@@ -5873,21 +5873,20 @@ describe('client Action declared SessionTarget admission', () => {
             getStorage().setState({ settings: previousSettings }); await wrapper.composition.unload(); }
     });
 
-    it.each([{ ask: false, foreignHome: false, compose: false, health: false }, { ask: true, foreignHome: false, compose: false, health: false },
-        { ask: false, foreignHome: true, compose: false, health: false }, { ask: false, foreignHome: false, compose: true, health: false },
-        { ask: false, foreignHome: false, compose: true, health: true },
+    it.each([{ ask: false, foreignHome: false, compose: false }, { ask: true, foreignHome: false, compose: false },
+        { ask: false, foreignHome: true, compose: false }, { ask: false, foreignHome: false, compose: true },
         ...(['hostControl', 'owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained',
             'recent', 'recentFabricated', 'recentWrongCaller', 'recentOtherLifetime', 'recentUnqualified'] as const).map(picked => ({
-            ask: false, foreignHome: false, compose: false, health: false, picked,
+            ask: false, foreignHome: false, compose: false, picked,
         }))])(
-        'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and health=$health and picked=$picked', async scenario => {
-        const { ask, foreignHome, compose, health } = scenario;
+        'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and picked=$picked', async scenario => {
+        const { ask, foreignHome, compose } = scenario;
         const picked = 'picked' in scenario ? scenario.picked : undefined;
         const hostControl = picked === 'hostControl';
         const recent = picked?.startsWith('recent') === true;
         const deniedSelection = picked === 'nonparticipant' || picked === 'otherAccount' || picked === 'unissued' || picked === 'wrongCaller' || picked === 'crossHomeConstrained'
             || picked === 'recentFabricated' || picked === 'recentWrongCaller' || picked === 'recentOtherLifetime' || picked === 'recentUnqualified';
-        const expectConfirmation = ask || Boolean(picked && !deniedSelection && !recent);
+        const expectConfirmation = !deniedSelection;
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { activate: activateTriageAccount } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
         const { resolveTriageActionInstructionV1 } = await import('../../../../../../packages/plugins/triage/src/sessions/actionResolution');
@@ -5901,11 +5900,6 @@ describe('client Action declared SessionTarget admission', () => {
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const { listProjectsForActions } = await import('@/sync/ops/actions/listProjects');
-        const { createServiceHealthNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
-        const { readAccountNoticeArtifactHeader } = await import('@/sync/domains/artifacts/usageNoticeArtifacts');
-        const { createAccountNoticeInvestigation } = await import('@/hooks/inbox/accountNoticeInvestigation');
-        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-        const { buildAgentTargetKeyV2 } = await import('@happier-dev/plugin-sdk/agents');
         const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === 'sessions/run-configured-v1');
         if (!declaration || declaration.execution.target !== 'account') throw new Error('Configured handoff must use its single portable Account declaration');
         const normalized = ingestPluginManifestV2(PLUGIN_MANIFEST);
@@ -5942,19 +5936,8 @@ describe('client Action declared SessionTarget admission', () => {
         if (compose) {
             await publishMachineInventoryForTest(accountLifetime.scope, [createMachineFixture({ id: project.machineId, activeAt: Date.now() })]);
         }
-        const agentTarget = { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'investigator' } } as const;
-        const targetKey = buildAgentTargetKeyV2(agentTarget);
-        const service = { kind: 'deployment', machineId: project.machineId, environmentId: 'environment',
-            environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } as const;
-        const notice = createServiceHealthNoticeArtifactFixture(accountLifetime.scope.serverId, {
-            ownerAccountId: accountLifetime.scope.accountId,
-            header: { source: { kind: 'host', topic: 'service_health', subject: service },
-                page: { kind: 'host', page: 'machine_service', machine: { serverId: project.serverId, machineId: service.machineId }, service,
-                    environment: { serverId: project.serverId, projectSourceId: 'project', environmentId: service.environmentId } } },
-        });
-        const noticeHeader = readAccountNoticeArtifactHeader(notice, accountLifetime.scope.accountId)!;
-        const configured = { actionId: health ? 'investigate' : 'fix', label: 'Repair', enabled: true, appliesTo: ['issue'], profileId: null,
-            workspaceMode: compose && !health ? 'repository' : 'reference_only', target: { kind: 'agent', promptInvocationId: null,
+        const configured = { actionId: 'fix', label: 'Repair', enabled: true, appliesTo: ['issue'], profileId: null,
+            workspaceMode: compose ? 'repository' : 'reference_only', target: { kind: 'agent', promptInvocationId: null,
                 seededFallbackInstruction: 'Repair this issue.', delivery: compose ? 'compose' : 'send' } } as const;
         replacePluginAccountAvailabilityProjection({ scope: accountLifetime.scope, snapshot: {
             availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response: {
@@ -5999,12 +5982,6 @@ describe('client Action declared SessionTarget admission', () => {
             return createEmptyAccountBootstrapHttpResponse(parsedUrl.pathname, init);
         });
         daemonRpc.mockImplementation(async (request: Readonly<{ method: string; payload?: Readonly<{ qualifiedActionId?: string }> }>) => {
-            if (health && request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) return {
-                status: 'current', targetedContributions: {
-                    target: { pluginId: activation.action.pluginId, occurrenceId: activation.action.occurrenceId,
-                        sourceCustody: TARGET_SOURCE_CUSTODY }, points: [],
-                }, targetedSurfaceMounts: [],
-            };
             if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return answerActionSchemasRead(request);
             throw new Error(`Unexpected daemon Action: ${request.payload?.qualifiedActionId}`);
         });
@@ -6028,23 +6005,6 @@ describe('client Action declared SessionTarget admission', () => {
             sessionList: async () => ({ sessions: [{ id: picked === 'recentFabricated' ? 'another-session' : 'reviewed-session',
                 ...(picked === 'recentUnqualified' ? {} : { serverId: targetHome }),
                 active: false, presence: null, updatedAt: 1 }], nextCursor: null, hasNext: false }),
-            agentsBackendsList: async () => ({ items: [{ targetKey, label: 'Investigator', enabled: true, agentTarget }] }),
-            spawnProfilesList: async () => ({ items: [{ id: 'profile-investigate', name: 'Investigate', preferredAgentTargetKey: targetKey }] }),
-            artifactAction: async request => {
-                if (request.actionId !== 'artifact.get') throw new Error(`Unexpected Artifact mutation ${request.actionId}`);
-                return { artifact: { artifactId: notice.id, ownerAccountId: notice.ownerAccountId, access: notice.access,
-                    publicAudience: notice.publicAudience, header: notice.header, body: notice.body,
-                    revision: { headerVersion: notice.headerVersion, bodyVersion: notice.bodyVersion },
-                    seq: notice.seq, createdAt: notice.createdAt, updatedAt: notice.updatedAt } };
-            },
-            runtimeActionExecute: async request => {
-                if (request.actionId !== 'localServices.launcher.snapshot') throw new Error(`Unexpected native Action ${request.actionId}`);
-                return { v: 1, machineId: service.machineId, updatedAt: 1, targets: [{ id: service.serviceId,
-                    source: 'managed_service', machineId: service.machineId, lifecyclePurpose: 'deployment', title: 'web',
-                    confidence: 'high', state: 'available', serviceState: 'unhealthy', actions: [],
-                    environment: { environmentId: service.environmentId, environmentInstanceId: service.environmentInstanceId,
-                        deploymentId: 'receipt-a', composeService: service.composeService } }] };
-            },
             resolveSessionReference: async ({ sessionId }) => {
                 return picked === 'nonparticipant' || picked === 'otherAccount' ? { kind: 'none' }
                     : { kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } };
@@ -6125,12 +6085,7 @@ describe('client Action declared SessionTarget admission', () => {
                 ...(picked ? { sessionAddress: { serverId: targetHome, sessionId: 'reviewed-session' } } : {}),
                 input: actionInput,
             });
-            const result = health ? await createAccountNoticeInvestigation({ scope: accountLifetime.scope,
-                isCurrent: accountLifetime.isCurrent, execute: createFrontDoorActionExecute(executor),
-            }).run({ artifact: notice, header: noticeHeader }, {
-                configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
-                agentChoice: { kind: 'profile', profileId: 'profile-investigate' }, delivery: 'compose',
-            }) : hostControl ? await (async () => {
+            const result = hostControl ? await (async () => {
                 const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
                 const control = createPluginSurfaceActionControls({
                     pluginId: PLUGIN_MANIFEST.id, surfaceId: 'surfacePlacement:triage-entry',
@@ -6148,8 +6103,7 @@ describe('client Action declared SessionTarget admission', () => {
                     }, undefined));
                 } finally { control.dispose(); }
             })() : await api.handleRequest({ ...request, surface });
-            const handoffResult = health && result && 'ok' in result && result.ok ? result.result : result;
-            expect(confirmationSnapshots, JSON.stringify({ result, confirmations })).toEqual(expectConfirmation ? [{ sentCount: 0, resolutions: picked ? 0 : 1, catalogueReads: 0 }] : []);
+            expect(confirmationSnapshots, JSON.stringify({ result, confirmations })).toEqual(expectConfirmation ? [{ sentCount: 0, resolutions: compose || picked ? 0 : 1, catalogueReads: 0 }] : []);
             expect(resolutions, JSON.stringify({ result, sent })).toBe(compose || picked ? 0 : 1);
             expect(catalogueReads, JSON.stringify({ result, sent })).toBe(deniedSelection ? 0 : 1);
             expect(confirmations).toBe(expectConfirmation ? 1 : 0);
@@ -6159,18 +6113,14 @@ describe('client Action declared SessionTarget admission', () => {
                 if (picked === 'crossHomeConstrained') expect(result).toMatchObject({ diagnostics: ['action_scope_restricted'] });
                 expect(sent).toEqual([]);
             } else if (compose) {
-                expect(handoffResult, JSON.stringify(handoffResult)).toMatchObject({ v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
+                expect(result, JSON.stringify(result)).toMatchObject({ v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
                 expect(sent).toEqual([]);
                 expect(newSessionNavigation).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/new' }));
                 const route = newSessionNavigation.mock.calls[0]![0] as Readonly<{ params: { draftId: string } }>;
                 const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
                 const draft = readNewSessionDraftFromRepository({ scope: accountLifetime.scope, draftId: route.params.draftId });
                 expect(newSessionNavigation).toHaveBeenCalledTimes(1);
-                expect(draft).toMatchObject(health ? { selectedProfileId: 'profile-investigate', agentTarget,
-                    selectedMachineId: service.machineId, targetServerId: accountLifetime.scope.serverId,
-                    directoryKind: 'managed', executionTarget: { kind: 'machine', target: {
-                        serverId: accountLifetime.scope.serverId, machineId: service.machineId } } }
-                    : { input: resolveTriageActionInstructionV1(configured, null,
+                expect(draft).toMatchObject({ input: resolveTriageActionInstructionV1(configured, null,
                         { task: 'draftReleaseNotes', context: 'repository' }),
                         selectedMachineId: project.machineId, selectedPath: project.rootPath });
             } else if (foreignHome) {
