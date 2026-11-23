@@ -185,8 +185,8 @@ export async function observeSessionPullRequestWatchAction(input: JsonValue, inv
         : { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation], order: 'asc' }, invalidate);
     const connections = request.kind === 'list' ? collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
         prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, invalidate) : undefined;
-    const settings = context.services.settings.forScope({ kind: 'account' }).watch(change => {
-        if (change.changedIds.includes(SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit)) invalidate();
+    const settings = context.services.settings.forScope({ kind: 'account' }).watch(invalidate, {
+        keys: [SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit],
     });
     const dispose = () => { bindings.dispose(); updates.dispose(); connections?.dispose(); settings.dispose(); context.signal.removeEventListener('abort', dispose); };
     context.signal.addEventListener('abort', dispose, { once: true });

@@ -36,6 +36,7 @@ describe('scoped Settings service contract', () => {
         }>>();
         expectTypeOf<Parameters<ScopedSettingsService['watch']>>().toEqualTypeOf<[
             listener: (change: PluginSettingsChange) => void,
+            options?: Readonly<{ keys: readonly string[] }>,
         ]>();
     });
 });

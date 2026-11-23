@@ -62,7 +62,11 @@ export interface ScopedSettingsService {
     set(id: string, value: JsonValue, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSettingsMutationResult>;
     reset(id: string, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSettingsMutationResult>;
     describe(): readonly PluginSettingDescriptor[];
-    watch(listener: (change: PluginSettingsChange) => void): Disposable;
+    /**
+     * Observe selected field IDs. Both changedIds and values are limited to that selection.
+     * Omit options to observe all changes in this scope.
+     */
+    watch(listener: (change: PluginSettingsChange) => void, options?: Readonly<{ keys: readonly string[] }>): Disposable;
 }
 
 /**

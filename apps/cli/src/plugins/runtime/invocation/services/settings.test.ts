@@ -553,7 +553,7 @@ describe('stable typed settings foundation', () => {
             });
     });
 
-    it('re-reads the reserved Account record after its content-free change notification', async () => {
+    it('delivers only selected Settings keys from Account change hints and local writes', async () => {
         let record: Readonly<{
             status: 'present';
             revision: number;
@@ -563,7 +563,7 @@ describe('stable typed settings foundation', () => {
             revision: 1,
             values: Object.freeze({ codexBackendMode: 'appServer' }),
         });
-        const subscribers = new Set<(hint: Readonly<{ revision: number }>) => void>();
+        const subscribers = new Set<(hint: Readonly<{ revision?: number }>) => void>();
         const readRevisions: number[] = [];
         const adapter = {
             // Account plugin Settings must not read host preference roots after
@@ -594,7 +594,7 @@ describe('stable typed settings foundation', () => {
                     },
                 };
             },
-            watchRecord(_model: unknown, listener: (hint: Readonly<{ revision: number }>) => void) {
+            watchRecord(_model: unknown, listener: (hint: Readonly<{ revision?: number }>) => void) {
                 subscribers.add(listener);
                 return () => subscribers.delete(listener);
             },
@@ -613,6 +613,11 @@ describe('stable typed settings foundation', () => {
                     title: 'Backend mode',
                     schema: { type: 'string', enum: ['appServer', 'acp'] },
                     default: 'appServer',
+                }, {
+                    id: 'other',
+                    title: 'Other',
+                    schema: { type: 'boolean' },
+                    default: false,
                 }],
                 presentation: { sections: [], subagentSections: [] },
             },
@@ -622,32 +627,37 @@ describe('stable typed settings foundation', () => {
             broker: createStablePluginEventsBroker(),
         }).bind({ model, seed: seed(() => true) });
         const changes: unknown[] = [];
-        const disposable = service.watch((change) => changes.push(change));
+        const disposable = service.watch((change) => changes.push(change), { keys: ['codexBackendMode'] });
         await vi.waitFor(() => expect(readRevisions).toEqual([1]));
 
-        record = Object.freeze({
-            status: 'present' as const,
-            revision: 2,
-            values: Object.freeze({ codexBackendMode: 'acp' }),
-        });
-        for (const listener of subscribers) listener({ revision: 2 });
+        // A broker write and a durable hint each change only an unrelated key.
+        await service.set('other', true, { expectedRevision: '1' });
+
+        record = { status: 'present', revision: 3, values: { codexBackendMode: 'appServer', other: false } };
+        for (const listener of subscribers) listener({ revision: 3 });
+
+        await vi.waitFor(() => expect(readRevisions).toContain(3));
+
+        // A content-free reconnect hint discovers changes to both fields.
+        record = { status: 'present', revision: 4, values: { codexBackendMode: 'acp', other: true } };
+        for (const listener of subscribers) listener({});
 
         await vi.waitFor(() => expect(changes).toEqual([{
             scope: { kind: 'account' },
-            revision: '2',
+            revision: '4',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'acp' },
         }]));
-        await expect(service.set('codexBackendMode', 'appServer', { expectedRevision: '2' }))
-            .resolves.toEqual({ scope: { kind: 'account' }, revision: '3' });
+        await expect(service.set('codexBackendMode', 'appServer', { expectedRevision: '4' }))
+            .resolves.toEqual({ scope: { kind: 'account' }, revision: '5' });
         await vi.waitFor(() => expect(changes).toEqual([{
             scope: { kind: 'account' },
-            revision: '2',
+            revision: '4',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'acp' },
         }, {
             scope: { kind: 'account' },
-            revision: '3',
+            revision: '5',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'appServer' },
         }]));

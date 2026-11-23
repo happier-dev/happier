@@ -531,7 +531,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             { kind: 'plugin_settings.get_v1', requestId: 'request-7', invocationId: 'invocation-1', scope: 'daemon', id: 'theme' },
             { kind: 'plugin_settings.set_v1', requestId: 'request-8', invocationId: 'invocation-1', scope: 'daemon', id: 'theme', value: { t: 'string', value: 'dark' }, expectedRevision: 'revision-1' },
             { kind: 'plugin_settings.reset_v1', requestId: 'request-9', invocationId: 'invocation-1', scope: 'account', id: 'theme' },
-            { kind: 'plugin_settings.watch.open_v1', requestId: 'request-9a', invocationId: 'invocation-1', scope: 'account', subscriptionId: 'settings-watch' },
+            { kind: 'plugin_settings.watch.open_v1', requestId: 'request-9a', invocationId: 'invocation-1', scope: 'account', subscriptionId: 'settings-watch', keys: ['theme'] },
             { kind: 'plugin_secrets.status_v1', requestId: 'request-10', invocationId: 'invocation-1', id: 'token' },
             { kind: 'plugin_secrets.get_v1', requestId: 'request-11', invocationId: 'invocation-1', id: 'token', reason: 'connect' },
             { kind: 'plugin_secrets.set_v1', requestId: 'request-12', invocationId: 'invocation-1', id: 'token', value: 'secret' },

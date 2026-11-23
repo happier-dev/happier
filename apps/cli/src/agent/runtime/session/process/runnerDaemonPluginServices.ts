@@ -1468,7 +1468,8 @@ export async function prepareRunnerDaemonPluginServices(
             assertAvailable('settings');
             return prepared.settingsDescriptors[scope];
         },
-        watch(listener: Parameters<ScopedSettingsService['watch']>[0]) {
+        watch(...[listener, options]: Parameters<ScopedSettingsService['watch']>) {
+            const keys = options && [...options.keys];
             assertSubscriptionAvailable(
                 'settings',
                 prepared.subscriptionCapabilities.settingsWatch,
@@ -1481,6 +1482,7 @@ export async function prepareRunnerDaemonPluginServices(
                     ...requestBase(),
                     scope,
                     subscriptionId,
+                    ...(keys ? { keys } : {}),
                 }),
                 (event) => event.kind
                     === 'plugin_settings.watch.event_v1'

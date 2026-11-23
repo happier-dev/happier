@@ -10318,6 +10318,12 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, Plugin Settings watches accept a field selection in the
+SDK and the runner-to-daemon watch request. The host applies that selection
+to live and durable Account changes. Runner and daemon should use matching
+development sources for keyed watches. The stored Settings records and
+content-free Account change hints keep their existing shapes.
+
 Unreleased 0.3 `SessionTurnV1` reads optionally expose the accepted terminal
 mutation's `automationLifecycleFacts` through the existing closed lifecycle-facts
 schema. The surrounding read projection keeps its existing additive policy.

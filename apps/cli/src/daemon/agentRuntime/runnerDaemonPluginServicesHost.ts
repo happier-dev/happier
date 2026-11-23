@@ -1708,7 +1708,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                     ),
                                 },
                             });
-                        }),
+                        }, operation.keys === undefined ? undefined : { keys: operation.keys }),
                     'fifo',
                 );
                 return result(operation, null);

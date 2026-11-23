@@ -375,15 +375,17 @@ describe('portable Account PR Watch Action', () => {
         const controller = new AbortController();
         const invalidate = vi.fn();
         const watch = vi.spyOn(state, 'watch');
+        const watchSettings = vi.fn<ReturnType<PluginServices['settings']['forScope']>['watch']>((listener) => {
+            settingsListeners.add(listener);
+            return { dispose: () => { settingsListeners.delete(listener); } };
+        });
         const observation = await observeSessionPullRequestWatchAction({ kind: 'get', sessionId: 'session-a' }, invalidate, {
             invokedAtMs: 1, signal: controller.signal, services: {
                 targetedContributions: channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest),
                 storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
                 actions: { execute: vi.fn() } as unknown as PluginServices['actions'],
                 settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
-                    get: async () => null, describe: () => [], watch: listener => {
-                        settingsListeners.add(listener); return { dispose: () => { settingsListeners.delete(listener); } };
-                    } }) },
+                    get: async () => null, describe: () => [], watch: watchSettings }) },
             },
         });
         await vi.waitFor(() => expect(watch).toHaveBeenCalledWith({ index: 'by-connection-binding-v2',
@@ -398,8 +400,7 @@ describe('portable Account PR Watch Action', () => {
         await state.put({ id: 'latest', 'record-kind': 'ingress-obligation', 'session-id': 'session-a', 'binding-id': 'pr-1' }, { expectedRevision: 'absent' });
         expect(invalidate).toHaveBeenCalledOnce();
         invalidate.mockClear();
-        for (const listener of settingsListeners) listener({ scope: { kind: 'account' }, revision: '2', changedIds: ['other'], values: {} });
-        expect(invalidate).not.toHaveBeenCalled();
+        expect(watchSettings).toHaveBeenCalledWith(expect.any(Function), { keys: ['pr-watch-fix-attempt-limit'] });
         for (const listener of settingsListeners) listener({ scope: { kind: 'account' }, revision: '3', changedIds: ['pr-watch-fix-attempt-limit'], values: {} });
         expect(invalidate).toHaveBeenCalledOnce();
         controller.abort();

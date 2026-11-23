@@ -724,6 +724,7 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         ...OptionalWitnessSchema,
         scope: RunnerDaemonPluginSettingsScopeV1Schema,
         subscriptionId: BoundedIdSchema,
+        keys: z.optional(z.array(BoundedIdSchema)),
     })),
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_secrets.status_v1'),

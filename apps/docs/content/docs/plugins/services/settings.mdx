@@ -37,8 +37,8 @@ There is no unscoped settings operation and no merged Account/daemon view:
 ```ts
 const accountSettings = context.services.settings.forScope({ kind: 'account' });
 const watcher = accountSettings.watch((change) => {
-  // `change.scope` is always `{ kind: 'account' }` here.
-});
+  // React to changes to the refresh interval.
+}, { keys: ['refresh-interval'] });
 ```
 
 Use `{ kind: 'daemon' }` only for fields declared with daemon scope.
@@ -48,9 +48,10 @@ one Account field and one daemon field. Secret ids share one plugin-wide
 namespace: a secret field or a top-level `secrets` entry cannot reuse any other
 Settings id. Manifest ingestion rejects a conflict at the path of the later
 declaration.
-`ScopedSettingsService.watch(listener)` returns a `Disposable`. Dispose it when
-its owning activation or runtime stops. A watcher is a live observation, not a
-history API.
+Pass the field IDs you read to `watch(listener, { keys })`. The host calls the
+listener only when a selected field changes and limits `changedIds` and `values`
+to those fields. Use `watch(listener)` when you need to observe the whole scope.
+Dispose the returned subscription when its owning activation or runtime stops.
 
 ## Account changes during a write
 

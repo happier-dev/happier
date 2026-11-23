@@ -1026,15 +1026,30 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     assertCurrent(seed);
                     return model.descriptors;
                 },
-                watch(listener: (change: SettingsChange) => void) {
+                watch(listener, options) {
                     assertSupportedScope(model, params.recordStore);
                     assertCurrent(seed);
+                    const keys = options && new Set(options.keys);
                     let lastDeliveredRevision: string | null = null;
                     const deliver = (change: SettingsChange): void => {
-                        if (change.scope.kind !== model.scope) return;
-                        if (lastDeliveredRevision === change.revision) return;
+                        if (change.scope.kind !== model.scope || lastDeliveredRevision === change.revision) return;
+                        if (!keys) {
+                            lastDeliveredRevision = change.revision;
+                            listener(change);
+                            return;
+                        }
+                        const changedIds = change.changedIds.filter((id) => keys.has(id));
+                        if (changedIds.length === 0) return;
+                        const values = Object.fromEntries<JsonValue>(
+                            [...keys].filter((id) => Object.hasOwn(change.values, id))
+                                .map((id) => [id, change.values[id]!]),
+                        );
                         lastDeliveredRevision = change.revision;
-                        listener(change);
+                        listener(Object.freeze({
+                            ...change,
+                            changedIds: Object.freeze(changedIds),
+                            values: Object.freeze(values),
+                        }));
                     };
                     const subscription = params.broker.subscribe({
                         ref: SETTINGS_CHANGED_REF,
