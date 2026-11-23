@@ -6,6 +6,7 @@ import { useRouter, type Href } from 'expo-router';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { actionAutomationTriggerKeyV1 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { ApprovalRequesterConfirmationV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readDiscussionDraftApproval } from './discussionDraftApproval';
@@ -508,9 +509,18 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         const hasSettledExecution = err instanceof ApprovalExecutionError;
         const isVersionConflict = !isStaleDecision && !hasSettledExecution
           && err instanceof Error && err.message.includes('modified by another client');
-        if (parsed.kind === 'target' || isVersionConflict || isStaleDecision || hasSettledExecution) {
+        const skip = triggerConsent?.decision === 'skip' ? triggerConsent : null;
+        if (skip || parsed.kind === 'target' || isVersionConflict || isStaleDecision || hasSettledExecution) {
           try {
-            await refreshArtifact();
+            const refreshed = await refreshArtifact(skip ? { fresh: true } : undefined);
+            if (skip && refreshed) {
+              // The shared check can be skipped while the Action still waits for its own approval.
+              const stored = approvalArtifactBodyMatchesHeaderV1(refreshed.header ?? {}, refreshed.body)?.request;
+              const key = actionAutomationTriggerKeyV1(skip);
+              if (stored && 'automaticChecks' in stored && stored.automaticChecks?.consents.some(
+                consent => consent.decision === 'skip' && actionAutomationTriggerKeyV1(consent) === key,
+              )) return;
+            }
           } catch {
             // Keep the decision result while the Home projection catches up.
           }

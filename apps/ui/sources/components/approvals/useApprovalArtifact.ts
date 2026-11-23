@@ -194,20 +194,26 @@ export function useApprovalArtifact(input: Readonly<{
     const invalidArtifact = fetchedInvalid;
     const readNotCurrent = React.useRef(false);
     readNotCurrent.current = error || artifact === null || (input.includeAccountActorRoster === true && accessGrants === null);
-    const refresh = React.useCallback(async () => {
-        pending.current?.abort();
+    const refresh = React.useCallback(async (options?: Readonly<{ fresh?: true }>) => {
+        const fresh = options?.fresh === true;
+        if (!fresh) pending.current?.abort();
         if (!artifactId || !serverId || unresolvedServer || !scopeMatches || resolution.kind !== 'bound') {
-            pending.current = null;
-            setLoading(false);
+            if (!fresh) {
+                pending.current = null;
+                setLoading(false);
+            }
             return;
         }
-        const controller = new AbortController();
-        pending.current = controller;
-        setLoading(true);
-        setError(false);
+        // A decision receipt read must survive background projection refreshes for the same approval.
+        const controller = fresh ? null : new AbortController();
+        if (controller) {
+            pending.current = controller;
+            setLoading(true);
+            setError(false);
+        }
         try {
             const result = await (async () => {
-                const context = await captureActionAccountContext(serverId, controller.signal);
+                const context = await captureActionAccountContext(serverId, controller?.signal);
                 try {
                     if (resolution.kind !== 'bound' || context.accountId !== resolution.scope.accountId) return null;
                     if (input.scope && context.accountId !== input.scope.accountId) return null;
@@ -217,22 +223,28 @@ export function useApprovalArtifact(input: Readonly<{
                         serverId: context.serverId,
                     });
                     const [full, grants] = await Promise.all([
-                        context.fetchArtifact(artifactId),
+                        context.fetchArtifact(artifactId, options),
                         input.includeAccountActorRoster
-                            ? accessApi.list({ artifactId }, controller.signal).catch(() => null)
+                            ? accessApi.list({ artifactId }, controller?.signal).catch(() => null)
                             : Promise.resolve(null),
                     ]);
                     context.assertCurrent();
                     return { full, grants };
                 } finally { context.dispose(); }
             })();
-            if (controller.signal.aborted) return;
+            if (controller?.signal.aborted) return;
             const full = result?.full ?? null;
             const compatible = hasCompatibleApprovalArtifact(
                 full,
                 requestedServerIdentityId,
                 requestedByPortableIdentity,
             );
+            if (fresh) {
+                if (!full || !compatible) return null;
+                pending.current?.abort();
+                pending.current = null;
+                setLoading(false);
+            }
             setLoaded({
                 artifactId,
                 serverId,
@@ -244,11 +256,11 @@ export function useApprovalArtifact(input: Readonly<{
             setError(!full || !compatible);
             return compatible ? full : null;
         } catch {
-            if (!controller.signal.aborted) setError(true);
+            if (controller && !controller.signal.aborted) setError(true);
         } finally {
             // An aborted read can still be the last one: losing Home authority
             // must settle it, while an older read cannot settle its replacement.
-            if (pending.current === controller) {
+            if (controller && pending.current === controller) {
                 pending.current = null;
                 setLoading(false);
             }

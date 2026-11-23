@@ -1769,6 +1769,61 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.automatic-checks:skipped:0')).not.toBeNull();
   });
 
+  it.each([true, false])('reconciles a failed shared-check Skip reply with the exact approval (committed: %s)', async committed => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const selected = { phase: 'before', actionIds: ['session.title.set'], mode: 'wait', onFailure: 'ask',
+      automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+      workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
+    const { automationId, triggerId } = selected;
+    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), automaticChecks: {
+      phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready', subjects: [], notices: [],
+      selected: [selected], consents: [{ automationId, triggerId, decision: 'pending' }], runs: [], results: [],
+    } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { Modal } = await import('@/modal');
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    const path = `/v1/artifacts/${artifact.id}`;
+    let pushed = false;
+    homes.answer(account.serverId, `POST ${path}`, { select: async (_input, incoming) => {
+      if (committed) {
+        const response = await homes.artifacts(account.serverId).handle(path, incoming.init);
+        expect(await response?.json()).toMatchObject({ success: true });
+        homes.answer(account.serverId, `GET ${path}`, { select: async (_input, incoming) => {
+          if (!pushed) {
+            pushed = true;
+            publishHomeAccountChange(account.serverId, [artifact.id], { changeKinds: ['artifact'] });
+          }
+          const settled = await homes.artifacts(account.serverId).handle(path, incoming.init);
+          if (!settled) throw new Error('Expected the approval receipt');
+          return { status: settled.status, body: await settled.json() };
+        } });
+      }
+      return { status: 400, body: { error: 'action_failed' } };
+    } });
+
+    expect(decisionButton(screen, 'approvals.reject')?.props.title).toBe('workflows.triggers.checks.skip');
+    await screen.pressByTestIdAsync('approvals.reject');
+    const readRecorded = () => JSON.parse(homes.artifacts(account.serverId).readPlainBody(artifact.id) ?? 'null');
+    await vi.waitFor(() => expect(readRecorded()).toMatchObject({ status: 'open', automaticChecks: {
+      consents: [{ automationId, triggerId, decision: committed ? 'skip' : 'pending' }], runs: [],
+    } }));
+    expect(readRecorded().decision).toBeUndefined();
+    if (committed) {
+      await vi.waitFor(() => {
+        expect(pushed).toBe(true);
+        expect(screen.findByTestId('approvals.automatic-checks:skipped:0')).not.toBeNull();
+        expect(decisionButton(screen, 'approvals.approve')?.props.disabled).toBe(false);
+      });
+      expect(Modal.alert).not.toHaveBeenCalled();
+      expect(decisionButton(screen, 'approvals.reject')?.props.title).not.toBe('workflows.triggers.checks.skip');
+    } else {
+      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledTimes(1));
+      expect(decisionButton(screen, 'approvals.reject')?.props.title).toBe('workflows.triggers.checks.skip');
+    }
+  });
+
   it('uses the executed receipt when the deciding Home loses its reply', async () => {
     const artifact = await createApiTargetActionApprovalArtifact();
     const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
