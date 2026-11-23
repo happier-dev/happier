@@ -62,10 +62,16 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   const boundary = mock.module('esbuild', { namedExports: { ...esbuild, build },
     defaultExport: { ...esbuild.default, build } });
   t.after(() => boundary.restore());
-  const originalWriteFile = fs.promises.writeFile;
-  t.mock.method(fs.promises, 'writeFile', (path, ...args) => {
-    if (String(path).startsWith(fixture.root) && /[\\/]preparation[\\/](alpha|beta|plugin\d+)\.json$/.test(String(path))) counts.artifacts += 1;
-    return originalWriteFile(path, ...args);
+  const originalRename = fs.promises.rename;
+  let editDuringAlphaBuild = false;
+  t.mock.method(fs.promises, 'rename', async (from, to) => {
+    if (String(to).startsWith(fixture.root) && /[\\/]preparation[\\/](alpha|beta|plugin\d+)\.json$/.test(String(to))) counts.artifacts += 1;
+    if (editDuringAlphaBuild && String(to) === fixture.path('moving-source', 'preparation', 'alpha.json')) {
+      editDuringAlphaBuild = false;
+      await writeFile(fixture.path('moving-source', 'workspace/packages/plugins/alpha/src/panel.ts'),
+        'export function renderSurface() { return "edited-during-build"; }');
+    }
+    return originalRename(from, to);
   });
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
@@ -170,6 +176,14 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   assert.ok(counts.graphs > 0, 'changed resolver conditions must rediscover the graph');
   assert.equal(counts.artifacts, plugins.length, 'resolver conditions are compiler inputs for every plugin');
   counts.graphs = counts.artifacts = 0;
-  await prepare('same-conditions', differentConditions.outputPath, ['browser']);
+  const sameConditions = await prepare('same-conditions', differentConditions.outputPath, ['browser']);
   assert.deepEqual(counts, { graphs: 0, artifacts: 0 }, 'unchanged resolver conditions retain zero compiler work');
+
+  plugins[0].manifest.displayName = 'adopted while source moved';
+  editDuringAlphaBuild = true;
+  const moving = await prepare('moving-source', sameConditions.outputPath, ['browser']);
+  assert.match(await readFile(join(moving.artifactRoots.alpha, 'react-native/panel/entry.cjs.bundle'), 'utf8'), /edited-during-build/);
+  const adopted = JSON.parse(await readFile(join(moving.artifactRoots.alpha, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), 'utf8'));
+  assert.equal(adopted.manifest.displayName, 'adopted while source moved');
+  assert.equal(adopted.fingerprint, undefined, 'the adopted graph cannot certify unchanged inputs after the edit');
 });

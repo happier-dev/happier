@@ -163,24 +163,24 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   const publicationPackageInputs = new Map();
   for (const [directory, input] of successfulInputs) {
     if (result.pluginFailures.some((failure) => failure.packageName === `@happier-dev/plugins-${directory}`)) continue;
-    // An interactive source edit during compilation does not make the served
-    // graph unusable, but it cannot certify unchanged-input reuse next time.
-    const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages,
-      packageInputs: publicationPackageInputs, resolveSourceImport: buildOptions.resolveSourceImport,
-      retainedInputs: input.sourceInputs, inputOptions: conditions });
-    if (await readBuildInputIdentity({ sourceDir: repoRoot, files, options: input.options }) !== input.inputFingerprint) continue;
     const root = result.artifactRoots[directory] ?? artifactOutputDirs[directory] ?? artifactRoots[directory];
     // Borrowed producer roots stay read-only. Consumer-owned graphs can retain
     // their admitted manifest even when identical bytes were reused.
     if (input.reusedRoot && resolve(root) === input.reusedRoot && !artifactStoreDir && !artifactOutputDirs[directory]) continue;
+    // The runtime always needs the adopted graph's declaration. An edit during
+    // compilation only prevents this publication from certifying input reuse.
+    const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages,
+      packageInputs: publicationPackageInputs, resolveSourceImport: buildOptions.resolveSourceImport,
+      retainedInputs: input.sourceInputs, inputOptions: conditions });
+    const reusable = await readBuildInputIdentity({ sourceDir: repoRoot, files, options: input.options }) === input.inputFingerprint;
     const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
     const manifestDigest = await attestBuildInputRecordManifest(pluginManifests[directory]);
-    if (record?.version === 2 && record.fingerprint === input.inputFingerprint && record.manifest && record.packageName
+    if (reusable && record?.version === 2 && record.fingerprint === input.inputFingerprint && record.manifest && record.packageName
       && record.sourceInputs?.identity === input.sourceInputs.identity && record.compilerInputs?.identity === compilerInputs.identity
       && record.manifestDigest === manifestDigest) continue;
-    await writeJsonAtomic(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), { version: 2, fingerprint: input.inputFingerprint,
+    await writeJsonAtomic(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), { version: 2,
       packageName: `@happier-dev/plugins-${directory}`, manifest: pluginManifests[directory], ...(manifestDigest ? { manifestDigest } : {}),
-      sourceInputs: input.sourceInputs, compilerInputs });
+      ...(reusable ? { fingerprint: input.inputFingerprint, sourceInputs: input.sourceInputs, compilerInputs } : {}) });
   }
   for (const diagnostic of result.diagnostics) {
     const unavailable = result.pluginFailures.some((failure) => failure.pluginId === diagnostic.pluginId);
