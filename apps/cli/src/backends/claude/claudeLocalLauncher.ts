@@ -3,6 +3,7 @@ import { delayUnrefAbortable } from '@/utils/time';
 import { claudeLocal, ExitCodeError } from "./claudeLocal";
 import { Session, type SessionFoundInfo } from "./session";
 import type { EnhancedMode } from './loop';
+import { withClaudeSessionModelArgs } from './cli/terminalOptions';
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
@@ -85,19 +86,6 @@ function upsertClaudePermissionModeArgs(
     }
 
     return filtered.length > 0 ? filtered : undefined;
-}
-
-/**
- * Launch args for one local Claude spawn, carrying the session model.
- *
- * Happier never puts the session model in the passthrough args, so a `--model` already there is an
- * explicit Claude Code override and is kept, as the remote runtimes keep it.
- */
-function withClaudeSessionModelArgs(args: string[] | undefined, modelId: string | null): string[] | undefined {
-    if (!modelId) return args;
-    const input = args ?? [];
-    if (input.some((arg) => arg === '--model' || arg.startsWith('--model='))) return args;
-    return [...input, '--model', modelId];
 }
 
 export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number };
@@ -511,7 +499,7 @@ export async function claudeLocalLauncher(
                 // `--model` would pin the model and ignore later changes from the app.
                 const localClaudeArgs = withClaudeSessionModelArgs(
                     session.claudeArgs,
-                    resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId ?? null,
+                    resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId,
                 );
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();

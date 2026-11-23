@@ -37,6 +37,7 @@ import { projectPath } from '../../projectPath';
 import { resolve } from 'node:path';
 import { startOfflineReconnection, connectionState } from '@/api/offline/serverConnectionErrors';
 import { claudeLocal } from '@/backends/claude/claudeLocal';
+import { withClaudeSessionModelArgs } from '@/backends/claude/cli/terminalOptions';
 import { createSessionScanner } from '@/backends/claude/utils/sessionScanner';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
@@ -472,7 +473,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                                 onSessionFound: (id) => { offlineSessionId = id; },
                                 onThinkingChange: () => {},
                                 abort: abortController.signal,
-                                claudeArgs: options.claudeArgs,
+                                claudeArgs: withClaudeSessionModelArgs(options.claudeArgs, initialModelId),
                                 systemPromptText: offlineSystemPromptText,
                             });
                     } finally {
