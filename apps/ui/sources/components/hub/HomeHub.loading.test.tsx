@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -16,6 +17,7 @@ import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionSta
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { isHomeArrivalMotionPending, isHomeArrivalSettled } from '@/components/hub/homeArrival';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -33,6 +35,7 @@ vi.mock('@shopify/react-native-skia', async () => {
 
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+await prepareSessionDraftPersistenceStorage();
 const { HomeHub } = await import('./HomeHub');
 const { useSessionGettingStartedGuidanceBaseModel } = await import('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
