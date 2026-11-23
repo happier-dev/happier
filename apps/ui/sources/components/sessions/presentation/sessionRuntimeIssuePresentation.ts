@@ -26,7 +26,7 @@ import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import type { SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema, type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
 import type { ProviderConnectionReviewRecovery } from '@/providers/connection/recovery';
 
@@ -150,6 +150,12 @@ function resolveSessionStartupFailureCause(
             t('teams.credentials.errors.brokerUnavailable'),
             t('teams.credentials.recovery.ownerHandoff'),
         ].join(' ');
+    }
+    if (failureCause?.providerErrorCode) {
+        const bindingRejection = SessionTeamCredentialBindingMutationRejectionV1Schema.safeParse({
+            code, reason: failureCause.providerErrorCode,
+        });
+        if (bindingRejection.success) return presentSessionTeamCredentialBindingRejection(bindingRejection.data.reason);
     }
     if (code === 'team_credential_provider_binding_unavailable') return t('session.startFailure.cause.teamCredential');
     const provider = ProviderErrorCodeV1Schema.safeParse(code);

@@ -48,6 +48,18 @@ async function useLanguage(language: string): Promise<void> {
 }
 
 describe('closed startup-failure recovery copy', () => {
+    it('explains withdrawn Team model access on a retained runtime issue', async () => {
+        await useLanguage('en');
+        const code = 'session_team_credential_binding_rejected';
+        const presented = presentSessionRuntimeIssue(issue({
+            code,
+            sanitizedPreview: undefined,
+            source: 'team_credential',
+            failureCause: { code, phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: 'access_removed' },
+        }));
+        expect(presented.summary).toBe(t('session.startFailure.teamCredentialBinding.access_removed'));
+    });
+
     it.each(Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS).filter(code =>
         code.startsWith('plugin_exec_') || code.startsWith('native_adapter_'),
     ))('localizes %s without exposing its diagnostic code', async code => {
