@@ -17,7 +17,7 @@ import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { createMockSession } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64, encrypt } from '../encryption';
 import {
-    bindApiSessionSocketPairMock,
+    bindApiSessionSocketMock,
     createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -61,12 +61,10 @@ describe('ApiSessionClient live account settings convergence', () => {
         mockIo.mockReset();
         readCredentialsMock.mockReset();
         readStoredCredentialsMock.mockReset();
-        const credentials = {
-            token: 'fake-token',
-            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(2) },
-        };
-        readCredentialsMock.mockResolvedValue(credentials);
-        readStoredCredentialsMock.mockResolvedValue(credentials);
+        // These Home fixtures serve Plain Account Settings. Session metadata
+        // still uses the separate Session key from createMockSession.
+        readCredentialsMock.mockResolvedValue(null);
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token', encryption: null });
         resetActiveAccountSettingsSnapshotForTests();
         // Socket fixtures have an admitted Machine binding. Feature discovery
         // is an HTTP boundary too; don't race online against an absent contract.
@@ -75,11 +73,6 @@ describe('ApiSessionClient live account settings convergence', () => {
     });
 
     it('applies a plain settings update with token-only credentials', async () => {
-        readCredentialsMock.mockResolvedValue(null);
-        readStoredCredentialsMock.mockResolvedValue({
-            token: 'fake-token',
-            encryption: null,
-        });
         const { client, userSocket } = createClient();
         await vi.waitFor(() => expect((client as never as { currentConnectionState: { phase: string } }).currentConnectionState.phase).toBe('online'));
         vi.spyOn(axios, 'get').mockResolvedValue({
@@ -173,14 +166,16 @@ describe('ApiSessionClient live account settings convergence', () => {
     function createClient(options: Partial<ApiSessionClientOptions> = {}) {
         const sessionSocket = createApiSessionSocketStub({ connected: true });
         const userSocket = createApiSessionSocketStub({ connected: true });
-        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket,
-            fallbackSocket: createApiSessionSocketStub({ connected: true }) });
+        // The managed Account stream opens its underlying socket on demand.
+        // Bind the two transport fixtures by role, independent of connection order.
+        bindApiSessionSocketMock(mockIo, sessionSocket);
         const accountTransport = createAccountSessionClientTransport('fake-token');
         const client = createTestApiSessionClient(ApiSessionClient, 'fake-token', createMockSession({
             pendingCount: 1,
             pendingVersion: 3,
             latestTurnStatus: 'in_progress',
         }), { localMachineId: 'machine', transport: { ...accountTransport,
+            createAccountUpdatesSocket: () => userSocket,
             createSessionSocketTransport: binding => createSessionSocketTransport({ ...binding,
                 token: 'fake-token', serverUrl: accountTransport.serverUrl, accessKeyBinding: 'preestablished' }),
         }, ...options });
