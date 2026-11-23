@@ -483,6 +483,26 @@ describe('Api server error handling', () => {
             expect(connectionState.isOffline()).toBe(false);
         });
 
+        it('presents Home\'s typed 403 Session-birth refusal by its reason, not as an authentication failure', async () => {
+            connectionState.reset();
+            // HTTP is the boundary; the real creation transport and settlement classify the refusal.
+            // This caller keeps Axios's default validateStatus, so Home's 403 arrives as a rejection.
+            mockGet.mockImplementation(readApiGetFixture);
+            mockPost.mockRejectedValue({
+                isAxiosError: true,
+                response: { status: 403, data: { error: 'session-origin-forbidden' } },
+            });
+
+            const failure = await api.getOrCreateSession({
+                tag: 'test-tag', metadata: testMetadata, state: null,
+            }).catch((error: unknown) => error);
+
+            expect(failure).toMatchObject({ name: 'HttpStatusError', response: { status: 403 }, code: 'session-origin-forbidden' });
+            expect((failure as Error).message).toContain('session-origin-forbidden');
+            expect((failure as Error).message).not.toMatch(/authentication failed/i);
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
         it.each([
             { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' },
             { error: 'database_transaction_conflict_exhausted', statusCode: 503 },
