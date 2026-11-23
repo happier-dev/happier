@@ -1,4 +1,3 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
@@ -20,6 +19,7 @@ export type ResolvedCustomHappierToolWarning = Readonly<{
 
 async function listServerTools(serverName: string, config: McpServerConfig, baseEnv: NodeJS.ProcessEnv, signal?: AbortSignal,
   prepareTransport?: PrepareMcpStdioTransport): Promise<ResolvedCustomHappierTool[]> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const transport = await createCustomMcpClientTransport(config, baseEnv, { signal, prepareTransport });
   const client = new Client({ name: 'happier-tools-list', version: '1.0.0' }, { capabilities: {} });
 

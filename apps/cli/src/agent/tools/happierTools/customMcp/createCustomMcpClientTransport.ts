@@ -11,7 +11,7 @@ export async function createCustomMcpClientTransport(
 ): Promise<Transport> {
   options.signal?.throwIfAborted();
   const prepared = options.prepareTransport ? await options.prepareTransport(config, options.signal)
-    : prepareHostMcpStdioTransport({ command: config.command, args: config.args,
+    : await prepareHostMcpStdioTransport({ command: config.command, args: config.args,
       environment: buildScopedProcessEnv({ baseEnv: processEnv, explicitEnv: config.env }), signal: options.signal });
   try {
     options.signal?.throwIfAborted();

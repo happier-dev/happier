@@ -167,7 +167,7 @@ export async function startMcpRequesterParent(input: Readonly<{
     initializeBackendRunSessionFn: async params => {
       if (input.nativeParentSelection) {
         if (!input.sessionRow) throw new Error('Native parent requires its original Session row');
-        liveSession = params.api.sessionSyncClient(input.sessionRow);
+        liveSession = await params.api.sessionSyncClient(input.sessionRow);
         originalControls = liveSession.setSessionRuntimeControls;
         liveSession.setSessionRuntimeControls = installControls;
       }

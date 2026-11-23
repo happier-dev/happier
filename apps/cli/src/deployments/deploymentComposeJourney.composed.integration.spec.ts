@@ -2620,7 +2620,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     user: 'coverage-user', homeDir: home.baseDir, version: '0.3', os: 'linux' },
             }));
             if (!preparationSession) throw new Error('Preparation requires a real Session created at this Home');
-            const preparationClient = runWithServerHttpBaseUrl(home.baseUrl,
+            const preparationClient = await runWithServerHttpBaseUrl(home.baseUrl,
                 () => preparationApi.sessionSyncClient(preparationSession));
             cleanup.push(() => preparationClient.close());
             const preparationMessages: unknown[] = [];

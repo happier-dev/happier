@@ -97,7 +97,7 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     await params.assertCurrent?.();
     params.signal?.throwIfAborted();
     prepared = params.prepareTransport ? await params.prepareTransport()
-      : prepareHostMcpStdioTransport({ command: params.config.command, args: params.config.args,
+      : await prepareHostMcpStdioTransport({ command: params.config.command, args: params.config.args,
         environment: env, signal: params.signal });
     transport = Object.assign(prepared.transport, { setProtocolVersion: (version: string) => { protocolVersion = version; } });
     stderr = prepared.stderr;

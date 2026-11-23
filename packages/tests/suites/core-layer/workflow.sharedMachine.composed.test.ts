@@ -394,7 +394,7 @@ it('runs a guest private Session on a shared Machine; revocation stops the next 
     const prompts: string[] = [];
     let childId = '';
     let executionCredentials: StoredCredentials | undefined;
-    let nativeSession: ReturnType<ApiClient['sessionSyncClient']> | undefined;
+    let nativeSession: Awaited<ReturnType<ApiClient['sessionSyncClient']>> | undefined;
     const boundaries = { nativeLaunches: 0, trackedOpenStatus: null as string | null,
         publisherClaimStatus: null as string | null,
         startupStates: [] as string[], startupErrorCodes: [] as string[], startupCompleted: false,
@@ -449,7 +449,7 @@ it('runs a guest private Session on a shared Machine; revocation stops the next 
             childId = created.id;
             // The native runner publishes presence before reporting its Session
             // open. Use its real Session client and acknowledged publisher claim.
-            const runnerSession = api.sessionSyncClient(created, {
+            const runnerSession = await api.sessionSyncClient(created, {
                 initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({
                     sessionId: childId, agentRuntimeApplicability: 'supported',
                 })],

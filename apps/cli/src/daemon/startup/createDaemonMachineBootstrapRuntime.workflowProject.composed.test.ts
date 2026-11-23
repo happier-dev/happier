@@ -279,7 +279,7 @@ it.each(['renewal', 'kilo', 'acp', 'acp-failure', 'external', 'foreign'] as cons
     directPeerServerLifecycle: null, directTransferRegistryHost: {} as never, daemonServerWorkScheduler: {} as never,
     setDaemonServerWorkOnline() {}, onMachineConnectionOnline: async () => {}, reconcileConnectedServicesProjection: async () => {},
     isShuttingDown: () => false, isWorkflowFeatureEnabled: () => true,
-    createWorkflowRunCoordinatorForMachine(input) {
+    async createWorkflowRunCoordinatorForMachine(input) {
       const authorizationCurrentness = createCredentialedWorkflowAcceptedAuthorizationCurrentness({ credentials, accountId });
       const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'session-home', serverApiUrl: 'https://session-home.test',
         machineId, machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,

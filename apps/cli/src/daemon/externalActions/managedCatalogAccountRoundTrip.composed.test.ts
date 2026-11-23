@@ -1103,7 +1103,7 @@ describe('managed catalog original Account transport', () => {
             credentials: software.credentials, mode: 'blocking' }));
           parentRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease({
             controller: software.runtime.controller, happyHomeDir: software.runtime.happyHomeDir });
-          const hostSession = api.sessionSyncClient(session);
+          const hostSession = await api.sessionSyncClient(session);
           liveParent = await startMcpRequesterParent({ credentials: software.credentials, session: hostSession, sessionRow: session, api, machineId,
             snapshot, pluginRuntimeRegistryLease: parentRegistryLease, backendTarget, nativeParentSelection: true,
             ...(foregroundRunnerBootstrap ? { foregroundRunnerBootstrap } : {}),

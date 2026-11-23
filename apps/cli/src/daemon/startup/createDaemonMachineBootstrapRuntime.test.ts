@@ -1029,7 +1029,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
       api: { machineSyncClient: vi.fn(() => ({})) } as never,
       isWorkflowFeatureEnabled: () => enabled,
-      createWorkflowRecoveryForMachine: ({ machineId }) => {
+      createWorkflowRecoveryForMachine: async ({ machineId }) => {
         constructions++;
         return createWorkflowRunRecoveryReader({ accountId: 'account', machineId,
           // The persisted Run transport is the boundary; recovery logic remains real.

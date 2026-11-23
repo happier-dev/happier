@@ -158,6 +158,6 @@ export async function terminateRestrictedMaterializedSession(params: Readonly<{
   });
   const transport = createRestrictedSessionClientTransport(params);
   const api = createRestrictedSessionBackendApi({ ...params, transport });
-  const client = api.sessionSyncClient(session);
+  const client = await api.sessionSyncClient(session);
   await client.endSessionAndClose();
 }

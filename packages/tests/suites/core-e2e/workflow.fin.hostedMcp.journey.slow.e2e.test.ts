@@ -73,7 +73,7 @@ it('J3 redacts a live hosted MCP bearer echoed by a provider from the transcript
       mode: 'e2ee' as const,
       ctx: { encryptionKey: sessionRecord.encryptionKey, encryptionVariant: sessionRecord.encryptionVariant },
     };
-    const session = api.sessionSyncClient(sessionRecord, {
+    const session = await api.sessionSyncClient(sessionRecord, {
       initialRegisteredSessionStateFieldMutations: [
         createInitialHostRuntimeActivityMutation({ sessionId: sessionRecord.id, agentRuntimeApplicability: 'not_applicable' }),
       ],

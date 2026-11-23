@@ -5950,8 +5950,8 @@ describe('runHostSessionRuntime', () => {
       },
       machineId: 'machine-1',
     });
-    harness.deps.initializeBackendRunSessionFn = async ({ api }: { api: Pick<import('@/api/api').ApiClient, 'sessionSyncClient'> }) => {
-      api.sessionSyncClient(createPlainSessionFixture({ id: harness.session.sessionId }));
+    harness.deps.initializeBackendRunSessionFn = async ({ api }) => {
+      await api.sessionSyncClient(createPlainSessionFixture({ id: harness.session.sessionId }));
       await expect(sourceClient!.rpcHandlerManager.invokeLocal(
         SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1,
         { sessionId: harness.session.sessionId, localId: 'edit-during-session-initialization',
@@ -6037,8 +6037,8 @@ describe('runHostSessionRuntime', () => {
       },
       machineId: 'machine-1',
     });
-    harness.deps.initializeBackendRunSessionFn = async ({ api }: { api: Pick<import('@/api/api').ApiClient, 'sessionSyncClient'> }) => {
-      api.sessionSyncClient(createPlainSessionFixture({ id: harness.session.sessionId }));
+    harness.deps.initializeBackendRunSessionFn = async ({ api }) => {
+      await api.sessionSyncClient(createPlainSessionFixture({ id: harness.session.sessionId }));
       return { session: harness.session, reconnectionHandle: null, reportedSessionId: harness.session.sessionId,
         attachedToExistingSession: true };
     };

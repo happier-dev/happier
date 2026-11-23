@@ -150,7 +150,7 @@ describe('restricted ephemeral Runner Session API', () => {
       credentials: { token: 'ignored' } as never,
       machineMetadata: {} as never,
     });
-    const client = context.api.sessionSyncClient(session);
+    const client = await context.api.sessionSyncClient(session);
     const lifetime = new AbortController();
     lifetime.abort();
 

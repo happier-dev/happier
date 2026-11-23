@@ -582,7 +582,7 @@ import {
   persistUsageLimitRecoveryFieldDurably,
 } from '@/session/usageLimitRecoveryControls/persistUsageLimitRecoveryFieldDurably';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
-import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
+import type { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
 import { createSpawnConcurrencyGate } from '../spawn/createSpawnConcurrencyGate';
 import { createForegroundAgentRuntimeAdmissionOwner } from '../agentRuntime/foregroundAdmission';
@@ -4469,7 +4469,7 @@ export async function startDaemonSessionControlRuntime(
 
           const spawnResult = await spawnConcurrencyGate.run(
             async () =>
-              await executeSpawnSessionRequest({
+              await (await import('./executeSpawnSessionRequest')).executeSpawnSessionRequest({
                 ...(() => {
                   const sessionHost = sessionHostPlacement.place();
                   return sessionHost ? { sessionHost, machineId: spawnParams.machineId } : {};

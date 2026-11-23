@@ -42,7 +42,7 @@ export type DeferredStartupBackendApi = Omit<Pick<ApiClient, 'getOrCreateSession
     sessionSyncClient: (
         session: Parameters<ApiClient['sessionSyncClient']>[0],
         options?: DeferredStartupSessionClientOptions,
-    ) => ApiSessionClient;
+    ) => ApiSessionClient | Promise<ApiSessionClient>;
 }>;
 
 export type DeferredStartupBackendApiContextInitializer = (
@@ -221,8 +221,8 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
             pushSenderRef.current = initializedApiContext.api.push();
             const runtimeSessionApi: Pick<
                 ApiClient,
-                'getOrCreateSession' | 'sessionSyncClient'
-            > = {
+                'getOrCreateSession'
+            > & Pick<DeferredStartupBackendApi, 'sessionSyncClient'> = {
                 getOrCreateSession: (options) =>
                     initializedApiContext.api.getOrCreateSession(options),
                 sessionSyncClient: (sessionRow) =>

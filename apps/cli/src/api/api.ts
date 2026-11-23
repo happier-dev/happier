@@ -42,7 +42,7 @@ import type {
   SessionCreateOrLoadResult,
 } from '@/api/types'
 import { MachineRegistrationIdentitySchema } from '@/api/types'
-import { ApiSessionClient, type ApiSessionClientOptions } from './session/sessionClient';
+import type { ApiSessionClient, ApiSessionClientOptions } from './session/sessionClient';
 import { createAccountSessionClientTransport } from './client/createAccountSessionClientTransport';
 import { ensureSessionMachineAccessKeyBinding } from './session/ensureSessionMachineAccessKeyBinding';
 import { openTeamCredentialProviderBroker } from './client/providerBrokerApi';
@@ -1597,7 +1597,7 @@ export class ApiClient {
     };
   }
 
-  sessionSyncClient(
+  async sessionSyncClient(
     session: Session,
     sessionOptions: Pick<
       ApiSessionClientOptions,
@@ -1609,18 +1609,22 @@ export class ApiClient {
       | 'machineAdmissionTransport'
       | 'actionsSettingsProvider'
     > & Partial<Pick<ApiSessionClientOptions, 'metadataAuthority'>> = {},
-  ): ApiSessionClient {
+  ): Promise<ApiSessionClient> {
     const serverId = configuration.activeServerId;
+    const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+    const capturedHomeIdentity = resolveServerProfileHomeIdentityId(serverId);
+    const transport = createAccountSessionClientTransport(this.credential.token);
+    const { ApiSessionClient } = await import('./session/sessionClient');
     const readDiscussionAutonomousCheckIn = createDiscussionAutonomousCheckInReader({
       credentials: this.credential,
       serverId,
-      serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-      capturedHomeIdentity: resolveServerProfileHomeIdentityId(serverId),
+      serverHttpBaseUrl,
+      capturedHomeIdentity,
       // Ordinary runners own their connection snapshot; daemon clients may inject theirs.
       resolveServerFeaturesSnapshot: () => client.getServerFeaturesSnapshot(),
     });
     const client: ApiSessionClient = new ApiSessionClient(this.credential.token, session, {
-      transport: createAccountSessionClientTransport(this.credential.token),
+      transport,
       metadataAuthority: sessionOptions.metadataAuthority
         ?? { kind: 'owner', credentials: this.credential, readCurrentCredentials: readStoredCredentials },
       ...(sessionOptions.actionsSettingsProvider ? { actionsSettingsProvider: sessionOptions.actionsSettingsProvider } : {}),

@@ -545,7 +545,7 @@ describe('createDeferredStartupBootstrap', () => {
           machineId: 'machine-1',
         }),
         initializeBackendRunSessionFn: async ({ api: runtimeApi }) => {
-          const session = runtimeApi.sessionSyncClient({
+          const session = await runtimeApi.sessionSyncClient({
             id: 'session-live',
           } as never);
           return {

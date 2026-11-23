@@ -34,7 +34,7 @@ async function createAttachmentRpcBoundary(directory: string) {
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
   let server: ReturnType<typeof createServer> | undefined;
   let socketServer: Server | undefined;
-  let client: ReturnType<ApiClient['sessionSyncClient']> | undefined;
+  let client: Awaited<ReturnType<ApiClient['sessionSyncClient']>> | undefined;
   let disposed = false;
   const dispose = async () => {
     if (disposed) return;
@@ -136,7 +136,7 @@ async function createAttachmentRpcBoundary(directory: string) {
   const api = await ApiClient.create({ token, encryption: null });
   api.setLocalMachineId('machine');
   api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features }));
-  client = api.sessionSyncClient(createPlainSessionFixture({ id: 'session-1', metadata: createTestMetadata({ path: directory }) }),
+  client = await api.sessionSyncClient(createPlainSessionFixture({ id: 'session-1', metadata: createTestMetadata({ path: directory }) }),
     { durableMutationDeliveryInitiallyActive: false });
   const rpc = client.rpcHandlerManager;
   // Observe the existing logger boundary without replacing execution or admission.

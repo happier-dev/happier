@@ -158,7 +158,7 @@ import { startDaemonMachineRegistrationRuntime } from './startup/startDaemonMach
 import { settleDaemonOptionalCapability, type DaemonOptionalCapabilityResult } from './startup/optionalCapabilities';
 import { createDaemonCleanupAndShutdown } from './startup/createDaemonCleanupAndShutdown';
 import { releaseDaemonOwnershipAfterFatal } from './lifecycle/cleanupAndShutdown';
-import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
+import type { AutomationWorkerHandle } from './automation/automationWorker';
 import type { MachineRoleActivationRuntime } from './roles/machineRoleActivation';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import { sanitizeConnectedServiceDiagnosticError } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
@@ -189,7 +189,7 @@ import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resol
 import { startDaemonSessionControlRuntime } from './startup/startDaemonSessionControlRuntime';
 import { prepareDaemonBootstrapContext } from './startup/prepareDaemonBootstrapContext';
 import { createDaemonMachineBootstrapRuntime } from './startup/createDaemonMachineBootstrapRuntime';
-import { createProductionDaemonWorkflowRuntime } from './workflows/daemonRuntime';
+import type { createProductionDaemonWorkflowRuntime } from './workflows/daemonRuntime';
 import { prepareWorkflowSessionRequester, runObservedWorkflowSessionStartup } from './workflows/workflowSessionStartup';
 import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
@@ -724,13 +724,19 @@ export async function startDaemon(
     });
     let workflowRuntime: ReturnType<typeof createProductionDaemonWorkflowRuntime> | null = null;
     const getWorkflowRuntime = externalActionAccountId
-      ? () => workflowRuntime ??= createProductionDaemonWorkflowRuntime({
-          secretSources: daemonSecretSources,
-          credentials,
-          accountId: externalActionAccountId,
-          serverId: configuration.activeServerId,
-          admissionDrain,
-        })
+      ? async (requester?: Readonly<{ credentials: StoredCredentials; accountId: string; serverId: string }>) => {
+          const { createProductionDaemonWorkflowRuntime } = await import('./workflows/daemonRuntime');
+          if (requester) {
+            return createProductionDaemonWorkflowRuntime({ ...requester, secretSources: daemonSecretSources, admissionDrain });
+          }
+          return workflowRuntime ??= createProductionDaemonWorkflowRuntime({
+            secretSources: daemonSecretSources,
+            credentials,
+            accountId: externalActionAccountId,
+            serverId: configuration.activeServerId,
+            admissionDrain,
+          });
+        }
       : null;
     let preflightMachineRegistration = bootstrapContext.preflightMachineRegistration;
     let machineId = bootstrapContext.machineId;
@@ -4534,13 +4540,13 @@ export async function startDaemon(
                 process.env,
                 serverFeaturesSnapshotStore.getSnapshot(),
               ),
-              createWorkflowRunCoordinatorForMachine: (input) => {
+              createWorkflowRunCoordinatorForMachine: async (input) => {
                 const selectedCredentials = input.requesterCredentials ?? credentials;
                 // getWorkflowRuntime is available only with a controller Account.
                 const selectedAccountId = input.requesterWorkAttributionV1?.accountId ?? externalActionAccountId!;
-                const runtime = sameStoredCredentials(selectedCredentials, credentials) ? getWorkflowRuntime()
-                  : createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials, accountId: selectedAccountId,
-                    serverId: requesterRuntimeServerId, secretSources: daemonSecretSources, admissionDrain });
+                const runtime = await getWorkflowRuntime(sameStoredCredentials(selectedCredentials, credentials) ? undefined : {
+                  credentials: selectedCredentials, accountId: selectedAccountId, serverId: requesterRuntimeServerId,
+                });
                 const installation = readInstallationIdentityIfExistsSync();
                 return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter, openManagedProjectWorkspace,
                   postWorkflowMessage,
@@ -4602,11 +4608,11 @@ export async function startDaemon(
                     return await apiMachineForSessions.callSessionActionRpc(request);
                   } });
               },
-              createWorkflowRecoveryForMachine: (input) => {
-                const runtime = input.requesterCredentials && input.requesterWorkAttributionV1
-                  ? createProductionDaemonWorkflowRuntime({ credentials: input.requesterCredentials,
-                    accountId: input.requesterWorkAttributionV1.accountId, serverId: requesterRuntimeServerId,
-                    secretSources: daemonSecretSources, admissionDrain }) : getWorkflowRuntime();
+              createWorkflowRecoveryForMachine: async (input) => {
+                const runtime = await getWorkflowRuntime(input.requesterCredentials && input.requesterWorkAttributionV1 ? {
+                  credentials: input.requesterCredentials, accountId: input.requesterWorkAttributionV1.accountId,
+                  serverId: requesterRuntimeServerId,
+                } : undefined);
                 return runtime.createRecoveryForMachine({ ...input, postWorkflowMessage });
               },
             }

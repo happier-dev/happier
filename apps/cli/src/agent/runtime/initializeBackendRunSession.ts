@@ -45,7 +45,9 @@ import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/proto
 
 export interface InitializeBackendRunSessionOptions {
   credentials?: import('@/persistence').StoredCredentials
-  api: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'>
+  api: Pick<ApiClient, 'getOrCreateSession'> & Readonly<{
+    sessionSyncClient: (...args: Parameters<ApiClient['sessionSyncClient']>) => ApiSessionClient | Promise<ApiSessionClient>
+  }>
   sessionTag: string
   organizationPlacement?: import('@happier-dev/protocol').SessionOrganizationPlacementV1
   initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1
@@ -378,7 +380,7 @@ export async function initializeBackendRunSession(
       ...(opts.sessionAttachSecret ? { sessionAttachSecret: opts.sessionAttachSecret } : {}),
     })
     throwIfAborted()
-    const session = opts.api.sessionSyncClient(baseSession, opts.sessionClientOptions)
+    const session = await opts.api.sessionSyncClient(baseSession, opts.sessionClientOptions)
     opts.configureSessionClient?.(session)
 
     let attachCleanupPromise: Promise<void> | null = null
@@ -644,7 +646,7 @@ export async function initializeBackendRunSession(
     )
   }
 
-  const session = opts.api.sessionSyncClient(response)
+  const session = await opts.api.sessionSyncClient(response)
   opts.configureSessionClient?.(session)
   recordStartupPhase('session_client')
 

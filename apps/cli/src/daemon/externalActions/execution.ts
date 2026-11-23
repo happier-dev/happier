@@ -85,7 +85,7 @@ import { type CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient"
 import type { LocalServicesRuntimeActionRoutes } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { SPAWN_SESSION_ERROR_CODES } from "@/session/shared/spawnSessionContract";
 import { fetchAccountEncryptionCurrentness } from "@/api/client/connectedServiceCredentialApi";
-import { executeSpawnSessionRequest } from "@/daemon/startup/executeSpawnSessionRequest";
+import type { executeSpawnSessionRequest } from "@/daemon/startup/executeSpawnSessionRequest";
 import { type ConnectedAccountRequestAuthSubjectRegistry } from "@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry";
 import { createProviderRedactionLease } from "@/providers/spawn/redaction";
 import { createManagedProviderOperationAuthority } from "@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority";

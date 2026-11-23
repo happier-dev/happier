@@ -93,7 +93,7 @@ describe('ApiClient ordinary Session Follow wake wiring', () => {
     const api = await ApiClient.create(credentials);
     if (featureOwner === 'daemon') api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features }));
     const beforeConnect = readSessionFollowWakeInvalidationGeneration();
-    client = api.sessionSyncClient(createMockSession({ id: 'check-in-destination', encryptionMode: 'plain',
+    client = await api.sessionSyncClient(createMockSession({ id: 'check-in-destination', encryptionMode: 'plain',
       metadataLayoutVersion: 1, metadata: { v: 1, machineId: 'machine' }, agentState: null }), { durableMutationDeliveryInitiallyActive: false });
     await vi.waitFor(() => expect(sessionSocket.connected).toBe(true));
     await vi.waitFor(() => expect(client?.getServerFeaturesSnapshot()?.status).toBe('ready'));
@@ -156,7 +156,7 @@ describe('ApiClient ordinary Session Follow wake wiring', () => {
       encryption: null,
     });
     const beforeConstruction = readSessionFollowWakeInvalidationGeneration();
-    client = api.sessionSyncClient(createMockSession({
+    client = await api.sessionSyncClient(createMockSession({
       id: 'destination-session',
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,

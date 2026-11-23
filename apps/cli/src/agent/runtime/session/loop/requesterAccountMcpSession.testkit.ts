@@ -75,7 +75,7 @@ export async function startRequesterAccountMcpSession(input: Readonly<{
   });
   const api = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => ApiClient.create(sessionCredentials));
   // Session construction is the Home/socket boundary; keep the canonical offline transport.
-  api.sessionSyncClient = () => session;
+  api.sessionSyncClient = async () => session;
   const parent = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => startMcpRequesterParent({
     credentials: sessionCredentials, session, sessionRow: createPlainSessionFixture({ id: sessionId,
       metadata: session.getMetadataSnapshot()! }), nativeParentSelection: true, api, machineId: input.machineId, snapshot: readySnapshot,

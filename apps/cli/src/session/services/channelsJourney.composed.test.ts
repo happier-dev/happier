@@ -205,7 +205,7 @@ describe('registered Channels composed journeys through real CLI Session admissi
           } },
         });
         const api = await ApiClient.create(credentials);
-        const child = api.sessionSyncClient(attached, { durableMutationDeliveryInitiallyActive: false });
+        const child = await api.sessionSyncClient(attached, { durableMutationDeliveryInitiallyActive: false });
         try {
           expect(child.getMetadataSnapshot()).toMatchObject({ flavor: 'claude',
             sessionCreationCorrespondenceV1: metadata.sessionCreationCorrespondenceV1 });

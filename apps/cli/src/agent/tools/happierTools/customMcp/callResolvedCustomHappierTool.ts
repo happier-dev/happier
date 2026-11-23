@@ -1,4 +1,3 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
@@ -29,6 +28,8 @@ export async function callResolvedCustomHappierTool(params: Readonly<{
     return { ok: false, errorCode: 'server_not_found', error: `Unknown MCP server source: ${params.source}` };
   }
 
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  params.signal?.throwIfAborted();
   const client = new Client({ name: 'happier-tools-call', version: '1.0.0' }, { capabilities: {} });
   let transport: Transport | undefined;
 

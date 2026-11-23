@@ -277,7 +277,7 @@ export function createStableDeclaredMcpTransportConnector(params?: Readonly<{
             );
             releaseExecutable = executable.release ?? null;
             try {
-                preparedStdio = prepareHostMcpStdioTransport({
+                preparedStdio = await prepareHostMcpStdioTransport({
                     command: executable.command,
                     args: [...(executable.args ?? []), ...(transportDefinition.args ?? [])],
                     environment: executable.env ?? {}, signal: lifetimeSignal,

@@ -1647,7 +1647,7 @@ async function runHostedSessionRuntime(
     const initializationApi = initializedApiContext.api;
     api = initializationApi;
     machineId = initializedApiContext.machineId;
-    const runtimeSessionApi: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'> = {
+    const runtimeSessionApi: InitializeBackendRunSessionOptions['api'] = {
       getOrCreateSession: (options) => initializationApi.getOrCreateSession(options),
       sessionSyncClient: (sessionRow) => {
         return initializationApi.sessionSyncClient(sessionRow, {

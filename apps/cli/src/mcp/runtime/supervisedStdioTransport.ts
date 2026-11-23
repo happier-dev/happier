@@ -1,7 +1,5 @@
-import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Readable } from 'node:stream';
-import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -16,13 +14,15 @@ export type PrepareMcpStdioTransport = (config: McpServerConfig, signal?: AbortS
 
 /** Host-resolved MCP configuration consumes the same final launch owner as Exec.
  * SDK default environment inheritance remains underneath authored values. */
-export function prepareHostMcpStdioTransport(input: Readonly<{
+export async function prepareHostMcpStdioTransport(input: Readonly<{
   command: string;
   args?: readonly string[];
   environment: ProcessEnvInput;
   cwd?: string;
   signal?: AbortSignal;
-}>): PreparedMcpStdioTransport {
+}>): Promise<PreparedMcpStdioTransport> {
+  input.signal?.throwIfAborted();
+  const { getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   input.signal?.throwIfAborted();
   const environment = buildScopedProcessEnv({ baseEnv: getDefaultEnvironment(), explicitEnv: input.environment });
   const invocation = resolveWindowsCommandInvocation({ command: input.command, args: input.args ?? [], env: environment });
@@ -45,16 +45,18 @@ export type AdmittedMcpStdioRuntime = Readonly<{
 /** Adapts an already admitted, supervised process; never selects launch authority.
  * The supervisor writes its host preamble before handle.write accepts MCP input. */
 export function createSupervisedMcpStdioTransport(process: SupervisedPluginProcess): Transport {
-  const buffer = new ReadBuffer();
+  type StdioCodec = typeof import('@modelcontextprotocol/sdk/shared/stdio.js');
+  let codec: Readonly<{ buffer: InstanceType<StdioCodec['ReadBuffer']>; serializeMessage: StdioCodec['serializeMessage'] }> | undefined;
   let started = false;
   let closed = false;
   let closing: Promise<void> | undefined;
   const error = (value: unknown) => value instanceof Error ? value : new Error('mcp_stdio_transport_failed');
   const receive = (chunk: Buffer) => {
-    buffer.append(chunk);
+    if (!codec) return;
+    codec.buffer.append(chunk);
     try {
       let message;
-      while ((message = buffer.readMessage()) !== null) transport.onmessage?.(message);
+      while ((message = codec.buffer.readMessage()) !== null) transport.onmessage?.(message);
     } catch (cause) { transport.onerror?.(error(cause)); }
   };
   const onError = (cause: Error) => { if (!closed) transport.onerror?.(cause); };
@@ -64,13 +66,16 @@ export function createSupervisedMcpStdioTransport(process: SupervisedPluginProce
     process.child.stdout.off('data', receive);
     process.child.off('error', onError);
     process.child.stdin.off('error', onError);
-    buffer.clear();
+    codec?.buffer.clear();
     transport.onclose?.();
   };
   const transport: Transport = {
     async start() {
       if (started || closed) throw new Error('mcp_stdio_transport_already_started');
       started = true;
+      const { ReadBuffer, serializeMessage } = await import('@modelcontextprotocol/sdk/shared/stdio.js');
+      if (closed) throw new Error('mcp_stdio_transport_not_open');
+      codec = { buffer: new ReadBuffer(), serializeMessage };
       process.child.stdout.on('data', receive);
       process.child.on('error', onError);
       process.child.stdin.on('error', onError);
@@ -81,8 +86,8 @@ export function createSupervisedMcpStdioTransport(process: SupervisedPluginProce
       }, cause => { if (!closed) transport.onerror?.(error(cause)); finish(); });
     },
     async send(message) {
-      if (!started || closed) throw new Error('mcp_stdio_transport_not_open');
-      await process.handle.write(Buffer.from(serializeMessage(message), 'utf8'));
+      if (!codec || closed) throw new Error('mcp_stdio_transport_not_open');
+      await process.handle.write(Buffer.from(codec.serializeMessage(message), 'utf8'));
     },
     close() {
       return closing ??= (async () => {

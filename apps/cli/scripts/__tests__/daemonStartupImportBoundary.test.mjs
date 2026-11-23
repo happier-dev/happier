@@ -71,3 +71,12 @@ test('Session host startup does not evaluate the holder implementation before a 
   const imports = startupImports('cli/commands/sessionHost.ts', 'agent/runtime/lifecycle/sessionHost.ts');
   assert.deepEqual(imports.filter(edge => edge.specifier === '@/subprocess/supervision/sessionHolder'), []);
 });
+
+test('daemon startup defers Session clients and launch execution until Session use', () => {
+  const sessionDependencies = new Set(['./session/sessionClient', './executeSpawnSessionRequest']);
+  assert.deepEqual(imports.filter(edge => sessionDependencies.has(edge.specifier)), []);
+});
+
+test('daemon startup defers Workflow coordination and recovery until Machine demand', () => {
+  assert.deepEqual(imports.filter(edge => edge.specifier === './workflows/daemonRuntime'), []);
+});

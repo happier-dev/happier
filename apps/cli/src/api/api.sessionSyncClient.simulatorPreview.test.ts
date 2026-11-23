@@ -105,7 +105,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
 
     api.setLocalServicesRuntimeActionRoutesProvider(() => localServices);
     api.setSimulatorPreviewRoutesProvider(() => simulatorPreview);
-    api.sessionSyncClient({ id: 'session_1' } as never);
+    await api.sessionSyncClient({ id: 'session_1' } as never);
 
     const options = apiSessionClientConstructorMock.mock.calls[0]?.[2] as Readonly<{
       getLocalServicesRuntimeActionRoutes?: () => unknown;
@@ -126,7 +126,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     } satisfies Credentials);
 
     api.setLocalMachineId(' machine-local ');
-    api.sessionSyncClient({ id: 'session_1' } as never);
+    await api.sessionSyncClient({ id: 'session_1' } as never);
 
     const options = apiSessionClientConstructorMock.mock.calls[0]?.[2] as Readonly<{
       localMachineId?: string;
@@ -468,7 +468,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     ) => payload);
     const afterComposerAttachmentMessageAccepted = vi.fn(async () => undefined);
 
-    api.sessionSyncClient(
+    await api.sessionSyncClient(
       { id: 'session_1' } as never,
       {
         transformSessionInputBeforeCommit,
@@ -493,7 +493,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     const api = await ApiClient.create({ token: 'runner-token', encryption: null });
     const actionsSettingsProvider = { getActionsSettings: () => ({ v: 1 as const, actions: {} }) };
 
-    api.sessionSyncClient({ id: 'runner-session' } as never, {
+    await api.sessionSyncClient({ id: 'runner-session' } as never, {
       metadataAuthority: { kind: 'shared_editor' },
       actionsSettingsProvider,
     });

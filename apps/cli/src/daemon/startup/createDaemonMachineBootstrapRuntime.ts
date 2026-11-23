@@ -143,6 +143,8 @@ type BootstrapRuntime = Omit<
   | 'connectedServiceQuotasLoopHandle'
 >;
 
+type WorkflowRecovery = (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>;
+
 type MachineSyncRuntime = Parameters<typeof startDaemonMachineRegistration>[0]['onMachineSyncRuntime'] extends (
   runtime: infer Runtime,
 ) => void
@@ -295,14 +297,14 @@ export function createDaemonMachineBootstrapRuntime(
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
       runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
       resolveActionRequesterContext?: ReturnType<typeof createWorkflowRunMachineTransport>['resolveActionRequesterContext'];
-    }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
+    }>) => ReturnType<typeof createProductionWorkflowRunCoordinator> | Promise<ReturnType<typeof createProductionWorkflowRunCoordinator>>;
     createWorkflowRecoveryForMachine?: (input: Readonly<{
       machineId: string;
       requesterCredentials?: StoredCredentials;
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
-    }>) => (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>;
+    }>) => WorkflowRecovery | Promise<WorkflowRecovery>;
     /** Starts the provider-broker application against the authoritative
      * registered Machine identity. A successful installation — never a
      * manifest or schema — is what makes the daemon advertise
@@ -353,7 +355,7 @@ export function createDaemonMachineBootstrapRuntime(
     brokerRole = null;
     await retiring?.runtime.stop();
   };
-  let workflowRecovery: ((trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>) | null = null;
+  let workflowRecovery: WorkflowRecovery | null = null;
   const workflowRecoveryCancellation = new AbortController();
   let workspaceSyncReadiness: WorkspaceSyncRuntimeReadinessV1 | null = null;
   let workspaceSyncPublicationTail = Promise.resolve();
@@ -588,7 +590,7 @@ export function createDaemonMachineBootstrapRuntime(
         });
       }
       const createWorkflowRecovery = params.createWorkflowRecoveryForMachine;
-      let recoverWorkflowRuns: Promise<ReturnType<NonNullable<typeof createWorkflowRecovery>>> | undefined;
+      let recoverWorkflowRuns: Promise<WorkflowRecovery> | undefined;
       workflowRecovery = createWorkflowRecovery
         ? async (trigger, signal, workflowRunId) => {
             if (params.isWorkflowFeatureEnabled?.() !== true) return;
@@ -712,7 +714,7 @@ export function createDaemonMachineBootstrapRuntime(
               happyHomeDir: configuration.happyHomeDir,
               homeServerIdentityId: await params.resolveCurrentServerIdentityId?.() ?? undefined,
               machineAdmission: savedSecretOperationContext.machineAdmission });
-            const coordinate = params.createWorkflowRunCoordinatorForMachine!({
+            const coordinate = await params.createWorkflowRunCoordinatorForMachine!({
               machineId: runtimeMachineId,
               requesterCredentials: selectedCredentials,
               savedSecretOperationContext,
@@ -770,7 +772,7 @@ export function createDaemonMachineBootstrapRuntime(
               invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
           });
           try {
-            const recover = params.createWorkflowRecoveryForMachine({ machineId: runtimeMachineId,
+            const recover = await params.createWorkflowRecoveryForMachine({ machineId: runtimeMachineId,
               requesterCredentials: requester.credentials, requesterWorkAttributionV1: requester.attribution,
               machineAdmissionTransport: (request, options) => automationApiMachine.enqueueSessionPendingByMachine(request, options),
               machineActionDirectTargetTransport: transport.transport });

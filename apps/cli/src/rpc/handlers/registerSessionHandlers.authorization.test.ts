@@ -60,7 +60,7 @@ describe('Session RPC registration authorization coverage', () => {
       let home: string | null = 'srv_session_owner';
       api.setServerFeaturesSnapshotProvider(() => home ? { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
         capabilities: { serverIdentity: { serverIdentityId: home } } }) } : undefined);
-      const client = api.sessionSyncClient(createPlainSessionFixture({ id: 'session-owner' }), { durableMutationDeliveryInitiallyActive: false });
+      const client = await api.sessionSyncClient(createPlainSessionFixture({ id: 'session-owner' }), { durableMutationDeliveryInitiallyActive: false });
       const admission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
         installationId: installation.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
       const call = (callerAuthority: 'present_user' | 'account_automation') => client.rpcHandlerManager.handleRequest({
@@ -116,7 +116,7 @@ describe('Session RPC registration authorization coverage', () => {
   });
   it('refuses protected raw effects on the real Session receiver, including closed local preview', async () => {
     const api = await ApiClient.create({ token: 'session-preview-owner-test', encryption: null });
-    const client = api.sessionSyncClient(createPlainSessionFixture({ id: 'session-preview-test' }), {
+    const client = await api.sessionSyncClient(createPlainSessionFixture({ id: 'session-preview-test' }), {
       durableMutationDeliveryInitiallyActive: false,
     });
     try {

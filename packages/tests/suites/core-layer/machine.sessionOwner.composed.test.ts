@@ -62,7 +62,7 @@ it('joins Home physical-owner Session forwarding to the actual receiver and refu
             if (!receiver) throw new Error('Session receiver not attached');
             return await receiver(request);
         } });
-        let clientForCleanup: ReturnType<ApiClient['sessionSyncClient']> | undefined;
+        let clientForCleanup: Awaited<ReturnType<ApiClient['sessionSyncClient']>> | undefined;
         try {
             await runWithServerHttpBaseUrl(boundary.baseUrl, async () => {
                 env.patch({ HAPPIER_SERVER_URL: boundary.baseUrl });
@@ -78,7 +78,7 @@ it('joins Home physical-owner Session forwarding to the actual receiver and refu
                 api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
                     capabilities: { serverIdentity: { serverIdentityId: boundary.homeId } } }) }));
                 const sessionConnected = new Promise<void>(resolve => { socketIoBoundary.onSessionConnect = resolve; });
-                const client = api.sessionSyncClient(createPlainSessionFixture({ id: 'session' }), { durableMutationDeliveryInitiallyActive: false });
+                const client = await api.sessionSyncClient(createPlainSessionFixture({ id: 'session' }), { durableMutationDeliveryInitiallyActive: false });
                 clientForCleanup = client;
                 expect(client.getServerBinding().serverUrl).toBe(boundary.baseUrl);
                 let withdrawBeforeReceiver = false;
