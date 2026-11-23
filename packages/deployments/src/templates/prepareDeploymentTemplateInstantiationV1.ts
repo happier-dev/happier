@@ -1,8 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { StoredAppPresetInputV1, DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
+import type { StoredAppPresetInputV1, DeploymentEnvironmentContentV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
-import { buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { selectDeploymentTemplateVariableBindingsV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -226,31 +226,15 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         return [{ ...domain, hostname }];
     });
     const variables = new Map(template.variables.map(variable => [variable.key, variable]));
-    const generatedDefaults = new Map(buildCatalogAppTemplateBindings(template).bindings.map(binding => [binding.name, binding]));
     if (input.bindings.some(binding => !variables.has(binding.name))) return refuse('template_binding_unknown');
     const bindings: EnvironmentVariableBindingInputV1[] = [];
     let generatedSecrets: PreparedDeploymentTemplateInstantiationV1['generatedSecrets'] = [];
-    for (const variable of template.variables) {
-        let selected = input.bindings.find(binding => binding.name === variable.key)
-            ?? (upgrading ? input.current?.content.bindings.find((binding): binding is EnvironmentVariableBindingV1 =>
-                binding.purpose === 'variable' && binding.name === variable.key) : undefined);
-        if (variable.valueFrom) {
-            const domain = domains.find(domain => domain.key === variable.valueFrom?.domainKey);
-            if (domain) {
-                const path = domain.path ?? '';
-                const value = variable.valueFrom.kind === 'domainUrl' ? `${domain.protocol}://${domain.hostname}${path}` : domain.hostname;
-                selected = { purpose: 'variable', phase: 'runtime', name: variable.key, source: { kind: 'value', value } };
-            }
-        }
-        if (!selected && variable.default !== undefined) selected = { purpose: 'variable', name: variable.key,
-            phase: 'runtime', source: { kind: 'value', value: variable.default } };
-        // The descriptor supplies generation defaults after explicit and retained selections.
-        // Preparation selects profiles only; the existing Saved Secret writer owns bytes and refs.
-        selected ??= generatedDefaults.get(variable.key);
-        if (!selected) {
-            if (variable.required) return refuse('template_variable_required', { key: variable.key });
-            continue;
-        }
+    const selectedVariables = selectDeploymentTemplateVariableBindingsV1(template, input.bindings,
+        domains.map(domain => ({ templateDomainId: domain.key, hostname: domain.hostname })),
+        upgrading ? input.current?.content.bindings.filter(binding => binding.purpose === 'variable') : undefined);
+    for (const { variable, binding: selected, missing } of selectedVariables) {
+        if (missing) return refuse('template_variable_required', { key: variable.key });
+        if (!selected) continue;
         if (selected.source.kind !== 'generated' && variable.secret && selected.source.kind !== 'secret') return refuse('template_secret_reference_required');
         const selection = selected;
         const incumbent = input.current?.content.bindings.find(binding => binding.purpose === 'variable'

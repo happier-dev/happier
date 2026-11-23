@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 import {
   act,
   createMachineFixture,
@@ -12,10 +13,13 @@ import {
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 
+const { focusedInput } = vi.hoisted(() => ({ focusedInput: vi.fn() }));
 vi.mock('react-native', async () => {
-  const { createReactNativeWebMock } =
+  const { createReactNativeWebMock, createFocusableTextInputMock } =
     await import('@/dev/testkit/mocks/reactNative');
-  return createReactNativeWebMock();
+  return createReactNativeWebMock({
+    TextInput: createFocusableTextInputMock(() => {}, props => focusedInput(props.testID)),
+  });
 });
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -54,6 +58,7 @@ const {
   DeploymentEnvironmentCreatePreviewV1Schema,
   DeploymentEnvironmentCreateIntentInputV1Schema,
 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+const { createRegistryHostV1 } = await import('@happier-dev/protocol/registries');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft hosted as steps (journey-deploy D3: Where → Configure → Review in the Deploy an app dialog)', () => {
@@ -257,34 +262,46 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
   it.each([
     { label: 'no domains', domains: [] },
     { label: 'required domain', domains: [{ key: 'web', service: 'app', containerPort: 20128, protocol: 'http', required: true }] },
-  ] as const)('a catalog app carries its exact pin and required addresses through Configure to Review ($label)', async ({ domains }) => {
+    { label: 'Umami with required variables', domains: [], umami: true },
+  ] as const)('a catalog app carries its exact pin and required choices through Configure to Review ($label)', async (testCase) => {
+    const umami = 'umami' in testCase ? await readUmamiTemplate() : null;
+    const domains = umami?.template.domains ?? testCase.domains;
+    const title = umami ? 'Umami' : 'Plausible';
     const serverId = await homes.addHome({ name: 'Deploy catalog', serverUrl: 'https://draft-steps-catalog.test', accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
     const authored: Record<string, unknown>[] = [];
     const frames: DeploymentDraftFrame[] = [];
-    const templateRef = { sourceId: 'apps', itemId: 'plausible', version: '2.1.0', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } };
+    const templateRef = umami?.templateRef
+      ?? { sourceId: 'apps', itemId: 'plausible', version: '2.1.0', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } };
+    const catalogApp = { templateRef, title, template: umami?.template ?? catalogTemplate(title, [...domains]) };
     try {
       homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
           const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
           authored.push(intent);
-          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, domainBindings: _domainBindings, ...selectors } = intent;
+          if (umami && authored.length === 1) return { refusedVariable: 'POSTGRES_DB' };
+          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link,
+            bindings: _bindings, domainBindings: _domainBindings, ...selectors } = intent;
           return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: { ...selectors,
             controllerMachineId: 'runtime', contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
             review: { creationDefaults: { values: { controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
               sources: { controllerMachineId: 'explicit', retainPreviousDeployments: 'builtin' } } } });
-        } });
+        },
+        failure: result => typeof result === 'object' && result !== null && 'refusedVariable' in result
+          ? { errorCode: 'template_variable_required', error: 'template_variable_required', details: { key: result.refusedVariable } }
+          : null });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
       function CatalogDraft() {
-        const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: 'Plausible' });
+        const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: title });
         return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
-          catalogApp={{ templateRef, title: 'Plausible', domains }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          catalogApp={catalogApp} phone={false} actions={createDeploymentActions(account.accountLifetime)}
           steps={steps} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
       }
+      const databaseField = 'project-deployments.draft.catalogChoices.variable.POSTGRES_DB';
       const screen = await renderScreen(<CatalogDraft />);
       const frame = () => frames[frames.length - 1]!;
       const settle = (check: () => void) => waitForHomeGovernance(async () => { await act(async () => {}); check(); });
@@ -295,22 +312,42 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(screen.findByTestId('project-deployments.draft.catalogApp')).toBeNull();
       const { t } = await import('@/text');
       expect(screen.getTextContent().includes(t('projects.deployments.whatRunsTitle'))).toBe(domains.length > 0);
+      const domainTestId = `project-deployments.draft.domain.${domains[0]?.key ?? 'web'}`;
       if (domains.length) {
-        expect(screen.findByTestId('project-deployments.draft.domain.web')).not.toBeNull();
+        expect(screen.findByTestId(domainTestId)).not.toBeNull();
         expect(frame().primary.disabled).toBe(true);
         await act(async () => frame().press());
         expect(authored).toHaveLength(0);
-        await act(async () => screen.changeTextByTestId('project-deployments.draft.domain.web', 'app.example.test'));
+        await act(async () => screen.changeTextByTestId(domainTestId, 'app.example.test'));
       } else {
-        expect(screen.findByTestId('project-deployments.draft.domain.web')).toBeNull();
+        expect(screen.findByTestId(domainTestId)).toBeNull();
+      }
+      if (umami) {
+        expect(frame().primary.disabled).toBe(true);
+        await act(async () => frame().press());
+        expect(authored).toHaveLength(0);
+        await act(async () => screen.changeTextByTestId(databaseField, '   '));
+        expect(frame().primary.disabled).toBe(true);
+        await act(async () => screen.changeTextByTestId(databaseField, 'analytics'));
+        await settle(() => expect(frame().primary.disabled).toBe(false));
+        focusedInput.mockClear();
+        await act(async () => frame().press());
+        await settle(() => expect(focusedInput).toHaveBeenCalledWith(databaseField));
+        expect(frame().step).toBe('configure');
+        expect(field(screen, databaseField).props.error).toContain('POSTGRES_DB');
+        expect(field(screen, databaseField).props.value).toBe('analytics');
+        await act(async () => screen.changeTextByTestId(databaseField, 'analytics-db'));
       }
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('review'));
-      expect(authored).toHaveLength(1);
-      expect(authored[0]).toMatchObject({ newProject: { name: 'Plausible' }, definition: { from: 'catalogApp', templateRef },
+      expect(authored).toHaveLength(umami ? 2 : 1);
+      const intent = authored.at(-1);
+      expect(intent).toMatchObject({ newProject: { name: title }, definition: { from: 'catalogApp', templateRef },
         firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
-      expect(authored[0]?.domainBindings).toEqual(domains.length ? [{ templateDomainId: 'web', hostname: 'app.example.test' }] : undefined);
+      expect(intent?.domainBindings).toEqual(domains.length ? [{ templateDomainId: domains[0]?.key, hostname: 'app.example.test' }] : undefined);
+      expect(intent?.bindings).toEqual(umami ? [{ purpose: 'variable', phase: 'runtime', name: 'POSTGRES_DB',
+        source: { kind: 'value', value: 'analytics-db' } }] : undefined);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -341,7 +378,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       function CatalogDraft() {
         const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: 'Plausible' });
         return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
-          catalogApp={{ templateRef, title: 'Plausible', domains: [] }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          catalogApp={{ templateRef, title: 'Plausible', template: catalogTemplate('Plausible', []) }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
           steps={steps} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
       }
       const screen = await renderScreen(<CatalogDraft />);
@@ -535,4 +572,48 @@ function nextSteps(screen: Awaited<ReturnType<typeof renderScreen>>): string[] |
 
 function field(screen: Awaited<ReturnType<typeof renderScreen>>, id: string) {
   return screen.findAllByType(FieldTextInput).find(node => node.props.testID === id)!;
+}
+
+function catalogTemplate(title: string, domains: DeploymentTemplateV1['domains']): DeploymentTemplateV1 {
+  return { schemaVersion: 1, title, compose: { document: 'services:\n  app:\n    image: nginx:1\n', services: ['app'], profiles: [] },
+    domains, variables: [], generatedSecrets: [], volumes: [] };
+}
+
+async function readUmamiTemplate() {
+  const sourceId = 'services';
+  const index = { umami: { slogan: 'Web analytics', port: '3000' } };
+  // Relevant input from Coolify's Umami template, acquired through the real catalog normalizer.
+  const document = [
+    'services:',
+    '  umami:',
+    '    image: ghcr.io/umami-software/umami:3.5.0',
+    '    environment:',
+    '      - SERVICE_URL_UMAMI_3000',
+    '      - DATABASE_URL=postgres://$SERVICE_USER_POSTGRES:$SERVICE_PASSWORD_POSTGRES@postgresql:5432/$POSTGRES_DB',
+    '      - APP_SECRET=$SERVICE_PASSWORD_64_UMAMI',
+    '  postgresql:',
+    '    image: postgres:16-alpine',
+    '    environment:',
+    '      - POSTGRES_USER=$SERVICE_USER_POSTGRES',
+    '      - POSTGRES_PASSWORD=$SERVICE_PASSWORD_POSTGRES',
+    '      - POSTGRES_DB=${POSTGRES_DB:-umami}',
+  ].join('\n');
+  const registry = createRegistryHostV1({
+    host: 'node',
+    readSources: async () => [{ id: sourceId, title: 'Service templates',
+      url: 'https://templates.example/service-templates.json', format: 'coolify-templates',
+      kinds: ['app'], enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true }],
+    http: {
+      getJson: async () => ({ ok: true, fetchedAt: 1, value: index }),
+      getText: async url => ({ ok: true, fetchedAt: 1,
+        value: url.endsWith('/service-templates.json') ? JSON.stringify(index) : document }),
+      getBytes: async () => { throw new Error('Unexpected byte read'); },
+    },
+  });
+  const itemId = 'umami';
+  const response = await registry.fetchRequest({ op: 'read', kind: 'app', sourceId, itemId });
+  if (response.op !== 'read' || response.item.payload.kind !== 'app' || response.item.payload.state !== 'ready'
+    || !response.item.summary.version) throw new Error('Expected a ready Umami template');
+  return { template: response.item.payload.app,
+    templateRef: { sourceId, itemId, version: response.item.summary.version, ref: response.item.payload.ref } };
 }

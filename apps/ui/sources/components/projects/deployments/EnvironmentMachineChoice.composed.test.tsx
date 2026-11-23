@@ -88,7 +88,9 @@ it.each([
     accountId: 'alice', serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
   const previous = storage.getState();
-  const source = kind === 'catalogTemplate' ? { catalogApp: { title: 'Bakery', domains: [],
+  const source = kind === 'catalogTemplate' ? { catalogApp: { title: 'Bakery',
+    template: { schemaVersion: 1 as const, title: 'Bakery', compose: { document: 'services:\n  app:\n    image: nginx:1\n', services: ['app'], profiles: [] },
+      domains: [], variables: [], generatedSecrets: [], volumes: [] },
     templateRef: { sourceId: 'catalog', itemId: 'bakery', version: '1', ref: { kind: 'version' as const, version: '1' } } } }
     : { definitionKind: 'image' as const };
   const onFrame = vi.fn();

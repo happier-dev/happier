@@ -6,6 +6,7 @@ import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarn
 import * as React from 'react';
 import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
 import { DeploymentCreationReviewFacts, type DeploymentCreationReviewPlan } from '@/components/approvals/ApprovalReviewFacts';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
@@ -72,6 +73,7 @@ import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } 
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
 import { DeploymentTemplateDomainRows, projectDeploymentTemplateDomainChoices } from './DeploymentTemplateDomainRows';
+import { DeploymentTemplateChoices, missingDeploymentTemplateVariable, type DeploymentTemplateChoicesValue } from './DeploymentTemplateChoices';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
@@ -150,8 +152,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: DeploymentNewDefinitionKind | null;
-      /** The exact registry App pin and its declared addresses. */
-      catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string; domains: Readonly<DeploymentTemplateV1['domains']> }> | null;
+      /** The exact registry App pin and its declared inputs. */
+      catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string; template: DeploymentTemplateV1 }> | null;
       /** Where a door already chose (a suggested platform); the recommendation owner still decides what is offered. */
       initialTargetKey?: string | null;
       onApprovalRequested: (artifactId: string) => void;
@@ -190,10 +192,14 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [moreOpen, setMoreOpen] = React.useState(false);
     const [configureVisited, setConfigureVisited] = React.useState(false);
     const [domainHostnames, setDomainHostnames] = React.useState<Readonly<Record<string, string>>>({});
-    const catalogDomains = props.catalogApp?.domains;
+    const catalogTemplate = props.catalogApp?.template;
+    const catalogDomains = catalogTemplate?.domains;
+    const [templateChoices, setTemplateChoices] = React.useState<DeploymentTemplateChoicesValue>({});
     const domainChoices = React.useMemo(() => catalogDomains
       ? projectDeploymentTemplateDomainChoices(catalogDomains, domainHostnames)
       : null, [catalogDomains, domainHostnames]);
+    const missingVariable = catalogTemplate
+      ? missingDeploymentTemplateVariable(catalogTemplate, templateChoices, domainChoices?.bindings) : null;
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
     const [provisionDrafts, setProvisionDrafts] = React.useState<Readonly<Record<string, ManagedDataProvisionDraft | null>>>({});
     const onProvisionDraftChange = React.useCallback((targetLinkId: string, draft: ManagedDataProvisionDraft | null) => {
@@ -233,6 +239,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     const stepReview = stepConfirmation.pending;
     const [refusal, setRefusal] =
       React.useState<DeploymentActionOutcome | null>(null);
+    const refusedVariable = refusal?.kind === 'refused' && refusal.code === 'template_variable_required'
+      ? readRecord(refusal.failure?.details).key : undefined;
+    const refusedVariableKey = typeof refusedVariable === 'string' ? refusedVariable : undefined;
+    const refusedDomainKey = catalogTemplate?.variables.find(variable => variable.key === refusedVariableKey)?.valueFrom?.domainKey;
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
     const [retention, setRetention] =
       React.useState<DeploymentRetentionChoiceValue>('alwaysOn');
@@ -324,7 +334,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       .map(choice => choice.binding) ?? [];
     const valid =
       configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) &&
-      !domainChoices?.missingRequired && !domainChoices?.invalidKeys.size &&
+      !domainChoices?.missingRequired && !domainChoices?.invalidKeys.size && missingVariable === null &&
       (copyChoices?.data.every(choice => choice.kind === 'createEmpty' ? provisionDrafts[choice.targetLinkId] != null
         : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
           reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
@@ -346,7 +356,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     React.useEffect(() => {
       setPrepared(null);
       answerStepConfirmation(false);
-    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, folderPath, folderEnvFiles, storedDefinition, domainChoices, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
+    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, folderPath, folderEnvFiles, storedDefinition, domainChoices, templateChoices, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
     // A folder reads home-relative on its own Machine, as Open and the path browser show it.
     const folderLabel = (path: string) => formatPathRelativeToHome(path, chosen?.metadata?.homeDir ?? null);
     const pickFolder = async () => {
@@ -403,6 +413,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               compose: { path: composePath.trim(), profiles: [], services: [] },
             } }),
             ...(domainChoices?.bindings.length ? { domainBindings: domainChoices.bindings } : {}),
+            ...(templateChoices.bindings?.length ? { bindings: templateChoices.bindings } : {}),
             protection: production ? 'production' : 'nonProduction',
             purpose: 'standard',
             deployerMode,
@@ -448,6 +459,10 @@ export const DeploymentEnvironmentDraft = React.memo(
         // Declining the controller's review in this step is the person's answer, not a failure.
         if (isActionApprovalDeclinedErrorCode((error as { code?: unknown } | null)?.code)) return;
         const outcome = readDeploymentActionError(error);
+        if (props.catalogApp && outcome.kind === 'refused' && outcome.code === 'template_variable_required') {
+          setPrepared(null);
+          setFormStep('configure');
+        }
         if (outcome.kind === 'approval') {
           if (createdEnvironment) onSaved(createdEnvironment.environmentId, { tab: 'settings' });
           onApprovalRequested(outcome.artifactId);
@@ -699,7 +714,9 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID="project-deployments.draft.refused"
               tone="danger"
               title={t('projects.deployments.createFailedTitle')}
-              description={readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
+              description={refusedVariableKey
+                ? t('session.actionsDraft.validation.requiredField', { field: refusedVariableKey })
+                : readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
               details={[refusal.code]}
             />
           ) : null;
@@ -966,7 +983,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
           {/* A one-service catalog app adds nothing here the summary doesn't say (its name is the Source): the section
               stands only when it carries the app's addresses (DESIGN-ACCEPT C6, lab catCfg). */}
-          {props.catalogApp && props.catalogApp.domains.length === 0 ? null : <ItemGroup
+          {catalogDomains?.length === 0 ? null : <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}
             description={props.copyFrom || storedDefinition || props.catalogApp ? undefined : onPlatform
               ? t('projects.deployments.platformLink.platformBuilds')
@@ -974,11 +991,14 @@ export const DeploymentEnvironmentDraft = React.memo(
           >
             {/* What the copy runs, named for itself, not the section's title again (PAGE-ACCEPT-176 R11-D7). */}
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.composeFile')}
-              subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <>
-                <DeploymentTemplateDomainRows domains={props.catalogApp.domains} testIDPrefix="project-deployments.draft.domain"
-                  hostname={key => domainHostnames[key] ?? ''} invalidKeys={domainChoices?.invalidKeys}
-                  onChangeHostname={(key, hostname) => setDomainHostnames(current => ({ ...current, [key]: hostname }))} />
-              </> : definitionKind === 'image' ? <>
+              subtitle={props.copyFrom.content.name} mode="info" /> : catalogDomains ? (
+                <DeploymentTemplateDomainRows domains={catalogDomains} testIDPrefix="project-deployments.draft.domain"
+                  hostname={key => domainHostnames[key] ?? ''} invalidKeys={domainChoices?.invalidKeys} focusKey={refusedDomainKey}
+                  onChangeHostname={(key, hostname) => {
+                    setDomainHostnames(current => ({ ...current, [key]: hostname }));
+                    if (key === refusedDomainKey) setRefusal(null);
+                  }} />
+              ) : definitionKind === 'image' ? <>
               <Item title={t('managedMachines.config.image')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
                   accessibilityLabel={t('managedMachines.config.image')} value={imageName}
@@ -1059,6 +1079,14 @@ export const DeploymentEnvironmentDraft = React.memo(
             ) : null}
             </>}
           </ItemGroup>}
+          {catalogTemplate && props.lifetime ? (
+            <DeploymentTemplateChoices template={catalogTemplate} lifetime={props.lifetime} mode="create"
+              value={templateChoices} onChange={choices => {
+                setTemplateChoices(choices);
+                if (refusedVariableKey) setRefusal(null);
+              }}
+              testID="project-deployments.draft.catalogChoices" refusedVariableKey={refusedVariableKey} />
+          ) : null}
           {props.copyFrom && copyChoices ? (
             <ItemGroup title={t('projects.deployments.copy.bindings')} description={t('projects.deployments.copy.domainsStay')}>
               {copyChoices.secrets.map((choice, index) => {

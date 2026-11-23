@@ -1,7 +1,7 @@
 import { deploymentRecommendationDescription } from '@/components/projects/deployments/deploymentRecommendationDescription';
 import * as React from 'react';
 import { useStore } from 'zustand';
-import { DeploymentTemplateChoices } from '@/components/projects/deployments/DeploymentTemplateChoices';
+import { DeploymentTemplateChoices, missingDeploymentTemplateVariable } from '@/components/projects/deployments/DeploymentTemplateChoices';
 import { DeploymentTemplateDomainRows, projectDeploymentTemplateDomainChoices } from '@/components/projects/deployments/DeploymentTemplateDomainRows';
 import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -157,13 +157,15 @@ export function StoreAppPreparationReview(
   );
   // What Review still waits for, in the order the sheet asks; the footer says it. Review only reviews, so nothing
   // the person must answer is left for after it.
+  const missingVariable = missingDeploymentTemplateVariable(ready.app, templateChoices, domainChoices.bindings);
   const missing = !chosen
     ? t('capabilities.store.appPage.chooseMachine')
     : !environmentName.trim()
       ? t('capabilities.store.appPage.nameEnvironment')
       : domainChoices.missingRequired
         ? t('capabilities.store.appPage.domainRequired')
-        : domainChoices.invalidKeys.size > 0 ? t('capabilities.store.appPage.domainInvalid') : projectChoice.missing;
+        : domainChoices.invalidKeys.size > 0 ? t('capabilities.store.appPage.domainInvalid')
+          : missingVariable ? t('session.actionsDraft.validation.requiredField', { field: missingVariable }) : projectChoice.missing;
 
   const review = React.useCallback(async () => {
     if (reviewState.getState().pending || !chosen?.installationId || missing) return;

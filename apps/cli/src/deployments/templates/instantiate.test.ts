@@ -178,6 +178,14 @@ it.each([false, true, 'metadata-unavailable'] as const)('persists independent ge
                     purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target',
                     firstTargetLink: { machines: [{ machineId: 'target', installationId: identity.installationId }] },
                     definition: { from: 'catalogApp', templateRef: input.templateRef }, bindings: input.bindings });
+                const blankBinding = [{ purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_USER',
+                    source: { kind: 'value' as const, value: '   ' } }];
+                const refusal = { ok: false, effectAttempted: false, errorCode: 'template_variable_required', details: { key: 'DB_USER' } };
+                // Both authoring Actions use the pinned template planner before publishing anything.
+                expect(await fixture.inHome(() => templates.prepareCreate({ ...createInput, bindings: blankBinding },
+                    { runtimeAccountId: 'account-cli-fixture' }))).toMatchObject(refusal);
+                expect(await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview', bindings: blankBinding },
+                    { runtimeAccountId: 'account-cli-fixture' }))).toMatchObject(refusal);
                 const createPreview = await fixture.inHome(() => templates.prepareCreate(createInput, { runtimeAccountId: 'account-cli-fixture' }));
                 if ('errorCode' in createPreview) throw new Error(JSON.stringify(createPreview));
                 const diagnostics: unknown[] = [];

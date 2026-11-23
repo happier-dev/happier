@@ -39,10 +39,15 @@ export function DeploymentTemplateDomainRows(
     domains: readonly TemplateDomain[];
     hostname: (domainKey: string) => string;
     invalidKeys?: ReadonlySet<string>;
+    focusKey?: string;
     onChangeHostname: (domainKey: string, hostname: string) => void;
     testIDPrefix: string;
   }>,
 ) {
+  const focused = React.useRef<React.ElementRef<typeof FieldTextInput>>(null);
+  React.useEffect(() => {
+    if (props.focusKey) focused.current?.focus();
+  }, [props.focusKey]);
   const serviceCounts = new Map<string, number>();
   for (const domain of props.domains)
     serviceCounts.set(
@@ -78,6 +83,7 @@ export function DeploymentTemplateDomainRows(
             rightElement={
               <FieldItem label={null} supportingText={helper}>
                 <FieldTextInput
+                  ref={props.focusKey === domain.key ? focused : undefined}
                   testID={`${props.testIDPrefix}.${domain.key}`}
                   value={props.hostname(domain.key)}
                   onChangeText={(hostname) =>

@@ -207,7 +207,7 @@ function DefinitionDeploy(
 }
 
 /**
- * The registry item read supplies the App's exact pin and declared addresses to the draft.
+ * The ready registry item supplies the App's exact pin and declared inputs to the draft.
  */
 function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceId: string; itemId: string }>; targetId: string | null }>) {
   const read = useRegistryItem({ kind: 'app', sourceId: props.app.sourceId, itemId: props.app.itemId }, true, { scope: props.lifetime.scope });
@@ -244,18 +244,18 @@ function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceI
   }
   const template = readStoreAppTemplate(read.item);
   if (!template) return <SurfaceStateCard testID="newApp.deploy.catalogUnavailable" kind="unavailable" layout="inline" title={t('common.unavailable')} />;
-  return <CatalogAppDraft {...props} templateRef={template.templateRef} domains={template.app.domains} title={read.item.summary.title} />;
+  return <CatalogAppDraft {...props} templateRef={template.templateRef} template={template.app} title={read.item.summary.title} />;
 }
 
 type CatalogTemplate = NonNullable<ReturnType<typeof readStoreAppTemplate>>;
 
 function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: CatalogTemplate['templateRef'];
-  title: string; domains: CatalogTemplate['app']['domains']; targetId: string | null }>) {
+  title: string; template: CatalogTemplate['app']; targetId: string | null }>) {
   const { lifetime } = props;
   const projectChoice = useDeploymentProjectChoice({ lifetime, initiallyNew: true, initialNewProjectName: props.title });
   const actions = React.useMemo(() => createDeploymentActions(lifetime), [lifetime]);
-  const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title, domains: props.domains }),
-    [props.templateRef, props.title, props.domains]);
+  const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title, template: props.template }),
+    [props.templateRef, props.title, props.template]);
   const { leaveTo, onApprovalRequested } = useDeployExits(props);
   return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId={null} projectChoice={projectChoice} catalogApp={catalogApp}
     phone={props.phone} actions={actions} platformAvailable initialMachineId={props.machineId} initialTargetKey={props.targetId}

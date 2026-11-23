@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { selectDeploymentTemplateVariableBindingsV1, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -18,6 +18,12 @@ type Input = DeploymentTemplateInstantiateInputV1;
 export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
 const text = (value: DeploymentTemplateV1['title']) => typeof value === 'string' ? value : value.fallback;
 
+export function missingDeploymentTemplateVariable(template: DeploymentTemplateV1,
+    choices: DeploymentTemplateChoicesValue, domains?: Input['domainBindings']): string | null {
+    return selectDeploymentTemplateVariableBindingsV1(template, choices.bindings ?? [], domains)
+        .find(selection => selection.missing)?.variable.key ?? null;
+}
+
 /** Ephemeral reviewed template inputs. The template planner owns validation and conflict decisions. */
 export function DeploymentTemplateChoices(props: Readonly<{
     template: DeploymentTemplateV1;
@@ -25,12 +31,20 @@ export function DeploymentTemplateChoices(props: Readonly<{
     value: DeploymentTemplateChoicesValue;
     onChange: (value: DeploymentTemplateChoicesValue) => void;
     testID: string;
+    /** Create accepts variable bindings; Instantiate also offers other template choices. */
+    mode?: 'create';
+    refusedVariableKey?: string;
     services?: readonly string[];
     /** The Environment's own variable names: only these can be replaced. */
     existingVariableNames?: readonly string[];
     domainChoices?: ReturnType<typeof projectDeploymentTemplateDomainChoices>;
 }>) {
     const { template, value, onChange, testID } = props;
+    const refusedInput = React.useRef<React.ElementRef<typeof FieldTextInput>>(null);
+    const refusedSecret = React.useRef<{ focus(): void } | null>(null);
+    React.useEffect(() => {
+        if (props.refusedVariableKey) (refusedInput.current ?? refusedSecret.current)?.focus();
+    }, [props.refusedVariableKey]);
     const [connectionsOpen, setConnectionsOpen] = React.useState(false);
     const picker = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => picker.current?.abort(), []);
@@ -57,6 +71,8 @@ export function DeploymentTemplateChoices(props: Readonly<{
         {variables.length ? <ItemGroup title={t('projects.deployments.tabVariables')}>
             {variables.map(variable => {
                 const binding = bindings.get(variable.key);
+                const refused = props.refusedVariableKey === variable.key;
+                const error = refused ? t('session.actionsDraft.validation.requiredField', { field: variable.key }) : undefined;
                 const authoredLabel = text(variable.label);
                 const label = authoredLabel && authoredLabel !== variable.key ? authoredLabel
                     : t(variable.secret ? 'profiles.requirements.secretRequired' : 'projects.deployments.sourceValue');
@@ -76,21 +92,23 @@ export function DeploymentTemplateChoices(props: Readonly<{
                             onSelectTab={mode => { if (mode === 'saved') void pickSecret(variable.key);
                                 else setBinding({ purpose: 'variable', name: variable.key, phase: 'runtime', source: { kind: 'generated', key: variable.key } }); }} />
                             : <RoundButton testID={`${testID}.secret.${variable.key}`} size="small" display="secondary"
+                                accessibilityHint={error} controlRef={refused ? control => { refusedSecret.current = control; } : undefined}
                                 title={chooseSaved} onPress={() => { void pickSecret(variable.key); }} />
                         : <FieldTextInput testID={`${testID}.variable.${variable.key}`} accessibilityLabel={label}
+                            ref={refused ? refusedInput : undefined} error={error}
                             value={binding?.source.kind === 'value' ? binding.source.value : variable.default ?? ''}
                             onChangeText={value => setBinding({ purpose: 'variable', name: variable.key, phase: 'runtime', source: { kind: 'value', value } })}
                             autoCapitalize="none" />} />;
             })}
         </ItemGroup> : null}
-        {template.companions?.length ? <ItemGroup header="none">
+        {props.mode !== 'create' && template.companions?.length ? <ItemGroup header="none">
             {template.companions.map(companion => <Item key={companion.id} title={text(companion.title)}
                 subtitle={companion.description ? text(companion.description) : undefined} showChevron={false}
                 rightElement={<Switch testID={`${testID}.companion.${companion.id}`} value={value.companions?.includes(companion.id) ?? false}
                     onValueChange={selected => onChange({ ...value, companions: selected ? [...(value.companions ?? []), companion.id]
                         : (value.companions ?? []).filter(entry => entry !== companion.id) })} />} />)}
         </ItemGroup> : null}
-        {template.volumes.length ? <ItemGroup title={t('capabilities.store.appPage.choices.volumes')}>
+        {props.mode !== 'create' && template.volumes.length ? <ItemGroup title={t('capabilities.store.appPage.choices.volumes')}>
             {template.volumes.map(volume => <Item key={`${volume.service}:${volume.id}`} title={volume.target}
                 subtitle={volume.description ? text(volume.description) : volume.service} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID={`${testID}.volume.${volume.id}`} accessibilityLabel={t('capabilities.store.appPage.choices.volumeName')}

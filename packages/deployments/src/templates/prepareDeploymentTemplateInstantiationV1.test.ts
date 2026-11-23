@@ -347,7 +347,10 @@ describe('stored template preparation', () => {
         expect(prepareDeploymentTemplateInstantiationV1({ ...input, bindings: [binding, explicit] }).bindings).toEqual([binding, explicit]);
         const required = { ...optional, variables: optional.variables.map(variable => variable.key === 'X' ? { ...variable, required: true } : variable) };
         expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, template: required })).toThrowError(
-            expect.objectContaining({ code: 'template_variable_required' }));
+            expect.objectContaining({ code: 'template_variable_required', details: { key: 'X' } }));
+        expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, template: required,
+            bindings: [binding, { ...explicit, source: { kind: 'value', value: '   ' } }] })).toThrowError(
+            expect.objectContaining({ code: 'template_variable_required', details: { key: 'X' } }));
     });
 
     it('defaults missing bindings to declared generation without generating bytes or replacing saved selections', () => {

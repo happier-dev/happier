@@ -7,7 +7,7 @@ import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComp
   StoredAppPresetInputV1Schema, StoredAppPresetBindingsV1Schema, EnvironmentVariableBindingInputV1Schema, DeploymentSecretBindingSourceV1Schema,
   DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema,
   DeploymentTextV1Schema, DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentRepositoryComposeV1Schema, DeploymentFolderDefinitionInputV1Schema,
-  DeploymentTemplateDomainBindingsV1Schema } from './storedAppInputV1.js';
+  DeploymentTemplateDomainBindingsV1Schema, type EnvironmentVariableBindingInputV1 } from './storedAppInputV1.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';
 import { DeploymentTemplateV1Schema, DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { ResolvedDeploymentCreationDefaultsV1Schema, DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
@@ -101,6 +101,34 @@ export function buildCatalogAppTemplateBindings(template: z.infer<typeof Deploym
     .filter(secret => !chosen.has(JSON.stringify(['runtime', secret.key])))
     .map(secret => ({ purpose: 'variable' as const, name: secret.key, phase: 'runtime' as const, source: { kind: 'generated' as const, key: secret.key } }))];
   return { bindings, ...(bindings.some(binding => binding.source.kind === 'generated') ? { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } } : {}) };
+}
+
+/** One variable selection for authored Create, Instantiate and their review forms. */
+export function selectDeploymentTemplateVariableBindingsV1(
+  template: z.infer<typeof DeploymentTemplateV1Schema>,
+  bindings: readonly (DeploymentTemplateInstantiateInputV1['bindings'][number] | EnvironmentVariableBindingInputV1)[],
+  domainBindings: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']>> = [],
+  retained: readonly EnvironmentVariableBindingInputV1[] = [],
+) {
+  const generated = new Map(buildCatalogAppTemplateBindings(template).bindings.map(binding => [binding.name, binding]));
+  return template.variables.map(variable => {
+    let binding = bindings.find(binding => binding.name === variable.key)
+      ?? retained.find(binding => binding.purpose === 'variable' && binding.name === variable.key);
+    if (variable.valueFrom) {
+      const domain = template.domains.find(domain => domain.key === variable.valueFrom?.domainKey);
+      const hostname = domainBindings.find(binding => binding.templateDomainId === domain?.key)?.hostname;
+      if (domain && hostname) {
+        const value = variable.valueFrom.kind === 'domainUrl' ? `${domain.protocol}://${hostname}${domain.path ?? ''}` : hostname;
+        binding = { purpose: 'variable', phase: 'runtime', name: variable.key, source: { kind: 'value', value } };
+      }
+    }
+    if (!binding && variable.default !== undefined) {
+      binding = { purpose: 'variable', phase: 'runtime', name: variable.key, source: { kind: 'value', value: variable.default } };
+    }
+    binding ??= generated.get(variable.key);
+    return { variable, binding, missing: variable.required && (!binding
+      || binding.source.kind === 'value' && binding.source.value.trim() === '') };
+  });
 }
 
 /** A template creation keeps its retained operation identity across transport retries. */
