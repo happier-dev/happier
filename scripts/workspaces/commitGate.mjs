@@ -14,7 +14,7 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionUnavailable,
+import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
   withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 
 
@@ -29,42 +29,45 @@ class CommitGateUnavailable extends Error {
   }
 }
 
-export async function runCommitGate({ repo, base, tree, compareAdmittedEntryLoads, env = process.env,
+export async function runCommitGate({ repo, base, tree, compareAdmittedEntryLoads, env = process.env, phase = 'commit',
   cacheDir = env.P03_GATE_CACHE }) {
   const scratch = cacheDir ? undefined : await mkdtemp(join(tmpdir(), 'happier-commit-gate-'));
   try {
-    return await judgeCommit({ repo, base, tree, cacheDir: resolve(cacheDir ?? scratch), compareAdmittedEntryLoads, env });
+    return await judgeCommit({ repo, base, tree, cacheDir: resolve(cacheDir ?? scratch), compareAdmittedEntryLoads, env, phase });
   } finally {
     if (scratch) await rm(scratch, { recursive: true, force: true });
   }
 }
 
-async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoads, env }) {
+async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoads, env, phase }) {
   const notes = [];
   const judge = async (check, run) => {
     const started = performance.now();
     try {
       return await run();
     } catch (error) {
+      if (error instanceof EntryLoadAdmissionRequired) throw error;
       throw new CommitGateUnavailable(check, error);
     } finally {
       notes.push(`${check}: ${Math.round(performance.now() - started)} ms`);
     }
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
+  const readView = createRevisionViewReader(repo);
+  if (phase === 'post-commit') {
+    const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView }));
+    if (closure.findings.length) return refused('producer closure', closure.findings);
+    const boundary = await judge('plugin import boundary', () => commitExtensionBoundaries({ repo, base, tree }));
+    if (boundary.findings.length) return refused('plugin import boundary', boundary.findings);
+    const manifests = await judge('plugin manifests', () => commitPluginManifests({ repo, base, tree, cacheDir }));
+    if (manifests.findings.length) return refused('plugin manifests', manifests.findings);
+    return { verdict: 'pass', check: null, findings: [], notes };
+  }
   const syntax = await judge('syntax', () => commitSourceSyntax({ repo, base, tree }));
   if (syntax.findings.length) return refused('syntax', syntax.findings);
-
-  const readView = createRevisionViewReader(repo);
-  const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView }));
-  if (closure.findings.length) return refused('producer closure', closure.findings);
-  const boundary = await judge('plugin import boundary', () => commitExtensionBoundaries({ repo, base, tree }));
-  if (boundary.findings.length) return refused('plugin import boundary', boundary.findings);
   const cycles = await judge('import cycles', () => commitImportCycles({ repo, base, tree, cacheDir: join(cacheDir, 'import-cycles'), readView }));
   if (cycles.findings.length) return refused('eager import cycle through a changed module (a TDZ at load)', cycles.findings);
 
-  const manifests = await judge('plugin manifests', () => commitPluginManifests({ repo, base, tree, cacheDir }));
-  if (manifests.findings.length) return refused('plugin manifests', manifests.findings);
   const lockfile = await judge('lockfile', () => commitLockfile({ repo, base, tree }));
   notes.push(`lockfile: ${lockfile.note}`);
   if (lockfile.findings.length) return refused('lockfile', lockfile.findings);
@@ -274,6 +277,7 @@ async function composeLockedPacket({ git, packet, head, regenerate, projections,
     if (tree === git(['rev-parse', `${head}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
     return { base: head, tree, replayedTree };
   } catch (cause) {
+    if (cause instanceof EntryLoadAdmissionRequired) throw cause;
     throw new CommitGateUnavailable('frozen packet no longer applies to HEAD; refresh the patch', cause.stderr?.toString().trim() || cause);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -372,7 +376,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const base = option('base');
       const tree = option('tree');
       if (!base || !tree) throw new Error('usage: commitGate.mjs --base=<rev> --tree=<tree-ish>');
-      const result = await runCommitGate({ repo, base, tree });
+      const postCommit = args.includes('--post-commit');
+      const result = await runCommitGate({ repo, base, tree, phase: postCommit ? 'post-commit' : 'commit' });
+      if (postCommit && result.verdict === 'refused') {
+        const path = result.findings[0]?.match(/(?:^|\s)((?:apps|packages|scripts)\/[^\s:]+)/u)?.[1] ?? '';
+        console.log(`HAPPIER_POST_COMMIT_FAILURE\t${result.check}\t${path}`);
+      }
       for (const note of result.notes) console.log(`commit gate: ${note}`);
       process.exitCode = format(result);
     }

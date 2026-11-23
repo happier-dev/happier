@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { commitFromPrivateIndex } from './commitFromPrivateIndex.mjs';
+import { runCommitGate } from '../workspaces/commitGate.mjs';
 
 
 // The commit lock is flock(1); hosts without it (native Windows, stock macOS) run no commit wrapper and take a plain CAS.
@@ -47,7 +48,7 @@ test('syncs additions, deletions and unusual filenames without changing other st
   assert.equal(fs.existsSync(path.join(f.cwd, 'deleted')), false);
 });
 
-test('refuses a packet whose committed imports miss their module or export in the tree, without advancing HEAD', async (t) => {
+test('reports committed imports that miss their module or export against the exact landed tree', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
   fs.mkdirSync(path.join(f.cwd, 'packages/widget/src'), { recursive: true });
@@ -71,19 +72,19 @@ const lazy = import('@/missing');
 // import 'comment-only';
 export const value = [absent, present, addedLater, widget, lazy];`);
   f.write('src/script.mjs', "import { shipped, unshipped } from './producer.mjs';\nshipped(); unshipped();");
-  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['src/consumer.ts', 'src/script.mjs'] }), (error) => {
-    assert.match(error.message, /refused/);
-    for (const expected of ['./absent.js', '@/missing', '@fixture/widget/missing', 'addedLater', 'unshipped']) {
-      assert.ok(error.message.includes(expected), `refusal names ${expected}`);
-    }
-    for (const satisfied of ['comment-only', ' present ', ' shipped ', 'widget }']) assert.ok(!error.message.includes(satisfied), satisfied);
-    return true;
-  });
-  assert.equal(f.git('rev-parse', 'HEAD'), before);
+  const tree = await commitFromPrivateIndex({ ...f, paths: ['src/consumer.ts', 'src/script.mjs'] });
+  const report = await runCommitGate({ repo: f.cwd, base: before.trim(), tree, phase: 'post-commit' });
+  assert.equal(report.check, 'producer closure');
+  const findings = report.findings.join('\n');
+  for (const expected of ['./absent.js', '@/missing', '@fixture/widget/missing', 'addedLater', 'unshipped']) {
+    assert.ok(findings.includes(expected), `report names ${expected}`);
+  }
+  for (const satisfied of ['comment-only', ' present ', ' shipped ', 'widget }']) assert.ok(!findings.includes(satisfied), satisfied);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), tree);
   assert.equal(f.git('diff', '--cached', '--name-status'), '');
 });
 
-test('refuses a producer change that drops an export an unchanged importer still reads, even through a barrel', async (t) => {
+test('reports when a landed producer drops an export an unchanged importer still reads, even through a barrel', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
   f.write('src/producer.ts', 'export const kept = 1;\nexport function dropped() {}\nexport interface Shape { id: string }');
@@ -94,13 +95,12 @@ test('refuses a producer change that drops an export an unchanged importer still
   f.git('commit', '-qm', 'test: producer basis');
   const before = f.git('rev-parse', 'HEAD');
   f.write('src/producer.ts', 'export const kept = 1;');
-  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['src/producer.ts'] }), (error) => {
-    assert.match(error.message, /src\/direct\.ts[^\n]*dropped/);
-    assert.match(error.message, /src\/viaBarrel\.ts[^\n]*Shape/);
-    assert.ok(!/\bkept\b/.test(error.message));
-    return true;
-  });
-  assert.equal(f.git('rev-parse', 'HEAD'), before);
+  const tree = await commitFromPrivateIndex({ ...f, paths: ['src/producer.ts'] });
+  const report = await runCommitGate({ repo: f.cwd, base: before.trim(), tree, phase: 'post-commit' });
+  const findings = report.findings.join('\n');
+  assert.match(findings, /src\/direct\.ts[^\n]*dropped/);
+  assert.match(findings, /src\/viaBarrel\.ts[^\n]*Shape/);
+  assert.doesNotMatch(findings, /\bkept\b/);
 });
 
 test('refuses removing the workspace lockfile from the exact candidate', async (t) => {
@@ -194,7 +194,7 @@ test('an @/ alias that no tsconfig maps (a test runner alias) is outside the clo
   assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
 });
 
-test('refuses an unresolved module-scope require but never resolves createRequire calls against the importing file', async t => {
+test('reports an unresolved module-scope require without misresolving createRequire calls', async t => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
   f.write('package.json', '{"type":"module"}');
@@ -208,11 +208,12 @@ function relocated() {
   require('./outside-this-module.js');
 }`);
   const paths = ['package.json', 'metro.config.js', 'src/relocated.mjs', 'src/native.cjs'];
-  await assert.rejects(commitFromPrivateIndex({ ...f, paths }), (error) => {
-    assert.ok(error.message.includes('src/native.cjs -> ./missing.js'));
-    assert.ok(!error.message.includes('outside-this-module') && !error.message.includes('metro.config'));
-    return true;
-  });
+  const base = f.git('rev-parse', 'HEAD').trim();
+  const tree = await commitFromPrivateIndex({ ...f, paths });
+  const report = await runCommitGate({ repo: f.cwd, base, tree, phase: 'post-commit' });
+  const findings = report.findings.join('\n');
+  assert.match(findings, /src\/native\.cjs -> \.\/missing\.js/);
+  assert.doesNotMatch(findings, /outside-this-module|metro\.config/);
   f.write('src/native.cjs', `function relocated() {
   const require = createRequire(new URL('../package.json', import.meta.url));
   require('./outside-this-module.js');
@@ -392,6 +393,28 @@ test('replays onto a competing commit and lands without rejoining the commit loc
   assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
   assert.equal(f.git('show', 'HEAD:unrelated'), 'competitor\n');
   assert.deepEqual(acquisitions, [base]);
+});
+
+test('the private-index writer refuses an unnamed post-base line removal', { skip: !hasFlock }, t => {
+  const f = fixture(t);
+  const field = '  workspaceWrites: z.optional(z.enum(["allow", "deny"])),';
+  const context = 'attribution\npermissions\nconstraints\n' + field + '\nsession\ncreation\ndefaults\n';
+  f.write('changed', 'base marker\n' + context + 'original requester\n');
+  f.git('add', '--', 'changed');
+  f.git('commit', '-qm', 'test: packet base');
+  const base = f.git('rev-parse', 'HEAD').trim();
+  f.write('changed', 'new marker\n' + context + 'new requester\nbase marker\n' + context + 'original requester\n');
+  f.git('add', '--', 'changed');
+  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: add requester').trim();
+  f.git('read-tree', base);
+  f.write('changed', 'base marker\n' + context.replace(field + '\n', '') + 'original requester\n');
+
+  const { result } = runWithCommitLockContender(f, winner, 'changed');
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /post-base line removal/);
+  assert.ok(result.stderr.includes(field.trim()));
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), winner);
 });
 
 for (const conflictingSource of [false, true]) {
@@ -615,7 +638,7 @@ test('a foreign CAS winner is preserved without replaying the gate', { skip: !ha
   assert.equal(f.git('rev-parse', 'HEAD').trim(), casWinner);
 });
 
-test('refuses a replay when the winning commit removed its producer and releases the commit lock', { skip: !hasFlock }, (t) => {
+test('reports a replay whose exact parent removed its producer and releases the commit lock', { skip: !hasFlock }, async (t) => {
   const f = fixture(t);
   f.write('producer.mjs', 'export const producer = true;\n');
   f.git('add', '--', 'producer.mjs');
@@ -628,9 +651,10 @@ test('refuses a replay when the winning commit removed its producer and releases
 
   const { result, acquisitions, flock, lock } = runWithCommitLockContender(f, winner, 'consumer.mjs');
 
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /refused by the commit gate \(producer closure\)[\s\S]*consumer\.mjs -> \.\/producer\.mjs/);
-  assert.equal(f.git('rev-parse', 'HEAD').trim(), winner);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
+  const report = await runCommitGate({ repo: f.cwd, base: winner, tree: 'HEAD', phase: 'post-commit' });
+  assert.match(report.findings.join('\n'), /consumer\.mjs -> \.\/producer\.mjs/);
   assert.deepEqual(acquisitions, [base]);
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });

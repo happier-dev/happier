@@ -16,6 +16,9 @@ if [ "${1:-}" != "--bundle" ]; then
     -- bash "$0" --bundle "$1" "$2"
 fi
 shift
+structuralStatus=0
+node "$tooling/scripts/workspaces/commitGate.mjs" --post-commit --base="$1" --tree="$2" || structuralStatus=$?
+case $structuralStatus in 0) ;; 10) exit 10;; *) exit 75;; esac
 unset P03_SCAN_CHEAP_ONLY P03_GATE_PRIOR SCAN_FROM
 refuse() {
   local check=$1 path=$2

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { runCommitGate } from './commitGate.mjs';
 import { commitTreeEntryLoads, selectCommitTreeEntryGraphs } from './commitTreeEntryLoads.mjs';
 
 // A miniature shared checkout: this repository's HEAD objects (alternates, no copy), a full working
@@ -264,4 +265,87 @@ test('post-commit entry loads ignore timing and process counters in the same par
   const result = await commitTreeEntryLoads({ repo, base, tree: git('rev-parse', 'HEAD'), graphIds: ['bundled-manifests'], phase: 'deferred', root });
   assert.deepEqual(result.findings, []);
   assert.equal(result.preexisting.length, 1);
+});
+
+test('route composition subsumes standalone server startup and defers preparation probes', async t => {
+  const server = 'apps/server/sources/flavors/light/main.ts';
+  const routes = 'apps/server/sources/app/api/api.ts';
+  const producer = 'apps/server/scripts/prepare.mjs';
+  const registry = [
+    { id: 'server', entry: server },
+    { id: 'prepare-fixture', entry: producer, preparationComponent: 'apps/server' },
+  ];
+  const { repo, tree: base, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = ${JSON.stringify(registry)};`,
+    'apps/server/package.json': '{"name":"@fixture/server"}',
+    [server]: 'export {};\n',
+    [routes]: 'export {};\n',
+    [producer]: 'export {};\n',
+  });
+  write(routes, 'export const routes = 1;\n');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', routes);
+  git('commit', '-qm', 'candidate');
+  const tree = git('rev-parse', 'HEAD');
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base, tree, phase: 'commit' })).selected, ['server-routes']);
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base, tree, phase: 'deferred' })).selected, ['prepare-fixture']);
+});
+
+test('a non-runtime producer closure finding is deferred to the exact post-commit check', async t => {
+  const entry = 'packages/protocol/src/index.ts';
+  const { repo, tree: base, write } = miniatureRevision(t, {
+    'packages/protocol/package.json': '{"name":"@fixture/protocol"}',
+    [entry]: 'export const supported = 1;\n',
+  });
+  write(entry, "export { missing } from './missing.js';\n");
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', entry);
+  git('commit', '-qm', 'candidate');
+  const tree = git('rev-parse', 'HEAD');
+  const fast = await runCommitGate({ repo, base, tree });
+  assert.equal(fast.verdict, 'pass', JSON.stringify(fast));
+  const deferred = await runCommitGate({ repo, base, tree, phase: 'post-commit' });
+  assert.equal(deferred.check, 'producer closure');
+  assert.ok(deferred.findings.some(finding => finding.includes('missing')));
+});
+
+test('verified graph inputs skip repeat probes across unrelated commits and invalidate when an input changes', async t => {
+  const entry = 'packages/protocol/src/index.mjs';
+  const unrelated = 'packages/unrelated/src/index.mjs';
+  const graph = 'fixture';
+  const { repo, tree: initial, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = [{ id: '${graph}', entry: '${entry}' }];`,
+    'packages/protocol/package.json': '{"name":"@fixture/protocol"}',
+    'packages/unrelated/package.json': '{"name":"@fixture/unrelated"}',
+    [entry]: 'export const value = 1;',
+    [unrelated]: 'export const other = 1;',
+  });
+  const { publishDependencyRefreshMarker } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
+  await publishDependencyRefreshMarker({ installDir: repo, identity: 'fixture installed dependency generation' });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p03-entry-reuse-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  let probes = 0;
+  const run = async (base, tree) => commitTreeEntryLoads({ repo, base, tree, graphIds: [graph], phase: 'commit', root,
+    compareAdmittedEntryLoads: async ({ selected }) => {
+      probes += selected.length;
+      return { findings: [], preexisting: [], results: selected.map(graph => ({ graph, status: 'passed', elapsedMs: 10 })), timings: {} };
+    },
+  });
+  const commit = (name, value) => {
+    write(name, value);
+    git('add', '--', name);
+    git('commit', '-qm', name);
+    return git('rev-parse', 'HEAD');
+  };
+  await run(initial, initial);
+  const unrelatedTree = commit(unrelated, 'export const other = 2;');
+  assert.equal((await run(initial, unrelatedTree)).results[0]?.status, 'passed');
+  assert.equal(probes, 1);
+  const changed = commit(entry, 'export const value = 2;');
+  await run(unrelatedTree, changed);
+  assert.equal(probes, 2);
+  await publishDependencyRefreshMarker({ installDir: repo, identity: 'refreshed dependency generation' });
+  await run(unrelatedTree, changed);
+  assert.equal(probes, 3);
 });

@@ -86,7 +86,7 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
 
     const packet = { base, tree: git('write-tree') };
     const { commit, gate, head } = await finalizeGatedCommit({
-      repo: cwd, packet, label: 'commitFromPrivateIndex',
+      repo: cwd, packet, label: 'commitFromPrivateIndex', message: fs.readFileSync(messageFile, 'utf8'),
       createCommit: ({ base, tree }) => git('commit-tree', tree, '-p', base, '-F', messageFile),
     });
     if (gate?.verdict === 'incomplete') {

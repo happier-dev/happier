@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, renameSync, writeFileSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -114,14 +114,18 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree, phase = 'r
   try { git(['cat-file', '-e', `${tree}:${SERVER_ROUTES_ENTRY}`]); routes = true; } catch { /* no server in this tree */ }
   const entries = routes ? [...graphs, { id: SERVER_ROUTES_GRAPH, entry: SERVER_ROUTES_ENTRY }] : graphs;
   const inputs = phase === 'commit' ? changed.filter(path => !TEST_OR_DOC.test(path) || HARNESS.test(path)) : changed;
+  if (!inputs.length) return { graphs: entries.map(graph => graph.id), selected: [], changed };
   const rootInput = phase === 'commit' ? COMMIT_ROOT_RUNTIME_INPUT : ROOT_RUNTIME_INPUT;
   const candidateReaches = reaches(inputs, treeWorkspacePackages(git, tree), rootInput);
   const baseReaches = phase === 'commit' ? reaches(inputs, treeWorkspacePackages(git, base), rootInput) : () => false;
-  const selected = entries.filter(({ id, entry, args, testFiles }) => {
-    const broad = args || testFiles || id === 'sdk-browser' || id === 'daemon-entry-preparation';
+  const checkRoutes = routes && inputs.some(path => SERVER_ROUTES_INPUT.test(path));
+  const selected = entries.filter(({ id, entry, args, testFiles, preparationComponent }) => {
+    const broad = args || testFiles || preparationComponent || id === 'sdk-browser' || id === 'daemon-entry-preparation';
     if (phase === 'commit' && broad || phase === 'deferred' && !broad) return false;
     if (phase === 'report' && id === CLI_GRAPH) return changed.length > 0;
-    if (id === SERVER_ROUTES_GRAPH) return inputs.some(path => SERVER_ROUTES_INPUT.test(path));
+    // Route composition includes the server startup probe in the same process.
+    if (phase === 'commit' && id === 'server' && checkRoutes) return false;
+    if (id === SERVER_ROUTES_GRAPH) return checkRoutes;
     return candidateReaches(entry) || baseReaches(entry);
   });
   return { graphs: entries.map(graph => graph.id), selected: selected.map(graph => graph.id), changed };
@@ -174,6 +178,107 @@ function childCpuMs() {
   } catch { return null; }
 }
 
+async function installedInputIdentity(installDir, env, signal) {
+  const { readDependencyPublicationState, withDependencyConsumption } =
+    await import(new URL('apps/stack/scripts/utils/proc/dependency_refresh.mjs', tooling).href);
+  try {
+    return await withDependencyConsumption({ installDir, env, signal, wait: false }, async () => {
+      const state = await readDependencyPublicationState({ installDir, env });
+      return state.identity && !state.writerActive && state.generation === state.completedGeneration
+        ? JSON.stringify([realpathSync(installDir), state.identity, state.generation]) : null;
+    });
+  } catch (error) {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env, signal }) {
+  const installed = await installedInputIdentity(installDir, env, signal);
+  if (!installed) return null;
+  const cacheDir = join(root, 'verified-entry-graphs');
+  try {
+    mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+    const directory = lstatSync(cacheDir);
+    if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077)) return null;
+  } catch (error) {
+    console.error(`entry-load verdict cache unavailable (${error.code ?? error.name})`);
+    return null;
+  }
+  const git = gitAt(repo);
+  const registry = git(['show', `${tree}:${ENTRY_GRAPHS_PATH}`]);
+  const { ENTRY_GRAPHS: graphs } = await import(`data:text/javascript;base64,${registry.toString('base64')}`);
+  const { workspaceSourcePackageClosure } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
+  const packages = treeWorkspacePackages(git, tree);
+  const owners = [...packages].sort(([, a], [, b]) => b.root.length - a.root.length);
+  const ownerOf = path => owners.find(([, item]) => path.startsWith(item.root + '/'))?.[0];
+  const blobs = git(['ls-tree', '-r', '-z', tree]).toString().split('\0').filter(Boolean).map(line => {
+    const path = line.slice(line.indexOf('\t') + 1);
+    return { line, path, owner: ownerOf(path) };
+  });
+  // Workspace manifests also describe loader resolution. Include the shared
+  // harness, feature policy and server derivation inputs even outside a graph's
+  // application closure. Git records include path, mode and blob identity.
+  const common = blobs.filter(({ path, owner }) => !owner || path.endsWith('/package.json')
+    || /^(?:apps\/stack\/|packages\/cli-common\/|apps\/server\/(?:prisma|scripts)\/|packages\/protocol\/scripts\/)/u.test(path));
+  const probeEnvironment = Object.entries(env).filter(([name]) => ![
+    'HAPPIER_COMMIT_GATE_ARRIVED_AT', 'P03_CP_ARRIVED_AT', 'P03_CP_FROZEN', 'P03_CP_PACKET_BASE',
+    'P03_COMMIT_TREE_WORK_DIR', 'P03_COMMIT_TREE_HOST_TMP', 'PWD', 'OLDPWD', 'SHLVL', '_',
+  ].includes(name)).sort(([a], [b]) => a.localeCompare(b));
+  const basis = createHash('sha256').update(JSON.stringify([installed, process.execPath, process.versions, probeEnvironment]))
+    .update(readFileSync(self)).update(JSON.stringify(common.map(({ line }) => line))).digest('hex');
+  const records = new Map();
+  for (const id of selected) {
+    const graph = graphs.find(candidate => candidate.id === id);
+    const owner = graph && ownerOf(graph.entry);
+    // Route composition and diagnostic probes can access dynamic inputs
+    // outside the declared workspace graph. Keep their existing full probe.
+    if (!owner || graph.args || graph.testFiles || graph.preparationComponent) continue;
+    const closure = workspaceSourcePackageClosure(packages, [owner]);
+    const owned = blobs.filter(entry => closure.has(entry.owner)
+      || (graph.cwd === 'apps/cli' && entry.path.startsWith('packages/plugins/')));
+    const key = createHash('sha256').update(JSON.stringify([basis, graph, owned.map(({ line }) => line)])).digest('hex');
+    const file = join(cacheDir, createHash('sha256').update(JSON.stringify([repo, id])).digest('hex'));
+    records.set(id, { key, file, hit: readFileIfPresent(file) === key });
+  }
+  return { installed, records };
+}
+
+function readFileIfPresent(file) {
+  try { return readFileSync(file, 'utf8'); }
+  catch (error) {
+    if (error.code !== 'ENOENT') console.error(`entry-load verdict cache read failed (${error.code ?? error.name})`);
+    return null;
+  }
+}
+
+async function compareWithVerifiedGraphs(request, { env, signal, run }) {
+  const { selected, graphs, installDir } = request;
+  const cache = await verifiedGraphInputs({ ...request, env, signal });
+  const hits = selected.filter(id => cache?.records.get(id)?.hit);
+  const missing = selected.filter(id => !cache?.records.get(id)?.hit);
+  const probed = missing.length ? await run({ ...request, selected: missing })
+    : { findings: [], preexisting: [], results: [], timings: {} };
+  if (cache && missing.length && cache.installed === await installedInputIdentity(installDir, env, signal)) {
+    for (const row of probed.results) {
+      const record = cache.records.get(row.graph);
+      if (row.status !== 'passed' || !record) continue;
+      const temporary = `${record.file}.${process.pid}.tmp`;
+      try {
+        writeFileSync(temporary, record.key, { mode: 0o600 });
+        renameSync(temporary, record.file);
+      } catch (error) {
+        console.error(`entry-load verdict cache write failed (${error.code ?? error.name})`);
+        try { rmSync(temporary, { force: true }); } catch { /* cache stays optional */ }
+      }
+    }
+  }
+  const rows = new Map(probed.results.map(row => [row.graph, row]));
+  for (const id of hits) rows.set(id, { graph: id, status: 'passed', elapsedMs: 0 });
+  return { ...probed, selected, graphs, results: selected.map(id => rows.get(id)).filter(Boolean),
+    timings: { ...probed.timings, ...(hits.length ? { cacheHits: hits.length } : {}) } };
+}
+
 /**
  * Entry loads of the exact commit tree. The tree's tracked bytes come from Git objects (`git archive`,
  * no worktree), its server clients and Protocol feature-policy module are derived from its own inputs,
@@ -194,16 +299,15 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
   const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
   if (!selected.length) return empty;
   const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !compareAdmittedEntryLoads };
-  return compareAdmittedEntryLoads
-    ? await compareAdmittedEntryLoads(request)
-    : await admitEntryLoads(request, { env, signal });
+  const run = compareAdmittedEntryLoads ?? (candidate => admitEntryLoads(candidate, { env, signal }));
+  return phase === 'commit' ? await compareWithVerifiedGraphs(request, { env, signal, run }) : await run(request);
 }
 
-function entryLoadAdmissionCommand(repo, projects, payload, { base, tree } = {}) {
+function entryLoadAdmissionCommand(repo, projects, payload, { base, tree, admissionClass = ENTRY_LOAD_ADMISSION_CLASS } = {}) {
   if (process.platform === 'win32') return payload;
   const localLauncher = join(repo, 'apps/stack/bin/hstack-exec');
   const launcher = existsSync(localLauncher) ? localLauncher : fileURLToPath(new URL('apps/stack/bin/hstack-exec', tooling));
-  return [launcher, '--heavyweight-admission', `--class=${ENTRY_LOAD_ADMISSION_CLASS}`, '--machine=local',
+  return [launcher, '--heavyweight-admission', `--class=${admissionClass}`, '--machine=local',
     `--projects=${projects.join('\n')}`, '--identity-arg=node', '--identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs',
     ...(base && tree ? [`--judged-trees=${base},${tree}`] : []),
     '--', ...payload];
@@ -214,6 +318,8 @@ async function spawnEntryLoadCommand({ repo, projects, payload, signal, env, std
   const { spawnForegroundCommand } = await import(new URL('apps/stack/scripts/utils/proc/proc.mjs', tooling).href);
   return spawnForegroundCommand(command, args, { cwd: repo, env, signal, stdio, ownedProcessGroup: true });
 }
+
+export class EntryLoadAdmissionRequired extends Error {}
 
 export class EntryLoadAdmissionUnavailable extends Error {
   constructor(status) {
@@ -236,6 +342,12 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
   };
   if (!projects.length) return await run(assertCovered, (combined, output, projections) =>
     regenerateCommitProjections({ repo, tree: combined, output, projections }, env));
+  const cached = await verifiedGraphInputs({ repo, tree, installDir: repo, root: defaultRoot(), selected: projects, env });
+  if (projects.every(id => cached?.records.get(id)?.hit)) {
+    const requireAdmission = () => { throw new EntryLoadAdmissionRequired(); };
+    try { return await run(requireAdmission, requireAdmission); }
+    catch (error) { if (!(error instanceof EntryLoadAdmissionRequired)) throw error; }
+  }
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
     payload: [process.execPath, self, '--entry-load-commit-session'] });
   const terminal = waitForTreeChild(child);
@@ -275,8 +387,8 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
   }
 }
 
-async function admitEntryLoads(request, { env, signal }) {
-  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal,
+async function admitEntryLoads(request, { env, signal, admissionClass }) {
+  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, admissionClass,
     payload: [process.execPath, self, '--entry-load-admitted'],
     env: { ...env, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
     stdio: ['ignore', 'pipe', 'inherit'] });
@@ -473,6 +585,7 @@ const started = performance.now();
 const result = { graph: '${SERVER_ROUTES_GRAPH}', entry: '${SERVER_ROUTES_ENTRY}' };
 try {
   await import(join(dir, 'apps/server/sources/configureZodLocale.ts'));
+  await import(join(dir, 'apps/server/sources/flavors/full/main.ts'));
   const { runLightServerMain } = await import(join(dir, 'apps/server/sources/flavors/light/main.ts'));
   await runLightServerMain(['--probe-runtime-import']);
   const { default: fastify } = await import(requireFromServer.resolve('fastify'));

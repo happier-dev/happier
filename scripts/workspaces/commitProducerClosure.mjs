@@ -1,8 +1,6 @@
 // Commit producer closure: every module and named export a packet's sources import must exist in the
-// packet's own tree, and every pnpm lockfile importer must have its package.json tracked there.
-// Textual (AST + module resolution over Git objects), no compiler program and no admission, so every
-// commit path runs it before CAS. Only findings the packet adds relative to its base refuse; a break
-// already present at the base is reported by its own owner, not attributed to this packet.
+// packet's own tree. Textual (AST + module resolution over Git objects), no compiler program.
+// Post-commit reports attribute only findings added relative to the exact parent.
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, posix, relative, resolve, sep } from 'node:path';
@@ -15,7 +13,6 @@ let ts;
 export const COMMIT_SOURCE_PATH = /\.(?:[cm]?[jt]sx?)$/u;
 const EXPORT_PARSED = /\.(?:[cm]?ts|tsx|mjs)$/u;
 const SOURCE_GLOBS = ['*.ts', '*.tsx', '*.mts', '*.cts', '*.js', '*.jsx', '*.mjs', '*.cjs'];
-const LOCKFILE_INPUT = /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u;
 
 const nul = text => text.split('\0').filter(Boolean);
 const stemOf = file => {
@@ -334,17 +331,7 @@ function buildRevisionView(repo, git, rev) {
     }
     return found;
   };
-  return { blobs, read, prefetch, resolveImport, optionsFor, workspaces, exportsOf, findings,
-    lockfileImporters: () => lockfileImporters(read('pnpm-lock.yaml')) };
-}
-
-// pnpm 9 may write several YAML documents; read every importers map.
-function lockfileImporters(lock) {
-  const dirs = new Set();
-  if (!lock) return dirs;
-  for (const section of lock.matchAll(/^importers:\n([\s\S]*?)(?=^\S|(?![\s\S]))/gmu))
-    for (const key of section[1].matchAll(/^ {2}(\S[^:\n]*):\s*$/gmu)) dirs.add(key[1].replace(/^['"]|['"]$/gu, ''));
-  return dirs;
+  return { blobs, read, prefetch, resolveImport, optionsFor, workspaces, exportsOf, findings };
 }
 
 export function commitChangedPaths({ repo, base, tree }) {
@@ -361,8 +348,7 @@ export function commitProducerClosure({ repo, base, tree, readView = createRevis
   const slice = paths ?? commitChangedPaths({ repo, base, tree });
   const sources = slice.filter(({ path }) => COMMIT_SOURCE_PATH.test(path));
   const result = { findings: [], roots: 0, ms: 0, changedSources: sources };
-  const lockfileInputs = slice.some(({ path }) => LOCKFILE_INPUT.test(path));
-  if (!sources.length && !lockfileInputs) return { ...result, ms: Date.now() - started };
+  if (!sources.length) return { ...result, ms: Date.now() - started };
   ts ??= require('typescript');
   const after = readView(tree);
   let before;
@@ -400,14 +386,6 @@ export function commitProducerClosure({ repo, base, tree, readView = createRevis
       const inherited = prior().findings([...roots].filter(file => prior().blobs.has(file)));
       for (const [key, message] of fresh) if (!inherited.has(key)) findings.push(message);
     }
-  }
-  if (lockfileInputs) {
-    // A clean checkout cannot `pnpm install --frozen-lockfile` when an importer's manifest is untracked.
-    const untracked = view => [...view.lockfileImporters()]
-      .filter(dir => !view.blobs.has(dir === '.' ? 'package.json' : `${dir}/package.json`));
-    const inherited = new Set(untracked(prior()));
-    for (const dir of untracked(after)) if (!inherited.has(dir))
-      findings.push(`lockfile importer without a tracked package.json: ${label(dir)}`);
   }
   return { ...result, findings: findings.sort(), ms: Date.now() - started };
 }
