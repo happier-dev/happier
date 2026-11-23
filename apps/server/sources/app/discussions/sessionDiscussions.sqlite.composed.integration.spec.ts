@@ -76,6 +76,9 @@ import { createNativeAgentHostSessionRuntimePlan } from '../../../../cli/src/plu
 import { buildPluginSessionBindingInput } from '../../../../cli/src/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createCurrentSessionPresentationHost } from '../../../../cli/src/session/presentation/currentSessionPresentationService';
 import { ProviderEnforcedPermissionHandler } from '../../../../cli/src/agent/permissions/providerEnforced/handler';
+import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol/runtime';
+import { createKeyedStreamedTranscriptBridge } from '../../../../cli/src/api/session/createKeyedStreamedTranscriptBridge';
+import { projectRuntimeTranscriptEvent, type RuntimeTranscriptProjectionSession } from '../../../../cli/src/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { createSessionTurnLifecycle } from '../../../../cli/src/agent/runtime/session/turn/lifecycle';
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { bindSessionProviderInputOutcome, createSessionProviderInputOutcomeBinding } from '../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
@@ -1021,6 +1024,98 @@ describe('First-class Discussions service (SQLite)', () => {
         await removeDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId, request: { participant: { kind: 'session', sessionId: session.id } } });
         expect(await postDiscussionMessage({ ...input, request: { ...input.request, localId: crypto.randomUUID() } })).toMatchObject({ ok: false });
     });
+    it.each(['Ask', 'Discussion'] as const)('retains one exact partial when Stop withdraws a native question after an addressed %s', async kind => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const richText = (text: string) => ({ v: 1 as const, parts: [{ t: 'text' as const, text }] });
+        const question = richText('Answer and ask a follow-up');
+        let discussion: { discussionId: string; messageId: string; throughSeq: number; participantSessionId: string } | undefined;
+        if (kind === 'Discussion') {
+            const created = await createDiscussion({ authentication, actorAccountId: account.id, request: buildDiscussionMutationRequestBodyV1({
+                kind: 'create', creationLocalId: crypto.randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Addressed Stop' } },
+                participants: [{ kind: 'session', sessionId: session.id }], firstMessage: {
+                    localId: crypto.randomUUID(), content: { t: 'plain', v: question }, authoredContent: question, mentionedAccountIds: [],
+                },
+            }) });
+            if (!created.ok) throw new Error(created.error);
+            const discussionId = created.value.discussion.id;
+            const addressed = { v: 1 as const, parts: [{ t: 'mention' as const, participant: { kind: 'session' as const, sessionId: session.id } }, ...question.parts] };
+            const asked = await postDiscussionMessage({ authentication, actorAccountId: account.id, discussionId,
+                request: buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: crypto.randomUUID(), content: { t: 'plain', v: addressed },
+                    authoredContent: addressed, mentionedAccountIds: [], mentionedSessionIds: [session.id] }) });
+            if (!asked.ok) throw new Error(asked.error);
+            discussion = { discussionId, messageId: asked.value.message.id, throughSeq: asked.value.message.seq, participantSessionId: session.id };
+        }
+        const progress = await inTx(tx => createSessionInputReplyProgressInTx(tx, { accountId: account.id, requestSessionId: session.id,
+            reply: discussion ? { mode: 'return', discussion } : { mode: 'wait' } }));
+        if (!progress) throw new Error('Expected admitted reply custody');
+        const turnId = crypto.randomUUID(), inputId = crypto.randomUUID();
+        await db.sessionMessage.create({ data: { sessionId: session.id, seq: 1, localId: inputId, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'One exact input' } } },
+            replyProgress: progress, replyDisposition: progress.disposition } });
+        const mutate = (mutation: object) => applySessionTurnMutation({ actorUserId: account.id, authentication,
+            mutation: { v: 1, sessionId: session.id, turnId, mutationId: crypto.randomUUID(), ...mutation } });
+        expect(await mutate({ action: 'begin', observedAt: 1, transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1] } }))
+            .toMatchObject({ ok: true });
+
+        const text = 'The exact committed partial';
+        const committed = new Map<string, string>();
+        const transcript: RuntimeTranscriptProjectionSession = { sessionId: session.id, requiresDurableTurnCompletionMarker: true,
+            enqueueAgentMessageCommitted: async (_provider, body, options) => {
+                if (body.type !== 'message') throw new Error('A question yield must not commit a stopped marker');
+                // The transcript port updates the same row at checkpoint and at flush.
+                committed.set(options.localId, body.message);
+                return { persisted: true, delivered: true, committedSequence: 2 };
+            } };
+        const bridge = createKeyedStreamedTranscriptBridge({ provider: 'opencode', createSessionForStream: () => transcript });
+        const project = (sequence: number, body: object) => projectRuntimeTranscriptEvent({ session: transcript, provider: 'opencode',
+            runtimeMessageDeltaBridge: bridge, questionWaitTurnId: turnId,
+            event: AgentSessionRuntimeEventV1Schema.parse({ sessionId: session.id, turnId, sequence, emittedAtMs: sequence, ...body }) });
+        const yielded = await (async () => {
+            try {
+                await project(1, { kind: 'message-delta', channel: 'assistant', text });
+                return await project(2, { kind: 'turn-cancelled', cause: 'user' });
+            } finally { bridge.clear(); }
+        })();
+        expect([...committed.values()]).toEqual([text]);
+        const [message] = committed;
+        if (!message) throw new Error('Expected a committed assistant message');
+        const [partialLocalId, partialText] = message;
+        const partial = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 2, messageRole: 'agent', localId: partialLocalId,
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'opencode', data: { type: 'text', text: partialText } } } } } });
+        // Use the transcript port's confirmed sequence, as the host's anchor mutation does.
+        if (yielded.projected && yielded.finalAssistantMessageSeq !== undefined) {
+            expect(await mutate({ action: 'append_transcript_anchors', observedAt: 2, transcriptAnchors: {
+                startSeqInclusive: 1, endSeqInclusive: 2, finalAssistantMessageSeq: yielded.finalAssistantMessageSeq,
+            } })).toMatchObject({ ok: true });
+        }
+        expect(await mutate({ action: 'wait', observedAt: 3 })).toMatchObject({ ok: true });
+        expect(await mutate({ action: 'cancel', observedAt: 4, reason: 'explicit_stop' })).toMatchObject({ ok: true });
+        await withAuthenticatedTestApp(registerSessionMessageRoutes, async app => {
+            const read = () => app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/messages/by-local-id/${inputId}/reply`,
+                headers: { 'x-test-user-id': account.id } });
+            const stopped = { status: 'available', progress: { acceptedTurnId: turnId,
+                outcome: { kind: 'cancelled', result: { sessionId: session.id, messageId: partial.id } } } };
+            expect((await read()).json()).toMatchObject(stopped);
+            expect((await read()).json()).toMatchObject(stopped);
+        });
+        if (discussion) {
+            const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: session.id, localId: inputId, acceptedTurnId: turnId });
+            const publication = { authentication, actorAccountId: account.id, discussionId: discussion.discussionId, terminalReturn: true as const,
+                producer: { v: 1 as const, kind: 'agent' as const, sessionId: session.id },
+                replyReturn: { serverId: 'home', requestLocalId: inputId, acceptedTurnId: turnId },
+                request: buildDiscussionMutationRequestBodyV1({ kind: 'post', localId, content: { t: 'plain', v: richText(partialText) },
+                    authoredContent: richText(partialText), replyTarget: { kind: 'message', messageId: discussion.messageId }, mentionedAccountIds: [] }) };
+            const first = await postDiscussionMessage(publication);
+            expect(first).toMatchObject({ ok: true, value: { message: { producerV1: { kind: 'agent', sessionId: session.id,
+                replyReturn: { outcome: 'cancelled' } }, content: { t: 'plain', v: richText(text) } } } });
+            if (!first.ok) throw new Error(first.error);
+            expect(await postDiscussionMessage(publication)).toMatchObject({ ok: true, value: { message: { id: first.value.message.id } } });
+            expect(await db.discussionMessage.count({ where: { discussionId: discussion.discussionId, localId } })).toBe(1);
+        }
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id, messageRole: 'agent' } })).toBe(1);
+    });
+
     it('keeps the withdrawn original cancelled when the same Session is invited again', async () => {
         const { owner, discussionId } = await fixture();
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });

@@ -1105,7 +1105,7 @@ async function projectRuntimeTranscriptEventContent(
       });
     }
     if (params.questionWaitTurnId === event.turnId) {
-      return { projected: true, kind: event.kind };
+      return { projected: true, kind: event.kind, ...assistantReceipt };
     }
     const terminalSourceMessage = await marker;
     return { projected: true, kind: event.kind, ...assistantReceipt,

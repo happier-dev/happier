@@ -490,9 +490,13 @@ describe('projectRuntimeTranscriptEvent', () => {
   });
 
   it.each(['turn-cancelled', 'turn-complete'] as const)(
-    'flushes a yielded question without publishing a false terminal marker after %s', async kind => {
+    'returns the committed partial without publishing a false terminal marker for a yielded question after %s', async kind => {
       const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
       const { bodies, enqueueAgentMessageCommitted } = createCommittedAgentMessageCapture();
+      enqueueAgentMessageCommitted.mockImplementation(async (_provider, body) => {
+        bodies.push(body);
+        return { persisted: true, delivered: true, committedSequence: 42 };
+      });
       const session = { sessionId: 'question-session', requiresDurableTurnCompletionMarker: true as const,
         enqueueAgentMessageCommitted };
       const bridge = createKeyedStreamedTranscriptBridge({ provider: 'opencode', createSessionForStream: () => session });
@@ -501,7 +505,8 @@ describe('projectRuntimeTranscriptEvent', () => {
           emittedAtMs: 1, turnId: 'question-turn', ...input }) });
       try {
         await project({ kind: 'message-delta', channel: 'assistant', text: 'Which option should I use?' });
-        await project({ kind, ...(kind === 'turn-cancelled' ? { cause: 'user' } : {}) });
+        await expect(project({ kind, ...(kind === 'turn-cancelled' ? { cause: 'user' } : {}) }))
+          .resolves.toMatchObject({ projected: true, finalAssistantMessageSeq: 42 });
         expect(bodies.some(body => body.type === 'message' && body.message === 'Which option should I use?')).toBe(true);
         expect(bodies.filter(body => body.type === 'turn_cancelled' || body.type === 'task_complete')).toEqual([]);
         // Another exact turn still carries genuine terminal evidence.
