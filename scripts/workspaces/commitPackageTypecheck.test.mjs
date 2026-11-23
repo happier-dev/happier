@@ -505,6 +505,32 @@ test('report mode checks a landed commit against its parent and posts one URGENT
   assert.equal(await reportCommitGateTypecheck({ ...options, commit: app }), null, 'apps stay with the rolling owner');
 });
 
+test('post-commit alerts use the exact Lane trailer and fall back only without one', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-routing-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const path = 'packages/plugins/codex/src/index.ts';
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const withLane = await commit(path, 'export const first: string = 1;\n',
+    'Draw the tab row while its detail reads\n\nThe row is visible from first paint.\n\nLane: TRIAGE-ACCEPT-FIX-UI-253');
+  const withoutLane = await commit(path, 'export const second: number = false;\n',
+    'Change the tab row\n\nMention Lane: ANOTHER-LANE in the body.');
+  const diagnostics = new Map([
+    [git('rev-parse', `${withLane}^{tree}`), [{ file: path, line: 1, column: 14, code: 2322, text: 'First type error' }]],
+    [git('rev-parse', `${withoutLane}^{tree}`), [{ file: path, line: 1, column: 14, code: 2322, text: 'Second type error' }]],
+  ]);
+  const remote = (trees, dirs) => new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, diagnostics.get(tree) ?? []]))]));
+  const posts = [];
+  for (const sha of [withLane, withoutLane]) {
+    await reportCommitGateTypecheck({ repo, env, commit: sha, remote, log: () => {}, post: entry => posts.push(entry) });
+  }
+  assert.deepEqual(posts.map(entry => entry.split('\n')[0].split(' — ')[1]), [
+    'P03-COMMIT-CHECKS → TRIAGE-ACCEPT-FIX-UI-253',
+    'P03-COMMIT-CHECKS → P03 ORCH',
+  ]);
+});
+
 test('report mode skips queued work only when a rolling verdict completed all its packages', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-report-coverage-'));
