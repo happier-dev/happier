@@ -1,9 +1,7 @@
-import { realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-
 import type { CliInstallSource, CliUpdateFacts } from '@happier-dev/protocol';
 import {
   describeHappierCliOrigin,
+  doesCliLauncherUseInstallation,
   type HappierCliOrigin,
   readInstalledVersionMarkersSync,
   readLastCliUpdateResult,
@@ -17,36 +15,11 @@ import { configuration } from '@/configuration';
 
 import packageJson from '../../../../package.json';
 
-function comparablePath(path: string, platform: NodeJS.Platform): string {
-  let resolved = path;
-  try {
-    resolved = realpathSync(path);
-  } catch {
-    // A path that does not resolve is compared as given.
-  }
-  const normalized = resolved.replace(/\\/g, '/').replace(/\/+$/, '');
-  return platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
-/**
- * Same file, including a hardlink. `realpath` does not follow hardlinks, so `bin\\happier.exe` stays `bin`.
- * File indexes on some NTFS volumes do not fit in a JavaScript number, and nearby files then compare equal.
- */
-function sameInstalledFile(left: string, right: string): boolean {
-  try {
-    const a = statSync(left, { bigint: true });
-    const b = statSync(right, { bigint: true });
-    return a.ino > 0n && a.dev === b.dev && a.ino === b.ino;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Where the running CLI came from. `managed` only when this process runs a version the managed
- * install of its own ring recorded (`current.version` present and the executable inside that
- * install's `versions/`, or a hardlink of that payload such as `bin\\happier.exe`) — the install
- * the one update transaction can replace and restore.
+ * install of its own ring recorded (`current.version` present and the canonical launcher owner
+ * matches the executable to that install, including its home bin shortcuts) — the install the
+ * one update transaction can replace and restore.
  */
 function resolveRunningCliInstallSource(params: Readonly<{
   homeDir: string;
@@ -62,14 +35,10 @@ function resolveRunningCliInstallSource(params: Readonly<{
     processEnv: { HAPPIER_HOME_DIR: params.homeDir },
   });
   const { currentVersionId } = readInstalledVersionMarkersSync(layout);
-  const versionsDir = `${comparablePath(layout.versionsDir, params.platform)}/`;
-  const versionPayload = currentVersionId
-    ? join(layout.versionsDir, currentVersionId, params.platform === 'win32' ? 'happier.exe' : 'happier')
-    : '';
-  if (currentVersionId && (
-    comparablePath(params.execPath, params.platform).startsWith(versionsDir)
-    || sameInstalledFile(params.execPath, versionPayload)
-  )) {
+  if (currentVersionId && doesCliLauncherUseInstallation({
+    launcher: [params.execPath],
+    installationRoots: [layout.installRoot],
+  })) {
     return { installSource: 'managed', packageManagerCommand: null };
   }
   const origin = resolveRunningCliPackageManagerOrigin(params);
@@ -113,11 +82,9 @@ export function resolveRunningCliPackageManagerOrigin(params: Readonly<{
  * version, the ring-filtered cached daily check, the install source with the exact command that
  * updates it, whether its daemon can run the update itself, and the last update outcome.
  *
- * `canUpdateRemotely` is true for a managed install on every platform. On Windows the daemon does
- * not spawn the updater as its child: `spawnWindowsRemoteCliUpdate` runs it as the scheduled task
- * `Happier\\happier-cli-remote-update`, so `taskkill /T` of the service does not end it, and the
- * updater's ancestry check still refuses an in-session update. systemd (`KillMode=process`) and
- * launchd (`AbandonProcessGroup`) already leave a detached child running.
+ * Windows remains manual-only: its updater must survive stopping the daemon's process tree,
+ * and a remote launcher has not been validated across that service restart. systemd
+ * (`KillMode=process`) and launchd (`AbandonProcessGroup`) leave a detached child running.
  */
 export function readCliUpdateFacts(params: Readonly<{
   homeDir: string;
@@ -142,7 +109,7 @@ export function readCliUpdateFacts(params: Readonly<{
     channel: getReleaseRingCatalogEntry(params.publicReleaseRing).publicLabel,
     installSource,
     updateCommand: managed ? `${resolveManagedCliToolNameForRing(params.publicReleaseRing)} self update` : packageManagerCommand,
-    canUpdateRemotely: managed,
+    canUpdateRemotely: managed && params.platform !== 'win32',
     lastUpdate: managed
       ? readLastCliUpdateResult({ channel: params.publicReleaseRing, processEnv: { HAPPIER_HOME_DIR: params.homeDir } })
       : null,

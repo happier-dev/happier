@@ -6,7 +6,6 @@ import { spawnDetachedNode, type DetachedSpawnResult } from '@happier-dev/cli-co
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { readUpdaterAdmission, UPDATER_ADMISSION_FD_ENV } from '@/cli/runtime/update/updaterAdmission';
-import { spawnWindowsRemoteCliUpdate } from '@/cli/runtime/update/windowsRemoteCliUpdate';
 
 export const CLI_UPDATE_SYSTEM_TASK_KIND = 'cli.update.v1';
 
@@ -56,9 +55,7 @@ function readRequestedChannel(params: unknown): string | null {
  * replaced, which the transaction keeps on disk until the new one is proven) and answers
  * "started" only after the updater reported its admission (it holds the install locks) on its
  * report pipe; a refused updater (`cli_update_in_progress`, …) fails this task instead. The updater survives the service restart because the service managers leave a
- * detached child alone (systemd `KillMode=process`, launchd `AbandonProcessGroup`). On Windows the
- * updater is the scheduled task `Happier\happier-cli-remote-update`, not a child, so `taskkill /T`
- * does not end it. The outcome is
+ * detached child alone (systemd `KillMode=process`, launchd `AbandonProcessGroup`). The outcome is
  * observed afterwards: the machine reconnects on the new version (or, rolled back, on the old one)
  * and publishes `lastUpdate` in its update facts.
  */
@@ -72,10 +69,7 @@ export function createCliUpdateRemoteTaskKind(deps: Readonly<{
   script: string;
   cwd: string;
   logsDir: string;
-  /** Test seam. Production uses a scheduled task on Windows and a detached child elsewhere. */
-  platform?: NodeJS.Platform;
   spawnDetached?: DetachedUpdaterSpawn;
-  spawnWindows?: DetachedUpdaterSpawn;
   nowMs?: () => number;
 }>): InteractiveSystemTaskKind<CliUpdateRemoteTaskResult> {
   return {
@@ -105,10 +99,7 @@ export function createCliUpdateRemoteTaskKind(deps: Readonly<{
 
       const logPath = join(deps.logsDir, `cli-update-${(deps.nowMs ?? Date.now)()}.log`);
       ctx.emit({ type: 'progress', stepId: 'cli.update.start', message: 'Starting the update on this machine' });
-      const platform = deps.platform ?? process.platform;
-      const spawn = deps.spawnDetached
-        ?? (platform === 'win32' ? deps.spawnWindows ?? spawnWindowsRemoteCliUpdate : spawnDetachedNode);
-      const spawned = spawn({
+      const spawned = (deps.spawnDetached ?? spawnDetachedNode)({
         script: deps.script,
         args: ['self', 'update', ...selfUpdateChannelArgs(deps.publicReleaseRing)],
         cwd: deps.cwd,

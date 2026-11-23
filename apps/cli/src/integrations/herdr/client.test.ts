@@ -35,26 +35,23 @@ describe('Herdr client workspace placement', () => {
   it('opens a Windows marker file on the named pipe Herdr actually listens on', () => {
     const marker = 'C:\\Users\\a\\AppData\\Roaming\\herdr\\herdr.sock';
     expect(resolveHerdrSocketEndpoint(marker, 'win32')).toBe(`\\\\.\\pipe\\${marker}`);
-    expect(resolveHerdrSocketEndpoint('\\\\.\\pipe\\happier-herdr-test', 'win32')).toBe('\\\\.\\pipe\\happier-herdr-test');
+    for (const prefix of ['pipe', 'PIPE', 'PiPe']) {
+      const qualified = `\\\\.\\${prefix}\\happier-herdr-test`;
+      expect(resolveHerdrSocketEndpoint(qualified, 'win32')).toBe(qualified);
+    }
     expect(resolveHerdrSocketEndpoint('/tmp/herdr.sock', 'linux')).toBe('/tmp/herdr.sock');
   });
 
-  it('connects through that pipe from the socket path Herdr reports', async () => {
-    const marker = 'C:\\Users\\a\\AppData\\Roaming\\herdr\\herdr.sock';
-    const socket = new Duplex({
-      read() {},
-      write(_chunk, _encoding, callback) { callback(); },
-    });
-    Object.assign(socket, { setTimeout: () => socket });
-    vi.mocked(createConnection).mockReturnValueOnce(socket as unknown as Socket);
-    const client = createHerdrClient({
-      binary: 'herdr', sessionName: 'work', socketPath: marker, actionTimeoutMs: 100, startupTimeoutMs: 100,
-    });
-    const pending = client.readPane('managed');
-    expect(vi.mocked(createConnection)).toHaveBeenCalledWith(resolveHerdrSocketEndpoint(marker));
-    socket.emit('connect');
-    socket.push(`${JSON.stringify({ id: 'happier', result: { read: { text: 'ok' } } })}\n`);
-    await expect(pending).resolves.toBe('ok');
+  it.skipIf(process.platform !== 'win32')('connects to the real named pipe from an unqualified Herdr endpoint', async () => {
+    await withHerdrApi(async api => {
+      // Herdr reports the namespaced name; Node's listener needs the qualified pipe address.
+      const marker = api.socketPath.slice('\\\\.\\pipe\\'.length);
+      const client = createHerdrClient({
+        binary: 'herdr', sessionName: 'work', socketPath: marker,
+        actionTimeoutMs: 1_000, startupTimeoutMs: 1_000,
+      });
+      await expect(client.readPane('managed')).resolves.toBe('ok');
+    }, { response: method => method === 'pane.read' ? { read: { text: 'ok' } } : undefined });
   });
 
   it.skipIf(process.platform === 'win32')('serves and cleans up a socket fixture when TMPDIR exceeds the Unix socket path budget', async () => {

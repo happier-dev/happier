@@ -125,7 +125,7 @@ function* textRequestChunks(method: string, paneId: string, text: string): Gener
  */
 export function resolveHerdrSocketEndpoint(socketPath: string, platform: NodeJS.Platform = process.platform): string {
   if (platform !== 'win32') return socketPath;
-  return socketPath.startsWith('\\\\.\\pipe\\') ? socketPath : `\\\\.\\pipe\\${socketPath}`;
+  return socketPath.toLowerCase().startsWith('\\\\.\\pipe\\') ? socketPath : `\\\\.\\pipe\\${socketPath}`;
 }
 
 function request(socketPath: string, method: string, params: JsonRecord, timeoutMs: number): Promise<JsonRecord> {
