@@ -7690,6 +7690,11 @@ In 0.3 development, local and SSH Home relay stores, CLI commands and bootstrap
 tasks consume the cli-common relay-access selection owner. Native executables
 resolve in the addressed host's environment.
 
+Managed Personal Home installation runs the SQLite migration phase with the
+updater's forward-recovery contract. Ordinary start and restart of an installed
+Personal Home start the service with SQLite auto-migration disabled and require
+a fresh startup receipt for the same Home identity and listener.
+
 SSH Personal Home setup and management use the installed remote CLI. The shared
 installer reads that binary's root help before invoking a Home command. If the
 selected release lacks the Home command, the task returns `remote_cli_update_required`.

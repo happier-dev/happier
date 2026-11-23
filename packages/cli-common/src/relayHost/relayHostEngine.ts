@@ -2437,6 +2437,9 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
               serverBinaryPath: join(defaults.installRoot, 'bin', serverBinaryName),
               env: requiresFreshPersonalHomeReceipt ? {
                 ...lifecycleEnv,
+                // Managed installation owns SQLite migrations and forward recovery. A normal
+                // start or restart of the installed Home only needs a fresh startup receipt.
+                HAPPIER_SQLITE_AUTO_MIGRATE: '0',
                 HAPPIER_SERVER_STARTUP_RECEIPT_PATH: lifecycleReceiptPath,
                 HAPPIER_SERVER_STARTUP_RECEIPT_NONCE: lifecycleReceiptNonce,
               } : {},

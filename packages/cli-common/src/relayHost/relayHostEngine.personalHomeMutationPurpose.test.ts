@@ -74,6 +74,7 @@ describe('RelayHostEngine (Personal Home mutation seam)', () => {
       `HAPPIER_PUBLIC_SERVER_URL=${PUBLIC_SERVER_URL}`,
       'AUTH_ANONYMOUS_SIGNUP_ENABLED=0',
       'HAPPIER_HOME_DEVICE_APPROVAL_REQUIRED=1',
+      'HAPPIER_SQLITE_AUTO_MIGRATE=1',
     ].join('\n') + '\n', 'utf8');
     if (options.withInitializedHome) {
       const migrationName = '20260903000000_test';
@@ -196,7 +197,7 @@ describe('RelayHostEngine (Personal Home mutation seam)', () => {
     });
   }
 
-  it('restart with an omitted purpose inherits the persisted Personal Home purpose and takes the Home operation lock', { timeout: 30_000 }, async () => {
+  it('restarts an existing Personal Home under its lock without rerunning updater migrations', { timeout: 30_000 }, async () => {
     const runtime = await createInstalledPersonalHomeRuntime({ withInitializedHome: true });
     const lockEvents: string[] = [];
     try {
@@ -213,6 +214,8 @@ describe('RelayHostEngine (Personal Home mutation seam)', () => {
       });
 
       expect(lockEvents).toEqual(['home:lifecycle:acquired', 'home:lifecycle:released']);
+      const unit = await readFile(join(runtime.homeDir, '.config', 'systemd', 'user', 'happier-server-preview.service'), 'utf8');
+      expect(unit).toMatch(/^Environment=HAPPIER_SQLITE_AUTO_MIGRATE=0$/mu);
       const envText = await readFile(join(runtime.defaults.configDir, 'server.env'), 'utf8');
       expect(envText).toContain('AUTH_ANONYMOUS_SIGNUP_ENABLED=0');
       const stateText = await readFile(join(runtime.defaults.installRoot, 'self-host-state.json'), 'utf8');
