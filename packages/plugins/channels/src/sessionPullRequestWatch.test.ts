@@ -436,8 +436,10 @@ describe('portable Account PR Watch Action', () => {
             const policy = { mode: 'notify', archiveAfterMerge: true } as const;
             const retained = { ...value, payload: { ...value.payload, enabled: true, target: { ...value.payload.target,
                 pullRequestWatch: { policy: { ...policy, stopWhenMerged } } } } };
+            const row = { rowId: value.id, revision: 1, value: retained };
+            const { binding } = readConversationBindingUpdateRow({ row, bindingId: value.id });
             const metadata = assembleSessionPullRequestWatchMetadata({ sessionId: 'session-a', provider: GITHUB_CHANNEL_PULL_REQUESTS,
-                rows: [{ rowId: value.id, revision: 1, value: retained }],
+                admitted: [{ row, binding }],
                 fixAttemptLimit: 3,
                 connectionReasons: new Map([['connection-1', 'credentials']]),
             });
@@ -466,7 +468,18 @@ describe('portable Account PR Watch Action', () => {
             const { pullRequestLink: _link, ...target } = value.payload.target;
             await state.put(withChannelStateSessionIdentity({ ...value, payload: { ...value.payload, target } }, target), { expectedRevision: 'absent' });
         }
-        const query = vi.spyOn(state, 'query');
+        const queryStorage = state.query.bind(state);
+        let returnedExactRows = 0;
+        let decodedExactBodies = 0;
+        const query = vi.spyOn(state, 'query').mockImplementation(async input => {
+            const page = await queryStorage(input);
+            if (input.index !== CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1
+                || input.prefix?.[2] === undefined || input.limit !== PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1) return page;
+            returnedExactRows += page.rows.length;
+            return { ...page, rows: page.rows.map(row => ({ ...row, value: { ...row.value,
+                get payload() { decodedExactBodies += 1; return row.value.payload; },
+            } })) };
+        });
         const execute = vi.fn(async (id: string, input: unknown) => {
             if (id !== 'session.targets.resolve' || input === null || typeof input !== 'object' || !('target' in input)) {
                 throw new Error('Watch metadata only resolves exact Session addresses');
@@ -508,6 +521,8 @@ describe('portable Account PR Watch Action', () => {
             // tombstones and unrelated chat bodies never enter that reader.
             expect(bindingReads.filter(([input]) => input.prefix?.[2] === 'session-a')).toHaveLength(2);
             expect(bindingReads.every(([input]) => input.prefix?.[2] === 'session-a' || input.prefix?.[2] === 'session-b')).toBe(true);
+            expect(returnedExactRows).toBeGreaterThan(1);
+            expect(decodedExactBodies).toBe(returnedExactRows);
             expect(query.mock.calls.some(([input]) => input.index === CHANNEL_STATE_INDEX_ID.byKind)).toBe(false);
         } finally { await kit.dispose(); }
     });

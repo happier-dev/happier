@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
-import { usePluginHostApi, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
 import {
     readTriageEntrySessionStartTargetV1, readTriageRecentSessionsV1,
@@ -33,56 +33,51 @@ export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOpti
     return React.useMemo(() => ({ ...snapshot, settleAction }), [snapshot, settleAction]);
 }
 
-/**
- * The last settled default target per action shape, so a detail opened after the first one keeps "Fix with Claude"
- * while its own read revalidates instead of drawing "Fix" and growing (last-known value while refreshing).
- */
-const LAST_DEFAULT_TARGETS = new Map<string, TriageEntrySessionStartTargetV1>();
-/**
- * The agent half of that target depends on the action alone (its profile), not on the entry's repository: an entry
- * in a repository not opened yet still names the last settled agent while its own read settles, so the primary keeps
- * its settled width from first paint ("Review with Claude", F10) instead of growing under the row.
- */
-const LAST_DEFAULT_AGENT_LABELS = new Map<string, string>();
-/** The agent is the profile's (`readTriageEntrySessionStartTargetV1`), so one key per profile; the default has none. */
-const agentLabelKey = (profileId: string | null | undefined): string => profileId ?? '';
-
 export function useTriageEntrySessionStartChoices(
     input: TriageEntrySessionStartChoiceInputV1 & Readonly<{ menuOpen: boolean }>,
 ): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; recentSessions: TriageRecentSessionsV1; settlingAgentLabel?: string }> {
     const host = usePluginHostApi() as unknown as TriageEntrySessionStartChoicesHostV1;
-    const targetKey = [input.action?.profileId, input.action?.workspaceMode, input.repository?.kind,
-        input.repository?.deployment, input.repository?.repository].map((part) => String(part ?? '')).join('\u001f');
-    const [settledDefaultTarget, setDefaultTarget] = React.useState<TriageEntrySessionStartTargetV1>(
-        () => LAST_DEFAULT_TARGETS.get(targetKey) ?? { status: 'idle' });
-    const [recentSessions, setRecentSessions] = React.useState<TriageRecentSessionsV1>({ status: 'idle' });
+    const scope = usePluginUiEphemeralSharedScope();
     const profileId = input.action?.profileId;
     const preferredAgentLabel = useSurfaceContext().preferredAgent?.label;
     const hasAccountPreferredAgent = profileId === null && preferredAgentLabel !== undefined;
-    const defaultTarget: TriageEntrySessionStartTargetV1 = hasAccountPreferredAgent ? { status: 'idle' } : settledDefaultTarget;
     const workspaceMode = input.action?.workspaceMode;
     const kind = input.repository?.kind;
     const deployment = input.repository?.deployment;
     const repository = input.repository?.repository;
-    React.useEffect(() => {
-        if (hasAccountPreferredAgent) return;
-        if (profileId === undefined || workspaceMode === undefined) { setDefaultTarget({ status: 'idle' }); return; }
+    const targetKey = JSON.stringify([profileId, workspaceMode, kind, deployment, repository]);
+    const [settled, setSettled] = React.useState<Readonly<{
+        host: typeof host; scope: typeof scope; key: string; target: TriageEntrySessionStartTargetV1;
+        profileLabel?: string;
+    }> | null>(null);
+    const current = settled?.host === host && settled.scope === scope && settled.key === targetKey ? settled : null;
+    const defaultTarget: TriageEntrySessionStartTargetV1 = hasAccountPreferredAgent ? { status: 'idle' }
+        : current?.target ?? { status: 'idle' };
+    const [recentSessions, setRecentSessions] = React.useState<TriageRecentSessionsV1>({ status: 'idle' });
+    React.useLayoutEffect(() => {
+        if (profileId === undefined || workspaceMode === undefined || hasAccountPreferredAgent) return;
         const lifetime = new AbortController();
-        const lastKnown = LAST_DEFAULT_TARGETS.get(targetKey);
-        setDefaultTarget(lastKnown ?? { status: 'loading' });
-        // The reader uses only these action facts; unrelated row objects do not create new demand.
+        const profileLabels = profileId === null ? null : scope?.acquire('triage.entry-profile-labels.v1', () => {
+            const labels = new Map<string, string>();
+            return { value: labels, retainWhenIdle: true, dispose: () => labels.clear() };
+        });
+        const profileLabel = profileId === null ? undefined : profileLabels?.value.get(profileId);
+        setSettled({ host, scope, key: targetKey, target: { status: 'loading' },
+            ...(profileLabel === undefined ? {} : { profileLabel }) });
+        // Repository and placement are current only once this entry's read settles.
         void readTriageEntrySessionStartTargetV1(host, {
             action: { profileId, workspaceMode },
             ...(kind === undefined || deployment === undefined || repository === undefined ? {}
                 : { repository: { kind, deployment, repository } }),
         }, { signal: lifetime.signal }).then((result) => {
             if (lifetime.signal.aborted) return;
-            if (result.status === 'ready') LAST_DEFAULT_TARGETS.set(targetKey, result);
-            if (result.status === 'ready' && result.agent != null) LAST_DEFAULT_AGENT_LABELS.set(agentLabelKey(profileId), result.agent.label);
-            setDefaultTarget(result);
+            if (profileId !== null && result.status === 'ready' && result.agent !== null) {
+                profileLabels?.value.set(profileId, result.agent.label);
+            }
+            setSettled({ host, scope, key: targetKey, target: result });
         });
-        return () => lifetime.abort();
-    }, [host, profileId, workspaceMode, kind, deployment, repository, targetKey, hasAccountPreferredAgent]);
+        return () => { lifetime.abort(); profileLabels?.release(); };
+    }, [host, scope, profileId, workspaceMode, kind, deployment, repository, targetKey, hasAccountPreferredAgent]);
     React.useEffect(() => {
         if (!input.menuOpen) { setRecentSessions({ status: 'idle' }); return; }
         const lifetime = new AbortController();
@@ -92,12 +87,10 @@ export function useTriageEntrySessionStartChoices(
         } })
             .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
         return () => lifetime.abort();
-    }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
-    // An action without a profile starts with the Account's preferred Agent, which the host names in the surface
-    // context from first paint (the same target the catalog read later resolves as its default): no "Fix" that grows.
-    // Not read yet (idle on the first frame, then loading): the settled agent for this action's profile holds the label.
-    const settlingAgentLabel = defaultTarget.status === 'loading' || (defaultTarget.status === 'idle' && profileId !== undefined)
-        ? (profileId === null ? preferredAgentLabel : undefined) ?? LAST_DEFAULT_AGENT_LABELS.get(agentLabelKey(profileId))
+    }, [host, scope, input.menuOpen, profileId, workspaceMode, kind, deployment, repository]);
+    // The host's Account choice already names the default. Placement is resolved when someone actually presses.
+    const settlingAgentLabel = defaultTarget.status === 'loading' || defaultTarget.status === 'idle'
+        ? profileId === null ? preferredAgentLabel : current?.profileLabel
         : undefined;
     return { defaultTarget, recentSessions, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
 }

@@ -6,13 +6,13 @@ import { SessionPullRequestWatchInputV1Schema, SessionPullRequestWatchReadResult
     SessionPullRequestWatchListResultV1Schema, resolveSessionPullRequestLinksV1,
     type ConversationBindingV1, type SessionPullRequestWatchReadResultV1, type SessionPullRequestWatchResultV1,
 } from '@happier-dev/channels-protocol/v1';
-import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
+import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
 import { readConversationBindingUpdateRow, readConversationConnectionUpdateRow,
-    updateConversationBindingPolicyInAccountCollection, type ChannelStateRow } from './accountLocalBindingPolicy.js';
+    updateConversationBindingPolicyInAccountCollection } from './accountLocalBindingPolicy.js';
 import { readSessionPullRequestBindingRows } from './sessionPullRequestBindings.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import { SESSION_PULL_REQUEST_WATCH_SETTINGS, continueSessionPullRequestFixProgress, isSessionPullRequestFixSequenceExhausted, readSessionPullRequestWatchPolicy } from './sessionPullRequestWatchPolicy.js';
-import { readSessionPullRequestLatestUpdateForBinding, type SessionPullRequestLatestUpdateV1 } from './sessionPullRequestLatestUpdate.js';
+import { readSessionPullRequestLatestUpdateForBinding } from './sessionPullRequestLatestUpdate.js';
 import { observeConversationSessionCollections } from './sessionCollectionObservation.js';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import { deliverSessionPullRequestConfiguredFix } from './sessionPullRequestWatchConfiguredFix.js';
@@ -47,15 +47,14 @@ function bindingSession(binding: ConversationBindingV1): string | undefined {
 }
 /** One assembler for exact Session reads, the paged Inbox index and the shared Resource. */
 export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
-    sessionId: string; rows: readonly ChannelStateRow[]; fixAttemptLimit: number | null; provider: SessionPullRequestProvider;
+    sessionId: string;
+    admitted: ReadonlyArray<Awaited<ReturnType<typeof readSessionPullRequestBindingRows>>[number]>;
+    fixAttemptLimit: number | null; provider: SessionPullRequestProvider;
     watchingMachines?: ReadonlyMap<string, { serverId: string; machineId: string; label: string }>;
-    latestUpdates?: ReadonlyMap<string, SessionPullRequestLatestUpdateV1 | null>;
     connectionReasons?: ReadonlyMap<string, 'credentials' | 'paused'>;
 }>): Extract<SessionPullRequestWatchReadResultV1, { kind: 'ready' }> {
     const bindings: Array<Extract<SessionPullRequestWatchReadResultV1, { kind: 'ready' }>['bindings'][number]> = [];
-    for (const row of input.rows) {
-        const { binding } = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
-        if (bindingSession(binding) !== input.sessionId || binding.deletionState !== 'none') continue;
+    for (const { row, binding } of input.admitted) {
         const link = resolveSessionPullRequestLinksV1([binding], input.provider).find(group => group.sessionId === input.sessionId)?.pullRequestLinks[0];
         if (!link) continue;
         const policy = readSessionPullRequestWatchPolicy(binding);
@@ -67,7 +66,7 @@ export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
         bindings.push({ bindingId: binding.id, revision: row.revision, link,
             watch: { policy, reason, fixAttemptLimit: input.fixAttemptLimit,
                 roundsStarted: progress?.roundsStarted ?? 0, watchingMachine: input.watchingMachines?.get(binding.connectionId) ?? null, ...(progress ? { progress } : {}) },
-            latestUpdate: input.latestUpdates?.get(binding.id) ?? null });
+            latestUpdate: null });
     }
     return { kind: 'ready', sessionId: input.sessionId, bindings };
 }
@@ -76,14 +75,13 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
     fixAttemptLimit?: number | null) {
     const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
     const [rows, currentLimit] = await Promise.all([
-        readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }).then(rows => rows.map(value => value.row)),
+        readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }),
         fixAttemptLimit === undefined ? readSessionPullRequestFixAttemptLimit(context) : fixAttemptLimit,
     ]);
     if (rows.length === 0) return { kind: 'ready' as const, sessionId, bindings: [] };
     const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
     const provider = contribution.descriptor.pullRequests!;
-    const connectionIds = new Set(rows.flatMap(row => typeof row.value[CHANNEL_STATE_FIELD.connectionId] === 'string'
-        ? [row.value[CHANNEL_STATE_FIELD.connectionId] as string] : []));
+    const connectionIds = new Set(rows.map(({ binding }) => binding.connectionId));
     const watchingMachines = new Map<string, { serverId: string; machineId: string; label: string }>();
     const connectionReasons = new Map<string, 'credentials' | 'paused'>();
     await Promise.all([...connectionIds].map(async connectionId => {
@@ -97,11 +95,14 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         watchingMachines.set(connectionId, { serverId: connection.transportOrigin.serverIdentityId,
             machineId: connection.transportOrigin.machineId, label: connection.transportOrigin.machineId });
     }));
-    const metadata = assembleSessionPullRequestWatchMetadata({ sessionId, rows, fixAttemptLimit: currentLimit, provider, watchingMachines, connectionReasons });
-    const latestUpdates = new Map(await Promise.all(metadata.bindings.map(async binding => [binding.bindingId,
-        await readSessionPullRequestLatestUpdateForBinding({ sessionId, bindingId: binding.bindingId }, context),
-    ] as const)));
-    return assembleSessionPullRequestWatchMetadata({ sessionId, rows, fixAttemptLimit: currentLimit, provider, watchingMachines, latestUpdates, connectionReasons });
+    const metadata = assembleSessionPullRequestWatchMetadata({
+        sessionId, admitted: rows, fixAttemptLimit: currentLimit, provider, watchingMachines, connectionReasons,
+    });
+    const bindings = await Promise.all(metadata.bindings.map(async binding => ({
+        ...binding,
+        latestUpdate: await readSessionPullRequestLatestUpdateForBinding({ sessionId, bindingId: binding.bindingId }, context),
+    })));
+    return { ...metadata, bindings };
 }
 export async function readSessionPullRequestWatchForSession(sessionId: string, context: SessionPullRequestWatchContext,
     fixAttemptLimit?: number | null): Promise<SessionPullRequestWatchReadResultV1> {

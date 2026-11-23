@@ -1331,29 +1331,28 @@ export function createTriageListWindowStore(deps: Readonly<{
             // provider, which is what lets a cold mount and the Composer picker
             // be visibly unsynchronized instead of falsely empty.
             const reusesRoster = sourceRefresh !== undefined && configuredSourceTaskScope === taskScope;
-            const resolving = sourceMachineReadiness?.pending === true;
-            const enumeration = reusesRoster
-                ? { configuredSources, configuredSourcesStatus }
-                : await enumerateConfiguredSources(censusLens);
-            if (!isCurrentRoster()) return;
-            if (!reusesRoster) rosterReadWhileResolving = resolving;
-            configuredSourceTaskScope = taskScope;
-            const configuredSourceChange = syncConfiguredSources(
-                enumeration.configuredSources,
-                enumeration.configuredSourcesStatus,
-            );
-            if (configuredSourceChange.acquisitionChanged && window !== null) {
-                // This check runs before asking the coordinator, so the first
-                // post-change invocation includes every available source with
-                // no predecessor frontier from the old mixed set.
-                resetPagingGeneration({ replacesGeneration: true });
-                cycleWasAppend = false;
-                activeCycleIsAppend = false;
-                activeCycleReplacesGeneration = true;
+            if (!reusesRoster) {
+                const resolving = sourceMachineReadiness?.pending === true;
+                const enumeration = await enumerateConfiguredSources(censusLens);
+                if (!isCurrentRoster()) return;
+                rosterReadWhileResolving = resolving;
+                configuredSourceTaskScope = taskScope;
+                const configuredSourceChange = syncConfiguredSources(
+                    enumeration.configuredSources,
+                    enumeration.configuredSourcesStatus,
+                );
+                if (configuredSourceChange.acquisitionChanged && window !== null) {
+                    // The first post-change invocation must start without an old frontier.
+                    resetPagingGeneration({ replacesGeneration: true });
+                    cycleWasAppend = false;
+                    activeCycleIsAppend = false;
+                    activeCycleReplacesGeneration = true;
+                }
             }
+            const hadRosterError = error !== null;
             error = null;
-            // A routed entry can use this admitted roster while list rows are still pending.
-            publish();
+            // A cold route can use a newly admitted roster while its list rows are pending.
+            if (!reusesRoster || hadRosterError) publish();
         } catch (cause) {
             if (!isCurrentRoster()) return;
             error = errorFrom(cause);

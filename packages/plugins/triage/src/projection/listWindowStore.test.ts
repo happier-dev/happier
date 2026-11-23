@@ -2111,6 +2111,39 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
+    it('projects pending metadata once before a targeted refresh using the admitted roster', async () => {
+        const harness = createHarness();
+        const clock = vi.fn(() => harness.clock.nowMs);
+        const reads = vi.fn(harness.readEntries);
+        const store = createTriageListWindowStore({ readEntries: reads, nowMs: clock });
+        try {
+            await store.refresh('view');
+            const [source] = store.getSnapshot().configuredSources;
+            expect(source).toBeDefined();
+            let entered!: (count: number) => void;
+            const enteredRead = new Promise<number>(resolve => { entered = resolve; });
+            let release!: () => void;
+            const heldRead = new Promise<void>(resolve => { release = resolve; });
+            reads.mockImplementationOnce(async input => {
+                entered(clock.mock.calls.length);
+                await heldRead;
+                return harness.readEntries(input);
+            });
+            clock.mockClear();
+            const refresh = store.refreshSources([source!.sourceInstanceId]);
+            try {
+                // Each full pending projection asks the refresh coordinator for its visible deadline.
+                expect(await enteredRead).toBe(2);
+            } finally {
+                release();
+                await refresh;
+            }
+            expect(store.getSnapshot().pending).toBe('idle');
+        } finally {
+            store.dispose();
+        }
+    });
+
     it('expires a published refresh deadline on read without a clock-driven wake', async () => {
         vi.useFakeTimers();
         try {
