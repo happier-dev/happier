@@ -3094,7 +3094,12 @@ provider tuple without a runtime deployment receipt. Neon and Supabase contribut
 Account Actions on the Environment controller, with invocation-bound provider
 HTTP and Plan 42 secret custody. Project creation and preview branch mutations
 never replay an ambiguous write: they re-observe or return an explicit unknown
-outcome for exact adoption. Connection saves return opaque references for pooled
+outcome for exact adoption. A Neon v2 schema-only branch may omit the native
+parent id even when ready. New schema-only creates atomically attach the exact
+source branch to their existing private correlation annotation. Recovery can
+use that annotation when the native parent is absent; an explicit conflicting
+parent still refuses adoption.
+Connection saves return opaque references for pooled
 `DATABASE_URL` and migration-safe `DIRECT_URL`; Supabase uses its provider-returned
 session pooler for the latter. The normal Environment binding owner binds both.
 The managed-data sheet reuses template Connect’s replacement review: each existing

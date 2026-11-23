@@ -314,10 +314,36 @@ describe('activated Neon managed data target', () => {
       const result = await h.kit.invokeAction('branches-create', { ...linked, ...createPair, name: 'Preview 17', correlation, initialization: 'parent-schema' });
       expect(result).toMatchObject({ status: 'provisioned', ready: false, branchId: 'br-preview', operationIds: [branchOperationId] });
       const request = h.requests.find(item => item.method === 'POST');
-      expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({ branch: { name: 'Preview 17', parent_id: 'br-main', init_source: 'parent-schema' }, endpoints: [{ type: 'read_write' }], annotation_value: annotation });
+      expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({ branch: { name: 'Preview 17', parent_id: 'br-main', init_source: 'parent-schema' }, endpoints: [{ type: 'read_write' }], annotation_value: { ...annotation, 'happier.sourceBranch': 'br-main' } });
       expect(h.requests.filter(item => item.method === 'POST')).toHaveLength(1);
       expect(h.saved).toHaveLength(1);
       expect(JSON.stringify(result)).not.toMatch(/branch-private|postgresql/u);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('recovers a schema-initialized branch after a lost create response using its exact saved source', async () => {
+    const parentBranchRef = { providerProjectId: project.id, branchId: 'saved-parent' };
+    const schemaCopy = { ...branch, parent_id: undefined, init_source: 'parent-schema' };
+    let writtenAnnotation: Record<string, string> = {};
+    const h = await host(request => {
+      if (request.method === 'POST') {
+        writtenAnnotation = JSON.parse(new TextDecoder().decode(request.body)).annotation_value;
+        throw new Error('response lost');
+      }
+      const wrongSource = { ...schemaCopy, id: 'br-other-source' };
+      const notProven = { ...schemaCopy, id: 'br-unknown-source' };
+      const wrongMode = { ...schemaCopy, id: 'br-other-mode', init_source: 'parent-data' };
+      return { branches: [schemaCopy, wrongSource, notProven, wrongMode], pagination: {}, annotations: {
+        [schemaCopy.id]: { object: { type: 'branch', id: schemaCopy.id }, value: writtenAnnotation },
+        [wrongSource.id]: { object: { type: 'branch', id: wrongSource.id }, value: { ...annotation, 'happier.sourceBranch': 'different' } },
+        [notProven.id]: { object: { type: 'branch', id: notProven.id }, value: annotation },
+        [wrongMode.id]: { object: { type: 'branch', id: wrongMode.id }, value: writtenAnnotation },
+      } };
+    });
+    try {
+      expect(await h.kit.invokeAction('branches-create', { ...linked, name: branch.name, correlation, initialization: 'parent-schema', parentBranchRef }))
+        .toMatchObject({ status: 'provisioned', branchId: schemaCopy.id, recovered: true });
+      expect(h.requests.map(request => request.method)).toEqual(['POST', 'GET']);
     } finally { await h.kit.dispose(); }
   });
 

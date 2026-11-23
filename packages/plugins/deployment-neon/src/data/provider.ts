@@ -317,8 +317,16 @@ async function recoverBranch(input: Input & CreateBranchInput, context: Context)
   const body = await request(context, `${projectPath(selected.providerProjectId)}/branches?${query}`);
   const expected = annotation(input, input.correlation);
   const annotations = record(body.annotations ?? {});
-  const candidates = list(body.branches).map(record).filter(item => item.project_id === selected.providerProjectId
-    && item.parent_id === selected.branchId && matches(annotations[text(item.id)], text(item.id), expected));
+  const candidates = list(body.branches).map(record).filter(item => {
+    if (item.project_id !== selected.providerProjectId
+      || item.init_source !== undefined && item.init_source !== input.initialization) return false;
+    const id = text(item.id);
+    // Neon can omit parent_id from a schema copy. Its atomic create annotation
+    // keeps the admitted source exact without accepting a contradictory native parent.
+    return (item.parent_id === selected.branchId && matches(annotations[id], id, expected))
+      || (item.parent_id === undefined && input.initialization === 'parent-schema'
+        && matches(annotations[id], id, { ...expected, 'happier.sourceBranch': selected.branchId }));
+  });
   const page = next(body, 'branches');
   if (input.cursor || candidates.length !== 1 || page.nextCursor) return { status: 'outcome_unknown' as const, code: 'outcome_unknown', ...page };
   return { ...configured(input, selected.providerProjectId, text(candidates[0]!.id), { branch: candidates[0], operations: [] }, true),
@@ -336,7 +344,8 @@ export async function createBranch(input: Input & CreateBranchInput, context: Co
   try {
     const body = await request(context, `${projectPath(selected.providerProjectId)}/branches`, 'POST', {
       branch: { name: input.name, parent_id: selected.branchId, init_source: input.initialization },
-      endpoints: [{ type: 'read_write' }], annotation_value: annotation(input, input.correlation) });
+      endpoints: [{ type: 'read_write' }], annotation_value: { ...annotation(input, input.correlation),
+        ...(input.initialization === 'parent-schema' ? { 'happier.sourceBranch': selected.branchId } : {}) } });
     const branchId = mutationResponse(() => branchIdentity(record(body.branch), selected.providerProjectId));
     known.branchId = branchId;
     if (hasCreatedSaveIntent(input)) captured = await captureCreated(body, selected.providerProjectId, branchId, input, context);
