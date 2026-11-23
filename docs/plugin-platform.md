@@ -7025,6 +7025,13 @@ schedule a retry. Terminal, cancelled and stale preparations still retire
 their exact stages. Existing candidate HTTP diagnostics identify the declared
 plugin, Collection and initiating trigger without row identities or content.
 
+In 0.3 development, bundled release-less preparation binds the declaring daemon
+module by plugin id, version, and exact Account Collection declarations. The
+publisher may compact Action schemas in the manifest used for the writer claim.
+Home still binds candidate staging and promotion to the exact published ref.
+When Home refuses a mutation because its writer has yet to be promoted, the
+daemon surfaces the typed preparation refusal if one is available.
+
 In 0.3 development source, the public SDK Collections entrypoint exposes
 `projectPluginAccountCollectionDeclaration(localId, definition)` for author
 tooling and the hosted Collection Data bridge. It shares the `definePlugin`

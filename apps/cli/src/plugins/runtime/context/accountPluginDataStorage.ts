@@ -484,11 +484,25 @@ function deleteAccountKvEntry(
     return inAccountKvRowAlgebra(() => deletePluginAccountKvEntryV1(row, key, previous));
 }
 
-function parseCollectionError(value: unknown, kind: 'read' | 'mutation'): PluginError | null {
+function parseCollectionError(
+    value: unknown,
+    kind: 'read' | 'mutation',
+    writerRefusal?: PluginError | null,
+): PluginError | null {
     const parsed = kind === 'read'
         ? PluginCollectionReadErrorV1Schema.safeParse(value)
         : PluginCollectionMutationErrorV1Schema.safeParse(value);
     if (!parsed.success) return null;
+    // A failed claim only explains this mutation once Home confirms there is
+    // no matching writer. An existing writer may still admit the operation.
+    if (kind === 'mutation' && parsed.data.error === 'collection_writer_contract_unavailable' && writerRefusal
+        && (writerRefusal.code === 'plugin_intent_writable_collections_not_ready'
+            || PluginCollectionCandidatePreparationErrorV1Schema.safeParse({
+                ...asJsonObject(writerRefusal.details ?? null),
+                error: writerRefusal.code,
+            }).success)) {
+        return writerRefusal;
+    }
     const details = parsed.data.error === 'collection_relation_restricted'
         ? normalizeStrictJsonValue({
             dependentCount: parsed.data.dependentCount,
@@ -877,10 +891,10 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             credentials: StoredCredentials,
             operationSignal?: AbortSignal,
             triggerKind: CandidatePreparationTriggerKind = 'collection-operation',
-        ): Promise<void> => {
+        ): Promise<PluginError | null> => {
             const manifest = resolveReleaseLessDeclaration(lifecycle.pluginId);
             const scopeKey = currentAccountScopeKey();
-            if (!manifest || scopeKey === null) return;
+            if (!manifest || scopeKey === null) return null;
             const key = `${scopeKey}\u0000${lifecycle.pluginId}`;
             const availabilityChangeKey = readPluginAccountAvailabilityChangeKey(scopeKey, lifecycle.pluginId);
             const realDemand = triggerKind === 'collection-operation';
@@ -1042,6 +1056,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 retainedClaim.diagnosticClaimAttemptId ? { claimAttemptId: retainedClaim.diagnosticClaimAttemptId } : {});
             await assertBoundCurrent(lifecycle, operationSignal);
             if (refusal?.code === 'plugin_collection_contract_conflict') throw refusal;
+            return refusal;
         };
         const request = async (input: Readonly<{
             path: string;
@@ -1053,7 +1068,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
         }>): Promise<unknown> => {
             let writerRefusal: PluginError | null = null;
             try {
-                await ensureWriterClaim(input.credentials, input.operationSignal);
+                writerRefusal = await ensureWriterClaim(input.credentials, input.operationSignal);
             } catch (error) {
                 if (input.kind !== 'read' || !isPluginError(error) || error.code !== 'plugin_collection_contract_conflict') throw error;
                 // A retained exact ref may still be readable. Data's server
@@ -1068,8 +1083,9 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             diagnosticCollectionId: input.diagnosticCollectionId,
             ...(input.operationSignal ? { operationSignal: input.operationSignal } : {}),
                 parseError: (value, status) => {
-                    const error = parseCollectionError(value, input.kind);
-                    return writerRefusal && status === 404 && error?.code === 'collection_unavailable'
+                    const error = parseCollectionError(value, input.kind, writerRefusal);
+                    return writerRefusal?.code === 'plugin_collection_contract_conflict'
+                        && status === 404 && error?.code === 'collection_unavailable'
                         ? writerRefusal : error;
                 },
                 unavailableMessage: 'Account Collection transport is unavailable',
@@ -2201,7 +2217,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     const encryption = await currentEncryption(credentials, operationSignal);
                     const accountId = readAccountIdFromToken(credentials.token);
                     if (!accountId) throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Collection sharing requires an authenticated Account identity');
-                    if (mutation) await ensureWriterClaim(credentials, operationSignal);
+                    const writerRefusal = mutation ? await ensureWriterClaim(credentials, operationSignal) : null;
                     return createPluginCollectionSharingClientV1<PluginAccountCollectionValue<TDefinition>>({
                         accountId,
                         contract: collection.contract,
@@ -2213,7 +2229,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             path, body, kind: options.kind, credentials, operationSignal,
                             diagnosticCollectionId: collection.contract.collectionId,
                             parseError: value => {
-                                const collectionError = parseCollectionError(value, options.kind);
+                                const collectionError = parseCollectionError(value, options.kind, writerRefusal);
                                 if (collectionError) return collectionError;
                                 const parsed = PluginCollectionSharingErrorV1Schema.safeParse(value);
                                 return parsed.success ? dataError(parsed.data.error, 'Collection sharing request was refused') : null;

@@ -1300,7 +1300,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const source = resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false });
             if (!source) return null;
             const projected = await loadCollectionMigrationModule(source, target);
-            if (serializeCanonicalPluginManifest(projected.manifest) !== serializeCanonicalPluginManifest(declaration)) return null;
+            if (target.sourceSpec?.kind === 'bundled') {
+                // Publication can compact Action schemas independently of the
+                // daemon module. Bind callbacks to the exact Collection declarations.
+                const manifest = projected.manifest;
+                if (manifest.id !== declaration.id || manifest.version !== declaration.version
+                    || !isDeepStrictEqual(manifest.contributes.accountCollections, declaration.contributes.accountCollections)) return null;
+            } else if (serializeCanonicalPluginManifest(projected.manifest) !== serializeCanonicalPluginManifest(declaration)) {
+                return null;
+            }
             return projected.module.collectionMigrations;
         },
     });

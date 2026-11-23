@@ -1,13 +1,23 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import * as fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+    compilePluginJsonSchema,
+    encodePluginCollectionLogicalValueV1,
+    isValidPluginJsonSchemaValue,
     normalizePluginAccountCollectionContractsV1,
+    PluginAccountCollectionContributionV1Schema,
+    PluginManifestV2Schema,
     PluginUiArtifactDigestV1Schema,
+    type NormalizedPluginAccountCollectionContractV1,
     type PluginAccountCollectionContributionV1,
 } from '@happier-dev/protocol';
+import { computePluginManifestDigestV2 } from '@happier-dev/protocol/plugins/manifest/digest';
+import { PLUGIN_MANIFEST as channelsManifest } from '@happier-dev/plugins-channels/manifest';
 import type { StoredCredentials } from '@/persistence';
 
 import type {
@@ -16,8 +26,11 @@ import type {
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createBundledPluginPublicationFsFixture } from '@/plugins/projection/registry/builtIn/locators.testkit';
+import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
 import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
+import { compactActionSchemas } from '../../../scripts/build-owned/bundledPlugins/actionSchemas';
 import { bindPluginRuntimeSourceAuthority } from './sourceAuthority';
 
 import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
@@ -208,6 +221,112 @@ async function seedCandidateFixture(input: Readonly<{
 }
 
 describe('Collection candidate preparation runtime owner', () => {
+    it('promotes a retained Channels writer using the bundled declaration and real daemon migrations', async () => {
+        const authorManifest = PluginManifestV2Schema.parse(channelsManifest);
+        const publishedManifest = PluginManifestV2Schema.parse(compactActionSchemas(authorManifest));
+        expect(computePluginManifestDigestV2(authorManifest)).not.toBe(computePluginManifestDigestV2(publishedManifest));
+        const publishedBytes = Buffer.from(JSON.stringify(publishedManifest));
+        const pluginId = authorManifest.id;
+        const collectionId = 'channel-state';
+        const sourceFixture = JSON.parse(await readFile(new URL(
+            '../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV23.json', import.meta.url,
+        ), 'utf8'));
+        const source = PluginAccountCollectionContributionV1Schema.parse(sourceFixture.collection);
+        const current = PluginAccountCollectionContributionV1Schema.parse(
+            authorManifest.contributes.accountCollections.find(entry => entry.id === collectionId),
+        );
+        const contractFor = (contribution: PluginAccountCollectionContributionV1) => {
+            const [contract] = normalizePluginAccountCollectionContractsV1({ pluginId, contributions: [contribution] });
+            return contract!;
+        };
+        const ref = (contract: NormalizedPluginAccountCollectionContractV1) => ({
+            pluginId, collectionId, schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest,
+        });
+        const sourceContract = contractFor(source);
+        const targetContract = contractFor(current);
+        const retainedWriter = ref(sourceContract);
+        const intent = { pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [retainedWriter], revision: '0' };
+        const rowId = 'checkpoint-1';
+        const checkpoint = { id: rowId, 'record-kind': 'checkpoint', v: 1, 'connection-id': 'connection-1', 'created-at': 0, 'updated-at': 1, payload: {
+            authorityEpoch: 1, opaqueToken: { offset: 1 }, lastOccurrenceId: null, revision: 1, nextPollNotBeforeMs: null,
+        } };
+        const encodeCheckpoint = (contract: NormalizedPluginAccountCollectionContractV1) => {
+            const validator = compilePluginJsonSchema(contract.schema);
+            const result = encodePluginCollectionLogicalValueV1({ contract, value: checkpoint,
+                isValidLogicalValue: value => isValidPluginJsonSchemaValue(validator, value),
+                encryptionMode: 'plain', material: null, randomBytes,
+            });
+            if (result.status !== 'encoded') throw new Error(`Invalid retained Channels checkpoint: ${result.reason}`);
+            return { content: result.content, projection: result.projection };
+        };
+        const retainedCheckpoint = encodeCheckpoint(sourceContract);
+        const migratedCheckpoint = encodeCheckpoint(targetContract);
+        let staged = false;
+        let promotedWriter: typeof retainedWriter | undefined;
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-writer-preparation-'));
+        const publication = createBundledPluginPublicationFsFixture({ ...fs });
+        const readFileSync = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+            if (String(args[0]).replaceAll('\\', '/').endsWith('/assets/bundled-plugin-manifests/channels.json')) {
+                return args[1] === 'utf8' ? publishedBytes.toString('utf8') : publishedBytes;
+            }
+            return publication.readFileSync(...args);
+        }) as typeof fs.readFileSync);
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        try {
+            const dependencies = accountStorageDependencies([]);
+            runtime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir, pluginIds: [pluginId],
+                contributes: createResolvedContributionRegistry(resolveBuiltInContributions({ pluginIds: [pluginId] })),
+                resolveDevelopmentSourceAuthority: ({ pluginId: sourcePluginId, rootPath }) => sourcePluginId === pluginId
+                    ? { kind: 'development', registeredRootId: rootPath, canonicalRoot: rootPath, observedRevision: 1 }
+                    : null,
+                accountStorageDependencies: {
+                    ...dependencies,
+                    http: {
+                        ...dependencies.http!,
+                        async post(url, body) {
+                            const request = JSON.parse(body);
+                            if (url.endsWith('/candidate-preparation/source-page')) {
+                                return { status: 200, data: { rows: [{ rowId, revision: 1, ...retainedCheckpoint, alreadyStaged: false }] } };
+                            }
+                            if (url.endsWith('/candidate-preparation/stage')) {
+                                expect(request.items).toEqual([{ source: { rowId, revision: 1 }, target: migratedCheckpoint }]);
+                                staged = true;
+                                return { status: 200, data: { results: [{ status: 'staged' }] } };
+                            }
+                            if (!url.endsWith('/collection-writers/claim')) throw new Error(`Unexpected POST: ${url}`);
+                            if (!request.manifest) return { status: 404, data: { error: 'plugin_declaration_not_found' } };
+                            const manifest = PluginManifestV2Schema.parse(request.manifest);
+                            const targetCollection = manifest.contributes.accountCollections.find(entry => entry.id === collectionId);
+                            if (!targetCollection) throw new Error('The bundled claim must declare channel-state');
+                            const target = ref(contractFor(targetCollection));
+                            if (request.prepare) {
+                                return { status: 200, data: { intent, preparation: [{ source, binding: {
+                                    source: retainedWriter, target,
+                                    candidate: { releaseVersion: manifest.version, artifactDigest: computePluginManifestDigestV2(manifest), releaseLessManifest: manifest },
+                                } }] } };
+                            }
+                            if (!staged) return { status: 400, data: { error: 'plugin_intent_writable_collections_not_ready' } };
+                            promotedWriter = target;
+                            return { status: 200, data: { intent: { ...intent, writableCollections: [target], revision: '1' } } };
+                        },
+                    },
+                },
+            });
+            const materialization = runtime.readReleaseLessMaterializations?.().find(entry => entry.pluginId === pluginId);
+            expect(materialization?.trustState).toBe('trusted');
+            await runtime.claimReleaseLessDeclarations().catch((error: unknown) => {
+                if (!(error instanceof AggregateError)) throw error;
+                expect(error.errors).toEqual([]);
+            });
+            expect(promotedWriter).toEqual(ref(targetContract));
+        } finally {
+            await runtime?.dispose();
+            readFileSync.mockRestore();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     it('loads the declaring release-less module and migrates retained rows before an Action reads them', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-release-less-preparation-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-release-less-preparation-plugin-'));

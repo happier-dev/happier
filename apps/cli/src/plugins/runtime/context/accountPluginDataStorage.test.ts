@@ -1926,7 +1926,7 @@ describe('Account plugin Data storage host', () => {
             expect(calls).not.toContain(CLAIM_URL);
         });
 
-        it('prepares a populated release-less upgrade with the declaring callback before claiming its writer', async () => {
+        it.each([false, true])('prepares a populated release-less writer or reports the preparation refusal (refused=%s)', async (preparationRefused) => {
             const targetDeclaration = {
                 ...contribution,
                 schemaVersion: 2,
@@ -1950,10 +1950,10 @@ describe('Account plugin Data storage host', () => {
             const bind = claimingHost({
                 contracts: [target],
                 resolveReleaseLessDeclaration: () => manifest,
-                resolveReleaseLessCollectionMigrations: async () => ({ tasks: [{
+                ...(preparationRefused ? {} : { resolveReleaseLessCollectionMigrations: async () => ({ tasks: [{
                     ...targetDeclaration.migrations[0]!,
-                    migrate: (value) => ({ ...value as Record<string, import('@happier-dev/plugin-sdk').JsonValue>, privateNote: 'migrated' }),
-                }] }),
+                    migrate: (value: import('@happier-dev/plugin-sdk').JsonValue) => ({ ...value as Record<string, import('@happier-dev/plugin-sdk').JsonValue>, privateNote: 'migrated' }),
+                }] }) }),
                 scopeKey: () => 'account-a',
                 post: async (url, body) => {
                     requests.push(url);
@@ -1975,10 +1975,18 @@ describe('Account plugin Data storage host', () => {
                         staged = true;
                         return { status: 200, data: { results: [{ status: 'staged' }] } };
                     }
+                    if (url.endsWith('/v1/plugins/data/mutate')) return { status: 409, data: { error: 'collection_writer_contract_unavailable' } };
                     return { status: 200, data: { row: null, absenceEpoch: 0 } };
                 },
             });
-            await bind().collection({ ...collectionDefinition, schemaVersion: 2, readableSchemaVersions: [1, 2], migrations: [{ ...targetDeclaration.migrations[0]!, migrate: (value) => value }] }).get('task-1');
+            const collection = bind().collection({ ...collectionDefinition, schemaVersion: 2, readableSchemaVersions: [1, 2], migrations: [{ ...targetDeclaration.migrations[0]!, migrate: (value) => value }] });
+            await expect(collection.get('task-1')).resolves.toBeNull();
+            if (preparationRefused) {
+                await expect(collection.put({ id: 'task-1', status: 'open', privateNote: 'pending' }, { expectedRevision: 'absent' }))
+                    .rejects.toMatchObject({ code: 'collection_candidate_preparation_invalid' });
+                expect(promoted).toBe(false);
+                return;
+            }
             expect(staged, JSON.stringify(requests)).toBe(true);
             expect(promoted).toBe(true);
         });
