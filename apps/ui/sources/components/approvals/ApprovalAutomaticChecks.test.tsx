@@ -122,6 +122,18 @@ describe('Action before checks on the approval card', () => {
     await screen.unmount();
   });
 
+  it('shows a declined check reason and its Run when the Workflow name is unavailable', async () => {
+    const runId = 'run-private';
+    const screen = await renderScreen(<ApprovalAutomaticChecks
+      checks={checks({ phase: 'refused', runs: [{ ...ref, runId }],
+        results: [{ ...ref, runId, outcome: 'failed', reason: 'content_unavailable' }] })}
+      actionTitle="Deploy" serverId={null} accountLifetime={null}
+      onOpenRoute={() => undefined} testID="private-check" />);
+    expect(screen.findByTestId('private-check:reason').props.children).toBe('workflows.contentUnavailable');
+    expect(screen.getTextContent()).not.toContain('workflows.triggers.checks.aCheckLead');
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.openRun');
+  });
+
   // 05 S8: Review steps opens the shared check's steps inside the card; it never leaves the decision.
   it('opens Review steps in place on the consent card', async () => {
     const navigation = createExpoRouterMock({ params: {} });
@@ -270,6 +282,7 @@ describe('Action before checks on the approval card', () => {
   it('leads a refusal with its reason and lets the card leave its own failure line out', async () => {
     const refused = checks({
       phase: 'refused',
+      selected: [{ ...selected, workflowId: 'builtin:open-a-pull-request' }],
       runs: [{ ...ref, runId: 'run-214' }],
       results: [{ ...ref, runId: 'run-214', outcome: 'failed' }],
     });
@@ -283,7 +296,8 @@ describe('Action before checks on the approval card', () => {
     const text = screen.getTextContent();
     expect(text).toContain('3 release tests fail in billing.');
     expect(text).not.toContain('workflows.triggers.checks.refused');
-    expect(text).toContain('workflows.triggers.checks.aCheckLead');
+    expect(text).toContain('workflows.builtins.openAPullRequest.title');
+    expect(text).toContain('workflows.triggers.checks.openRun');
     await screen.unmount();
   });
 

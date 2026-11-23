@@ -219,19 +219,13 @@ export const ApprovalAutomaticChecks = React.memo(
         ),
       [checks.selected],
     );
-    // An unnamed check reads "A check" where it starts a sentence or a line, "a check" inside one.
-    const nameOf = (
-      ref: Readonly<{ automationId: string; triggerId: string }>,
-      position: 'lead' | 'inline' = 'lead',
-    ) => {
-      const workflowId = selectedByKey.get(
-        actionAutomationTriggerKeyV1(ref),
-      )?.workflowId;
-      return (
-        (workflowId ? resolveTitle(workflowId) : null) ??
-        t(position === 'lead' ? 'workflows.triggers.checks.aCheckLead' : 'workflows.triggers.checks.aCheck')
-      );
+    const knownNameOf = (ref: Readonly<{ automationId: string; triggerId: string }>) => {
+      const workflowId = selectedByKey.get(actionAutomationTriggerKeyV1(ref))?.workflowId;
+      return workflowId ? resolveTitle(workflowId) : null;
     };
+    // Decision sentences can still refer to a check whose name is unavailable.
+    const nameOf = (ref: Parameters<typeof knownNameOf>[0], position: 'lead' | 'inline' = 'lead') =>
+      knownNameOf(ref) ?? t(position === 'lead' ? 'workflows.triggers.checks.aCheckLead' : 'workflows.triggers.checks.aCheck');
     const runOf = (
       ref: Readonly<{ automationId: string; triggerId: string }>,
     ) =>
@@ -384,6 +378,7 @@ export const ApprovalAutomaticChecks = React.memo(
     } else if (checks.phase === 'refused' && failed) {
       // The refusal settled the request: its reason leads the block (said once, here), the check's name and Run beneath
       // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
+      const workflowName = knownNameOf(failed);
       const rawReason = failed.reason ?? props.failureReason ?? null;
       const reason = rawReason === 'content_unavailable'
         ? presentActionFailureOutcome({ error: rawReason, errorCode: rawReason }).reason
@@ -403,7 +398,7 @@ export const ApprovalAutomaticChecks = React.memo(
             </View>
           )}
           <View style={styles.line}>
-            {reason ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{nameOf(failed)}</Text> : null}
+            {reason && workflowName ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{workflowName}</Text> : null}
             {openRun(failed.runId)}
           </View>
         </View>
