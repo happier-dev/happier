@@ -7,7 +7,6 @@ import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBo
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
 import { DIGITALOCEAN_SNAPSHOT_FACTS } from './machine/nativeClient.js';
 import { CONTRIBUTION, reference as resourceRef, dropletLaunchSchema, dropletResourceSchema, dropletNativeOperationSchema } from './machine/schemas.js';
@@ -201,10 +200,12 @@ export const PLUGIN = definePlugin({
         if (observed.kind === 'failed') throw new PluginError({ code: 'native_action_failed' });
         if (observed.kind !== 'present' || !observed.ready || !observed.ssh) throw new PluginError({ code: 'provider_unavailable',
           ...(observed.kind === 'unavailable' && observed.nativeCause ? { details: { nativeCause: observed.nativeCause } } : {}) });
-        if (input.guestHostPublicKey !== undefined && input.credentialRef) return buildMachineProvisionerPinnedSshBootstrap({
-          connection: observed.ssh, credentialRef: input.credentialRef, guestHostPublicKey: input.guestHostPublicKey });
-        return resolveMachineProvisionerSshBootstrap({ signal: context.signal,
-          connection: observed.ssh, credentialRef: input.credentialRef }); },
+        const { credentialRef, guestHostPublicKey } = input;
+        if (!credentialRef) throw new PluginError({ code: 'credential_unavailable' });
+        if (guestHostPublicKey !== undefined) return buildMachineProvisionerPinnedSshBootstrap({
+          connection: observed.ssh, credentialRef, guestHostPublicKey });
+        context.signal.throwIfAborted();
+        return { kind: 'ssh' as const, ...observed.ssh, credentialRef }; },
     },
     inspect: { ...accountDefaults, title: 'Inspect exact DigitalOcean resource', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,

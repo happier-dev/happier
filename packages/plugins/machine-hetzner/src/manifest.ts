@@ -7,7 +7,7 @@ import { projectMachineProvisionerActionFailure, projectMachineProvisionerOption
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
   MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
+import type { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createHetznerProvider } from './machine/provider.js';
 import { HETZNER_SNAPSHOT_FACTS } from './machine/nativeClient.js';
 import { createHetznerPreparationClient, HETZNER_PREPARATION_HOME, HetznerPreparationInputSchema, HetznerPreparedArtifactSchema, HetznerPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
@@ -60,7 +60,7 @@ export const MACHINE_PROVISIONER = {
   reconciliation: { action: 'reconcile', nativeOperationSchema: HetznerNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
-export const PLUGIN = definePlugin({
+export const createHetznerPlugin = (resolveSshBootstrap?: typeof resolveMachineProvisionerSshBootstrap) => definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'Hetzner Machines',
   // The provider's own mark beside its name in Machines: Hetzner's mark from Simple Icons 13.21.0 (CC0-1.0), brand red #D50C2D with the white H.
   brand: { iconResourceId: 'brand-icon' },
@@ -188,12 +188,16 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
       async run(input, context: PluginAccountActionContext | PluginInvocationContext) {
         try {
-          const connection = await (await runtime(context)).bootstrap(input.resource);
-          if (input.guestHostPublicKey !== undefined && input.credentialRef !== undefined) return buildMachineProvisionerPinnedSshBootstrap({
-            connection: { address: connection.address, user: connection.username, port: connection.port },
-            credentialRef: input.credentialRef, guestHostPublicKey: input.guestHostPublicKey });
-          return await resolveMachineProvisionerSshBootstrap({ ...('exec' in context.services ? { exec: context.services.exec } : {}), signal: context.signal,
-            connection: { address: connection.address, user: connection.username, port: connection.port }, credentialRef: input.credentialRef });
+          const native = await (await runtime(context)).bootstrap(input.resource);
+          const connection = { address: native.address, user: native.username, port: native.port };
+          const { credentialRef, guestHostPublicKey } = input;
+          if (!credentialRef) throw new PluginError({ code: 'credential_unavailable' });
+          if (guestHostPublicKey !== undefined) return buildMachineProvisionerPinnedSshBootstrap({ connection, credentialRef, guestHostPublicKey });
+          context.signal.throwIfAborted();
+          if (resolveSshBootstrap && 'exec' in context.services) {
+            return await resolveSshBootstrap({ exec: context.services.exec, signal: context.signal, connection, credentialRef });
+          }
+          return { kind: 'ssh' as const, ...connection, credentialRef };
         } catch (error) {
           if (error instanceof HetznerNativeError) throw new PluginError({ code: error.code,
             ...(error.nativeCause ? { details: { nativeCause: error.nativeCause } } : {}) });
@@ -259,6 +263,7 @@ export const PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
 });
+export const PLUGIN = createHetznerPlugin();
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
-export const activateAccount = (api: Parameters<typeof PLUGIN.activateAccount>[0]) =>
-  PLUGIN.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' });
+export const activateAccount = (api: Parameters<typeof PLUGIN.activateAccount>[0], plugin = PLUGIN) =>
+  plugin.activateAccount(api, defaults.execution.account);
