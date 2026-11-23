@@ -662,6 +662,17 @@ it.runIf(process.platform === 'linux')('keeps managed command input and output p
         scope: { accountId: requester.accountId, machineId: home.machineId }, result: output } });
     expect(custodianRead, JSON.stringify(custodianRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
     expect(otherRead, JSON.stringify(otherRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+
+    const withdrawal = await fetch(new URL(`/v1/machines/${encodeURIComponent(guest.id)}/access`, home.baseUrl), {
+        method: 'DELETE',
+        headers: { 'authorization': `Bearer ${credentials.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ principal: { kind: 'account', accountId: requester.accountId } }),
+    });
+    expect(withdrawal.status).toBe(200);
+    expect(await withdrawal.json()).toMatchObject({ kind: 'removed', effectiveAccess: 'none' });
+    await expect(runUi(requester, randomUUID())).rejects.toMatchObject({ code: 'permission_denied', status: 403 });
+    expect(nativeCalls).toHaveLength(4);
+    expect(providerReads).toHaveLength(4);
 }, 120_000);
 
 // Replace only the native executable. The real Lima executor supplies the
