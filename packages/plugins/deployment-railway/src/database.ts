@@ -12,12 +12,13 @@ function descriptor(engine: Engine, target: DatabaseManagedDeploymentTargetV1,
     capabilities: [...builtinDatabaseCapabilities(engine)] };
 }
 
-async function databaseName(engine: Engine, preparation: Scope, context: PluginAccountActionContext) {
+/** The selected service's private address; it names the engine and database. */
+async function privateAddress(engine: Engine, preparation: Scope, context: PluginAccountActionContext) {
   const value = await railway(context).project.readServiceVariable(selectedService(preparation), engines[engine].privateVariable).catch(readFailure);
   if (!value) return null;
   try {
     const parsed = parseDatabaseConnectionUrl(value);
-    return parsed.engine === engine && parsed.hostname ? parsed.database : null;
+    return parsed.engine === engine && parsed.hostname ? { value, database: parsed.database } : null;
   } catch {
     return null;
   }
@@ -25,12 +26,30 @@ async function databaseName(engine: Engine, preparation: Scope, context: PluginA
 
 export function railwayDatabaseRuntime(engine: Engine): DeploymentTargetDatabaseRuntimeV1 {
   return {
+    async readRoleEndpoint({ preparation }, context) {
+      const service = selectedService(preparation);
+      const address = await privateAddress(engine, preparation, context);
+      if (!address) throw new PluginError({ code: 'database_connection_unavailable' });
+      const proxies = await railway(context).project.listTcpProxies(service).catch(readFailure);
+      const proxy = proxies.find(candidate => candidate.applicationPort === engines[engine].port);
+      if (!proxy) throw new PluginError({ code: 'database_public_networking_required',
+        message: 'Turn on Public Networking for this database service in Railway, then try again.' });
+      const url = new URL(address.value);
+      url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+      url.hostname = proxy.domain;
+      url.port = String(proxy.proxyPort);
+      // Railway's database templates sign their certificate with a CA generated inside the
+      // container, for private names only. The public proxy keeps TLS but cannot prove the
+      // server's identity (owner decision 2026-11-23).
+      return { connectionString: url.toString(), trust: 'encrypted_unverified' };
+    },
     async listTargets({ preparation, target, placement }, context) {
-      const database = await databaseName(engine, preparation, context);
+      const database = (await privateAddress(engine, preparation, context))?.database;
       if (!database) return { targets: [], completeness: { complete: false, reason: 'transport_unproven' } };
       return { targets: [descriptor(engine, { ...target, database }, placement)], completeness: { complete: true } };
     },
     async open({ target, placement, access }, context) {
+      // The host reads through `readRoleEndpoint` with the limited login.
       if (access !== 'write') throw new PluginError({ code: 'database_transport_unavailable',
         message: 'Railway reads require a limited database login.' });
       const readRole = context.services.secrets.readDataRole;

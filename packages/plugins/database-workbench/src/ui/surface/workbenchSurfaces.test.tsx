@@ -341,12 +341,44 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
       for (const sql of statements) expect(document.body.textContent).toContain(sql);
+      expect(document.body.textContent).not.toContain('identity isn’t verified');
       expect(configured).toBe(false);
       if (!apply) throw new Error('The reviewed SQL did not offer an Action Control');
       await act(async () => { apply?.publish({ kind: 'prepare', requestId: 'create-login' }); });
       await settle(20);
       expect(configured).toBe(true);
       expect(await fixture.findByRole('button', { name: 'invoices' })).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
+  it('says the connection is encrypted but unverified when the reviewed endpoint declares it', async () => {
+    const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+        targetLinkId: 'link', contribution: { pluginId: 'fixture.database', contributionId: 'postgres' },
+        platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
+    const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+    const daemon = daemonAnswers([{ ...descriptor, target }]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'managed-read-unverified', mountNonce: 'managed-read-unverified' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      subPath: encodeWorkbenchRootSubPath(target),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(),
+        async watchResource() { throw new PluginError({ code: 'read_role_setup_required' }); },
+        async executeAction(request) {
+          if (request.action !== create) return daemon(request);
+          return { ok: true, status: 'review', role: 'happier_read', statements: ['CREATE ROLE happier_read LOGIN'],
+            endpointTrust: 'encrypted_unverified' };
+        },
+      },
+    });
+    try {
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
+      await settle(20);
+      expect(await fixture.getByText('The connection is encrypted, but the server’s identity isn’t verified.')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

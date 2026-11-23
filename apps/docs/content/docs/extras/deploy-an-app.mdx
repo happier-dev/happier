@@ -94,10 +94,18 @@ checks the address and saves it when it finds a match.
 Choose a Railway project and environment for a PostgreSQL or MySQL template.
 After creation, inspect the exact service and confirm adoption before Happier
 links it to the Environment. You can also adopt an existing database from
-that environment. Workbench can list the linked database. Reads return
-`database_transport_unavailable` in this development flow and require a
-limited database login. Live validation of the Railway deployment and database
-journeys remains pending.
+that environment. Workbench can list the linked database.
+
+To read it in Workbench, turn on Public Networking for that database service in
+Railway (**Settings → Networking**). Happier doesn't turn it on for you, and
+Workbench asks you to do it if it's off. Workbench then reaches the database
+through Railway's public TCP proxy and asks for a read-only login: attach an
+existing one from Saved Secrets, or review and create one with the database's
+write login. The connection is always encrypted. Railway's database templates
+use certificates from their own private authority that don't name the public
+proxy, so Happier can't verify the server's identity, and Workbench says so
+when you review the login. Live validation of the Railway deployment and
+database journeys remains pending.
 
 ## What you need
 

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseReadRoleSetupResult } from '@happier-dev/databases';
+import type { DeploymentDatabaseEndpointV1 } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createManagedReadAccessForHost } from './managedReadAccessForHost';
 
-const endpoint = { connectionString: 'postgresql://db.example.test/app', ca: 'provider-ca' };
+const endpoint: DeploymentDatabaseEndpointV1 = { connectionString: 'postgresql://db.example.test/app', ca: 'provider-ca' };
 const readLogin = 'postgresql://reader:fixture-password@db.example.test:5432/app?sslmode=disable';
 const writeLogin = 'postgresql://writer:fixture-writer@db.example.test/app';
 const plan = { engine: 'postgresql' as const, database: 'app', role: 'happier_ro_example',
@@ -64,5 +66,25 @@ describe('managed read-access setup', () => {
         expect(connection.setupReadRole).toHaveBeenCalledWith(plan, ports.signal);
         expect(ports.saveSecret).toHaveBeenCalledWith('postgresql://happier_ro_example:fixture-generated@db.example.test/app');
         expect(ports.setBinding).toHaveBeenCalledWith(secretRef);
+    });
+
+    it('opens the reader and the role-setup writer with the declared unverified trust and reports it', async () => {
+        const { access, ports } = fixture();
+        ports.readEndpoint.mockResolvedValue({ connectionString: endpoint.connectionString, trust: 'encrypted_unverified' });
+        const unverified = { trust: 'encrypted_unverified' };
+        await expect(access.attach(secretRef)).resolves.toEqual({ ok: true, status: 'configured', endpointTrust: 'encrypted_unverified' });
+        await expect(access.create({ mode: 'preview' })).resolves.toMatchObject({ status: 'review', endpointTrust: 'encrypted_unverified' });
+        await expect(access.create({ mode: 'apply', role: plan.role, statements: plan.statements }))
+            .resolves.toEqual({ ok: true, status: 'configured', endpointTrust: 'encrypted_unverified' });
+        expect(ports.open.mock.calls.map(call => call[2])).toEqual([unverified, unverified, unverified]);
+    });
+
+    it('relays the provider’s typed endpoint reason instead of a generic unavailable', async () => {
+        const { access, ports } = fixture();
+        ports.readEndpoint.mockRejectedValueOnce(new PluginError({ code: 'database_public_networking_required', message: 'Turn on Public Networking' }));
+        await expect(access.create({ mode: 'preview' })).rejects.toMatchObject({ code: 'database_public_networking_required' });
+        ports.readEndpoint.mockRejectedValueOnce(new Error('native detail'));
+        await expect(access.create({ mode: 'preview' })).rejects.toMatchObject({ code: 'database_connection_unavailable' });
+        expect(ports.open).not.toHaveBeenCalled();
     });
 });

@@ -22,12 +22,15 @@ export const DatabaseReadAccessCreateInputV1Schema = defineProtocolUnion([
 ]);
 export type DatabaseReadAccessCreateInputV1 = ProtocolSchemaOutput<typeof DatabaseReadAccessCreateInputV1Schema>;
 
+/** Present when the provider's endpoint is encrypted but the server's identity is not verified. */
+const endpointTrust = defineProtocolLiteral('encrypted_unverified').optional();
+
 export const DatabaseReadAccessSetupResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
-        ok: defineProtocolLiteral(true), status: defineProtocolLiteral('review'), role, statements,
+        ok: defineProtocolLiteral(true), status: defineProtocolLiteral('review'), role, statements, endpointTrust,
     }, { policy: 'closed' }),
     defineProtocolObject({
-        ok: defineProtocolLiteral(true), status: defineProtocolLiteral('configured'),
+        ok: defineProtocolLiteral(true), status: defineProtocolLiteral('configured'), endpointTrust,
     }, { policy: 'closed' }),
 ]);
 export type DatabaseReadAccessSetupResultV1 = ProtocolSchemaOutput<typeof DatabaseReadAccessSetupResultV1Schema>;

@@ -1,6 +1,7 @@
 import {
   defineProtocolArray,
   defineProtocolLiteral,
+  defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
   defineProtocolUnion,
@@ -44,6 +45,8 @@ const environmentServices = defineProtocolObject({
 const grantedProjectWorkspaces = defineProtocolArray(defineProtocolObject({
   id: text, name: text, projects: defineProtocolArray(choice),
 }, open));
+const port = defineProtocolNumber({ integer: true, minimum: 1, maximum: 65535 });
+const tcpProxies = defineProtocolArray(defineProtocolObject({ domain: text, proxyPort: port, applicationPort: port }, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
 
 const deleteService = `mutation DeleteServiceInstance($id: String!, $environmentId: String!) {
@@ -196,6 +199,16 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     return value;
   }
 
+  /** Credential-free public TCP proxies of one service instance; empty while Public Networking is off. */
+  async function listTcpProxies({ environmentId, serviceId }: ServiceSelection) {
+    const data = await graphql(`query($serviceId: String!, $environmentId: String!) {
+      tcpProxies(serviceId: $serviceId, environmentId: $environmentId) { domain proxyPort applicationPort }
+    }`, { serviceId, environmentId });
+    const parsed = tcpProxies.safeParse(data.tcpProxies);
+    if (!parsed.success) throw new NativeError('railway_invalid_response');
+    return parsed.data;
+  }
+
   async function observeServiceAbsent({ projectId, environmentId, serviceId }: ServiceSelection): Promise<boolean> {
     let after: string | null = null;
     do {
@@ -238,6 +251,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     readEnvironmentServicesPage,
     readServiceInstance,
     readServiceVariable,
+    listTcpProxies,
     observeServiceAbsent,
     upsertServiceVariables,
   };

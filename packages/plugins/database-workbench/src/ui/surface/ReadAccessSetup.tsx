@@ -71,6 +71,9 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
       description={attaching
         ? t('plugins.database.readSetup.savedSecret', 'Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.', { database: target.database })
         : t('plugins.database.readSetup.reviewDescription', 'These statements will create {role} and grant it read access to {database}.', { role: review?.role ?? '', database: target.database })} />
+    {!attaching && review?.endpointTrust === 'encrypted_unverified'
+      ? <Text tone="secondary" value={t('plugins.database.readSetup.unverifiedServer', 'The connection is encrypted, but the server’s identity isn’t verified.')} />
+      : null}
     {attaching
       ? <SavedSecretChoiceList testIDPrefix="database-read-access-secret" selectedRef={secret?.ref ?? null}
           onSelect={(next) => { setNotice(null); setSecret(next); }} />

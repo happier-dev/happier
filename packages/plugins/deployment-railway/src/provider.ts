@@ -21,8 +21,8 @@ export const exactSelectionSchema = exactSelection.jsonSchema;
 
 export const pluginId = 'happier.deploy.railway-data';
 export const engines = {
-  postgresql: { label: 'PostgreSQL', template: 'postgres', privateVariable: 'DATABASE_URL' },
-  mysql: { label: 'MySQL', template: 'mysql', privateVariable: 'MYSQL_URL' },
+  postgresql: { label: 'PostgreSQL', template: 'postgres', privateVariable: 'DATABASE_URL', port: 5432 },
+  mysql: { label: 'MySQL', template: 'mysql', privateVariable: 'MYSQL_URL', port: 3306 },
 } as const;
 export type Engine = keyof typeof engines;
 export type Scope = DeploymentTargetPreparationBaseV1;

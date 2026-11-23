@@ -40,5 +40,6 @@
   "plugins.database.readSetup.reviewDescription": "These statements will create {role} and grant it read access to {database}.",
   "plugins.database.readSetup.savedSecret": "Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.",
   "plugins.database.readSetup.title": "Set up read-only access",
-  "plugins.database.readSetup.unknown": "Could not verify the setup result."
+  "plugins.database.readSetup.unknown": "Could not verify the setup result.",
+  "plugins.database.readSetup.unverifiedServer": "The connection is encrypted, but the server’s identity isn’t verified."
 }

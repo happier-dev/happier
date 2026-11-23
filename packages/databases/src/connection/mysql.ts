@@ -5,7 +5,7 @@ import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happi
 import { statsOperationResultV1 } from '../stats.js';
 import { DatabaseStatementError } from '../statement.js';
 import { fitDatabaseOperationResult } from '../resultEnvelope.js';
-import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, type DatabaseConnectionOperationRunner, type VerifiedDatabaseTls } from '../connection.js';
+import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
     executeMysqlOperation, mysqlFailureCause, MysqlOperationError, type MysqlCompiledStatement, type MysqlExecutionOptions,
     type MysqlNativeField, type MysqlNativeResult, type MysqlNativeValue,
@@ -25,11 +25,12 @@ export interface MysqlConnection {
 }
 
 /** mysql2 3.24.6 merges URI options over explicit false values. Remove those keys at the URL owner first. */
-export function mysqlConnectionOptions(connectionString: string, tls?: VerifiedDatabaseTls): ConnectionOptions {
+export function mysqlConnectionOptions(connectionString: string, declared?: DatabaseTls): ConnectionOptions {
+    const tls = declared && databaseTlsVerification(declared);
     const uri = tls ? databaseConnectionUrlWithoutOptions(connectionString) : withDatabaseConnectionUrlOptions(connectionString, {
         multipleStatements: null, decimalNumbers: null, nestTables: null, namedPlaceholders: null, debug: null,
     });
-    return { uri, ...(tls ? { ssl: { rejectUnauthorized: true, verifyIdentity: true, ...(tls.ca === undefined ? {} : { ca: tls.ca }) } } : {}),
+    return { uri, ...(tls ? { ssl: { rejectUnauthorized: tls.verify, verifyIdentity: tls.verify, ...(tls.ca === undefined ? {} : { ca: tls.ca }) } } : {}),
         multipleStatements: false, namedPlaceholders: false, nestTables: false, debug: false,
         supportBigNumbers: true, bigNumberStrings: true, decimalNumbers: false, dateStrings: true,
         jsonStrings: true, rowsAsArray: true, flags: ['FOUND_ROWS', '-MULTI_STATEMENTS'],
@@ -63,13 +64,14 @@ export function mysqlNativeResult(result: unknown, fields: ReadonlyArray<{ name:
 
 /** One connection belongs to one workbench demand, or to the caller's standalone request. */
 export async function openMysqlConnection(connectionString: string, signal?: AbortSignal, options: Readonly<{
-    tls?: VerifiedDatabaseTls;
+    tls?: DatabaseTls;
     runOperation?: DatabaseConnectionOperationRunner;
     openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
 }> = {}): Promise<MysqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
-    if (options.tls && options.openStream && isIP(parseDatabaseConnectionUrl(connectionString).hostname.replace(/^\[|\]$/gu, ''))) {
-        // mysql2 3.24.6 uses SNI for an explicit identity on borrowed sockets. Its IP fallback needs a native TCP socket.
+    if (options.tls && options.tls.trust !== 'encrypted_unverified' && isIP(parseDatabaseConnectionUrl(connectionString).hostname.replace(/^\[|\]$/gu, ''))) {
+        // mysql2 3.24.6 checks identity only for a DNS servername; it accepted a
+        // `localhost`-only certificate when dialing 127.0.0.1. Verified mode needs a host name.
         throw new DatabaseReadRoleError(readRoleFailure('database_read_role_tls_hostname_required'));
     }
     const connectionOptions = mysqlConnectionOptions(connectionString, options.tls);

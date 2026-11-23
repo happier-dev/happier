@@ -87,7 +87,16 @@ export function withDatabaseConnectionUrlOptions(input: string, overrides: Reado
     return url.toString();
 }
 
-export type VerifiedDatabaseTls = Readonly<{ ca?: string }>;
+/** TLS is mandatory in both modes and URL options never relax it. `verified` (the default)
+ * authenticates the certificate chain and server name. `encrypted_unverified` encrypts the
+ * channel without authenticating the server; only a provider's declared endpoint selects it. */
+export type DatabaseTls = Readonly<{ trust?: 'verified'; ca?: string } | { trust: 'encrypted_unverified' }>;
+
+/** Driver options for the one declared mode; no caller retries a refused mode with another. */
+export function databaseTlsVerification(tls: DatabaseTls): Readonly<{ verify: boolean; ca?: string }> {
+    if (tls.trust === 'encrypted_unverified') return { verify: false };
+    return tls.ca === undefined ? { verify: true } : { verify: true, ca: tls.ca };
+}
 
 /** Explicit TLS verification owns driver options; keep only the address and login in the URI. */
 export function databaseConnectionUrlWithoutOptions(input: string): string {

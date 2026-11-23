@@ -2,7 +2,7 @@ import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
-import { databaseConnectionUrlWithoutOptions, type DatabaseConnectionOperationRunner, type VerifiedDatabaseTls } from '../connection.js';
+import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
     executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1,
@@ -24,12 +24,13 @@ export interface PostgresqlConnection {
 
 /** The caller owns this demand's credential and connection. No pool, timer or retry outlives it. */
 export async function openPostgresqlConnection(connectionString: string, signal?: AbortSignal,
-    options: Readonly<{ sessionGuardSql?: string; tls?: VerifiedDatabaseTls;
+    options: Readonly<{ sessionGuardSql?: string; tls?: DatabaseTls;
         runOperation?: DatabaseConnectionOperationRunner;
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
     }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
     const uri = options.tls ? databaseConnectionUrlWithoutOptions(connectionString) : connectionString;
+    const tls = options.tls && databaseTlsVerification(options.tls);
     const openClient = async () => {
         const transport = await options.openStream?.();
         try {
@@ -41,7 +42,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                 connect() { queueMicrotask(() => transport.stream.emit('connect')); return transport.stream; },
             }) : undefined;
             return { client: new Client({ connectionString: uri, ...(stream ? { stream: () => stream } : {}),
-                ...(options.tls ? { ssl: { rejectUnauthorized: true, ...(options.tls.ca === undefined ? {} : { ca: options.tls.ca }) } } : {}),
+                ...(tls ? { ssl: { rejectUnauthorized: tls.verify, ...(tls.ca === undefined ? {} : { ca: tls.ca }) } } : {}),
             }), transport };
         } catch (error) { await transport?.close(); throw error; }
     };

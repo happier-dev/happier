@@ -10,7 +10,7 @@ export { BackupDestinationOpenV1ProtocolSchema, BackupDestinationCredentialBindi
   SFTP_BACKUP_DESTINATION_REF_V1 } from './backupDestinations.js';
 export type {
     DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
-    DeploymentTargetDatabaseRuntimeV1, DeploymentDatabaseConnectionV1, DeploymentDatabaseResolutionV1,
+    DeploymentTargetDatabaseRuntimeV1, DeploymentDatabaseConnectionV1, DeploymentDatabaseEndpointV1, DeploymentDatabaseResolutionV1,
     DeploymentTargetCredentialPrincipalV1,
     DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
     DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
