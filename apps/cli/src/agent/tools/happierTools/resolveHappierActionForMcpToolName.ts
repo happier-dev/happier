@@ -1,6 +1,5 @@
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { memoizeActionSpecValue } from '@happier-dev/protocol/actions/lazyActionSpecValue';
+import { findActionSpec, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol';
 
 import type { PermissionMode } from '@/api/types';
@@ -8,10 +7,6 @@ import { resolveHappierActionPermission } from '@/agent/permissions/happierActio
 
 import { getEquivalentActionIdForBuiltInTool } from './actionToolCatalog';
 import { parseTrustedHappierToolsShellBridgeCommand } from './runtime/buildHappierToolsShellBridgeCommand';
-
-// Built on first lookup: building it at module evaluation built the whole Action
-// catalog in every process that imports this module (daemon, session host).
-const readActionIds = memoizeActionSpecValue(() => new Set<ActionId>(listActionSpecs().map((spec) => spec.id as ActionId)));
 
 function normalizeToolName(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -30,8 +25,7 @@ function normalizeFirstPartyHappierToolName(toolName: string): string | null {
 function readActionExecuteActionId(input: unknown): ActionId | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const raw = normalizeToolName((input as Record<string, unknown>).actionId);
-  if (!readActionIds().has(raw as ActionId)) return null;
-  return raw as ActionId;
+  return findActionSpec(raw)?.id ?? null;
 }
 
 export function resolveHappierActionForMcpToolName(params: Readonly<{
@@ -54,7 +48,7 @@ export function resolveHappierActionForMcpToolName(params: Readonly<{
   }
   if (firstPartyToolName === 'action_execute') return readActionExecuteActionId(params.input);
   const actionId = getEquivalentActionIdForBuiltInTool(firstPartyToolName);
-  return readActionIds().has(actionId as ActionId) ? actionId as ActionId : null;
+  return actionId ? findActionSpec(actionId)?.id ?? null : null;
 }
 
 export type HappierActionPermissionDecision =

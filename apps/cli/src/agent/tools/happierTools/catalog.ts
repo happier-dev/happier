@@ -1,4 +1,4 @@
-import { getActionSpec, listActionSpecBindingDeclarations } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, listActionSpecMcpToolBindings } from '@happier-dev/protocol/actions/actionSpecs';
 import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 
 import type { HappierBuiltInToolDefinition } from './types';
@@ -11,10 +11,8 @@ function buildActionBackedTools(): readonly HappierBuiltInToolDefinition[] {
   const tools: HappierBuiltInToolDefinition[] = [];
 
   // Select by declared tool name first: only bound Actions are normalized.
-  for (const declaration of listActionSpecBindingDeclarations()) {
-    const name = String(declaration.bindings?.mcpToolName ?? '').trim();
-    if (!name) continue;
-    const spec = getActionSpec(declaration.id);
+  for (const [name, id] of listActionSpecMcpToolBindings()) {
+    const spec = getActionSpec(id);
 
     tools.push({
       name,
