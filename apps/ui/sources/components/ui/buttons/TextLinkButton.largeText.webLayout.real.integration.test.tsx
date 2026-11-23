@@ -49,6 +49,34 @@ async function renderLinkAboveText() {
 }
 
 describe('an inline text link, as a browser lays it out', () => {
+  it('keeps a long action readable and reachable inside a narrow wrapping row', async () => {
+    const { TextLinkButton } = await import('./TextLinkButton');
+    const { Text } = await import('@/components/ui/text/Text');
+    const label = 'Open Product Reliability and Infrastructure for the Northern Research Team';
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="row" style={{ width: 300, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+          <TextLinkButton testID="link" label={label} onPress={() => {}} />
+          <Text testID="note"> · You can set up later from Home</Text>
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 390, height: 300 }, texts: [label], edgeProbeTestIds: ['link'],
+    });
+    const row = layout.rect('row');
+    const link = layout.rect('link');
+    expect(link.left, 'the action starts inside its row').toBeGreaterThanOrEqual(row.left);
+    expect(link.right, 'the action ends inside its row').toBeLessThanOrEqual(row.right);
+    const text = layout.textRects(label)[0]!;
+    expect(text.clipped, 'the full Team name stays readable').toBe(false);
+    expect(text.height).toBeGreaterThan(happierPageTextMetrics('rowDescription').lineHeight);
+    expect(link.receivesPointer).toBe(true);
+    expect(layout.rect('note').top).toBeGreaterThanOrEqual(link.bottom - 0.5);
+  });
   it('is exactly one row-description line at the default text size', async () => {
     const layout = await measureWebLayout(await renderLinkAboveText(), {
       viewport: { width: 400, height: 200 },

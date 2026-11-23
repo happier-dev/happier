@@ -49,15 +49,16 @@ export function HappierTextLinkButton(props: HappierTextLinkButtonProps): ReactN
       hitReach={{ left: 0, right: 0, ...(props.verticalReach === undefined ? null : { top: props.verticalReach, bottom: props.verticalReach }) }}
       style={(state) => ({
         alignSelf: 'flex-start',
-        // The label is one line: its drawn height is known before layout, which is what the hit area reaches from.
-        // A minimum, so text the browser or OS enlarges past that line keeps its room.
+        maxWidth: '100%',
+        // A short action keeps its line; a long action wraps inside the host's available width.
+        // The minimum also leaves room for text enlarged by the browser or OS.
         minHeight: props.labelStyle.lineHeight,
         opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
       })}
     >
       {(state) => (
         <View style={{ borderRadius: 4, ...happierFocusRingStyle({ visible: state.focused, color: props.focusColor }) }}>
-          <props.Text numberOfLines={1} style={{
+          <props.Text style={{
             ...props.labelStyle,
             ...(state.hovered ? { color: props.hoverColor, textDecorationLine: 'underline' as const } : null),
           }}>
