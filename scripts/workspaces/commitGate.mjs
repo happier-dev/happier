@@ -139,12 +139,45 @@ function cliProjectionOwned(git, revision, path) {
   catch { return false; }
 }
 
+function unnamedPostBaseRemovals(git, base, head, tree, message) {
+  const pathsChanged = (from, to) => git(['diff', '--name-only', '--no-renames', '-z', from, to]).split('\0').filter(Boolean);
+  const changedSinceBase = new Set(pathsChanged(base, head));
+  const namedLines = new Set(message.split(/\r?\n/u).map(line => line.trim()).filter(Boolean));
+  const removals = [];
+  const diff = (from, to, path) => git(['--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv',
+    '--no-renames', '--no-color', '--unified=0', from, to, '--', path]);
+  for (const path of pathsChanged(head, tree)) {
+    if (!changedSinceBase.has(path)) continue;
+    const added = [];
+    for (const line of diff(base, head, path).split('\n')) {
+      const range = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u.exec(line);
+      if (range && range[2] !== '0') added.push([Number(range[1]), Number(range[1]) + Number(range[2] ?? 1)]);
+    }
+    if (!added.length) continue;
+    let oldLine = 0;
+    let rangeIndex = 0;
+    for (const line of diff(head, tree, path).split('\n')) {
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/u.exec(line);
+      if (hunk) {
+        oldLine = Number(hunk[1]);
+      } else if (oldLine && line.startsWith('-')) {
+        while (added[rangeIndex]?.[1] <= oldLine) rangeIndex++;
+        const text = line.slice(1).trim();
+        if (added[rangeIndex]?.[0] <= oldLine && !namedLines.has(text) && !namedLines.has(`${path}:${oldLine}`)) removals.push({ path, line: oldLine, text });
+        oldLine++;
+      }
+    }
+  }
+  return removals;
+}
+
 /** Compose the frozen delta against the exact locked parent in a private index. */
 async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot = tmpdir() }) {
   const scratch = await mkdtemp(join(scratchRoot, 'replay-index-'));
   const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index'), GIT_LITERAL_PATHSPECS: '1' };
   const gitIndex = (args, options) => git(args, { ...options, env: options?.env ?? env });
   const writeTree = () => gitIndex(['write-tree']).trim();
+  let replayedTree;
   try {
     git(['merge-base', '--is-ancestor', packet.base, head]);
     const patch = git(['diff', '--binary', '--full-index', '--no-renames', packet.base, packet.tree], { encoding: 'buffer' });
@@ -168,7 +201,7 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
           .replace(/(\d+) \S+ ([a-f0-9]+)\t/gu, '$1 $2\t');
         if (restored) gitIndex(['update-index', '-z', '--index-info'], { input: restored });
 
-        const combined = writeTree();
+        const combined = replayedTree = writeTree();
         const output = join(scratch, 'projections');
         await regenerate(combined, output);
         const cliOutput = join(output, CLI_PROJECTION_ROOT);
@@ -204,7 +237,7 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
     });
     const tree = writeTree();
     if (tree === git(['rev-parse', `${head}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
-    return { base: head, tree };
+    return { base: head, tree, replayedTree: replayedTree ?? tree };
   } catch (cause) {
     throw new CommitGateUnavailable('frozen packet no longer applies to HEAD; refresh the patch', cause.stderr?.toString().trim() || cause);
   } finally {
@@ -217,7 +250,7 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
  * ref, judge once and publish that exact tree. A foreign ref move makes CAS
  * fail without re-running the gate or changing the ref.
  */
-export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, dry = false }) {
+export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, message, dry = false }) {
   const git = gitIn(repo);
   const admissionAt = performance.now();
   try {
@@ -230,6 +263,15 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
         try {
           const head = git(['rev-parse', '--verify', ref]).trim();
           const exact = head === packet.base ? packet : await composeLockedPacket({ git, packet, head, regenerate, scratchRoot: replayScratchRoot });
+          if (head !== packet.base && message !== undefined) {
+            const started = performance.now();
+            const removals = unnamedPostBaseRemovals(git, packet.base, head, exact.replayedTree, message);
+            console.error(`commit gate: post-base line removal: ${Math.round(performance.now() - started)} ms`);
+            if (removals.length) return { gate: {
+              verdict: 'refused', check: 'post-base line removal', notes: [],
+              findings: removals.map(({ path, line, text }) => `${path}:${line}: name this removed line in the commit message: ${text}`),
+            } };
+          }
           const gate = await runCommitGate({ repo, base: head, tree: exact.tree, compareAdmittedEntryLoads });
           for (const note of gate.notes) console.error(`commit gate: ${note}`);
           if (gate.verdict !== 'pass') return { gate };
@@ -258,7 +300,7 @@ async function finalizeFrozenPacket({ repo, candidate, message, patch, ref, dry 
   const base = git(['rev-parse', `${candidate}^`]).trim();
   const tree = git(['rev-parse', `${candidate}^{tree}`]).trim();
   return await finalizeGatedCommit({
-    repo, ref, label: 'commit-partial', packet: { base, tree }, dry, replayScratchRoot: dirname(resolve(patch)),
+    repo, ref, label: 'commit-partial', packet: { base, tree }, dry, replayScratchRoot: dirname(resolve(patch)), message: readFileSync(message, 'utf8'),
     createCommit: exact => exact.base === base ? candidate : git(['commit-tree', exact.tree, '-p', exact.base, '-F', message]).trim(),
   });
 }

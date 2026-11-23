@@ -135,3 +135,44 @@ writeFileSync(out, JSON.stringify(['first', 'second'].map(file => readFileSync(f
 
 
 test_old_action_packet()
+
+
+def test_stale_packet_preserves_post_base_workspace_writes():
+    with tempfile.TemporaryDirectory(prefix="p03-stale-writer-") as temp:
+        repo = Path(temp)
+        git = lambda *args: subprocess.check_output(["git", *args], cwd=repo, text=True)
+        git("init", "-qb", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        path = "requester.txt"
+        field = "  workspaceWrites: z.optional(z.enum(['allow', 'deny'])),"
+        context = "attribution\npermissions\nconstraints\n" + field + "\nsession\ncreation\ndefaults\n"
+        (repo / path).write_text("base marker\n" + context + "original requester\n")
+        git("add", path)
+        git("commit", "-qm", "packet base")
+        base = git("rev-parse", "HEAD").strip()
+        (repo / path).write_text("base marker\n" + context.replace(field + "\n", "") + "original requester\n")
+        patch = repo / "stale.patch"
+        patch.write_text(git("diff", "--binary", "--full-index", base, "--", path))
+        (repo / path).write_text("new marker\n" + context + "new requester\nbase marker\n" + context + "original requester\n")
+        git("add", path)
+        git("commit", "-qm", "retain workspace write restrictions in the new requester")
+        winner = git("rev-parse", "HEAD").strip()
+        msg = repo / "message"
+        env = {**os.environ, "P03_CP_PACKET_BASE": base, "P03_GATE_CACHE": str(repo / "cache"),
+               "P03_COMMIT_KICK": "true"}
+        def commit(message):
+            msg.write_text(message)
+            return subprocess.run(["bash", str(WRAPPER), str(msg), "-", str(patch)],
+                                  cwd=repo, env=env, capture_output=True, text=True)
+        result = commit("fix: change requester\n")
+        details = result.stdout + result.stderr
+        assert result.returncode == 1 and "post-base" in details and field.strip() in details, details
+        assert git("rev-parse", "HEAD").strip() == winner, details
+        result = commit(f"fix: change requester\n\n{field.strip()}\n")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert git("show", f"HEAD:{path}") == "new marker\n" + context.replace(field + "\n", "") + "new requester\nbase marker\n" + context + "original requester\n"
+        print("PASS post-base workspaceWrites removal requires an explicit message")
+
+
+test_stale_packet_preserves_post_base_workspace_writes()
