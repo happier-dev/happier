@@ -57,6 +57,11 @@
         "types": "./dist/github.browser.d.ts",
         "default": "./dist/github.browser.js"
       },
+      "react-native": {
+        "happier-source": "./src/github.browser.ts",
+        "types": "./dist/github.browser.d.ts",
+        "default": "./dist/github.browser.js"
+      },
       "happier-source": "./src/github.ts",
       "types": "./dist/github.d.ts",
       "default": "./dist/github.js"
