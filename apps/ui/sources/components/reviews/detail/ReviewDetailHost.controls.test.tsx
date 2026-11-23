@@ -252,6 +252,50 @@ it('stands on the Review record while its owner read loads, then brings People, 
   } finally { await screen.unmount(); }
 });
 
+it.each(['cold', 'warm'] as const)('keeps "…" on the header\'s trailing edge before and after the primary arrives, with the primary to its left (G4, %s)', async open => {
+  const reviewId = `trailing-more-${open}`;
+  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+    needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: true, requestedVerdict: true,
+      pendingDecisions: false, canSubmitVerdict: true } };
+  let openDetail!: () => void;
+  const detailOpened = open === 'warm' ? Promise.resolve() : new Promise<void>(resolve => { openDetail = resolve; });
+  fixture = await createSessionFilesViewFixture({ serverUrl: `https://trailing-more-${open}.test`, request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/reviews/get') {
+      await detailOpened;
+      return Response.json({ review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+        state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 } }, human });
+    }
+    if (path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Trailing more', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Trailing more' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { t } = await import('@/text');
+  const submit = t('reviewWalkthrough.detail.submitReview');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  // The header's controls in drawing order: "…" must be the last one, whatever stands before it.
+  const headerControls = () => {
+    const header = JSON.stringify(screen.findHostByTestId('review-detail:header') ? screen.tree.toJSON() : null);
+    const more = header.indexOf('"review-detail:more"');
+    const primary = header.indexOf(JSON.stringify(submit));
+    return { more: more >= 0, primary: primary >= 0, moreTrailing: more >= 0 && (primary < 0 || more > primary) };
+  };
+  try {
+    if (open === 'cold') {
+      await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:more')).not.toBeNull());
+      expect(headerControls()).toEqual({ more: true, primary: false, moreTrailing: true });
+      await act(async () => { openDetail(); });
+    }
+    await vi.waitFor(() => expect(headerControls().primary).toBe(true));
+    expect(headerControls()).toEqual({ more: true, primary: true, moreTrailing: true });
+  } finally { await screen.unmount(); }
+});
+
 it('says the Review is shared, with whom through the Artifact audience owner, and offers Share and Delete in its "…"', async () => {
   const reviewId = 'shared-review-page';
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://shared-review-page.test', request: async url => {

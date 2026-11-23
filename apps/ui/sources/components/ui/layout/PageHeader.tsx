@@ -27,6 +27,7 @@ import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/Inl
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { NavigationHeaderActions, type NavigationHeaderAction } from '@/components/ui/layout/NavigationHeaderActions';
+import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useNavigationChromeShowsBack, useNavigationLeavesLargeTitle, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 
@@ -247,12 +248,16 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     // A page that is a pane host's main column offers "Hide <page>" as its header's last control.
     const hideMain = usePaneMainHideAvailable() ? <PaneMainHideButton /> : null;
     const pageActions = chromeShowsTitle && props.actionsPlacement !== 'page' ? null : props.actions;
-    const ownActions = !chromeShowsTitle && props.navigationTrailing != null
-        ? <>{pageActions}{props.navigationTrailing}</>
-        : pageActions;
+    // "⋯" is the header's last control (only a pane's Hide follows it): the primary stands to its left, so the menu keeps
+    // its place whether a primary is offered, arrives later or goes away.
+    const [leadingActions, menu] = splitTrailingMenu(pageActions);
+    const trailingActions = !chromeShowsTitle && props.navigationTrailing != null
+        ? <>{menu}{props.navigationTrailing}</>
+        : menu;
     const actions = pageButtons || routeActions
-        ? <View style={stylesheet.actions}>{ownActions}{routeActions}{pageButtons}{hideMain}</View>
-        : hideMain ? <>{ownActions}{hideMain}</> : ownActions;
+        ? <View style={stylesheet.actions}>{leadingActions}{routeActions}{pageButtons}{trailingActions}{hideMain}</View>
+        : hideMain ? <>{leadingActions}{trailingActions}{hideMain}</>
+        : trailingActions === null ? leadingActions : <>{leadingActions}{trailingActions}</>;
     const meta = React.useMemo(() => props.meta?.map((fact) => ({
         key: fact.key,
         text: fact.text,
@@ -344,6 +349,13 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
         />
     );
 });
+
+/** The page's own controls, and its "⋯" menu pulled out to stand last. */
+function splitTrailingMenu(actions: React.ReactNode): readonly [React.ReactNode, React.ReactNode] {
+    const nodes = React.Children.toArray(actions);
+    const menu = nodes.find(node => React.isValidElement(node) && node.type === PageHeaderMenu);
+    return menu === undefined ? [actions, null] : [nodes.filter(node => node !== menu), menu];
+}
 
 /** A page's primary (or cancel) action as a button; an Add dialog's footer draws a hosted editor's Save with it. */
 export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
