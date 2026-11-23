@@ -87,8 +87,12 @@ describe('useWorkflowActionCatalog', () => {
         deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1, projection, projectionDigest: 'b'.repeat(64) }));
         const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
-        network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
-            ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+        network.setHttpResponder(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            return null;
+        });
         const home = await network.addHome('https://workflow-action-catalog.example.test', 'account-a');
         serverId = home.id;
         network.setRpcAckResponder(async (request) => {
@@ -119,7 +123,12 @@ describe('useWorkflowActionCatalog', () => {
     it('offers the Machine\'s plugin Actions while hydrating only the plugin UI sections, not the whole catalogue', async () => {
         const hook = await renderHook(() => useWorkflowActionCatalog({ kind: 'machine', machineId: 'machine-1', serverId }));
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().specs.some(spec => spec.plugin?.id === 'acme.deploy')).toBe(true));
+            const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+            await waitForHomeGovernance(() => {
+                const { phase, specs } = hook.getCurrent();
+                expect(phase, `Projection sections: ${[...sectionsRead].join(', ')}`).toBe('ready');
+                expect(specs.some(spec => spec.plugin?.id === 'acme.deploy')).toBe(true);
+            });
             expect([...sectionsRead].sort()).toEqual([...demandedDaemonProjectionSections(deferred.manifest, PLUGIN_UI_SECTIONS)].sort());
             expect(sectionsRead.has('agentsById')).toBe(false);
         } finally { await hook.unmount(); }
@@ -141,7 +150,8 @@ describe('useWorkflowActionCatalog', () => {
             expect(hook.getCurrent().choices).toEqual([]);
             expect(sectionsRead.size).toBe(0);
             await hook.rerender(true);
-            await vi.waitFor(() => {
+            const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+            await waitForHomeGovernance(() => {
                 expect(hook.getCurrent().catalog.phase).toBe('ready');
                 expect(hook.getCurrent().events.status).toBe('ready');
             });

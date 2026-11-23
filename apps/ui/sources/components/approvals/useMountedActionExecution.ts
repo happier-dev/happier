@@ -116,8 +116,8 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         // durable approval does not become live-only merely because it has an effect.
         const invoke = !retainInvocation && capturedBinding === binding && areServerAccountScopesEqual(capturedScope, scope)
             ? frontDoor : createFrontDoorActionExecute(undefined, { ...frontDoorOptions,
-                ...(retainInvocation ? {
-                    hostActionApprovalLifetime: { actionId, signal: cancellation.signal, surface: caller?.surface ?? 'ui' },
+                ...(retainInvocation && (caller === undefined || caller.surface === 'ui') ? {
+                    hostActionApprovalLifetime: { actionId, signal: cancellation.signal, surface: 'ui' },
                 } : {}),
             });
         const result = await (operation?.confirmed ? invoke.confirmed : invoke)(actionId, capturedInput, {
