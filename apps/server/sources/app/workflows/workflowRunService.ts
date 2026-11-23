@@ -14,7 +14,7 @@ import { WorkflowDirectRunAdmissionIdV1Schema, WorkflowInvocationRecordIdSchema 
 import { isWorkflowDraftPublicationLifecycleV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { type WorkflowRunRecipientKeyEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { type WorkflowRunWaitConditionV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx, assertWorkflowDiscussionAdmissionInTx, workflowInvocationObservationRunWhere } from "./workflowRunAccess";
+import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx, assertWorkflowDiscussionAdmissionInTx, workflowInvocationObservationRunWhere, workflowRunConsentSourceSelect, readWorkflowRunConsentFor } from "./workflowRunAccess";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -619,10 +619,11 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
         // the frozen Team even when current grants require a new choice.
         const unresolved = await tx.automationRun.findFirst({ where: {
             id: params.runId, accountId: params.accountId, workflowAcceptedSnapshotEnvelope: null,
-        }, select: { id: true } });
+        }, select: { id: true, ...workflowRunConsentSourceSelect } });
+        const consentFor = unresolved ? readWorkflowRunConsentFor(unresolved) : null;
         if (unresolved) await withWorkflowRunAccess(() => acquireWorkflowPublicationLocksInTx(tx, {
             accountId: params.accountId, runIds: [params.runId],
-            admission: { sourceArtifactId: params.sourceArtifactId ?? null, authentication: params.authentication,
+            admission: { sourceArtifactId: params.sourceArtifactId ?? null, authentication: params.authentication, consentFor,
                 ...(params.visibleTeamId === undefined ? {} : { visibleTeamId: params.visibleTeamId }) },
         }));
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId);
@@ -690,7 +691,7 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
         }
         const visibleTeamId = await withWorkflowRunAccess(() => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
             actorAccountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null,
-            authentication: params.authentication,
+            authentication: params.authentication, consentFor,
             ...(params.visibleTeamId === undefined ? {} : { visibleTeamId: params.visibleTeamId }),
         }));
         const changed = await tx.automationRun.updateMany({ where: {

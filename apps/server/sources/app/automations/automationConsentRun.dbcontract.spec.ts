@@ -1,16 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
+    encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER, AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol';
 import { AutomationActionAdmitRequestV1Schema } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { PROJECT_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { decodeBase64 } from 'privacy-kit';
-import { admitAutomationActionOccurrencesV1 } from './automationActionAdmissionService';
-import { createAutomation } from './automationCrudService';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { initEncrypt } from '@/modules/encrypt';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
+import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAcceptedSnapshot';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { resolveWorkflowRunAdmissionVisibilityInTx, resolveWorkflowRunAdmissionRecipientAccountIdsInTx,
+    resolveWorkflowRunAccessInTx, readWorkflowRunRecipientCensusInTx } from '@/app/workflows/workflowRunAccess';
+import { admitAutomationRunTx } from './automationRunAdmissionService';
+import { admitAutomationActionOccurrencesV1 } from './automationActionAdmissionService';
+import { createAutomation } from './automationCrudService';
 import { readAutomationActorConsentReferencesInTx } from './automationSharedWorkflowSummaries';
 
 describe('Consent Run admission (real database)', () => {
@@ -86,6 +93,128 @@ describe('Consent Run admission (real database)', () => {
         expect(duplicate).toEqual(deploy);
         expect((await replay()).results).toEqual(first.map(result => ({ ...result, kind: 'rejoined' })));
         expect(await db.automationRun.count({ where: { automationId } })).toBe(3);
+    });
+
+    it('admits a check Run under the actor\'s own consent row privately, reading consent only from that row', async () => {
+        const author = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: author.id,
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({})),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
+        const teamIds: string[] = [];
+        for (const name of ['First readers', 'Second readers']) {
+            const team = await db.team.create({ data: { name } });
+            teamIds.push(team.id);
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
+            await db.artifactGrant.create({ data: { artifactId: artifact.id, principalKind: 'team',
+                teamId: team.id, accessLevel: 'view', createdByAccountId: author.id } });
+        }
+        let teamGrantEnumerations = 0;
+        const stop = observePrismaRequests(db, { before(request) {
+            if (request.model === 'ArtifactGrant' && request.action === 'findMany') teamGrantEnumerations += 1;
+        } });
+        try {
+            // Ordinary control: two granted Teams need an explicit choice, read through the Team-grant set.
+            await expect(inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+                actorAccountId: actor.id, sourceArtifactId: artifact.id,
+            }))).rejects.toThrow('visible_team_not_granted');
+            const selectedTeamId = teamIds[0];
+            if (!selectedTeamId) throw new Error('Missing shared Team fixture');
+            expect(await inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+                actorAccountId: actor.id, sourceArtifactId: artifact.id, visibleTeamId: selectedTeamId,
+            }))).toBe(selectedTeamId);
+            expect(teamGrantEnumerations).toBeGreaterThan(0);
+            const recipe = createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Check' });
+            const createRunFor = async (consent: boolean) => {
+                const automation = await db.automation.create({ data: { accountId: actor.id, name: 'Check',
+                    enabled: true, workflowDefinitionId: artifact.id, templateVersion: 1, templateCiphertext: JSON.stringify(recipe),
+                    targetType: null, ...(consent ? { triggers: { create: { kind: 'action', enabled: true, revision: 1,
+                        consentForAutomationId: randomUUID(), consentForTriggerId: randomUUID(),
+                        consentedWorkflowRevision: 1 } } } : {}) } });
+                const now = new Date();
+                return db.automationRun.create({ data: { id: randomUUID(), accountId: actor.id, automationId: automation.id,
+                    originKind: 'automation', causeKind: 'manual', causeOccurredAt: now, sourceArtifactId: artifact.id, workflowCustodyState: 'pending',
+                    scheduledAt: now, dueAt: now } });
+            };
+            const ordinaryRun = await createRunFor(false);
+            await expect(inTx(tx => readWorkflowRunRecipientCensusInTx(tx, { actorAccountId: actor.id,
+                runId: ordinaryRun.id, sourceArtifactId: artifact.id }))).rejects.toThrow('visible_team_not_granted');
+            const consentRun = await createRunFor(true);
+            teamGrantEnumerations = 0;
+            // The caller cannot name consent; the Run's own Automation row carries it.
+            const census = await inTx(tx => readWorkflowRunRecipientCensusInTx(tx, { actorAccountId: actor.id,
+                runId: consentRun.id, sourceArtifactId: artifact.id, visibleTeamId: selectedTeamId }));
+            expect(census.visibleTeamId).toBeNull();
+            expect(teamGrantEnumerations).toBe(0);
+            expect(await inTx(tx => resolveWorkflowRunAdmissionRecipientAccountIdsInTx(tx, {
+                accountId: actor.id, sourceArtifactId: artifact.id, visibleTeamId: census.visibleTeamId,
+            }))).toEqual([actor.id]);
+            await expect(inTx(tx => readWorkflowRunRecipientCensusInTx(tx, { actorAccountId: reader.id,
+                runId: consentRun.id, sourceArtifactId: artifact.id }))).rejects.toThrow('run_not_found');
+            const visibleTeamId = census.visibleTeamId;
+            const machine = await db.machine.create({ data: { id: randomUUID(), accountId: actor.id,
+                installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+                dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+            const runId = randomUUID();
+            const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+                mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: actor.id, runId },
+                acceptedSnapshot: await materializeWorkflowAcceptedSnapshotFixture({
+                    definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
+                        document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
+                    context: { source: { kind: 'inline', sourceArtifactId: artifact.id }, inputs: {}, machineId: machine.id,
+                        executionTarget: { kind: 'session' },
+                        workspaceTarget: { project: { machineId: machine.id, directory: '/repo', checkoutRootPath: '/repo' } },
+                        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+                }),
+            }));
+            const now = new Date();
+            const run = await db.automationRun.create({ data: { id: runId, accountId: actor.id, originKind: 'direct',
+                causeKind: null, sourceArtifactId: artifact.id, visibleTeamId, workflowCustodyState: 'pending',
+                workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
+                scheduledAt: now, dueAt: now } });
+            expect(await inTx(tx => resolveWorkflowRunAccessInTx(tx, { actorAccountId: actor.id, runId: run.id })))
+                .toMatchObject({ level: 'owner' });
+            for (const outsider of [author, reader]) {
+                expect(await inTx(tx => resolveWorkflowRunAccessInTx(tx, { actorAccountId: outsider.id, runId: run.id })))
+                    .toBeNull();
+            }
+        } finally { stop(); }
+    });
+
+    it('freezes the invocation Machine on each Run without assigning it to the definition', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const makeMachine = () => db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const [first, second] = await Promise.all([makeMachine(), makeMachine()]);
+        const automation = await db.automation.create({ data: { accountId: account.id, name: 'Actor consent',
+            enabled: true, templateVersion: 1, templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({
+                templateVersion: 1, directory: '/repo', prompt: 'Check' })), targetType: null } });
+        for (const machine of [first, second]) {
+            const now = new Date();
+            const result = await inTx(tx => admitAutomationRunTx({ tx, accountId: account.id,
+                automationId: automation.id, runTargetMachineId: machine.id, now,
+                recipeFeaturePolicy: { workflowsEnabled: true }, cause: { kind: 'manual', invokedAt: now.getTime() } }));
+            expect(result.kind).toBe('admitted');
+            if (result.kind !== 'admitted') throw new Error(JSON.stringify(result));
+            expect(await db.automationRunAssignment.findMany({ where: { runId: result.run.id },
+                select: { machineId: true, admittedMachineInstallationId: true } })).toEqual([
+                { machineId: machine.id, admittedMachineInstallationId: machine.installationId },
+            ]);
+        }
+        expect(await db.automationAssignment.count({ where: { automationId: automation.id } })).toBe(0);
+        const foreign = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const foreignMachine = await db.machine.create({ data: { id: randomUUID(), accountId: foreign.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const now = new Date();
+        expect(await inTx(tx => admitAutomationRunTx({ tx, accountId: account.id, automationId: automation.id,
+            runTargetMachineId: foreignMachine.id, now, recipeFeaturePolicy: { workflowsEnabled: true },
+            cause: { kind: 'manual', invokedAt: now.getTime() } })))
+            .toEqual({ kind: 'ineligible', reason: 'noEnabledAssignment' });
     });
 
     it('reads all selected actor consent Trigger references, including paused and deleted-definition history', async () => {

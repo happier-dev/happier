@@ -2,9 +2,10 @@ import { isDeepStrictEqual } from "node:util";
 import * as privacyKit from "privacy-kit";
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { resolveWorkflowRunVisibleTeamV1 } from '@happier-dev/protocol/workflows';
+import { resolveWorkflowRunVisibleTeamV1, type WorkflowRunConsentForV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowRunRecipientCensusInputV1, WorkflowRunRecipientCensusResponseV1, WorkflowRunRecipientKeyEnvelopeV1, WorkflowRunRecipientKeyEnvelopeCommitInputV1, WorkflowRunRecipientKeyEnvelopeCommitResponseV1 } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { Tx } from "@/storage/inTx";
+import { automationConsentReferenceSelect, readAutomationDefinitionConsentFor } from '@/app/automations/automationActionTriggerConfiguration';
 import { resolveArtifactAccessInTx, resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
 import { readAccessibleArtifactIdsInTx } from '@/app/artifacts/artifactGrantStorageAdapter';
 import { resolveTeamMembershipContextsInTx } from "@/app/teams/memberships/effectiveMembership";
@@ -86,6 +87,17 @@ const runAccessFactsSelect = {
     accountId: true, sourceArtifactId: true, visibleTeamId: true,
     workflowCustodyState: true, account: { select: { encryptionMode: true } },
 } as const;
+/** Consent is structural server data, never an audience choice supplied by a caller. */
+export const workflowRunConsentSourceSelect = {
+    automation: { select: { triggers: { where: { consentForAutomationId: { not: null } },
+        select: automationConsentReferenceSelect } } },
+} as const;
+export function readWorkflowRunConsentFor(row: Readonly<{
+    automation: Readonly<{ triggers: readonly Readonly<{ consentForAutomationId: string | null;
+        consentForTriggerId: string | null }>[] }> | null;
+}>): WorkflowRunConsentForV1 | null {
+    return readAutomationDefinitionConsentFor(row.automation?.triggers ?? []);
+}
 const runFactsSelect = { ...runAccessFactsSelect, workflowAcceptedSnapshotEnvelope: true } as const;
 async function readRunFactsInTx(tx: Tx, runId: string) {
     return tx.automationRun.findUnique({ where: { id: runId }, select: runFactsSelect });
@@ -155,12 +167,13 @@ export async function resolveWorkflowRunAccessInTx(tx: Tx, input: Readonly<{ act
 /** Only viewable granted Teams are eligible; several require the caller's choice. */
 export async function resolveWorkflowRunAdmissionVisibilityInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; sourceArtifactId: string | null; visibleTeamId?: string | null;
+    consentFor?: WorkflowRunConsentForV1 | null;
     authentication?: TeamOperationAuthenticationContext;
 }>): Promise<string | null> {
     if (input.sourceArtifactId && !await resolveArtifactAccessInTx(tx, { actorAccountId: input.actorAccountId, artifactId: input.sourceArtifactId })) {
         throw new WorkflowRunAccessError("run_not_found");
     }
-    const grants = input.sourceArtifactId
+    const grants = input.sourceArtifactId && !input.consentFor
         ? await tx.artifactGrant.findMany({ where: { principalKind: 'team', artifactId: input.sourceArtifactId }, select: { teamId: true } }) : [];
     const contexts = await resolveTeamActorContextsInTx(tx, {
         actorAccountId: input.actorAccountId, teamIds: grants.map(grant => grant.teamId!),
@@ -175,7 +188,7 @@ export async function resolveWorkflowRunAdmissionVisibilityInTx(tx: Tx, input: R
         throw new WorkflowRunAccessError("run_access_denied");
     }
     const viewableTeamIds = viewers.map(context => context.team.id);
-    const visibility = resolveWorkflowRunVisibleTeamV1(viewableTeamIds, input.visibleTeamId);
+    const visibility = resolveWorkflowRunVisibleTeamV1(viewableTeamIds, input.visibleTeamId, input.consentFor);
     if (!visibility.ok) throw new WorkflowRunAccessError(visibility.code);
     return visibility.visibleTeamId;
 }
@@ -329,12 +342,14 @@ export async function readWorkflowRunKeyProjectionInTx(tx: Tx, input: Readonly<{
 export async function readWorkflowRunRecipientCensusInTx(tx: Tx, input: WorkflowRunRecipientCensusInputV1 & {
     actorAccountId: string; authentication?: TeamOperationAuthenticationContext;
 }): Promise<WorkflowRunRecipientCensusResponseV1> {
-    const row = await readRunFactsInTx(tx, input.runId);
+    const row = await tx.automationRun.findUnique({ where: { id: input.runId },
+        select: { ...runFactsSelect, ...workflowRunConsentSourceSelect } });
     if (row && row.workflowAcceptedSnapshotEnvelope !== null) return readWorkflowRunKeyProjectionInTx(tx, input);
     if (row && row.accountId !== input.actorAccountId) throw new WorkflowRunAccessError("run_not_found");
     const sourceArtifactId = input.sourceArtifactId ?? null;
     const visibleTeamId = await resolveWorkflowRunAdmissionVisibilityInTx(tx, { actorAccountId: input.actorAccountId, sourceArtifactId,
-        visibleTeamId: input.visibleTeamId, authentication: input.authentication });
+        visibleTeamId: input.visibleTeamId, authentication: input.authentication,
+        consentFor: row ? readWorkflowRunConsentFor(row) : null });
     const account = await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { encryptionMode: true } });
     if (!account) throw new WorkflowRunAccessError("run_not_found");
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);

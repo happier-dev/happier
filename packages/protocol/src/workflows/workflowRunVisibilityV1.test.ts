@@ -12,4 +12,13 @@ describe('Workflow Run audience selection', () => {
       expect(resolveWorkflowRunVisibleTeamV1(grants, selection)).toEqual({ ok: false, code: 'visible_team_not_granted' });
     }
   });
+
+  it('keeps a check Run under an actor consent row private even when Teams are granted or chosen', () => {
+    const consentFor = { automationId: 'shared-automation', triggerId: 'shared-trigger' };
+    for (const [grants, selection] of [
+      [['one'], undefined], [['one', 'two'], undefined], [['one', 'two'], 'two'],
+    ] satisfies readonly (readonly [readonly string[], string | undefined])[]) {
+      expect(resolveWorkflowRunVisibleTeamV1(grants, selection, consentFor)).toEqual({ ok: true, visibleTeamId: null });
+    }
+  });
 });

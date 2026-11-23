@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
+import type { WorkflowRunConsentForV1 } from '@happier-dev/protocol/workflows';
 import { getSessionReviewProjectionIdForRun } from "@/app/automations/sessionReviewProjectionInvalidation";
 import { automationRunCauseSelect } from "@/app/automations/automationPersistenceSelect";
 import { isAutomationCauseRow, retainedV2OriginKindForRun } from "@/app/automations/automationRunCauseCodec";
@@ -36,6 +37,7 @@ export interface WorkflowPublicationScope {
     machineTargets?: readonly Readonly<{ accountId: string; machineId: string }>[];
     admission?: Readonly<{
         sourceArtifactId: string | null;
+        consentFor?: WorkflowRunConsentForV1 | null;
         visibleTeamId?: string | null;
         authentication?: TeamOperationAuthenticationContext;
     }>;
