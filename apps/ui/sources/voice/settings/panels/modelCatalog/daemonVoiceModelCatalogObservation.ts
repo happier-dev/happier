@@ -29,6 +29,8 @@ export type DaemonVoiceModelCatalogObservationState = Readonly<{
 const EMPTY_OBSERVATION: DaemonVoiceModelCatalogObservationState = {
     statuses: [], errorCode: null, loading: false, stale: true,
 };
+type CatalogClient = Pick<DaemonVoiceInferenceClient, 'listModels' | 'getModelsStatus'>;
+type InstallProgressDemand = Readonly<{ client: CatalogClient; intervalMs: number }>;
 const CANONICAL_MODEL_PACK_IDS = listModelPackCatalogEntries().map(entry => entry.packId);
 
 export function readDaemonVoiceModelCatalogErrorCode(error: unknown): Exclude<DaemonVoiceModelCatalogErrorCode, null> {
@@ -59,6 +61,38 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
         controller: AbortController; readers: Set<symbol> }>;
     let pending: Reading | null = null;
     const listeners = new Set<() => void>();
+    const progressDemands = new Set<InstallProgressDemand>();
+    const activeInstalls = new Set<Readonly<{ packId: string }>>();
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    const visibility = typeof document !== 'undefined' ? document : undefined;
+
+    const installingPackIds = () => [...new Set([
+        ...[...activeInstalls].map(install => install.packId),
+        ...snapshot.statuses.filter(status => status.installState === 'installing').map(status => status.packId),
+    ])];
+    function clearProgressTimer() {
+        if (progressTimer !== null) clearTimeout(progressTimer);
+        progressTimer = null;
+    }
+    function scheduleInstallProgress() {
+        const demand = progressDemands.values().next().value;
+        if (!demand || visibility?.visibilityState === 'hidden' || pending || installingPackIds().length === 0) {
+            clearProgressTimer();
+            return;
+        }
+        if (progressTimer !== null) return;
+        progressTimer = setTimeout(() => {
+            progressTimer = null;
+            // An explicit discovery or Action read can have started since scheduling.
+            // Its settlement will schedule the next progress read.
+            if (pending || visibility?.visibilityState === 'hidden') return;
+            const packIds = installingPackIds();
+            if (packIds.length === 0) return;
+            void read({ client: demand.client, packIds }).catch(() => {
+                // The shared observation retains the typed read failure.
+            });
+        }, demand.intervalMs);
+    }
     const publish = (next: DaemonVoiceModelCatalogObservationState) => {
         if (snapshot.statuses !== next.statuses) {
             next = { ...next, statuses: retainKeyedRows(snapshot.statuses, next.statuses, status => resolveCanonicalModelPackId(status.packId)) };
@@ -67,6 +101,7 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
             && snapshot.message === next.message && JSON.stringify(snapshot.failureCause) === JSON.stringify(next.failureCause)
             && snapshot.loading === next.loading && snapshot.stale === next.stale) return;
         snapshot = next;
+        scheduleInstallProgress();
         for (const listener of listeners) listener();
     };
     const targetIsCurrent = () => (target.account ?? captureActiveServerAccountScopeCurrentness()).isCurrent()
@@ -85,12 +120,12 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
                 pending = null;
                 requestSequence += 1;
                 reading.controller.abort();
-                publish({ ...snapshot, loading: false, stale: true });
+                publish({ ...snapshot, loading: false, stale: snapshot.stale || reading.query === 'null' });
             }
         }
     };
     const read = async (input: Readonly<{
-        client: Pick<DaemonVoiceInferenceClient, 'listModels' | 'getModelsStatus'>;
+        client: CatalogClient;
         packIds?: readonly string[];
         requireNewObservation?: boolean;
         isCurrent?: () => boolean;
@@ -118,26 +153,56 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
             // A partial check replaces only queried packs. It cannot certify
             // missing packs or resurrect rows withdrawn by an invalidation.
             const queried = new Set(input.packIds?.map(resolveCanonicalModelPackId));
-            const retained = input.packIds && !snapshot.stale
+            const retained = input.packIds
                 ? snapshot.statuses.filter(status => !queried.has(resolveCanonicalModelPackId(status.packId))) : [];
             const observed = input.packIds ? [...new Map([...retained, ...statuses].map(status => [status.packId, status])).values()] : statuses;
             publish({ statuses: observed, errorCode: null, loading: false, stale: input.packIds ? snapshot.stale : false });
             return statuses;
         }).catch((error: unknown) => {
             if (sequence === requestSequence && current() && !controller.signal.aborted) {
-                publish({ ...snapshot, ...readDaemonVoiceModelCatalogFailure(error), loading: false, stale: true });
+                publish({ ...snapshot, ...readDaemonVoiceModelCatalogFailure(error), loading: false, stale: snapshot.stale || !input.packIds });
             }
             if (controller.signal.aborted) return null;
             throw error;
         }).finally(() => {
             retirement.dispose();
-            if (pending?.promise === request) pending = null;
+            if (pending?.promise === request) {
+                pending = null;
+                scheduleInstallProgress();
+            }
         });
         pending = { query, promise: request, controller, readers: new Set() };
         return await join(pending, input.signal);
     };
     return {
         getSnapshot: () => snapshot,
+        watchInstallProgress: (input: InstallProgressDemand) => {
+            const demand = { ...input };
+            if (progressDemands.size === 0) {
+                visibility?.addEventListener('visibilitychange', scheduleInstallProgress);
+            }
+            progressDemands.add(demand);
+            scheduleInstallProgress();
+            return () => {
+                progressDemands.delete(demand);
+                if (progressDemands.size === 0) {
+                    visibility?.removeEventListener('visibilitychange', scheduleInstallProgress);
+                }
+                clearProgressTimer();
+                scheduleInstallProgress();
+            };
+        },
+        trackInstall: async <T>(packId: string, run: () => Promise<T>): Promise<T> => {
+            const install = { packId: resolveCanonicalModelPackId(packId) };
+            activeInstalls.add(install);
+            scheduleInstallProgress();
+            try {
+                return await run();
+            } finally {
+                activeInstalls.delete(install);
+                scheduleInstallProgress();
+            }
+        },
         /** A successful warm response is a fresh observation, not a reason to probe again. */
         observeModels: (models: readonly DaemonVoiceInferenceModelStatus[]) => {
             if (!targetIsCurrent() || models.length === 0) return;

@@ -64,9 +64,8 @@ type CatalogActionState = Pick<DaemonVoiceModelCatalogState, 'actionPackId' | 'a
  * Merge the effective selected-host discovery list with explicit status for
  * every canonical catalog pack, then expose per-pack install/remove actions.
  * This drives the whole grouped STT/TTS list and preserves external discovered
- * packs without hiding never-installed built-ins. Polls while any pack is
- * installing or an action is in flight so progress and warm/ready transitions
- * stream into the UI.
+ * packs without hiding never-installed built-ins. The shared observation
+ * refreshes progress for installing packs while there is visible demand.
  */
 export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     enabled?: boolean;
@@ -211,32 +210,10 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         };
     }, [enabled, params?.refreshKey, refreshCatalog]);
 
-    const anyInstalling = state.statuses.some((status) => status.installState === 'installing');
-
+    const pollIntervalMs = params?.pollIntervalMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.statusPollMs;
     React.useEffect(() => {
-        const shouldPoll = enabled && (state.actionPackId !== null || anyInstalling);
-        if (!shouldPoll) {
-            return;
-        }
-        const pollIntervalMs = params?.pollIntervalMs
-            ?? VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.statusPollMs;
-        let cancelled = false;
-        let timeout: ReturnType<typeof setTimeout> | null = null;
-        const poll = async () => {
-            await refreshCatalog();
-            if (cancelled) return;
-            timeout = setTimeout(() => {
-                void poll();
-            }, pollIntervalMs);
-        };
-        timeout = setTimeout(() => {
-            void poll();
-        }, pollIntervalMs);
-        return () => {
-            cancelled = true;
-            if (timeout !== null) clearTimeout(timeout);
-        };
-    }, [anyInstalling, enabled, params?.pollIntervalMs, refreshCatalog, state.actionPackId]);
+        if (enabled) return observation.watchInstallProgress({ client, intervalMs: pollIntervalMs });
+    }, [client, enabled, observation, pollIntervalMs]);
 
     const runAction = React.useCallback(async (
         packId: string,

@@ -958,52 +958,83 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(state(tree).installState).toBe('not_installed');
     });
 
-    it('polls until an installing pack reports installed', async () => {
+    it('reads only installing packs while the catalog is visible and open', async () => {
         vi.useFakeTimers();
-        let lists = 0;
-        let current = status();
-        respond = request => {
-            if (request.method.endsWith('.list')) current = status(STT_PACK, ++lists === 1 ? {} : lists === 2
-                ? { installState: 'installing', progress: { phase: 'downloading', progress: 0.5, bytesDownloaded: 50, totalBytes: 100, message: null } }
-                : { installState: 'installed' });
-            const catalog = answerVoiceModelCatalogRpcRequest(request, [current]);
-            if (catalog) return catalog;
-            if (request.method.endsWith('.install')) return DaemonVoiceInferenceModelsInstallResponseSchema.parse({ ok: true, model: status(STT_PACK, { installState: 'installing' }) });
-            throw new Error(`Unexpected model RPC: ${request.method}`);
+        const documentBoundary = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+        vi.stubGlobal('document', documentBoundary);
+        const unrelated = Array.from({ length: 32 }, (_, index) => status(`external/model-${index}`));
+        let current = status(STT_PACK, { installState: 'installing' });
+        respond = request => answerVoiceModelCatalogRpcRequest(request, [current, ...unrelated]);
+        const tick = async () => {
+            await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+            await settle();
         };
-        const tree = await mount();
-        const { action } = await start(tree);
-        await act(async () => action);
-        await settle();
-        expect(state(tree).installState).toBe('installing');
-        expect(state(tree).statuses[0].progress.progress).toBe(0.5);
-        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-        await settle();
-        expect(state(tree).installState).toBe('installed');
+        const setVisibility = async (visibilityState: string) => {
+            await act(async () => {
+                documentBoundary.visibilityState = visibilityState;
+                documentBoundary.dispatchEvent(new Event('visibilitychange'));
+            });
+        };
+        try {
+            const active = await renderScreen(<TestHarness refreshKey="machine-a" />);
+            await settle();
+            expect(state(active.tree).installState).toBe('installing');
+            const start = requests.length;
+            current = status(STT_PACK, {
+                installState: 'installing',
+                progress: { phase: 'downloading', progress: 0.5, bytesDownloaded: 50, totalBytes: 100, message: null },
+            });
+            await tick();
+            expect(state(active.tree).statuses.find((row: DaemonVoiceInferenceModelStatus) => row.packId === STT_PACK)?.progress?.progress).toBe(0.5);
+            const progress = requests.slice(start).map(request => ({ method: request.method.split(':').at(-1), params: request.params }));
+            await setVisibility('hidden');
+            const hiddenStart = requests.length;
+            await tick();
+            const hiddenReads = requests.length - hiddenStart;
+            current = status(STT_PACK, { installState: 'installed' });
+            await setVisibility('visible');
+            await tick();
+            expect(state(active.tree).installState).toBe('installed');
+            expect(state(active.tree).statuses).toEqual(expect.arrayContaining(unrelated));
+            const idleStart = requests.length;
+            await tick();
+            const idleReads = requests.length - idleStart;
+            await active.unmount();
+            const closedStart = requests.length;
+            await tick();
+            expect({ progress, hiddenReads, idleReads, closedReads: requests.length - closedStart }).toEqual({
+                progress: [{ method: 'daemon.voiceInference.models.status', params: { packIds: [STT_PACK] } }],
+                hiddenReads: 0,
+                idleReads: 0,
+                closedReads: 0,
+            });
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
-    it('never overlaps catalog polls and schedules the next poll after the current one settles', async () => {
+    it('waits for the in-flight pack status before scheduling the next progress read', async () => {
         vi.useFakeTimers();
         const pending = createDeferred<unknown>();
-        let lists = 0;
-        respond = request => request.method.endsWith('.status') ? modelStatus([])
-            : ++lists === 2 ? pending.promise : modelList([status(STT_PACK, { installState: lists < 3 ? 'installing' : 'installed' })]);
+        let reads = 0;
+        const installing = status(STT_PACK, { installState: 'installing' });
+        respond = request => {
+            if (request.method.endsWith('.list')) return modelList([installing]);
+            reads += 1;
+            return reads === 2 ? pending.promise : modelStatus([reads < 3
+                ? installing : status(STT_PACK, { installState: 'installed' })]);
+        };
         const tree = await mount();
         expect(state(tree).installState).toBe('installing');
         await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-        await settle();
-        expect(listingRequests()).toHaveLength(2);
+        expect(reads).toBe(2);
         await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        expect(reads).toBe(2);
+        await act(async () => pending.resolve(modelStatus([installing])));
         await settle();
-        expect(listingRequests()).toHaveLength(2);
-        await act(async () => pending.resolve(modelList([status(STT_PACK, { installState: 'installing' })])));
-        await settle();
-        await act(async () => { await vi.advanceTimersByTimeAsync(99); });
-        await settle();
-        expect(listingRequests()).toHaveLength(2);
-        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-        await settle();
-        expect(listingRequests()).toHaveLength(3);
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+        expect(reads).toBe(3);
+        expect(listingRequests()).toHaveLength(1);
         expect(state(tree).installState).toBe('installed');
     });
 

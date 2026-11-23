@@ -42,8 +42,10 @@ export async function invokeDaemonModelPackOperation(input: Readonly<{
             await client.acceptModelPackLicense(license, scope, input.signal);
         }
         if (!await current()) return { status: 'cancelled' };
-        if (scope) await client.installModel({ packId: row.packId, signal: input.signal }, scope);
-        else await client.installModel({ packId: row.packId, signal: input.signal });
+        const install = { packId: row.packId, signal: input.signal };
+        await observation.trackInstall(row.packId, () => scope
+            ? client.installModel(install, scope)
+            : client.installModel(install));
     }
     // The mutation may come from a settings Action with no mounted controller.
     // Withdraw only its captured Account/Machine observation; demanded readers
