@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import tempfile
+import time
 
 WRAPPER = Path(__file__).resolve().with_name("commit-partial.sh")
 
@@ -238,3 +239,78 @@ def test_stale_packet_preserves_post_base_workspace_writes():
 
 
 test_stale_packet_preserves_post_base_workspace_writes()
+
+
+def test_waiting_packets_land_in_arrival_order():
+    with tempfile.TemporaryDirectory(prefix="p03-group-writer-") as temp:
+        repo = Path(temp)
+
+        def git(*args):
+            return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+        git("init", "-qb", "main")
+        git("config", "user.name", "Holder")
+        git("config", "user.email", "holder@example.invalid")
+        names = ("oldest", "newer", "invalid")
+        for name in names:
+            (repo / f"{name}.mjs").write_text("export const x = 0;\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD")
+        for name in names:
+            (repo / f"{name}.mjs").write_text("export const x = " + (";" if name == "invalid" else "1;") + "\n")
+            (repo / f"{name}.patch").write_text(git("diff", "--binary", "--full-index", base, "--", f"{name}.mjs") + "\n")
+            (repo / f"{name}.msg").write_text(f"fix: {name}\n")
+
+        lock = repo / ".git/p03-commit-partial.lock"
+        env = {**os.environ, "P03_CP_PACKET_BASE": base, "P03_GATE_CACHE": str(repo / "cache"),
+               "P03_COMMIT_KICK": "true"}
+        # The shim only exposes when the real flock has been reached. It does not
+        # choose the winner or replace Git, the gate, or the lock operation.
+        shim = repo / "flock"
+        shim.write_text("""#!/bin/sh
+if [ "$*" = "-x 3" ]; then touch "$FIXTURE_WAITING"; fi
+exec "$FIXTURE_FLOCK" "$@"
+""")
+        shim.chmod(0o700)
+        env.update(PATH=f"{repo}:{env['PATH']}", FIXTURE_FLOCK=shutil.which("flock"))
+        writers = {}
+        try:
+            with subprocess.Popen(["flock", "-x", str(lock), "sh", "-c", "echo locked; read release"],
+                                  cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as holder:
+                assert holder.stdout.readline().strip() == "locked"
+                # Deliberately reach flock in the reverse order of submission.
+                for name, arrived in (("newer", "2"), ("oldest", "1"), ("invalid", "3")):
+                    waiting = repo / f"{name}.waiting"
+                    writers[name] = subprocess.Popen(
+                        ["bash", str(WRAPPER), f"{name}.msg", "-", f"{name}.patch"],
+                        cwd=repo, env={**env, "P03_CP_ARRIVED_AT": arrived, "FIXTURE_WAITING": str(waiting),
+                                       "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": f"{name}@example.invalid"},
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    for _ in range(500):
+                        if waiting.exists() or list((repo / ".git").glob(f"p03-commit-partial.lock.writers/{arrived:0>16}-*")):
+                            break
+                        assert writers[name].poll() is None, writers[name].communicate()
+                        time.sleep(0.01)
+                    else:
+                        raise AssertionError(f"{name} did not reach the commit lock")
+                holder.stdin.write("release\n")
+                holder.stdin.flush()
+
+            output = {name: writer.communicate(timeout=20) for name, writer in writers.items()}
+        finally:
+            for writer in writers.values():
+                if writer.poll() is None:
+                    writer.terminate()
+                    writer.communicate(timeout=10)
+        assert [writers[name].returncode for name in names] == [0, 0, 1], output
+        assert git("log", "--format=%s <%an>", f"{base}..HEAD").splitlines() == [
+            "fix: newer <newer>", "fix: oldest <oldest>"], output
+        assert "grouped by" in git("reflog", "-1", "--format=%gs"), output
+        assert "commit gate: lock held " not in output["newer"][1], output
+        assert "syntax" in output["invalid"][1], output
+        assert not list((repo / ".git/p03-commit-partial.lock.writers").iterdir()), output
+        print("PASS arrival order, grouped landing, original author and exact-tree refusal")
+
+
+test_waiting_packets_land_in_arrival_order()

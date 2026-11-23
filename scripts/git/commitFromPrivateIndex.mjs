@@ -85,9 +85,12 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
 
     const packet = { base, tree: git('write-tree') };
+    const message = fs.readFileSync(messageFile, 'utf8');
+    const commitPacket = (base, tree) => gitAt(cwd, env)('commit-tree', tree, '-p', base, '-F', messageFile).trim();
+    const candidate = commitPacket(packet.base, packet.tree);
     const { commit, gate, head } = await finalizeGatedCommit({
-      repo: cwd, packet, label: 'commitFromPrivateIndex', message: fs.readFileSync(messageFile, 'utf8'),
-      createCommit: ({ base, tree }) => git('commit-tree', tree, '-p', base, '-F', messageFile),
+      repo: cwd, packet, candidate, label: 'commitFromPrivateIndex', message,
+      createCommit: ({ base, tree }) => base === packet.base && tree === packet.tree ? candidate : commitPacket(base, tree),
     });
     if (gate?.verdict === 'incomplete') {
       throw Object.assign(new Error(formatCommitGateIncomplete(gate)), { exitCode: COMMIT_GATE_EXIT.incomplete });

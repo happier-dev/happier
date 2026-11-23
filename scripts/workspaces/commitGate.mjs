@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 // The exact-tree safety checks and ref lock shared by every commit writer.
-import { execFileSync, spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -15,7 +13,9 @@ import { commitProducerClosure, createRevisionViewReader, gitIn } from './commit
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
-  withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
+  commitEntryLoadEnvironmentKey, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
+import { withCommitLock } from './commitWriterLock.mjs';
+export { commitGateLockPath, withCommitLock } from './commitWriterLock.mjs';
 
 
 export const COMMIT_GATE_EXIT = Object.freeze({ refused: 10, incomplete: 11, unavailable: 75 });
@@ -30,16 +30,16 @@ class CommitGateUnavailable extends Error {
 }
 
 export async function runCommitGate({ repo, base, tree, compareAdmittedEntryLoads, env = process.env, phase = 'commit',
-  cacheDir = env.P03_GATE_CACHE }) {
+  cacheDir = env.P03_GATE_CACHE, expectedEnvironment }) {
   const scratch = cacheDir ? undefined : await mkdtemp(join(tmpdir(), 'happier-commit-gate-'));
   try {
-    return await judgeCommit({ repo, base, tree, cacheDir: resolve(cacheDir ?? scratch), compareAdmittedEntryLoads, env, phase });
+    return await judgeCommit({ repo, base, tree, cacheDir: resolve(cacheDir ?? scratch), compareAdmittedEntryLoads, env, phase, expectedEnvironment });
   } finally {
     if (scratch) await rm(scratch, { recursive: true, force: true });
   }
 }
 
-async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoads, env, phase }) {
+async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoads, env, phase, expectedEnvironment }) {
   const notes = [];
   const judge = async (check, run) => {
     const started = performance.now();
@@ -73,7 +73,7 @@ async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoa
   if (lockfile.findings.length) return refused('lockfile', lockfile.findings);
 
   const loads = await judge('tree entry loads', () => commitTreeEntryLoads({
-    repo, base, tree, env, phase: 'commit', compareAdmittedEntryLoads,
+    repo, base, tree, env, phase: 'commit', compareAdmittedEntryLoads, expectedEnvironment,
   }));
   if (loads.selected.length) notes.push(`tree entry loads: ${loads.selected.length} graph(s), ${JSON.stringify(loads.timings)}`);
   if (loads.findings.length) return refused("entry loads of the commit's own tree", loads.findings);
@@ -89,47 +89,6 @@ export function formatCommitGateRefusal(result) {
   return [`Commit refused by the commit gate (${result.check}): ${result.findings.length} finding(s):`,
     ...result.findings.map(finding => `  ${finding}`)].join('\n');
 }
-
-/** The lock every HEAD writer holds while judging and publishing an exact tree. */
-export function commitGateLockPath(repo) {
-  const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf8' }).trim();
-  return join(common, 'p03-commit-partial.lock');
-}
-
-/**
- * Serialize the exact-tree gate and compare-and-swap. flock locks the inherited descriptor;
- * the parent holds it until the writer settles. Await acquisition so another writer in this process
- * can finish its gate and release the lock. Hosts without flock retain the plain CAS fallback.
- */
-export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate' }, run) {
-  const moveRef = ({ commit, head, reason }) => {
-    execFileSync('git', ['update-ref', '-m', reason, ref, commit, head], {
-      cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-    });
-  };
-  if (process.platform === 'win32') return run(moveRef);
-
-  const path = commitGateLockPath(repo);
-  const lock = openSync(path, 'a');
-  let mark;
-  try {
-    try {
-      const child = spawn('flock', ['-x', '3'], { cwd: repo, stdio: ['ignore', 'ignore', 'inherit', lock] });
-      const [code, signal] = await once(child, 'exit');
-      if (code !== 0) throw new Error(`commit gate: flock failed (${signal ?? code})`);
-      mark = `${path}.holder`;
-      writeFileSync(mark, `pid=${process.pid} since=${new Date().toISOString().slice(11, 19)}Z msg=${label}\n`);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      process.stderr.write('commit gate: no flock on this host (the commit wrapper cannot run here either); plain compare-and-swap\n');
-    }
-    return await run(moveRef);
-  } finally {
-    try { if (mark) rmSync(mark, { force: true }); }
-    finally { closeSync(lock); }
-  }
-}
-
 
 const CLI_PROJECTION_ROOT = 'apps/cli';
 const manifestAssetRoot = dirname(`${CLI_PROJECTION_ROOT}/${bundledPluginManifestAssetRelativePath('plugin')}`);
@@ -284,43 +243,104 @@ async function composeLockedPacket({ git, packet, head, regenerate, projections,
   }
 }
 
+async function judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
+  compareAdmittedEntryLoads, expectedEnvironment, replayScratchRoot, message }) {
+  const exact = head === packet.base && !projections.approvals && !projections.fieldTitles && !projections.plugins.size
+    ? packet
+    : await composeLockedPacket({ git, packet, head, regenerate, projections, scratchRoot: replayScratchRoot });
+  if (head !== packet.base && message !== undefined) {
+    const started = performance.now();
+    const removals = unnamedPostBaseRemovals(git, packet.base, head, exact.replayedTree, message);
+    console.error(`commit gate: post-base line removal: ${Math.round(performance.now() - started)} ms`);
+    if (removals.length) return { gate: {
+      verdict: 'refused', check: 'post-base line removal', notes: [],
+      findings: removals.map(({ path, line, text }) => `${path}:${line}: name this removed line in the commit message: ${text}`),
+    } };
+  }
+  const gate = await runCommitGate({ repo, base: head, tree: exact.tree, compareAdmittedEntryLoads, expectedEnvironment });
+  for (const note of gate.notes) console.error(`commit gate: ${note}`);
+  return gate.verdict === 'pass' ? { exact } : { gate };
+}
+
+function frozenCandidate(git, candidate) {
+  const [base, tree] = git(['rev-parse', `${candidate}^`, `${candidate}^{tree}`]).trim().split('\n');
+  return { base, tree };
+}
+
+function createGroupedCommit(git, candidate, exact, packet, message) {
+  if (exact.base === packet.base && exact.tree === packet.tree) return candidate;
+  const contents = git(['cat-file', 'commit', candidate]);
+  const headers = contents.slice(0, contents.indexOf('\n\n'));
+  // A signed commit must be recreated by its original writer when the parent changes.
+  if (/^gpgsig(?:-sha256)? /mu.test(headers)) return;
+  const identities = git(['show', '-s', '--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI', candidate]).trimEnd().split('\0');
+  const [author, email, date, committer, committerEmail, committerDate] = identities;
+  return git(['commit-tree', exact.tree, '-p', exact.base, '-F', '-'], {
+    input: message, env: { ...process.env, GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: date,
+      GIT_COMMITTER_NAME: committer, GIT_COMMITTER_EMAIL: committerEmail, GIT_COMMITTER_DATE: committerDate },
+  }).trim();
+}
+
+async function landWaitingPackets({ repo, git, ref, moveRef, queued, replayScratchRoot }) {
+  const requireAdmission = () => { throw new EntryLoadAdmissionRequired(); };
+  for await (const { packet: waiting, saveLanding } of queued()) {
+    if (!waiting) break;
+    try {
+      const head = git(['rev-parse', '--verify', ref]).trim();
+      const packet = frozenCandidate(git, waiting.candidate);
+      const projections = packetProjectionInputs(git, packet);
+      const { exact } = await judgeLockedPacket({ repo, git, head, packet, projections,
+        regenerate: requireAdmission, compareAdmittedEntryLoads: requireAdmission,
+        expectedEnvironment: waiting.environment, replayScratchRoot, message: waiting.message });
+      if (!exact) break;
+      const commit = createGroupedCommit(git, waiting.candidate, exact, packet, waiting.message);
+      if (!commit) break;
+      // Store the proposed result before CAS. The waiting writer only accepts it
+      // if the commit is in its ref, including when the holder exits mid-handoff.
+      saveLanding({ commit, head, tree: exact.tree });
+      moveRef({ commit, head, reason: `${waiting.label}: grouped by pid ${process.pid}` });
+      console.error(`commit gate: grouped ${commit} after ${head}`);
+    } catch (error) {
+      const reason = error instanceof EntryLoadAdmissionRequired ? 'needs its own entry admission or generator' : error.message;
+      console.error(`commit gate: next writer resumes individually (${reason})`);
+      break;
+    }
+  }
+}
+
 /**
- * Admission is outside the lock. Once admitted, compose against the current
- * ref, judge once and publish that exact tree. A foreign ref move makes CAS
- * fail without re-running the gate or changing the ref.
+ * Admission is outside the lock. Compose and judge against the current ref.
+ * The same holder can publish subsequent frozen packets using verified inputs,
+ * without obtaining another grant or doing generation under the shared lock.
  */
-export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, message, dry = false }) {
+export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, message,
+  candidate, dry = false }) {
   const git = gitIn(repo);
   const projections = packetProjectionInputs(git, packet);
+  const arrival = process.env.HAPPIER_COMMIT_GATE_ARRIVED_AT || Date.now();
+  const waiting = candidate && !dry ? { candidate, label, message, environment: commitEntryLoadEnvironmentKey() } : undefined;
   const admissionAt = performance.now();
   try {
     return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, (compareAdmittedEntryLoads, regenerate) => {
       console.error(`commit gate: admission ${Math.round(performance.now() - admissionAt)} ms`);
       const queuedAt = performance.now();
-      return withCommitLock({ repo, ref, label }, async moveRef => {
+      return withCommitLock({ repo, ref, label, arrival, packet: waiting }, async (moveRef, queued) => {
         const lockedAt = performance.now();
         console.error(`commit gate: lock wait ${Math.round(lockedAt - queuedAt)} ms`);
         try {
           const head = git(['rev-parse', '--verify', ref]).trim();
-          const exact = head === packet.base && !projections.approvals && !projections.fieldTitles && !projections.plugins.size
-            ? packet
-            : await composeLockedPacket({ git, packet, head, regenerate, projections, scratchRoot: replayScratchRoot });
-          if (head !== packet.base && message !== undefined) {
-            const started = performance.now();
-            const removals = unnamedPostBaseRemovals(git, packet.base, head, exact.replayedTree, message);
-            console.error(`commit gate: post-base line removal: ${Math.round(performance.now() - started)} ms`);
-            if (removals.length) return { gate: {
-              verdict: 'refused', check: 'post-base line removal', notes: [],
-              findings: removals.map(({ path, line, text }) => `${path}:${line}: name this removed line in the commit message: ${text}`),
-            } };
-          }
-          const gate = await runCommitGate({ repo, base: head, tree: exact.tree, compareAdmittedEntryLoads });
-          for (const note of gate.notes) console.error(`commit gate: ${note}`);
-          if (gate.verdict !== 'pass') return { gate };
+          const result = await judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
+            compareAdmittedEntryLoads, replayScratchRoot, message });
+          if (result.gate) return result;
+          const { exact } = result;
           const commit = createCommit(exact);
           if (!dry) {
             try { moveRef({ commit, head, reason: `${label}: pid ${process.pid}` }); }
             catch (error) { throw new CommitGateUnavailable('ref update', error); }
+            if (queued) {
+              try { await landWaitingPackets({ repo, git, ref, moveRef, queued, replayScratchRoot }); }
+              catch (error) { console.error(`commit gate: group landing stopped (${error.message})`); }
+            }
           }
           return { commit, head, tree: exact.tree };
         } finally {
@@ -339,11 +359,12 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
 
 async function finalizeFrozenPacket({ repo, candidate, message, patch, ref, dry }) {
   const git = gitIn(repo);
-  const base = git(['rev-parse', `${candidate}^`]).trim();
-  const tree = git(['rev-parse', `${candidate}^{tree}`]).trim();
+  const packet = frozenCandidate(git, candidate);
   return await finalizeGatedCommit({
-    repo, ref, label: 'commit-partial', packet: { base, tree }, dry, replayScratchRoot: dirname(resolve(patch)), message: readFileSync(message, 'utf8'),
-    createCommit: exact => exact.base === base && exact.tree === tree ? candidate : git(['commit-tree', exact.tree, '-p', exact.base, '-F', message]).trim(),
+    repo, ref, label: 'commit-partial', packet, candidate, dry,
+    replayScratchRoot: dirname(resolve(patch)), message: readFileSync(message, 'utf8'),
+    createCommit: exact => exact.base === packet.base && exact.tree === packet.tree ? candidate
+      : git(['commit-tree', exact.tree, '-p', exact.base, '-F', message]).trim(),
   });
 }
 

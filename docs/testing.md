@@ -746,8 +746,13 @@ Changed-source syntax, new eager import cycles, dependency imports and
 exports, plugin manifests, workspace and lockfile sanity, and affected
 runtime loads protect HEAD. An affected CLI or daemon entry must load even
 if the parent has the same failure. An unavailable check or failed
-compare-and-swap leaves the packet unpublished. The gate releases the lock
-after the ref update.
+compare-and-swap leaves the packet unpublished. Admitted writers take the
+commit lock in packet arrival order. After publishing its own packet, the
+holder can publish consecutive waiting packets on the same ref while their
+exact rebased trees pass the same checks using previously verified inputs.
+The next writer takes over if it needs its own entry probe or projection
+generation, or if its packet cannot be replayed and checked in the group.
+Each packet retains its own commit and post-commit report.
 
 The existing rolling checks run full package and app typechecks. The
 post-commit report compares Protocol and Plugin SDK declarations against

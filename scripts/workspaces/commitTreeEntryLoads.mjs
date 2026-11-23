@@ -221,11 +221,7 @@ async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env
   // application closure. Git records include path, mode and blob identity.
   const common = blobs.filter(({ path, owner }) => !owner || path.endsWith('/package.json')
     || /^(?:apps\/stack\/|packages\/cli-common\/|apps\/server\/(?:prisma|scripts)\/|packages\/protocol\/scripts\/)/u.test(path));
-  const probeEnvironment = Object.entries(env).filter(([name]) => ![
-    'HAPPIER_COMMIT_GATE_ARRIVED_AT', 'P03_CP_ARRIVED_AT', 'P03_CP_FROZEN', 'P03_CP_PACKET_BASE',
-    'P03_COMMIT_TREE_WORK_DIR', 'P03_COMMIT_TREE_HOST_TMP', 'PWD', 'OLDPWD', 'SHLVL', '_',
-  ].includes(name)).sort(([a], [b]) => a.localeCompare(b));
-  const basis = createHash('sha256').update(JSON.stringify([installed, process.execPath, process.versions, probeEnvironment]))
+  const basis = createHash('sha256').update(JSON.stringify([installed, process.execPath, process.versions, entryLoadEnvironment(env)]))
     .update(readFileSync(self)).update(JSON.stringify(common.map(({ line }) => line))).digest('hex');
   const records = new Map();
   for (const id of selected) {
@@ -242,6 +238,17 @@ async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env
     records.set(id, { key, file, hit: readFileIfPresent(file) === key });
   }
   return { installed, records };
+}
+
+function entryLoadEnvironment(env) {
+  return Object.entries(env).filter(([name]) => ![
+    'HAPPIER_COMMIT_GATE_ARRIVED_AT', 'P03_CP_ARRIVED_AT', 'P03_CP_FROZEN', 'P03_CP_PACKET_BASE',
+    'P03_COMMIT_TREE_WORK_DIR', 'P03_COMMIT_TREE_HOST_TMP', 'PWD', 'OLDPWD', 'SHLVL', '_',
+  ].includes(name)).sort(([a], [b]) => a.localeCompare(b));
+}
+
+export function commitEntryLoadEnvironmentKey(env = process.env) {
+  return createHash('sha256').update(JSON.stringify(entryLoadEnvironment(env))).digest('hex');
 }
 
 function readFileIfPresent(file) {
@@ -291,13 +298,16 @@ async function compareWithVerifiedGraphs(request, { env, signal, run }) {
  * Other graphs report failures they share with the base. Extraction, derivation or missing harness results make
  * the check unavailable.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, phase = 'report', compareAdmittedEntryLoads }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, phase = 'report', compareAdmittedEntryLoads, expectedEnvironment }) {
   const git = gitAt(repo);
   [base, tree] = git(['rev-parse', `${base}^{tree}`, `${tree}^{tree}`]).toString().trim().split('\n');
   const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, phase });
   const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
   if (!selected.length) return empty;
+  if (expectedEnvironment !== undefined && expectedEnvironment !== commitEntryLoadEnvironmentKey(env)) {
+    throw new EntryLoadAdmissionRequired();
+  }
   const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !compareAdmittedEntryLoads };
   const run = compareAdmittedEntryLoads ?? (candidate => admitEntryLoads(candidate, { env, signal }));
   return phase === 'commit' ? await compareWithVerifiedGraphs(request, { env, signal, run }) : await run(request);
