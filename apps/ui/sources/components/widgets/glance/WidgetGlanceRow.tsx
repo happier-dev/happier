@@ -62,6 +62,8 @@ export const WidgetGlanceRow = React.memo(function WidgetGlanceRow(
     variant?: 'row' | 'fact' | 'state';
     tag?: string | null;
     tagSentence?: boolean;
+    /** A `fact` that is a sentence wraps to a second line (a section's description heading its widget body). */
+    titleSentence?: boolean;
     fact?: string | null;
     factTone?: 'quiet' | 'attention' | 'danger';
     mono?: boolean;

@@ -7,6 +7,8 @@ import type { AutomationRunCause, AutomationV3RunDetail } from '@happier-dev/pro
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -809,11 +811,20 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
         : null;
     const triggerCause = run?.cause.kind === 'trigger' ? run.cause : null;
     const triggerRetired = run?.triggerRetired === true;
+    const technicalLines = [
+        ...(triggerCause ? [{ key: 'trigger', label: t('automations.detail.runMeta.triggerIdentityTitle'),
+            value: t('automations.detail.runMeta.triggerIdentity', { id: triggerCause.triggerId, revision: triggerCause.triggerRevision }) }] : []),
+        ...(occurrenceKey ? [{ key: 'occurrence', label: t('automations.detail.runMeta.occurrenceTitle'), value: occurrenceKey }] : []),
+        ...(sourceSelectorId ? [{ key: 'source', label: t('automations.detail.runMeta.sourceTitle'), value: sourceSelectorId }] : []),
+        ...(eventRef ? [{ key: 'event', label: t('automations.detail.runMeta.eventReferenceTitle'),
+            value: `${eventRef.pluginId}/${eventRef.localId}` }] : []),
+    ];
     return <>
                         <ItemGroup
                             title={t('automationPages.run.causeTitle')}
                             description={t('automationPages.run.causeDescription')}
                         >
+                            {/* Every cause kind reads here; the managed header names only some of them. */}
                             <Item
                                 title={t('automations.detail.runMeta.causeTitle')}
                                 detail={formatAutomationRunCauseLabel(run.cause)}
@@ -825,18 +836,6 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
                                 showChevron={false}
                                 mode="info"
                             />
-                            {triggerCause ? (
-                                <Item
-                                    title={t('automations.detail.runMeta.triggerIdentityTitle')}
-                                    subtitle={t('automations.detail.runMeta.triggerIdentity', {
-                                        id: triggerCause.triggerId,
-                                        revision: triggerCause.triggerRevision,
-                                    })}
-                                    subtitleLines={0}
-                                    copy={`${triggerCause.triggerId}@${triggerCause.triggerRevision}`}
-                                    showChevron={false}
-                                />
-                            ) : null}
                             {triggerRetired ? (
                                 <Item
                                     testID="automation-run-trigger-retired"
@@ -847,36 +846,14 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
                                     mode="info"
                                 />
                             ) : null}
-                            {occurrenceKey ? (
-                                <Item
-                                    title={t('automations.detail.runMeta.occurrenceTitle')}
-                                    subtitle={occurrenceKey}
-                                    subtitleLines={0}
-                                    copy={occurrenceKey}
-                                    showChevron={false}
-                                />
-                            ) : null}
-                            {sourceSelectorId ? (
-                                <Item
-                                    title={t('automations.detail.runMeta.sourceTitle')}
-                                    subtitle={sourceSelectorId}
-                                    subtitleLines={0}
-                                    copy={sourceSelectorId}
-                                    showChevron={false}
-                                />
-                            ) : null}
-                            {eventRef ? (
-                                <Item
-                                    title={t('automations.detail.runMeta.eventReferenceTitle')}
-                                    subtitle={`${eventRef.pluginId}/${eventRef.localId}`}
-                                    subtitleLines={0}
-                                    copy={`${eventRef.pluginId}/${eventRef.localId}`}
-                                    showChevron={false}
-                                />
-                            ) : null}
                             {triggerCause?.triggerKind === 'sessionLifecycle' ? (
                                 <AutomationRunLifecycleCauseItems cause={triggerCause} />
                             ) : null}
+                            {/* The exact trigger, occurrence and source are for someone tracing the Run: one tap away. */}
+                            {technicalLines.length === 0 ? null : (
+                                <TechnicalDetailsDisclosure testID="automation-run-cause-technical"
+                                    title={t('workflows.run.technicalDetails')} lines={technicalLines} />
+                            )}
                         </ItemGroup>
                         {runHistory.length > 0 ? (
                             <ItemGroup title={t('automations.detail.runMeta.historyTitle')}>
@@ -915,12 +892,13 @@ function WorkflowOccurrenceRunFacts({ detail }: Readonly<{ detail: OccurrenceDet
         {loadFailed ? <AttentionBanner testID="automation-run-detail-stale-refresh-error"
             title={t('runs.runDetails.failedToLoad')} announce="alert" accessibilityLiveRegion="assertive"
             action={{ label: t('common.retry'), onPress: refresh, testID: 'automation-run-detail-stale-refresh-retry' }} /> : null}
-        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <>
+        {/* Sections of the Run's page: title and description above their rows, as every page section reads. */}
+        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <ListPresentationProvider value="page">
             {run.replyHandoffState === 'none' ? null : <ItemGroup title={t('automations.detail.runMeta.replyHandoffTitle')}>
                 <WorkflowOccurrenceDeliveryItems detail={detail} />
             </ItemGroup>}
             <WorkflowOccurrenceCauseAndHistory run={run} events={currentDetail?.detail.events ?? []} />
-        </>}
+        </ListPresentationProvider>}
     </>;
 }
 

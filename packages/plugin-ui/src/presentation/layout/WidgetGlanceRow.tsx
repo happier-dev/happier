@@ -69,6 +69,11 @@ export type HappierWidgetGlanceRowProps = Readonly<{
    * to a second line when the room runs out, so the tag never cuts the label short.
    */
   tagSentence?: boolean;
+  /**
+   * A `fact` that is a sentence (a section's description heading its widget body): it wraps to a second line
+   * instead of losing its end, as `state` sentences do.
+   */
+  titleSentence?: boolean;
   /** The second line: where it is and what is happening there. */
   fact?: string | null;
   /** `attention`: the fact needs the person (amber); `danger`: it failed. Healthy state stays quiet. */
@@ -96,7 +101,7 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
   const { Text, colors, space } = props;
   const variant = props.variant ?? 'row';
   const sentenceTag = props.tagSentence && props.tag ? props.tag : null;
-  const sentenceLines = variant === 'state' ? { lines: 2 } : {};
+  const sentenceLines = variant === 'state' || props.titleSentence ? { lines: 2 } : {};
   const content = (
     <>
       {props.mark !== undefined ? (

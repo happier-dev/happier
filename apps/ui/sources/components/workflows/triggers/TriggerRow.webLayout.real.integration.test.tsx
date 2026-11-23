@@ -43,8 +43,8 @@ it('keeps the ⋯ and the switch in the row\'s trailing column, each the topmost
                 expect(control.bottom).toBeLessThanOrEqual(row.bottom);
                 expect(control.receivesPointer).toBe(true);
             }
-            // The ⋯ stands just before the switch, which closes the row.
-            expect(layout.rect('habit-more').right).toBeLessThanOrEqual(layout.rect('habit-switch').left);
+            // The switch comes first and the ⋯ closes the row (lab trigger rows, DESIGN-ACCEPT-5 NF-6).
+            expect(layout.rect('habit-switch').right).toBeLessThanOrEqual(layout.rect('habit-more').left);
         }
     } finally {
         await act(async () => root.unmount());

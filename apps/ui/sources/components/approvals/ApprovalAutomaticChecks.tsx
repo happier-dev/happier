@@ -404,20 +404,25 @@ export const ApprovalAutomaticChecks = React.memo(
         </View>
       );
     }
-    const skipped = [
-      ...skippedConsents.map((row) =>
-        t('workflows.triggers.checks.skipped', { workflow: nameOf(row, 'inline') }),
-      ),
-      ...skippedNotices.map(({ notice, reason }) => formatAutomaticCheckSkipNotice({
+    // One Skip per check: a person's Skip is one consent and one skip notice for the same trigger, so rows are keyed on
+    // the trigger identity and the person's own answer (it asks again next time) speaks for it.
+    const skipped = new Map<string, string>();
+    for (const row of skippedConsents) {
+      const key = actionAutomationTriggerKeyV1(row);
+      if (!skipped.has(key)) skipped.set(key, t('workflows.triggers.checks.skipped', { workflow: nameOf(row, 'inline') }));
+    }
+    for (const { notice, reason } of skippedNotices) {
+      const key = actionAutomationTriggerKeyV1(notice);
+      if (!skipped.has(key)) skipped.set(key, formatAutomaticCheckSkipNotice({
         reason, workflow: nameOf(notice, 'inline'), executionAccountName: props.automaticChecksExecutionAccountName ?? undefined,
-      })),
-    ];
+      }));
+    }
     if (!readApprovalAutomaticChecksShown(checks)) return null;
     return (
       <>
         {body}
-        {skipped.map((line, index) => (
-          <View key={index} style={styles.lead}>
+        {[...skipped].map(([key, line], index) => (
+          <View key={key} style={styles.lead}>
             <Icon name="minus-circle" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
             <Text
               variant="meta"

@@ -301,13 +301,31 @@ describe('Action before checks on the approval card', () => {
     await screen.unmount();
   });
 
+  // QA-UI-R 11-23: a person's Skip on a shared check is one consent and one skip notice for the same trigger; it reads once.
+  it('says one Skip per check when its consent and its skip notice name the same trigger', async () => {
+    const notice = { code: 'action_automation_skipped' as const, ...ref, workflowId: selected.workflowId, reason: 'consentSkipped' };
+    const value = checks({ phase: 'passed', consents: [{ ...ref, decision: 'skip' }], notices: [notice] });
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={value} actionTitle="Deploy" serverId={null} testID="checks"
+        automaticCheckSkips={[{ notice, reason: null }]} />,
+    );
+    expect(screen.findByTestId('checks:skipped:0')).not.toBeNull();
+    expect(screen.findByTestId('checks:skipped:1')).toBeNull();
+    const text = screen.getTextContent();
+    expect(text).toContain('workflows.triggers.checks.skipped');
+    expect(text).not.toContain('workflows.triggers.checks.skippedUnavailable');
+    await screen.unmount();
+  });
+
   // R24 and the shared-Bot recovery: a typed skip says why; an unknown reason says only that it skipped.
   it('says why a check was skipped from its typed reason, naming the Account holder for a shared Bot', async () => {
-    const notice = (reason: string) => ({ code: 'action_automation_skipped' as const, ...ref, workflowId: selected.workflowId, reason });
-    const machine = notice('machineRequired');
-    const holder = notice('actorConsentUnavailableForRequester');
-    const other = notice('some_future_reason');
-    const value = checks({ phase: 'passed', notices: [machine, holder, other] });
+    // Three checks, each skipped for its own reason.
+    const notice = (reason: string, n: number) => ({ code: 'action_automation_skipped' as const, automationId: `automation-${n}`,
+      triggerId: AutomationTriggerIdSchema.parse(`trigger-${n}`), workflowId: selected.workflowId, reason });
+    const machine = notice('machineRequired', 1);
+    const holder = notice('actorConsentUnavailableForRequester', 2);
+    const other = notice('some_future_reason', 3);
+    const value = checks({ phase: 'passed', selected: [], notices: [machine, holder, other] });
     const screen = await renderScreen(
       <ApprovalAutomaticChecks checks={value} actionTitle="Deploy" serverId={null} testID="checks"
         automaticChecksExecutionAccountName="Ade"

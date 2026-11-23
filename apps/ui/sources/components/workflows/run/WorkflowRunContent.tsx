@@ -1748,7 +1748,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 reachable: props.machineReachable,
             },
             operationPending,
-            recoveryPrimaryDisplay: primaryAction === 'stop' ? 'secondary' : 'default',
+            // One filled action per page: while the header leads with Stop or Run again, the pane's matching way
+            // forward stays bordered (DESIGN-ACCEPT-5 NF-10: two filled "Run workflow again").
+            recoveryPrimaryDisplay: primaryAction === 'stop' || headerPrimaryAction === 'run_again' ? 'secondary' : 'default',
             noChoicesNext,
             setupOutcome: selectedDetail.setupOutcome,
             machineSetupStep: selectedDetail.machineSetupStep,
@@ -1802,6 +1804,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     ), [
         operationPending,
         primaryAction,
+        headerPrimaryAction,
         noChoicesNext,
         onRunAgain,
         props.onOpenMachineRemedy,

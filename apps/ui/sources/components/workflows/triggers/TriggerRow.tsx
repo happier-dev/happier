@@ -68,14 +68,14 @@ export type TriggerRowProps = Readonly<{
     presentation?: 'sheet' | 'column';
     /** The event's glyph; a column row leads with it like its sibling rows' marks. */
     glyph?: IconName;
-    /** Secondary actions (History, Run now): behind the row's ⋯, just before its switch. */
+    /** Secondary actions (History, Run now): behind the row's ⋯, just after its switch. */
     menuActions?: readonly ItemAction[];
     /** The enclosing sheet's hairline decision (a sheet clones it onto its rows). */
     showDivider?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // The ⋯ and the switch share the trailing column, the way a Context document row holds them.
+    // The switch and the ⋯ share the trailing column, the switch first (lab trigger rows, the trigger block's header).
     controls: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
 }));
 
@@ -93,7 +93,7 @@ const triggerRowHost: HappierTriggerRowHost = {
     Toggle: Switch,
     Text: TriggerRowLineText,
     Row: (props) => {
-        const trailing = props.menu ? <View style={stylesheet.controls}>{props.menu}{props.toggle}</View> : props.toggle;
+        const trailing = props.menu ? <View style={stylesheet.controls}>{props.toggle}{props.menu}</View> : props.toggle;
         return props.presentation === 'column' && props.onPress ? (
             <CollectionNavigationRow testID={props.testID} title={props.title}
                 {...(props.subtitleText ? { subtitle: props.subtitleText } : {})}

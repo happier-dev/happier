@@ -4,7 +4,6 @@ import { useRouter } from 'expo-router';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierTextActionEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
@@ -16,6 +15,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
+import { PageRowDensityProvider } from '@/components/ui/lists/useResolvedItemDensity';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { Typography } from '@/constants/Typography';
@@ -161,8 +161,10 @@ function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof Ite
     {...(page || props.widget ? {} : { constrainToContentWidth: false })}
     {...(props.widget ? { surface: 'none' as const }
       : { title: t('workflows.triggers.section.title'), description: props.description, action: props.action })}>
-    {props.widget ? <WidgetGlanceRow variant="fact" title={props.description} testID="subject-triggers-description" /> : null}
-    {props.children}
+    {props.widget ? <WidgetGlanceRow variant="fact" titleSentence title={props.description} testID="subject-triggers-description" /> : null}
+    {/* A widget body is a dense surface (lab Project dashboard): its rows take the inspector's size and small marks,
+        as the glance rows of the widgets beside it do. */}
+    {props.widget ? <PageRowDensityProvider value="inspector">{props.children}</PageRowDensityProvider> : props.children}
   </ItemGroup>;
   return props.widget || page ? section : <ListPresentationProvider value="page" pageInsets="contained">{section}</ListPresentationProvider>;
 }
@@ -429,14 +431,12 @@ export const SubjectTriggersSectionContent = React.memo(
 
 /** Lends the section's actions to the widget frame that heads it; mounted only in that presentation. */
 /**
- * The section's two actions in the order of the edge they stand on. Beside the title, Automate… closes the row on the
- * section's trailing edge and Link (or its held place) sits before it. Dropped beneath the text on a narrow page, the
- * row leads from the text edge (the header's own measured decision), so Automate… leads and Link's place trails: an
- * unseen held slot never pushes it in, and nothing moves when Link arrives. Keyed, so the swap never remounts either.
+ * The section's two actions, Automate… then Link, in one order wherever the row stands (lab `automations:v:*`, beside
+ * the title at 1440 and under the text on a phone). Link's held place trails Automate…, so it reserves Link's room
+ * without moving Automate… when Link arrives. Keyed, so neither remounts.
  */
 function SectionActionsInEdgeOrder(props: Readonly<{ link: React.ReactNode; automate: React.ReactNode }>) {
-  const leadsFromTextEdge = React.useContext(HappierTextActionEdgeContext) === 'start';
-  return <>{leadsFromTextEdge ? [props.automate, props.link] : [props.link, props.automate]}</>;
+  return <>{props.automate}{props.link}</>;
 }
 
 function WidgetFrameHeaderActions(props: Readonly<{ node: React.ReactNode }>) {

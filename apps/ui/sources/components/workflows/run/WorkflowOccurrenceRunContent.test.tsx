@@ -421,9 +421,14 @@ describe('canonical Run page occurrence target', () => {
         const screen = await respond(run({ triggerId: AutomationTriggerIdSchema.parse('trigger-1'), cause: row }));
         expect(screen.getTextContent()).toContain('Failed');
         expect(screen.getTextContent()).toContain('Error: executor_unavailable');
-        expect(screen.getTextContent()).toContain('trigger-1 · revision 3');
-        expect(screen.getTextContent()).toContain('Observation source');
-        expect(screen.getTextContent()).toContain('happier.scm.github/pull-request-opened-v1');
+        // The exact trigger and source wait under Technical details, not at rest (DESIGN-ACCEPT-5 NF-10).
+        expect(screen.getTextContent()).not.toContain('trigger-1 · revision 3');
+        const technical = screen.findByProps({ testID: 'automation-run-cause-technical' }).props.lines as readonly { label: string; value: string }[];
+        expect(technical).toEqual(expect.arrayContaining([
+            expect.objectContaining({ label: 'Trigger identity', value: expect.stringContaining('trigger-1 · revision 3') }),
+            expect.objectContaining({ label: 'Observation source' }),
+            expect.objectContaining({ value: 'happier.scm.github/pull-request-opened-v1' }),
+        ]));
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(0);
         expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
     });
