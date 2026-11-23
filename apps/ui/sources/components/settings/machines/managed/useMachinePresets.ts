@@ -18,7 +18,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
-import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetRevisionsSnapshot, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
+import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetCountSnapshot, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 export { isMachinePresetAccessLost, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions, type MachinePresetCollectionFilter } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
@@ -442,7 +442,7 @@ export function useActiveMachinePresetCount(serverIds: readonly string[]): numbe
     }), [accountScopes]);
     React.useEffect(() => {
         if (!presented) return;
-        const release = homes.map(({ homeId, binding }) => retainMachinePresets(binding, homeId, undefined, { projection: 'revisions' }));
+        const release = homes.map(({ homeId, binding }) => retainMachinePresets(binding, homeId, undefined, { projection: 'count' }));
         return () => { for (const dispose of release) dispose(); };
     }, [homes, presented]);
     const subscribe = React.useCallback((listener: () => void) => presented
