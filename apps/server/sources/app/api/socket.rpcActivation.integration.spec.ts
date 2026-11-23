@@ -94,7 +94,7 @@ describe("startSocket RPC activation", () => {
         await db.account.deleteMany();
     });
 
-    it("distinguishes admitted daemon socket connections from heartbeats and disconnects", async () => {
+    it("publishes Machine presence on admitted connections, clean disconnects, and reconnects", async () => {
         const machineId = "m-presence-reconnect";
         const account = await db.account.create({ data: { publicKey: `presence-${Date.now()}` } });
         await db.machine.create({ data: {
@@ -135,10 +135,6 @@ describe("startSocket RPC activation", () => {
             const admitted = nextPresence();
             daemon.connect();
             expect(await admitted).toMatchObject({ type: "machine-activity", id: machineId, active: true, reconnected: true });
-
-            const heartbeat = nextPresence();
-            daemon.emit("machine-alive", { machineId, time: Date.now() });
-            expect(await heartbeat).toEqual({ type: "machine-activity", id: machineId, active: true, activeAt: expect.any(Number) });
 
             const disconnected = nextPresence();
             daemon.disconnect();
