@@ -163,6 +163,10 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const [failuresShownFor, setFailuresShownFor] = React.useState<string | null>(null);
     const failuresShown = foldedFailures.length > 0 && failuresShownFor === pendingKey;
     const earlierFailuresLabel = t('approvals.earlierFailures', { count: foldedFailures.length });
+    // Showing the failures puts them above the pending request; the tray then scrolls back to the request once,
+    // so its decision stays in view in a short tray. Later layouts leave the person's own scroll alone.
+    const trayScrollRef = React.useRef<ScrollView>(null);
+    const revealPendingOnLayout = React.useRef(false);
     // The folded failures' disclosure is the composer's current-context command, so an agent can show or hide them as
     // the row does; the row's press runs the same command. Transient view state only: it decides no approval.
     const earlierFailuresCommands = useCurrentUiContextLocalCommands(React.useMemo(() => foldedFailures.length === 0 ? NO_COMMANDS : [{
@@ -171,6 +175,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         description: 'composer.attentionRequests.earlierFailures: show ({ shown: true }) or hide ({ shown: false }) the earlier failed actions folded above the pending request.',
         invoke: (input) => {
             if (!isJsonObject(input) || typeof input.shown !== 'boolean') return false;
+            revealPendingOnLayout.current = input.shown;
             setFailuresShownFor(input.shown ? pendingKey : null);
         },
     }], [earlierFailuresLabel, foldedFailures.length, pendingKey]), { contextKey: 'composer.attentionRequests', unbound: 'local' });
@@ -230,6 +235,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         };
     }, [shownRequests.length, cardHeights, trayMaxHeightPx, reportCardHeights]);
 
+    const onTrayContentSizeChange = (width: number, height: number) => {
+        props.onContentSizeChange(width, height);
+        // Each card reports its height after it mounts and the tray re-lays out; scroll once that has settled.
+        if (!revealPendingOnLayout.current || cardHeights.size !== shownRequests.length) return;
+        revealPendingOnLayout.current = false;
+        trayScrollRef.current?.scrollToEnd({ animated: false });
+    };
+
     if (attentionRequests.length === 0) {
         return null;
     }
@@ -274,13 +287,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                 <View style={foldedFailures.length > 0 ? styles.pendingFirst : null}>
                 <View style={{ position: 'relative' }}>
                     <ScrollView
+                        ref={trayScrollRef}
                         testID="agentInput.permissionRequests.scroll"
                         style={scrollStyle}
                         contentContainerStyle={{ paddingBottom: TRAY_BOTTOM_INSET_PX }}
                         nestedScrollEnabled={true}
                         scrollEventThrottle={16}
                         showsVerticalScrollIndicator={false}
-                        onContentSizeChange={props.onContentSizeChange}
+                        onContentSizeChange={onTrayContentSizeChange}
                         onLayout={props.onLayout}
                         onScroll={props.onScroll}
                     >

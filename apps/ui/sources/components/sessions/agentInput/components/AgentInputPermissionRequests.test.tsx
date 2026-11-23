@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { AgentInputPermissionRequests as AgentInputPermissionRequestsComponent } from './AgentInputPermissionRequests';
 
@@ -9,12 +9,19 @@ import type { AgentInputPermissionRequests as AgentInputPermissionRequestsCompon
 const capturedPermissionPromptCardProps: Array<Record<string, unknown>> = [];
 const capturedApprovalPromptCardProps: Array<Record<string, unknown>> = [];
 const capturedUserActionPromptCardProps: Array<Record<string, unknown>> = [];
+// The tray's native scroll boundary: where it is told to scroll is what puts a request in view.
+const trayScrollToEnd = vi.fn();
+// Cases about the tray's settled layout have the cards report their heights, as the real chrome does once laid out.
+let cardsReportHeights = false;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         View: (props: any) => React.createElement('View', props, props.children),
-        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        ScrollView: React.forwardRef((props: any, ref) => {
+            React.useImperativeHandle(ref, () => ({ scrollToEnd: trayScrollToEnd }));
+            return React.createElement('ScrollView', props, props.children);
+        }),
         Platform: {
             OS: 'web',
             select: (value: any) => value.web ?? value.default ?? null,
@@ -57,6 +64,14 @@ vi.mock('@/components/tools/shell/approvals/ApprovalPromptCard', async () => {
         ApprovalPromptCard: (props: any) => {
             // The room the tray gives this card: bounded to it, a card keeps its decision in view.
             const room = React.useContext(ApprovalPromptRoomContext);
+            // Like the real chrome, each card reports the height it wants once it has laid out.
+            const cardId = String(props.artifact.id);
+            const report = room?.report;
+            React.useEffect(() => {
+                if (!cardsReportHeights) return;
+                report?.(cardId, { natural: 120, minimum: 60 });
+                return () => report?.(cardId, null);
+            }, [cardId, report]);
             capturedApprovalPromptCardProps.push({ ...props, roomBoundPx: room?.boundFor(String(props.artifact.id)) ?? null });
             return React.createElement('ApprovalPromptCard', props);
         },
@@ -409,6 +424,28 @@ describe('AgentInputPermissionRequests', () => {
             await screen.pressByTestIdAsync(FOLD_TEST_ID);
             expect(shownIds()).toEqual(['pending', 'failed-1', 'failed-2']);
             expect(foldExpanded(screen)).toBe(true);
+        });
+
+        it('scrolls the pending approval back into view when the failures are shown above it', async () => {
+            const { act } = await import('react-test-renderer');
+            trayScrollToEnd.mockClear();
+            cardsReportHeights = true;
+            onTestFinished(() => { cardsReportHeights = false; });
+            const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, props([
+                approval('failed-1', 'executed'), approval('failed-2', 'executed'), approval('pending', 'open'),
+            ])));
+            const layOut = async () => {
+                const scroll = screen.findAll((node) => String(node.type) === 'ScrollView').at(0);
+                await act(async () => { scroll?.props.onContentSizeChange?.(1280, 900); });
+            };
+            await layOut();
+            expect(trayScrollToEnd).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync(FOLD_TEST_ID);
+            await layOut();
+            expect(trayScrollToEnd).toHaveBeenCalledTimes(1);
+            // Only the Show itself moves the tray; later layouts leave the person's own scroll alone.
+            await layOut();
+            expect(trayScrollToEnd).toHaveBeenCalledTimes(1);
         });
 
         it('pages only the pending approvals on a phone', async () => {
