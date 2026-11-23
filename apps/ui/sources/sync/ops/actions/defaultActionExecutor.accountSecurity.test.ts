@@ -5,7 +5,8 @@ import { act } from 'react-test-renderer';
 import {
     ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import {
-    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+    openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
 import {
     encodePasswordCredentialFieldV1,
     type PlainAccountPasswordCredentialV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
@@ -17,7 +18,9 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { setCurrentAuth } from '@/auth/context/currentAuth';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, withAccountE2eeCustody } from '@/auth/storage/tokenStorage';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import {
     reconcileServerProfileHomeConnectionDescriptor,
@@ -40,7 +43,7 @@ import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopS
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { nativePasswordTranslations } from '@/text/translations/nativePasswordTranslations';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
 
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -219,25 +222,42 @@ describe('default Account Security Action transport', () => {
         await expect(executor.execute('account.security.get', {}, { serverId, surface: 'ui' })).resolves.toMatchObject({ ok: true });
     });
 
-    it.each(['plain', 'encrypted'] as const)('restores an exact Settings-history version through Action admission and the real one-shot CAS owner (%s snapshot)', async snapshotMode => {
+    it.each([
+        { custody: 'absent', snapshotMode: 'plain' },
+        { custody: 'historical', snapshotMode: 'plain' },
+        { custody: 'historical', snapshotMode: 'encrypted' },
+        { custody: 'active', snapshotMode: 'encrypted' },
+        { custody: 'active', snapshotMode: 'plain' },
+    ] as const)('applies Settings history admission through settings.invoke ($custody custody, $snapshotMode snapshot)', async ({ custody, snapshotMode }) => {
         let writes = 0;
         let snapshotReads = 0;
         let policy = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.invoke': { enabled: false } } });
-        let snapshotContent: Readonly<{ t: 'plain'; v: { preferredLanguage: string } }> | Readonly<{ t: 'encrypted'; c: string }>
-            = { t: 'plain', v: { preferredLanguage: 'de' } };
-        if (snapshotMode === 'encrypted') {
-            const credentials = { token: createAccountTokenForTests('account-a'), secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') };
-            const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
-            const encryption = await createEncryptionFromAuthCredentials(credentials);
+        const token = createAccountTokenForTests('account-a');
+        const encryption = await createEncryptionFromAuthCredentials({ token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        const material = { type: 'dataKey' as const, machineKey: encryption.getContentPrivateKey() };
+        const credentials = custody === 'absent' ? { token } : withAccountE2eeCustody({
+            token,
+            encryption: {
+                publicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+                machineKey: encodeBase64(material.machineKey, 'base64'),
+            },
+        }, custody);
+        if (custody !== 'absent') {
             authorityCredentialWrite = await TokenStorage.setCredentialsForServerUrlWithRollback('https://security-actions.test',
                 { serverId: resolveServerProfileScopeIdForIdentifier(serverId) }, credentials);
             if (!authorityCredentialWrite) throw new Error('Device storage refused historical material fixture');
-            snapshotContent = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
-                material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() }, payload: { preferredLanguage: 'de' },
-                randomBytes: length => new Uint8Array(length).fill(4) }) };
         }
+        const content = (encrypted: boolean, payload: Record<string, unknown>) => encrypted
+            ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload,
+                randomBytes: length => new Uint8Array(length).fill(4) }) }
+            : { t: 'plain', v: payload };
+        const currentness = custody === 'active' ? createAccountEncryptionCurrentnessFixtureForCredentials(credentials)
+            : createPlainAccountEncryptionCurrentnessFixture();
+        const snapshotContent = content(snapshotMode === 'encrypted', { preferredLanguage: 'de' });
         const restoreRequest: RuntimeFetch = async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
+            if (path === '/v1/account/encryption') return Response.json({ mode: currentness.mode, updatedAt: 1 });
             if (path === '/v2/account/settings/history/3') {
                 snapshotReads += 1;
                 return Response.json({ version: 3, createdAt: '2026-01-01T00:00:00.000Z', content: snapshotContent });
@@ -245,19 +265,23 @@ describe('default Account Security Action transport', () => {
             if (path === '/v1/account/entity-rows/profiles/transfer') return Response.json({ status: 'absent' });
             if (path.startsWith('/v1/account/entity-rows/')) return Response.json({}, { status: 404 });
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
-                return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: policy } }, version: 1 });
+                return Response.json({ content: content(currentness.mode === 'e2ee', { actionsSettingsV1: policy }), version: 1 });
             }
             if (path === '/v2/account/settings' && init?.method === 'POST') {
                 writes += 1;
-                expect(JSON.parse(String(init.body))).toMatchObject({ expectedVersion: 1,
-                    content: { t: 'plain', v: { preferredLanguage: 'de' } } });
+                const body = JSON.parse(String(init.body));
+                expect(body.expectedVersion).toBe(1);
+                if (currentness.mode === 'e2ee') {
+                    expect(body.content.t).toBe('encrypted');
+                    expect(openAccountScopedBlobCiphertext({ kind: 'account_settings', material, ciphertext: body.content.c })?.value)
+                        .toMatchObject({ preferredLanguage: 'de' });
+                } else {
+                    expect(body.content).toMatchObject({ t: 'plain', v: { preferredLanguage: 'de' } });
+                }
                 return Response.json({ success: true, version: 2 });
             }
             return securityRequest(input, init);
         };
-        const credentials = await TokenStorage.getCredentialsForServerUrl('https://security-actions.test',
-            { serverId: resolveServerProfileScopeIdForIdentifier(serverId) });
-        if (!credentials) throw new Error('Historical material fixture is unavailable');
         connection = await restoreServerAccountForTest({ serverUrl: 'https://security-actions.test',
             serverIdentityId: 'srv_security_actions', accountId: 'account-a', credentials, request: restoreRequest });
         const input = { anchor: 'account.settingsHistory', input: {
@@ -272,11 +296,18 @@ describe('default Account Security Action transport', () => {
         expect(snapshotReads).toBe(0);
         policy = ActionsSettingsV1Schema.parse({ v: 1 });
         getStorage().getState().applySettingsLocal({ actionsSettingsV1: policy });
-        expect(await executor.execute('settings.invoke', input, { ...context, bypassApprovals: true }))
-            .toEqual({ ok: true, result: { anchor: 'account.settingsHistory', status: 'completed',
-                value: { status: 'applied', settingsVersion: 2 } } });
-        expect(writes).toBe(1);
+        const result = await executor.execute('settings.invoke', input, { ...context, bypassApprovals: true });
         expect(snapshotReads).toBe(1);
+        if (custody === 'active' && snapshotMode === 'plain') {
+            expect(writes).toBe(0);
+            expect(result).toMatchObject({ ok: true, result: { anchor: 'account.settingsHistory', status: 'unavailable',
+                reason: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } });
+            expect(getStorage().getState().settings.preferredLanguage).not.toBe('de');
+        } else {
+            expect(result).toMatchObject({ ok: true, result: { anchor: 'account.settingsHistory', status: 'completed',
+                value: { status: 'applied', settingsVersion: 2 } } });
+            expect(writes).toBe(1);
+        }
     });
 
     it('admits whole-Account mode conversion at Ask first and keeps a refused invocation effect-free', async () => {

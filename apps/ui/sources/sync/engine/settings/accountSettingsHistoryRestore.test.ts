@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { createDefaultCollectionSpaceV1, reduceCollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
@@ -28,7 +31,7 @@ const mocks = vi.hoisted(() => {
         transferControl: { status: 'absent' } as unknown,
         analyticsOptIn: vi.fn(),
         analyticsOptOut: vi.fn(),
-        realSettingsState: null as (() => unknown) | null,
+        realSettingsState: null as (() => object) | null,
         storageState: {
             settings: {
                 analyticsOptOut: false,
@@ -124,7 +127,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
-vi.mock('@/sync/domains/state/persistence', () => ({
+vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
+    parseStoredPendingSettings: (await importOriginal<typeof import('@/sync/domains/state/persistence')>()).parseStoredPendingSettings,
     loadPendingSettings: () => ({}),
     loadSettings: () => ({
         settings: { ...mocks.storageState.settings },
@@ -193,11 +197,13 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: mocks.runtimeFetchWithServerReachability,
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => ({
-        getState: () => mocks.storageStoreState,
-    }),
-}));
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = { getState: () => ({
+        ...mocks.storageStoreState,
+        ...(mocks.realSettingsState?.() ?? mocks.storageState),
+    }) };
+    return { storage, getStorage: () => storage };
+});
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: mocks.getRandomBytes,
@@ -213,15 +219,15 @@ import { encodeBase64 } from '@/encryption/base64';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { ImportLegacySessionOrganizationResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 
+const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
 const credentials: AuthCredentials = {
     token: 'token',
+    custody: 'historical',
     encryption: {
-        publicKey: encodeBase64(new Uint8Array(32).fill(12), 'base64'),
-        machineKey: encodeBase64(new Uint8Array(32).fill(11), 'base64'),
+        publicKey: encodeBase64(tweetnacl.box.keyPair.fromSecretKey(TEST_MACHINE_KEY).publicKey, 'base64'),
+        machineKey: encodeBase64(TEST_MACHINE_KEY, 'base64'),
     },
 };
-
-const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
 
 const ENCRYPTION_STUB = {
     getContentPrivateKey: () => TEST_MACHINE_KEY,
@@ -742,14 +748,14 @@ describe('classification-aware account settings history restore', () => {
             expectedVersion: number;
         };
         expect(body).toEqual({ content: { t: 'plain', v: MERGED_BASELINE }, expectedVersion: 7, expectedProfileTransferRevision: 'absent' });
-        expect(mocks.storageState.applySettingsForScope).toHaveBeenCalledWith(
+        expect(mocks.storageState.applySettingsForScope.mock.lastCall?.slice(0, 3)).toEqual([
             SETTINGS_SCOPE,
             expect.objectContaining({
                 sessionTmuxSessionName: 'old-name',
                 preferredLanguage: 'de',
             }),
             8,
-        );
+        ]);
     });
 
     it('passes destination authority into restore so a latest source cannot be reseeded', async () => {
@@ -851,7 +857,9 @@ describe('classification-aware account settings history restore', () => {
             .toHaveLength(1);
     });
 
-    it('opens a plain-recorded snapshot on an e2ee account and reseals the merged document to the current mode', async () => {
+    it('reseals a plain-recorded snapshot to the current E2EE mode when custody is historical', async () => {
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        const currentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
         const latestCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -862,7 +870,7 @@ describe('classification-aware account settings history restore', () => {
             if (path === '/v1/account/encryption') {
                 return jsonResponse({ mode: 'e2ee', updatedAt: Date.now() });
             }
-            if (path === '/v1/account/encryption/currentness') return currentnessResponse('e2ee');
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ ...currentness, settingsVersion: 7 });
             if (path === '/v2/account/settings' && (init?.method ?? 'GET') === 'GET') {
                 return jsonResponse({ content: { t: 'encrypted', c: latestCiphertext }, version: 7 });
             }
@@ -882,7 +890,7 @@ describe('classification-aware account settings history restore', () => {
 
         await expect(restoreAccountSettingsFromHistorySnapshot({
             credentials,
-            encryption: ENCRYPTION_STUB,
+            encryption,
             settingsScope: SETTINGS_SCOPE,
             historyVersion: 3,
             expectedSettingsVersion: 7,

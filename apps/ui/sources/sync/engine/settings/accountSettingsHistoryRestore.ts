@@ -10,10 +10,11 @@ import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/ac
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { SettingsDeclarationOperationInputV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { admitReportedAccountMode } from '@happier-dev/sync-client';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod/mini';
 
-import { areCredentialsEqual, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { areCredentialsEqual, readAccountE2eeCustody, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { accountSettingsScopeKeySuffix, areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
@@ -476,10 +477,13 @@ export async function restoreAccountSettingsFromHistorySnapshot(
 
     try {
         const detail = await fetchHistorySnapshot(request, params.historyVersion, isCurrent);
+        if (detail.content?.t === 'plain') {
+            // A Home-supplied Plain row carries no authenticated evidence of a Plain period.
+            admitReportedAccountMode({ reported: 'plain', custody: readAccountE2eeCustody(params.credentials) });
+        }
         const destination = await captureDestinationAuthority({ ...params, request, isCurrent });
-        // Open in the RECORDED mode — no expected mode is asserted — so a snapshot
-        // recorded before an Account encryption-mode transition still opens. The
-        // ordinary writer below reseals the merged document to the CURRENT mode.
+        // Open an admitted snapshot in its recorded mode. The ordinary writer
+        // below reseals the merged document to the current Account mode.
         let opened: OpenedAccountSettingsStoredContent;
         try {
             opened = openAccountSettingsStoredContent({ content: detail.content, encryption: params.encryption });

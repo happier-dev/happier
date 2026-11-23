@@ -6,6 +6,7 @@ import {
 } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ACCOUNT_SETTINGS } from './accountSettings';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -138,8 +139,11 @@ export const SettingsHistorySection = React.memo(function SettingsHistorySection
                 const outcome = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(invocation.result);
                 if (outcome.status === 'cancelled') return;
                 if (outcome.status === 'unavailable') {
-                    await Modal.alert(t('common.error'), t(outcome.reason === 'history_invalid'
-                        ? 'settingsAccount.history.invalidBody' : 'settingsAccount.history.unavailableBody'));
+                    const messageKey = outcome.reason === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED
+                        ? 'machineDetailPage.recovery.enrollmentRequired'
+                        : outcome.reason === 'history_invalid'
+                            ? 'settingsAccount.history.invalidBody' : 'settingsAccount.history.unavailableBody';
+                    await Modal.alert(t('common.error'), t(messageKey));
                     return;
                 }
                 const result = AccountSettingsHistoryRestoreResultSchema.parse(outcome.value);

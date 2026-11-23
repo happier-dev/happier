@@ -1936,6 +1936,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
                 return { status: 'completed', value: result };
               }, 'danger');
             } catch (error) {
+              if (isAccountModeDowngradeUnverifiedError(error)) {
+                return { status: 'unavailable', reason: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED };
+              }
               return { status: 'unavailable', reason: error instanceof AccountSettingsHistoryRestoreInvalidError
                 ? 'history_invalid' : 'history_unavailable' };
             }

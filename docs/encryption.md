@@ -3190,6 +3190,12 @@ including on predecessor Homes, a Plain envelope goes through the same admission
 decision with the socket's existing credentials. A refusal leaves the current
 Settings in place and records its reason through the existing sync log.
 
+Interactive Settings history restore also applies this decision to the chosen
+Plain snapshot before merging it into live Settings. Active custody returns
+`account_mode_downgrade_unverified` through `settings.invoke` and the app shows
+**Encryption change needs confirmation**. Encrypted snapshots and Plain
+snapshots with historical or absent custody follow the ordinary restore path.
+
 Own-Account Machine rows migrate with the Account, so a Machine row the Home reports
 plain is a Home-reported Account mode. `admitMachineRowPlainMode` applies the same
 decision where a row resolves plain: UI Machine sync (which locks the row for every

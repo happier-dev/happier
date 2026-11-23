@@ -3,7 +3,10 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { serveAccountHomes, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { encodeBase64 } from '@/encryption/base64';
 import { storage } from '@/sync/domains/state/storageStore';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { Modal } from '@/modal';
@@ -37,10 +40,18 @@ describe('SettingsHistorySection Action composition', () => {
         vi.restoreAllMocks();
     });
 
-    async function open(expanded = true, policy?: ReturnType<typeof ActionsSettingsV1Schema.parse>, holdHistory?: Promise<void>) {
+    async function open(expanded = true, policy?: ReturnType<typeof ActionsSettingsV1Schema.parse>, holdHistory?: Promise<void>, activeKeys = false) {
+        const credentialsWithKeys = {
+            token: createAccountTokenForTests('account-a'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        };
         home = await serveAccountHomes({
             homes: [{ key: 'a', serverUrl: `https://settings-history-${crypto.randomUUID()}.test`, accountId: 'account-a', currentAccount: true,
-                ...(policy ? { settings: { actionsSettingsV1: policy } } : {}) }],
+                ...(policy ? { settings: { actionsSettingsV1: policy } } : {}),
+                ...(activeKeys ? { accountMode: 'e2ee', credentials: credentialsWithKeys,
+                    encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentialsWithKeys),
+                } : {}),
+            }],
             route: async request => {
                 if (request.path === '/v2/account/settings/history' && holdHistory) await holdHistory;
                 if (request.path === '/v2/account/settings/history') return Response.json({ snapshots: [
@@ -76,6 +87,17 @@ describe('SettingsHistorySection Action composition', () => {
         await view.pressByTestIdAsync('settings-account-history-restore-3');
         await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
         expect(home.requests.some(row => row.path === '/v2/account/settings/history/3')).toBe(false);
+        expect(home.httpRequests.some(row => row.path === '/v2/account/settings' && row.method === 'POST')).toBe(false);
+    });
+
+    it('shows the existing encryption refusal for a Plain snapshot while Account keys are active', async () => {
+        const view = await open(true, undefined, undefined, true);
+        await vi.waitFor(() => expect(view.findByTestId('settings-account-history-restore-3')).not.toBeNull());
+        await view.pressByTestIdAsync('settings-account-history-restore-3');
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
+            t('common.error'), t('machineDetailPage.recovery.enrollmentRequired'),
+        ));
+        expect(home.requests.some(row => row.path === '/v2/account/settings/history/3')).toBe(true);
         expect(home.httpRequests.some(row => row.path === '/v2/account/settings' && row.method === 'POST')).toBe(false);
     });
 
