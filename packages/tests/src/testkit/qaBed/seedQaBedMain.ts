@@ -1,5 +1,6 @@
 // Entry for `hstack stack qa-bed`: seed one fresh QA bed Account on a running server.
-// Usage: node scripts/runTsxEntrypoint.mjs src/testkit/qaBed/seedQaBedMain.ts \
+// For a manual invocation, set NODE_OPTIONS=--conditions=happier-source, then run:
+// node scripts/runTsxEntrypoint.mjs src/testkit/qaBed/seedQaBedMain.ts \
 //   --server-url <url> --profile <profile> --key-file <path>
 // The recovery key goes only to --key-file (mode 0600). Stdout carries one JSON
 // line with counts and Session ids; it never contains a key or token.

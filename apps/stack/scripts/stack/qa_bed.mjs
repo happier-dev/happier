@@ -101,8 +101,10 @@ function readJsonLine(text, kind) {
 export async function seedAccount({ repoDir, serverUrl, profile, keyFile }) {
   const { runCaptureResult } = await import('../utils/proc/proc.mjs');
   const testsDir = join(repoDir, 'packages/tests');
+  // The TSX launcher spawns its own Node process, so pass the source condition through its environment.
+  const env = { ...process.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, '--conditions=happier-source'].filter(Boolean).join(' ') };
   const result = await runCaptureResult(process.execPath, ['scripts/runTsxEntrypoint.mjs', 'src/testkit/qaBed/seedQaBedMain.ts',
-    '--server-url', serverUrl, '--profile', profile, '--key-file', keyFile], { cwd: testsDir, env: process.env });
+    '--server-url', serverUrl, '--profile', profile, '--key-file', keyFile], { cwd: testsDir, env });
   const summary = readJsonLine(result.out, 'qa_bed_seed');
   if (summary?.ok === false && typeof summary.phase === 'string' && /^[a-z]+(?:_[a-z]+)*$/u.test(summary.phase)) {
     const status = Number.isInteger(summary.httpStatus) && summary.httpStatus >= 100 && summary.httpStatus <= 599

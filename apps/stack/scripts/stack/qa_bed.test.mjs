@@ -91,3 +91,19 @@ test('a seed failure reports its fixture operation and HTTP status without expos
     (error) => error.code === 'qa_bed_seed_failed' && /machine_registration.*400/.test(error.message)
       && !error.message.includes('fixture-secret-that-must-not-be-printed'));
 });
+
+test('the QA bed seed resolves source exports from the checkout', async (t) => {
+  const fixture = await createTempFixture(t);
+  const scripts = fixture.path('packages', 'tests', 'scripts');
+  await mkdir(scripts, { recursive: true });
+  await writeFile(fixture.path('packages', 'tests', 'package.json'), JSON.stringify({
+    imports: { '#seed': { 'happier-source': './seed.mjs' } },
+  }));
+  await writeFile(fixture.path('packages', 'tests', 'seed.mjs'), 'export const result = { kind: "qa_bed_seed", ok: true };');
+  await writeFile(fixture.path('packages', 'tests', 'scripts', 'runTsxEntrypoint.mjs'), `
+    import { result } from '#seed';
+    console.log(JSON.stringify(result));
+  `);
+  assert.deepEqual(await seedAccount({ repoDir: fixture.root, serverUrl: 'http://qa.test', profile: 'small', keyFile: fixture.path('account.key') }),
+    { kind: 'qa_bed_seed', ok: true });
+});
