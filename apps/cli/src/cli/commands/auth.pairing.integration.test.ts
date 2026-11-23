@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
+  computeAccountEncryptionMigrateKeyFingerprintV1,
   CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
   sealTerminalProvisioningV3Payload,
   sealTerminalProvisioningV3TokenOnlyPayload,
@@ -11,6 +12,8 @@ import {
 import tweetnacl from 'tweetnacl';
 
 import { reloadConfiguration } from '@/configuration';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -105,6 +108,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     envScope.restore();
     reloadConfiguration();
     vi.unstubAllGlobals();
+    resetServerFeaturesClientForTests();
     await removeTempDir(remoteHomeDir);
     await removeTempDir(localHomeDir);
   });
@@ -263,6 +267,16 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
     registerMachineSetupRoutes(app, 'e2ee');
+    const machineKey = new Uint8Array(32).fill(7);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    app.get('/v1/account/encryption/currentness', async (request, reply) => {
+      if (request.headers.authorization !== 'Bearer local-token') return reply.code(401).send({ error: 'unauthorized' });
+      return createAccountEncryptionCurrentnessFixture({
+        mode: 'e2ee',
+        version: 1,
+        contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(publicKey),
+      });
+    });
 
     app.post('/v1/auth/request', async (req, reply) => {
       const body = req.body as { publicKey?: unknown; claimSecretHash?: unknown; supportsV2?: unknown } | undefined;
@@ -362,9 +376,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_VARIANT: 'stable',
       });
       reloadConfiguration();
-      const machineKey = new Uint8Array(32).fill(7);
       await writeCredentialsDataKey({
-        publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
+        publicKey,
         machineKey,
         token: 'local-token',
       });
@@ -526,19 +539,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       response,
       serverIdentityId: SERVER_IDENTITY_ID,
     }));
-    app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 1 }));
-    app.post('/v1/machines', async (request) => {
-      const body = request.body as Record<string, unknown>;
-      return {
-        machine: {
-          id: body.id,
-          metadata: body.metadata,
-          metadataVersion: 1,
-          daemonState: null,
-          daemonStateVersion: 0,
-        },
-      };
-    });
+    registerMachineSetupRoutes(app, 'e2ee');
 
     await app.ready();
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://happier-auth.test' });
