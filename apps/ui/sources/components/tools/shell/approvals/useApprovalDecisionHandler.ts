@@ -12,6 +12,7 @@ import { ApprovalExecutionV1Schema, resolveApprovalExecutor, type ApprovalExecut
 import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
+import { MachinePairingCreateOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import {
@@ -289,8 +290,11 @@ export function useApprovalDecisionHandler(
         if (decision !== 'cancel' && isApprovalReplayRouteUnavailable(approval)) {
             throw new HappyError('approval_origin_unavailable', false, { code: 'approval_origin_unavailable' });
         }
+        const revealsPairingLink = decision === 'approve' && builtInApproval?.actionId === 'machines.pairing.create';
+        // Live-only links reach only this deciding person; the requester receives a held result.
         const revealsInvitation = decision === 'approve'
-            && (builtInApproval?.actionId === 'teams.invitations.create' || builtInApproval?.actionId === 'teams.invitations.reissue');
+            && (builtInApproval?.actionId === 'teams.invitations.create' || builtInApproval?.actionId === 'teams.invitations.reissue'
+                || revealsPairingLink);
         const publicLinkActionId = builtInApproval?.actionId === 'session.public_link.create' || builtInApproval?.actionId === 'artifact.public_link.create'
             ? builtInApproval.actionId : null;
         const publicLink = decision === 'approve' && publicLinkActionId !== null;
@@ -392,20 +396,35 @@ export function useApprovalDecisionHandler(
             if (typeof live !== 'object' || live === null || !('ok' in live) || live.ok !== true
                 || !('result' in live)) return true;
             const captured = account;
-            const parsed = builtInApproval?.actionId === 'teams.invitations.create'
-                ? TeamInvitationCreateResultV1Schema.safeParse(live.result)
-                : TeamInvitationReissueResultV1Schema.safeParse(live.result);
-            if (!parsed.success) return false;
-            // Email delivery and replay legitimately have no human bearer to reveal.
-            if (parsed.data.joinUrl === null) return true;
-            const props = {
-                url: parsed.data.joinUrl,
-                testIDPrefix: 'team-invite-approval',
-                title: t('teams.invitations.linkRow'),
-                copyLabel: t('teams.invitations.copyLink'),
-                shareLabel: t('teams.invitations.shareLink'),
-                qrAccessibilityLabel: t('teams.invitations.qrLabel'),
-            };
+            let props: React.ComponentProps<typeof TeamLinkDelivery>;
+            if (revealsPairingLink) {
+                const pairing = MachinePairingCreateOutputSchema.safeParse(live.result);
+                if (!pairing.success) return false;
+                props = {
+                    url: pairing.data.link,
+                    testIDPrefix: 'pairing-approval',
+                    title: t('homeSetup.pairingComputerStepOpenTitle'),
+                    description: t('homeSetup.pairingComputerStepJoin'),
+                    copyLabel: t('homeSetup.copyLink'),
+                    shareLabel: t('homeSetup.shareLink'),
+                    qrAccessibilityLabel: t('homeSetup.pairingScanTitle'),
+                };
+            } else {
+                const parsed = builtInApproval?.actionId === 'teams.invitations.create'
+                    ? TeamInvitationCreateResultV1Schema.safeParse(live.result)
+                    : TeamInvitationReissueResultV1Schema.safeParse(live.result);
+                if (!parsed.success) return false;
+                // Email delivery and replay legitimately have no human bearer to reveal.
+                if (parsed.data.joinUrl === null) return true;
+                props = {
+                    url: parsed.data.joinUrl,
+                    testIDPrefix: 'team-invite-approval',
+                    title: t('teams.invitations.linkRow'),
+                    copyLabel: t('teams.invitations.copyLink'),
+                    shareLabel: t('teams.invitations.shareLink'),
+                    qrAccessibilityLabel: t('teams.invitations.qrLabel'),
+                };
+            }
             let retirement: Readonly<{ dispose: () => void }> | undefined;
             const modalId = Modal.show({
                 component: TeamLinkDelivery,

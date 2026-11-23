@@ -7,7 +7,8 @@ import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
-import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { ApprovalRequestSchema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 
 describe('machine and Home connection Action parity', () => {
   it('exposes managed installation questions on the answering client with automation Ask and exact prompt identity', () => {
@@ -224,20 +225,38 @@ describe('machine and Home connection Action parity', () => {
     expect(getActionSpec(id).executionPlacement).toBe('client');
   });
 
-  it.each(['agent', 'mcp'] as const)('never delivers a pairing credential to %s, even after person approval', async surface => {
-    let issued = false;
-    // Trusted device enrollment is the external credential boundary.
-    const executor = createActionExecutor({ machinePairingCreate: async () => {
-      issued = true;
-      return { pairId: 'pair', link: 'happier:///pair?payload=fixture', expiresAtMs: 1000 };
-    } });
-    const result = await executor.execute('machines.pairing.create', { serverId: 'home' }, {
-      surface, authority: 'present_user', bypassApprovals: true,
-    });
-    expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled',
-      details: { surface, reason: 'unsupported_surface' } });
-    expect(issued).toBe(false);
-    expect(result).not.toHaveProperty('result.link');
-    expect(listActionSpecsForCatalogSurface({ surface }).map(action => action.id)).not.toContain('machines.pairing.create');
+  // Owner decision 2026-11-23: an agent may create the link; only the deciding person's app receives it.
+  it.each(['agent', 'mcp'] as const)('delivers a %s-requested pairing link only to the approving person', async surface => {
+    const link = 'happier:///pair?payload=private-bearer';
+    let stored: ApprovalRequest | null = null;
+    let issued = 0;
+    const boundary: Partial<ActionExecutorDeps> = {
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'pairing-ask' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; return { ok: true };
+      },
+      // The deciding host's origin currentness port and trusted device enrollment are the boundaries.
+      isApprovalExecutionOriginCurrent: async () => true,
+      machinePairingCreate: async () => { issued++; return { pairId: 'pair', link, expiresAtMs: 1000 }; },
+    };
+    expect(listActionSpecsForCatalogSurface({ surface }).map(action => action.id)).toContain('machines.pairing.create');
+    const origin = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
+      runtimeAccountId: 'account-1', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: `agent-pairing-${surface}` };
+    const requested = await createActionExecutor(boundary as ActionExecutorDeps).execute('machines.pairing.create', { serverId: 'home' }, origin);
+    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'pairing-ask' } });
+    expect(issued).toBe(0);
+    const decision = await createActionExecutor(boundary as ActionExecutorDeps).execute('approval.request.decide',
+      { artifactId: 'pairing-ask', decision: 'approve' }, { ...origin, surface: 'ui', authority: 'present_user' });
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: { link } } } });
+    expect(issued).toBe(1);
+    // The requesting model reads the settled request and never receives the bearer.
+    const collected = await createActionExecutor(boundary as ActionExecutorDeps).execute('approval.request.get',
+      { artifactId: 'pairing-ask' }, origin);
+    expect(JSON.stringify(requested) + JSON.stringify(collected) + JSON.stringify(stored)).not.toContain('private-bearer');
   });
 });

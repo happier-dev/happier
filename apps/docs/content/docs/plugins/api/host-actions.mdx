@@ -11453,13 +11453,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.pairing.create`
 
-**Create link to add another computer** — Issue a short-lived Home pairing link through the trusted device enrollment lifecycle. Keep this client running until the computer joins.
+**Create link to add another computer** — Issue a short-lived Home pairing link through the trusted device enrollment lifecycle. Keep this client running until the computer joins. When an agent asks, the approving person receives the link in their app; the agent never does.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
