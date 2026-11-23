@@ -1,4 +1,5 @@
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import { compareDatabaseStatsSizeV1 } from '@happier-dev/databases/stats-comparisons';
 import {
     DatabaseOperationResultV1Schema,
     type DatabaseDescriptorV1,
@@ -56,12 +57,13 @@ export async function readDeploymentDatabaseSizesV1(input: Readonly<{
             result.push(unavailable('invalid_size_result')); continue;
         }
         const prior = previous.get(data.service);
-        const comparable = prior?.deploymentId === target.deploymentId && prior.size.status === 'available'
-            && prior.size.observedAtMs < observedAtMs ? prior.size : null;
+        const previousSize = prior?.deploymentId === target.deploymentId && prior.size.status === 'available' ? prior.size : undefined;
+        const comparison = compareDatabaseStatsSizeV1(previousSize && {
+            bytes: String(previousSize.bytes), observedAtMs: previousSize.observedAtMs, bindingKey: previousSize.measurement,
+        }, { bytes: observation.data.bytes, observedAtMs, bindingKey: observation.data.measurement });
         result.push({ service: data.service, deploymentId: target.deploymentId,
             size: { status: 'available', bytes, measurement: observation.data.measurement, observedAtMs },
-            growth: comparable ? { status: 'available', bytes: bytes - comparable.bytes, fromMs: comparable.observedAtMs, toMs: observedAtMs }
-                : { status: 'unavailable', reason: 'previous_sample_required' } });
+            growth: comparison.status === 'available' ? { ...comparison, bytes: Number(comparison.bytes) } : comparison });
     }
     return result;
 }

@@ -69,6 +69,11 @@ describe('database engine size read', () => {
         run.mockResolvedValueOnce(statementResult('3072'));
         const second = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content, readTargets, run, now: () => 2000, previous: first });
         expect(second[0]?.growth).toEqual({ status: 'available', bytes: -1024, fromMs: 1000, toMs: 2000 });
+        run.mockResolvedValueOnce(statementResult('1024', true));
+        const changedMeasurement = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content,
+            readTargets, run, now: () => 2500, previous: second });
+        expect(changedMeasurement[0]).toMatchObject({ size: { status: 'available', measurement: 'table_bytes_estimate' },
+            growth: { status: 'unavailable', reason: 'comparison_unavailable' } });
         const replaced = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content,
             readTargets: async () => listed(descriptor(value, 'postgres', 'deploy-b')), run, now: () => 3000, previous: second });
         expect(replaced[0]?.growth).toEqual({ status: 'unavailable', reason: 'previous_sample_required' });
