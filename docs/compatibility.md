@@ -3557,6 +3557,15 @@ as a selected answer. Omitting the selector preserves the existing request and
 response. Parent and Session relations remain inside encrypted Task content;
 this extension adds no persisted metadata or relation index.
 
+The development `tasks.internal.list` Action also accepts a closed
+`parent: { ownerAccountId, taskId }` filter, intersected with an optional exact
+selection. It filters the admitted, opened Todo projection and reports
+unavailable child candidates from the parent's owner. Triage can read one Task
+and receive only its children from the existing Action. The parent address is
+local to that Action. The Task resource HTTP selector, encrypted relations and
+storage format are unchanged. An older development Action implementation may
+refuse the new input, leaving Task content readable with child coverage unknown.
+
 ### Retired workspace replication files (0.3 development)
 
 The 0.3 daemon leaves 0.2's `<activeServerDir>/workspace-replication` files at

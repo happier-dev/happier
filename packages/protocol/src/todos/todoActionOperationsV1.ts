@@ -90,26 +90,32 @@ export async function executeInternalTaskAction(args: Readonly<{
       return { status: 'applied', scope: args.scope, labelCatalog: projectTodoLabelColorsV1(Object.keys(colors), { v: 1, colors }) };
     }
     if (args.actionId === 'tasks.internal.list') {
-      const input = InternalTaskListInputSchema.parse(args.input);
+      const { selection, parent } = InternalTaskListInputSchema.parse(args.input);
+      const isInParentScope = (todo: TodoItemV1) => parent === undefined || todo.parentId === parent.taskId;
       const catalog = (await readLabelCatalog()).value;
       const labelCatalog = projectTodoLabelColorsV1(Object.keys(catalog.colors), catalog);
       const withColors = <T extends TodoItemV1>(todo: T) => ({ ...todo, labelColors: projectTodoLabelColorsV1(todo.labels ?? [], catalog) });
       if (resources) {
         try {
-          const result = await resources.list(input);
-          const indexRow = input.selection === undefined ? await args.port.read('todo.index') : { value: null };
+          const result = await resources.list({ ...(selection === undefined ? {} : { selection }),
+            ...(parent === undefined ? {} : { ownerAccountId: parent.ownerAccountId }) });
+          const tasks = parent === undefined ? result.tasks : result.tasks.filter(task => isInParentScope(task.todo));
+          const indexRow = selection === undefined && parent === undefined ? await args.port.read('todo.index') : { value: null };
           args.requireCurrent();
           const index = indexRow.value === null ? { undoneOrder: [], completedOrder: [] } : indexSchema.parse(indexRow.value);
-          const { undoneOrder, completedOrder } = resolveTodoIndexForItemsV1(result.tasks.filter(task => task.resource.ownerAccountId === args.scope.accountId).map(task => task.todo), index);
-          return { status: 'ok', scope: args.scope, todos: result.tasks.map(task => withColors(projectResource(task))), undoneOrder, completedOrder, labelCatalog,
+          const { undoneOrder, completedOrder } = resolveTodoIndexForItemsV1(tasks.filter(task => task.resource.ownerAccountId === args.scope.accountId).map(task => task.todo), index);
+          return { status: 'ok', scope: args.scope, todos: tasks.map(task => withColors(projectResource(task))), undoneOrder, completedOrder, labelCatalog,
             ...(result.unavailableTasks.length ? { unavailableTasks: result.unavailableTasks } : {}) };
         } catch (error) { if (!(error instanceof TaskResourceClientErrorV1) || error.code !== 'task_resource_unsupported') throw error; }
       }
-      if (input.selection !== undefined) throw new TaskResourceClientErrorV1('task_selection_unsupported', 'failed');
+      if (selection !== undefined || (parent !== undefined && parent.ownerAccountId !== args.scope.accountId)) {
+        throw new TaskResourceClientErrorV1('task_selection_unsupported', 'failed');
+      }
       const rows = await args.port.list('todo.');
       args.requireCurrent();
-      const todos = rows.filter(row => row.key !== 'todo.index').map(row => project(parseTodo(row.key.slice(5), row.value)));
-      const indexRow = rows.find(row => row.key === 'todo.index');
+      const todos = rows.filter(row => row.key !== 'todo.index')
+        .map(row => parseTodo(row.key.slice(5), row.value)).filter(isInParentScope).map(project);
+      const indexRow = parent === undefined ? rows.find(row => row.key === 'todo.index') : undefined;
       const index = indexRow ? indexSchema.parse(indexRow.value) : { undoneOrder: [], completedOrder: [] };
       const { undoneOrder, completedOrder } = resolveTodoIndexForItemsV1(todos, index);
       return { status: 'ok', scope: args.scope, todos: todos.map(withColors), undoneOrder, completedOrder, labelCatalog };

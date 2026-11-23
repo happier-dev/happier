@@ -55,9 +55,9 @@ function taskDueDate(task: Task): string | null {
   return task.dueAt === undefined ? null : new Date(task.dueAt).toISOString();
 }
 
-async function readTasks(context: TaskReadContext): Promise<TaskList | null> {
+async function readTasks(context: TaskReadContext, input: PluginActionInputById['tasks.internal.list'] = {}): Promise<TaskList | null> {
   try {
-    const result = await context.services.actions.execute('tasks.internal.list', {}, { signal: context.signal });
+    const result = await context.services.actions.execute('tasks.internal.list', input, { signal: context.signal });
     return !isPluginActionApprovalRequestCreated(result) && result.status === 'ok' ? result : null;
   } catch (error) { if (context.signal.aborted || isPluginError(error)) throw error; return null; }
 }
@@ -207,13 +207,13 @@ export async function getInternalTask(input: TriageGetInputV1, context: TriageDa
     : { kind: 'unresolved', localRef: input.localRef, failure: { class: 'permission', code: result.reason } };
   const task = result.todo;
   const owner = ownerOf(task, result);
-  // The exact read owns task content/access. One existing list read supplies the inverse parent relation.
-  const relations = await readTasks(context).catch(error => {
+  // The exact read owns the Task. The same admitted list owner supplies only its children.
+  const relations = await readTasks(context, { parent: { ownerAccountId: owner, taskId: task.id } }).catch(error => {
     // Inverse children enrich the exact Task read; their absence does not hide its content.
     if (context.signal.aborted) throw error;
     return null;
   });
-  const children = relations === null ? undefined : indexChildren(relations, [task]).get(taskKey(task.id, owner));
+  const children = relations === null || relations.unavailableTasks?.length ? undefined : relations.todos;
   return taskGetResult(task, result, input.localRef, children);
 }
 

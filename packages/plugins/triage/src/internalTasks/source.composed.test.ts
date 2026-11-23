@@ -8,7 +8,7 @@ import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollecti
 import { TriageListEntriesResultV1Schema } from '../actions/listEntriesProtocol.js';
 import { executeInternalTaskAction, executeInternalTaskReorder, type AccountJsonKvCollectionPort } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 import { applyTodoSessionLinkV1, TodoSessionLinkInputV1Schema, resolveTodoSessionLinkInputV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
-import { InternalTaskListOutputSchema, InternalTaskReadInputSchema } from '@happier-dev/protocol/actions/internalTaskActions';
+import { InternalTaskListInputSchema, InternalTaskListOutputSchema, InternalTaskReadInputSchema } from '@happier-dev/protocol/actions/internalTaskActions';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from './contribution.js';
 import { qualifySourceObservation } from '../corpus/fold/qualify.js';
 import { runTriageScanPass } from '../projection/scanPass.js';
@@ -40,7 +40,18 @@ async function withSource(run: (kit: Awaited<ReturnType<typeof createPluginTestk
   const actions = { execute: async (id: string, input: unknown) => {
     calls.push({ id, input });
     if (hostAction) return hostAction(id, input);
-    if (id === 'tasks.internal.list') return list;
+    if (id === 'tasks.internal.list') {
+      const current = InternalTaskListOutputSchema.parse(list);
+      const { parent } = InternalTaskListInputSchema.parse(input);
+      if (parent === undefined || current.status !== 'ok') return current;
+      return { ...current, undoneOrder: [], completedOrder: [],
+        todos: current.todos.filter(task => task.parentId === parent.taskId
+          && (task.ownerAccountId ?? current.scope.accountId) === parent.ownerAccountId),
+        ...(current.unavailableTasks === undefined ? {} : {
+          unavailableTasks: current.unavailableTasks.filter(task => task.ownerAccountId === parent.ownerAccountId),
+        }),
+      };
+    }
     if (id === 'tasks.internal.read') {
       const current = InternalTaskListOutputSchema.parse(list);
       if (current.status !== 'ok') return current;
@@ -218,7 +229,7 @@ describe('registered internal Happier task source', () => {
       expect(calls).toEqual([{ id: 'tasks.internal.list', input: {} }]);
     }, { status: 'ok', scope, todos, undoneOrder: todos.map(task => task.id), completedOrder: [] });
   });
-  it('returns owner-qualified children with one exact read and one shared list at 1,000 Tasks', async () => {
+  it('requests only owner-qualified children after one exact read at 1,000 Tasks', async () => {
     const parent = { ...predecessor, state: 'unstarted' };
     const children = [
       { ...parent, id: 'child-open', parentId: parent.id },
@@ -243,7 +254,7 @@ describe('registered internal Happier task source', () => {
       expect(detail.snapshot.relations?.children).toEqual(scan.observations[0].snapshot.relations?.children);
       expect(calls.slice(before)).toEqual([
         { id: 'tasks.internal.read', input: { taskId: predecessor.id } },
-        { id: 'tasks.internal.list', input: {} },
+        { id: 'tasks.internal.list', input: { parent: { ownerAccountId: scope.accountId, taskId: predecessor.id } } },
       ]);
     }, list);
   });
@@ -269,7 +280,7 @@ describe('registered internal Happier task source', () => {
       if (read.kind !== 'present') throw new Error('Expected readable task despite relation failure');
       expect(read.snapshot.relations).not.toHaveProperty('children');
       expect(calls).toEqual([{ id: 'tasks.internal.read', input: { taskId: predecessor.id, ownerAccountId: 'other' } },
-        { id: 'tasks.internal.list', input: {} }]);
+        { id: 'tasks.internal.list', input: { parent: { ownerAccountId: 'other', taskId: predecessor.id } } }]);
       expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, localRef: sharedRef }))
         .toEqual({ kind: 'complete', links: [] });
       expect(calls.slice(2)).toEqual([{ id: 'tasks.internal.read', input: { taskId: predecessor.id, ownerAccountId: 'other' } }]);
@@ -326,8 +337,8 @@ describe('registered internal Happier task source', () => {
         sessionId: 'shared-session', linkedAtMs: 2, displayPath: predecessor.title }] };
       expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, localRef: sharedRef }))
         .toEqual(expected);
-      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionId: 'shared-session' }))
-        .toEqual(expected);
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionIds: ['shared-session'] }))
+        .toEqual({ kind: 'sessionSet', slices: [{ sessionId: 'shared-session', result: expected }] });
       expect(calls).toEqual([
         { id: 'tasks.internal.read', input: { taskId: predecessor.id, ownerAccountId: 'other' } },
         { id: 'tasks.internal.list', input: {} },
@@ -348,9 +359,11 @@ describe('registered internal Happier task source', () => {
       expect(pass.observations.map(item => item.entryRef.entryId)).toEqual([predecessor.id]);
       expect(pass.lanes).toMatchObject([{ health: { kind: 'partial', reason: 'taskContentUnavailable' } }]);
       expect(sourceReads).toBe(1);
-      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionId: 'session-old' }))
-        .toEqual({ kind: 'partial', links: [{ localRef, sessionId: 'session-old', linkedAtMs: 19, displayPath: predecessor.title }],
-          unavailableRefs: [{ ...localRef, collisionScope: 'account:other' }] });
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionIds: ['session-old'] }))
+        .toEqual({ kind: 'sessionSet', slices: [{ sessionId: 'session-old', result: {
+          kind: 'partial', links: [{ localRef, sessionId: 'session-old', linkedAtMs: 19, displayPath: predecessor.title }],
+          unavailableRefs: [{ ...localRef, collisionScope: 'account:other' }],
+        } }] });
       expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance,
         localRef: { ...localRef, collisionScope: 'account:other' } })).toMatchObject({ kind: 'failed' });
     }, { status: 'ok', scope, todos: [{ ...predecessor, state: 'unstarted' }], undoneOrder: [predecessor.id], completedOrder: [],
@@ -368,8 +381,9 @@ describe('registered internal Happier task source', () => {
     }, { status: 'ok', scope, todos: [{ ...predecessor, state: 'unstarted', ownerAccountId: 'other' }], undoneOrder: [], completedOrder: [],
       unavailableTasks: [{ ownerAccountId: 'other', taskId: 'unreadable-child', error: 'task_content_unavailable', reason: 'recipient_key_pending' }] });
     await withSource(async kit => {
-      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionId: 'session-old' }))
-        .toEqual({ kind: 'partial', links: [], unavailableRefs: [localRef] });
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionIds: ['session-old'] }))
+        .toEqual({ kind: 'sessionSet', slices: [{ sessionId: 'session-old',
+          result: { kind: 'partial', links: [], unavailableRefs: [localRef] } }] });
     }, { status: 'ok', scope, todos: [], undoneOrder: [], completedOrder: [],
       unavailableTasks: [{ ownerAccountId: scope.accountId, taskId: predecessor.id, error: 'task_content_unavailable', reason: 'recipient_key_pending' }] });
   });
@@ -686,7 +700,8 @@ describe('registered internal Happier task source', () => {
       expect(TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', address))).toMatchObject({ kind: 'present',
         snapshot: { title: 'Edited once', relations: { parent: { entryId: 'old-task' }, blockedBy: [{ source, ...localRef }, ...externalBlockers] } },
         taskFields: { blockedBy: [{ source, ...localRef }, ...externalBlockers] } });
-      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionId: 'work-session' })).toMatchObject({ kind: 'complete', links: [{ localRef: address.localRef }] });
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionIds: ['work-session'] }))
+        .toMatchObject({ kind: 'sessionSet', slices: [{ sessionId: 'work-session', result: { kind: 'complete', links: [{ localRef: address.localRef }] } }] });
       expect(await measureWrite('unlink', () => kit.invokeAction('internal/tasks/link-session-v1', { ...address, sessionId: 'work-session', linked: false }))).toEqual({ status: 'unlinked' });
       expect(rows.get('todo.old-task')?.value).toEqual(predecessor);
       expect(rows.get('todo.new-task')?.value).toMatchObject({ id: 'new-task', title: 'Edited once', done: true,
@@ -729,8 +744,10 @@ describe('registered internal Happier task source', () => {
 
   it('reads legacy Session links once and routes linking through the todo owner only', async () => {
     await withSource(async (kit, calls) => {
-      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionId: 'session-old' })).toEqual({ kind: 'complete',
-        links: [{ localRef, sessionId: 'session-old', linkedAtMs: 19, displayPath: predecessor.title }] });
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance, sessionIds: ['session-old'] }))
+        .toEqual({ kind: 'sessionSet', slices: [{ sessionId: 'session-old', result: { kind: 'complete',
+          links: [{ localRef, sessionId: 'session-old', linkedAtMs: 19, displayPath: predecessor.title }],
+        } }] });
       expect(await kit.invokeAction('internal/tasks/link-session-v1', { v: 1, instance, localRef, sessionId: 'session-new', linked: true })).toEqual({ status: 'linked' });
       expect(calls.filter(call => call.id === 'tasks.internal.session.link')).toEqual([{ id: 'tasks.internal.session.link', input: {
         taskId: predecessor.id, session: { sessionId: 'session-new' }, linked: true,
