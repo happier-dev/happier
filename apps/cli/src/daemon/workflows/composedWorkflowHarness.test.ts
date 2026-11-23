@@ -4147,6 +4147,32 @@ describe('composed fresh-process reconstruction over durable rows', () => {
     expect(rowFor(kit, 'queued-must-not-admit')).toBeUndefined();
   });
 
+  it('parks a fail-stop parallel Run with an Agent result and a manual sibling both awaiting review', async () => {
+    const runId = '714182e0-ebea-4935-8b0b-ffc3e8d7d72d';
+    const directory = await projectDirectory();
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: retainedConversationDefaults(), blocks: [{
+      kind: 'parallel', id: 'qa_holds', failurePolicy: 'fail_stop', branches: [
+        { id: 'qa_use', blocks: [{
+          kind: 'wait', id: 'qa_manual', document: { text: 'Provide the QA result', references: [], attachments: [] },
+          result: { kind: 'text' },
+        }] },
+        { id: 'qa_generate', blocks: [step('qa_native', { pauseForReview: true })] },
+      ],
+    }] };
+    const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
+    const kit = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    const sessionInput = sessionInputBoundary({ qa_native: { kind: 'final_text', text: 'QA_READY' } });
+
+    await expect(workflowDaemonProcess({ storage: kit, sessionInput, directory })({
+      runId, attempt: 0, expectedRevision: 0, accountCurrentness: currentness, acceptedEnvelope,
+    })).resolves.toMatchObject({ state: 'waiting_for_review' });
+    expect(kit.run()).toMatchObject({ state: 'waiting_for_review', heldCount: 2 });
+    expect(rowFor(kit, 'qa_manual')).toMatchObject({ lifecycle: 'waiting_for_review' });
+    const generated = rowFor(kit, 'qa_native')!;
+    expect(generated).toMatchObject({ lifecycle: 'waiting_for_review' });
+    expect(openRowProgress(kit, generated)).toMatchObject({ result: 'QA_READY' });
+  });
+
   it('advances and settles a claimed Wait parent from its completed human leaf without an Agent input', async () => {
     const runId = '81818181-8181-4181-8181-818181818181';
     const directory = await projectDirectory();

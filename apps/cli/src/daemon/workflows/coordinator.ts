@@ -2846,7 +2846,7 @@ async function executeStepBlock(
             await awaitReviewedInvocation(row, context);
             return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
           }
-          const failed = await context.deps.store.commitFact({
+          const failedInvocation = await context.deps.store.commitFact({
             key,
             lifecycle: 'failed',
             reason: error.code,
@@ -2855,6 +2855,10 @@ async function executeStepBlock(
             ...(execution.replyOutcome ? { replyOutcome: execution.replyOutcome } : {}),
           });
           nativeTerminalCommitted = true;
+          throw new WorkflowLeafFailure(
+            persistedFailure(failedInvocation, context.automationCause)!.state,
+            error.code, error.collectable, error.resultFailureReason,
+          );
         }
         throw error;
       }
@@ -2867,8 +2871,6 @@ async function executeStepBlock(
           nativeTerminalCommitted = true;
           releaseAdmission();
         });
-          throw new WorkflowLeafFailure(persistedFailure(failed, context.automationCause)!.state,
-            error.code, error.collectable, error.resultFailureReason);
         await awaitReviewedInvocation(row, context);
         return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
       }
