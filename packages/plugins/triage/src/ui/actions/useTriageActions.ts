@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { isPluginError, PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginSurfaceActivity, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -113,7 +113,8 @@ const UNAVAILABLE_REASON =
 export function useTriageActions(): TriageMountedActionsV1 {
   const hostApi = usePluginHostApi();
   const durable = useTriageDurableAccount();
-  const readiness = usePluginHostReadiness(durable.actions === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
+  const { active } = usePluginSurfaceActivity();
+  const readiness = usePluginHostReadiness(active && durable.actions === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const text = usePluginTranslation();
   const targeted = useSurfaceContext().targetedContributions;
   // The declarations plugins contribute in this mount's admitted snapshot, keyed by value so a re-stamped snapshot
@@ -170,11 +171,11 @@ export function useTriageActions(): TriageMountedActionsV1 {
   }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
-    if (readiness.pending || readiness.ready === false) return;
+    if (!active || readiness.pending || readiness.ready === false) return;
     const controller = new AbortController();
     void load(controller.signal);
     return () => { controller.abort(); };
-  }, [load, readiness.pending, readiness.ready, readiness.revision]);
+  }, [active, load, readiness.pending, readiness.ready, readiness.revision]);
 
   const retry = useCallback(() => {
     if (readiness.pending || readiness.ready === false) return;
