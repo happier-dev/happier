@@ -20,10 +20,8 @@ export async function fetchOpenAiCompatSpeechAudio(opts: {
         input: opts.input,
     });
 
-    const res = await fetchWithTimeout(req.url, { ...req.init, signal: opts.signal }, opts.timeoutMs ?? 15_000, 'tts_timeout');
-    if (!res.ok) {
-        throw new Error(`tts_failed:${res.status}`);
-    }
-
-    return await res.arrayBuffer();
+    return fetchWithTimeout(req.url, { ...req.init, signal: opts.signal }, opts.timeoutMs ?? 15_000, 'tts_timeout', async (response) => {
+        if (!response.ok) throw new Error(`tts_failed:${response.status}`);
+        return response.arrayBuffer();
+    });
 }

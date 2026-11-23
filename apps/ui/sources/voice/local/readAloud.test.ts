@@ -212,4 +212,14 @@ describe('toggleReadAloud', () => {
         utterances[0].onDone?.();
         await live;
     });
+
+    it('sends a long message to the device engine as one utterance', async () => {
+        const text = ['A', 'B', 'C'].map(letter => `${letter.repeat(5)} ${'word '.repeat(22)}ends here.`).join(' ');
+        const pending = toggleReadAloud({ key: 'm1', text, settings });
+        expect(expoSpeech.speak).toHaveBeenCalledWith(text, expect.any(Object));
+        utterances[0].onDone?.();
+        await expect(pending).resolves.toBe(true);
+        expect(expoSpeech.speak).toHaveBeenCalledTimes(1);
+        expect(getReadAloudActiveKey()).toBeNull();
+    });
 });

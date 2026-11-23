@@ -14,6 +14,7 @@ import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroCon
  */
 export async function speakWithLocalTtsProvider(ctx: {
   text: string;
+  readAloudChunkChars?: number;
   settings: any;
   tts: VoiceLocalTtsSettings;
   networkTimeoutMs: number;
@@ -86,6 +87,7 @@ export async function speakWithLocalTtsProvider(ctx: {
       apiKey,
       androidCertSha1,
       input: ctx.text,
+      readAloudChunkChars: ctx.readAloudChunkChars,
       voiceName,
       languageCode,
       format,
@@ -112,6 +114,7 @@ export async function speakWithLocalTtsProvider(ctx: {
     voice,
     format,
     input: ctx.text,
+    readAloudChunkChars: ctx.readAloudChunkChars,
     timeoutMs: ctx.networkTimeoutMs,
     registerPlaybackStopper: ctx.registerPlaybackStopper,
   });
