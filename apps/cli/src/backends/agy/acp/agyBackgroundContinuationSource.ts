@@ -98,7 +98,9 @@ export function createAgyBackgroundContinuationSource(
     /** Register still-running tool calls as tasks whose settlement can resume Agy, then release every witness. */
     const retainBackgroundTasks = (toolCalls: ToolCalls) => {
       for (const [toolCallId, { status }] of toolCalls) {
-        if (!isAcpToolCallTerminalStatus(status) && host.registerContinuation({ id: toolCallId, parentToolCallId: toolCallId })) {
+        if (status === 'in_progress' && host.registerContinuation({
+          id: toolCallId, parentToolCallId: toolCallId, keepToolCallOpen: true,
+        })) {
           backgroundTasks.add(toolCallId);
           observedBackgroundWork = true;
         }
@@ -180,16 +182,13 @@ export function createAgyBackgroundContinuationSource(
 
     const deliver = (open: Continuation, update: SessionUpdate) => {
       const toolCallId = toolCallIdOf(update);
-      let delivered = update;
       if (toolCallId && backgroundTasks.has(toolCallId)) {
         if (isAcpToolCallTerminalStatus(update.status)) backgroundTasks.delete(toolCallId);
-        // The foreground abandoned this call when its turn ended, so the settled task opens its own card.
-        delivered = { ...update, toolCallId: `${open.turnId}:${toolCallId}` };
       } else if (toolCallId) {
         recordToolCall(open.toolCalls, toolCallId, update);
       }
       observeProgress(open, update, toolCallId);
-      enqueue(() => open.sink.update(delivered));
+      enqueue(() => open.sink.update(update));
     };
 
     const admitContinuation = () => {
@@ -239,7 +238,6 @@ export function createAgyBackgroundContinuationSource(
         if (isLive() && input?.foregroundActive) {
           releaseUnadmittedUpdates();
         } else if (isLive()) {
-          settleForegroundTurn();
           admitContinuation();
         }
         await deliveryTail;
@@ -250,7 +248,6 @@ export function createAgyBackgroundContinuationSource(
           observeForegroundUpdate(update);
           return false;
         }
-        settleForegroundTurn();
         if (continuation) {
           if (update.sessionUpdate !== 'usage_update' && !GENERATION_PROGRESS_UPDATES.has(update.sessionUpdate ?? '')) return false;
           deliver(continuation, update);
@@ -268,6 +265,13 @@ export function createAgyBackgroundContinuationSource(
         return true;
       },
       hasUnattributedWork: () => observedBackgroundWork,
+      onTurnFinished(outcome) {
+        if (outcome.kind === 'completed') settleForegroundTurn();
+        else {
+          host.releaseToolCalls([...foregroundToolCalls.keys()]);
+          foregroundToolCalls.clear();
+        }
+      },
       dispose() {
         disposed = true;
         if (continuation) clearTimers(continuation);

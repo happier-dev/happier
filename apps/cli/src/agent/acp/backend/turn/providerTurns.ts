@@ -11,7 +11,7 @@ export type AcpProviderTurnSourceHost = Readonly<{
   cwd: string;
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
-  registerContinuation(input: Readonly<{ id: string; parentToolCallId: string }>): boolean;
+  registerContinuation(input: Readonly<{ id: string; parentToolCallId: string; keepToolCallOpen?: boolean }>): boolean;
   beginContinuation(input: Readonly<{ id?: string; turnId: string }>): AcpProviderTurnSink | null;
   /** The native journal has crossed the parent terminal and all task registrations. */
   releaseToolCalls(toolCallIds: readonly string[]): void;
@@ -30,6 +30,8 @@ export type AcpProviderTurnSource = Readonly<{
   claimLiveUpdate?(update: SessionUpdate, context: Readonly<{ foregroundActive: boolean }>): boolean;
   /** Live provider work can overlap a prompt without identifying which input produced a request. */
   hasUnattributedWork?(): boolean;
+  /** Capture live work before the host abandons the prompt's unresolved calls. */
+  onTurnFinished?(outcome: AcpTurnOutcome): void;
   dispose(): void | Promise<void>;
 }>;
 

@@ -34,7 +34,8 @@ export type AcpToolCallTracker<TimerHandle = ReturnType<typeof setTimeout>> = Re
   markRunning(callId: string): boolean;
   cancel(callId: string): boolean;
   cancelAll(): string[];
-  abandonAll(): string[];
+  detachFromTurn(callId: string): void;
+  abandonTurn(): string[];
   reset(): void;
   get(callId: string): AcpToolCallPublication | null;
   activeCallIds(): string[];
@@ -67,6 +68,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
 }>): AcpToolCallTracker<TimerHandle> {
   const now = params.now ?? Date.now;
   const records = new Map<string, ToolCallRecord<TimerHandle>>();
+  const detached = new Set<string>();
   const finalized = new Map<string, AcpToolCallPublication>();
   const pendingEnrichments = new Map<string, AcpToolCallEnrichment>();
   const maxFinalizedCalls = Math.max(1, Math.trunc(params.maxFinalizedCalls ?? 1_000));
@@ -174,13 +176,14 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
     });
     const finalPublication = publication(callId, record);
     records.delete(callId);
+    detached.delete(callId);
     rememberFinalized(callId, finalPublication);
     params.onCallClosed?.({ callId, reason, publication: finalPublication });
   };
 
   const armTimeout = (callId: string, record: ToolCallRecord<TimerHandle>): void => {
     clearRecordTimer(record);
-    if (!params.resolveTimeoutMs || !params.scheduleTimer || !params.clearTimer) return;
+    if (detached.has(callId) || !params.resolveTimeoutMs || !params.scheduleTimer || !params.clearTimer) return;
     const timeoutMs = params.resolveTimeoutMs(publication(callId, record));
     if (timeoutMs == null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
     const timer = params.scheduleTimer(() => {
@@ -372,8 +375,14 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
       }
       return callIds;
     },
-    abandonAll() {
-      const callIds = [...records.keys()];
+    detachFromTurn(callId) {
+      const record = records.get(callId);
+      if (!record || record.permissionPending) return;
+      detached.add(callId);
+      clearRecordTimer(record);
+    },
+    abandonTurn() {
+      const callIds = [...records.keys()].filter(id => !detached.has(id));
       for (const callId of callIds) {
         const record = records.get(callId);
         if (record) abandonRecord(callId, record);
@@ -384,6 +393,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
       if (disposed) return;
       for (const record of records.values()) clearRecordTimer(record);
       records.clear();
+      detached.clear();
       finalized.clear();
       pendingEnrichments.clear();
     },
@@ -392,7 +402,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
       return record ? publication(callId, record) : null;
     },
     activeCallIds() {
-      return [...records.keys()];
+      return [...records.keys()].filter(id => !detached.has(id));
     },
     isFinalized(callId) {
       return finalized.has(callId);
@@ -402,11 +412,12 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
       disposed = true;
       for (const record of records.values()) clearRecordTimer(record);
       records.clear();
+      detached.clear();
       finalized.clear();
       pendingEnrichments.clear();
     },
     get activeSize() {
-      return records.size;
+      return records.size - detached.size;
     },
     get finalizedSize() {
       return finalized.size;

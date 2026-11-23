@@ -18,6 +18,7 @@ import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuati
 const SESSION_ID = 'agy-session';
 const TEST_TIMING = { generationSettleMs: 50, stallMs: 10_000 } as const;
 const IDLE_AFTER_TURN = { type: 'status', status: 'idle', turnFinished: true } as const;
+const COMPLETED_TURN = { kind: 'completed', stopReason: 'end_turn' } as const;
 
 /** Replays the update order `agy acp` produced for a backgrounded `run_command` in a captured session. */
 function agyAgent(directory: string): string {
@@ -247,6 +248,7 @@ describe('createAgyBackgroundContinuationSource', () => {
   it('runs the conversation Agy resumes after a background command settles as its own turn', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);
+      expect(events.filter(event => event.type === 'tool-result' && event.callId === 'call_build')).toEqual([]);
       events.length = 0;
 
       const resumed = backend.requestExtension('test/finish-build', {});
@@ -258,7 +260,10 @@ describe('createAgyBackgroundContinuationSource', () => {
       expect(await resumed).toEqual({ resumed: true });
       await expect.poll(() => events.at(-1)).toEqual(IDLE_AFTER_TURN);
       expect(events[0]).toEqual({ type: 'status', status: 'running' });
-      expect(events).toContainEqual(expect.objectContaining({ type: 'tool-result', callId: 'agy-continuation-1:call_build' }));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'tool-result', callId: 'call_build', result: expect.objectContaining({ output: 'build ok', exit_code: 0 }),
+      }));
+      expect(events.filter(event => event.type === 'tool-result' && event.callId.endsWith('call_build'))).toHaveLength(1);
       expect(events).toContainEqual(expect.objectContaining({ type: 'tool-result', callId: 'call_verify' }));
       expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'The build is verified.' }));
       expect(finishedTurns(events)).toHaveLength(1);
@@ -278,7 +283,9 @@ describe('createAgyBackgroundContinuationSource', () => {
       await backend.requestExtension('test/finish-tests', {});
 
       await expect.poll(() => finishedTurns(events)).toHaveLength(2);
-      expect(events).toContainEqual(expect.objectContaining({ type: 'tool-result', callId: 'agy-continuation-2:call_tests' }));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'tool-result', callId: 'call_tests', result: expect.objectContaining({ output: 'tests passed', exit_code: 0 }),
+      }));
       expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'All tests passed.' }));
       expect(events.at(-1)).toEqual(IDLE_AFTER_TURN);
     });
@@ -457,8 +464,9 @@ describe('createAgyBackgroundContinuationSource while the host refuses admission
     const testsSettled: SessionUpdate = { sessionUpdate: 'tool_call_update', toolCallId: 'call_tests', status: 'completed' };
 
     expect(source.claimLiveUpdate?.(buildStarted, { foregroundActive: true })).toBe(false);
+    source.onTurnFinished?.(COMPLETED_TURN);
     await source.catchUp({ foregroundActive: false });
-    expect(host.registerContinuation).toHaveBeenCalledWith({ id: 'call_build', parentToolCallId: 'call_build' });
+    expect(host.registerContinuation).toHaveBeenCalledWith({ id: 'call_build', parentToolCallId: 'call_build', keepToolCallOpen: true });
 
     for (const update of [buildSettled, generationEnded, testsStarted]) {
       expect(source.claimLiveUpdate?.(update, { foregroundActive: false })).toBe(true);
@@ -469,8 +477,9 @@ describe('createAgyBackgroundContinuationSource while the host refuses admission
     await source.catchUp({ foregroundActive: true });
     expect(released).toEqual([buildSettled, generationEnded, testsStarted]);
 
+    source.onTurnFinished?.(COMPLETED_TURN);
     await source.catchUp({ foregroundActive: false });
-    expect(host.registerContinuation).toHaveBeenLastCalledWith({ id: 'call_tests', parentToolCallId: 'call_tests' });
+    expect(host.registerContinuation).toHaveBeenLastCalledWith({ id: 'call_tests', parentToolCallId: 'call_tests', keepToolCallOpen: true });
     expect(source.claimLiveUpdate?.(buildSettled, { foregroundActive: false })).toBe(false);
     expect(source.claimLiveUpdate?.(testsSettled, { foregroundActive: false })).toBe(true);
     expect(host.beginContinuation).toHaveBeenCalledTimes(4);
@@ -489,6 +498,7 @@ describe('createAgyBackgroundContinuationSource while the host refuses admission
     const source = await createAgyBackgroundContinuationSource({ generationSettleMs: 20, stallMs: 100 })(host);
     try {
       source.claimLiveUpdate?.({ sessionUpdate: 'tool_call', toolCallId: 'call_build', status: 'in_progress' }, { foregroundActive: true });
+      source.onTurnFinished?.(COMPLETED_TURN);
       await source.catchUp({ foregroundActive: false });
       source.claimLiveUpdate?.({ sessionUpdate: 'tool_call_update', toolCallId: 'call_build', status: 'completed' }, { foregroundActive: false });
       await vi.advanceTimersByTimeAsync(75);

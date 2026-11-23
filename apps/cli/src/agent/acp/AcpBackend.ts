@@ -1183,10 +1183,11 @@ export class AcpBackend implements AgentBackend {
       && this.providerSourceLifetime === lifetime && this.acpSessionId === sessionId;
     const source = await this.spawnedProviderTurnSource({
       sessionId, cwd: this.options.cwd, env: { ...this.spawnedProcessEnv }, signal: lifetime.signal,
-      registerContinuation: ({ id, parentToolCallId }) => {
+      registerContinuation: ({ id, parentToolCallId, keepToolCallOpen }) => {
         const context = this.providerToolContexts.get(parentToolCallId);
         if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
         this.providerContinuations.set(id, context);
+        if (keepToolCallOpen) this.toolCalls.detachFromTurn(parentToolCallId);
         return true;
       },
       releaseToolCalls: (ids) => {
@@ -3350,7 +3351,7 @@ export class AcpBackend implements AgentBackend {
   private clearActiveToolCallStateForTerminalTurn(reason: string): void {
     const activeToolCallCount = this.toolCalls.activeSize;
     if (activeToolCallCount === 0) return;
-    this.toolCalls.abandonAll();
+    this.toolCalls.abandonTurn();
 
     logger.debug(
       `[AcpBackend] Abandoned ${activeToolCallCount} unresolved tool call(s) after ${reason}`,
@@ -3382,6 +3383,7 @@ export class AcpBackend implements AgentBackend {
     this.pendingPromptResponseTurnGeneration = null;
     this.idleStatusDeferredUntilPromptResponse = false;
     this.abortPendingPermissionsForCurrentTurn(this.resolvePermissionFlushReasonForOutcome(outcome));
+    this.providerSource?.onTurnFinished?.(outcome);
     this.clearActiveToolCallStateForTerminalTurn(this.resolvePermissionFlushReasonForOutcome(outcome));
     this.plans.finalizeTurn(resolveAcpPlanTurnId(this.turnGeneration));
     this.closeCurrentTurnGeneration();
