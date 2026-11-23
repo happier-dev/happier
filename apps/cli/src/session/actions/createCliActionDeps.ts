@@ -82,7 +82,7 @@ import { createCliProjectAdmission } from './cliActionDeps/projectAdmission';
 import { createCliMachineActionDeps } from './cliActionDeps/machine';
 import { createCliSettingsActionDeps } from './cliActionDeps/settings';
 import { createCliMessageActionDeps } from '@/session/services/cliMessageActionDeps';
-import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
+import { findTranscriptEncryptedMessageByLocalIdV2, isTranscriptSessionUnavailableError } from '@/api/session/transcriptMessageLookup';
 import { UserMessageSchema } from '@/api/types';
 import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { createCliArtifactsActionDeps } from './cliActionDeps/artifacts';
@@ -1866,8 +1866,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const origin = request.executionOriginV1;
       if (!params.credentials || origin.caller.kind !== 'session') return null;
       const transport = await resolveTransportForSession(origin.caller.sessionId, context.signal,
-        { context, actionId: 'session.message.send' });
-      if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code };
+        { context, actionId: 'session.message.send' }, { serverId: origin.serverId, sessionId: origin.caller.sessionId });
+      if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code, effectAttempted: false };
       const retained = await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.credentials.token, serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         sessionId: transport.sessionId, localId: `approval-result:${artifactId}`,
@@ -1875,7 +1875,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.message.send', request),
       });
       if (retained.type === 'not_found') return null;
-      if (retained.type !== 'found') throw retained.error;
+      if (retained.type !== 'found') {
+        if (isTranscriptSessionUnavailableError(retained.error)) {
+          const code = 'session_input_target_unavailable';
+          return { ok: false, errorCode: code, error: code, effectAttempted: false };
+        }
+        throw retained.error;
+      }
       // The canonical retained input already reached the origin Session. Its
       // materialized authority envelope is not the original admission request:
       // re-authoring it can change its retry identity after the runtime stops.

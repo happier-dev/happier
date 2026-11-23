@@ -83,6 +83,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+/** Home conceals missing Sessions and Sessions outside the reader's access with the same response. */
+export function isTranscriptSessionUnavailableError(error: unknown): boolean {
+    return axios.isAxiosError(error) && error.response?.status === 404
+        && asRecord(error.response.data)?.error === 'Session not found';
+}
+
 function isV2MessageNotFoundError(error: unknown): error is AxiosError<unknown> {
     if (!axios.isAxiosError(error)) return false;
     if (error.response?.status !== 404) return false;

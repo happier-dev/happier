@@ -36,13 +36,17 @@ it.each(([
     projectSourceId: 'source', templateRef: { sourceId: 'data-services', itemId: 'redis', version: '0.0.0' } }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.domains.add', actionArgs: { environmentId: 'environment', domainId: 'app.invalid',
     expectedRevision: 2, requestKey: 'domain', content: { hostname: 'app.invalid', target: { service: 'web', containerPort: 80 } } }, failed: true, restrictedCredential: false },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, deliveryFailure: 'before_lookup' },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, deliveryFailure: 'during_lookup' },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, deliveryFailure: 'before_pending' },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, deliveryFailure: 'lost_ack' },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'terminal' },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'account' },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, encryptionMode: 'e2ee' },
   { actionId: 'deployments.teardown', actionArgs: { environmentId: 'environment', requestKey: 'teardown', removeEnvironment: true }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.environments.create', actionArgs: { requestKey: 'restricted-create', contentArtifactId: 'definition',
     contentHeaderVersion: 1, contentBodyVersion: 1 }, failed: false, restrictedCredential: true },
-] as const).map(scenario => ({ encryptionMode: 'plain' as const, ...scenario })))('settles $actionId delivery with its own credential custody ($encryptionMode, $restrictedCredential)', async scenario => {
+] as const).map(scenario => ({ encryptionMode: 'plain' as const, ...scenario })))('settles $actionId delivery with its own credential custody ($encryptionMode, $restrictedCredential, $deliveryFailure)', async scenario => {
   await withConfiguredDaemonTestHome({ prefix: 'approval-result-delivery-', env: {
     HAPPIER_SERVER_URL: 'https://approval-home.test', HAPPIER_WEBAPP_URL: 'https://approval-home.test',
     HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined,
@@ -60,6 +64,13 @@ it.each(([
   const sessionCrypto = mode === 'plain' ? { mode, ctx: null } as const
     : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } } as const;
   let sessionActive = true;
+  const deliveryFailure = 'deliveryFailure' in scenario ? scenario.deliveryFailure : undefined;
+  const pendingAdmission = vi.fn(async (request: Parameters<typeof origin.machineAdmissionTransport>[0]) => {
+    if (deliveryFailure === 'before_pending') return { status: 'rejected', code: 'session_input_target_unavailable' } as const;
+    const receipt = await origin.machineAdmissionTransport(request);
+    if (deliveryFailure === 'lost_ack') throw new Error('socket closed after dispatch');
+    return receipt;
+  });
   const origin = await createDeferredOutcomeDeliveryBoundary({ accountId, serverId, serverIdentityId: serverId,
     machineId, sessionId, sessionCrypto, callerAuthority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user',
     readReceiver: () => receiver });
@@ -82,14 +93,23 @@ it.each(([
       storageMode: 'plain', access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage',
         resourceMode: 'plain', accessState: 'ready' },
     } } };
+    if (deliveryFailure === 'before_lookup' && new URL(url).pathname === '/v2/sessions') {
+      return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
+    }
     if (url.endsWith('/v1/artifacts/approval')) return { status: 200, data: artifact };
     if (url.endsWith(`/messages/by-local-id/${encodeURIComponent('approval-result:approval')}`)) {
+      if (deliveryFailure === 'during_lookup') throw Object.assign(new axios.AxiosError('Session not found'), {
+        response: { status: 404, data: { error: 'Session not found' } },
+      });
       const retainedContent = origin.readRetainedContent('approval-result:approval');
       if (!retainedContent) throw Object.assign(new axios.AxiosError('Message not found'), {
         response: { status: 404, data: { error: 'Message not found' } },
       });
       return { status: 200, data: { message: { id: 'delivered-outcome', seq: 1, localId: 'approval-result:approval',
         content: retainedContent, createdAt: 2, updatedAt: 2 } } };
+    }
+    if (deliveryFailure === 'before_lookup' && url.includes(`/v2/sessions/${sessionId}`)) {
+      return { status: 404, data: { error: 'Session not found' } };
     }
     if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
       id: sessionId, active: sessionActive, encryptionMode: mode, machineId,
@@ -100,6 +120,9 @@ it.each(([
   const transportFailures: unknown[] = [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     try {
+    if (deliveryFailure === 'before_lookup' && url.endsWith('/v2/sessions/lookup-by-tags')) {
+      return { status: 200, data: { sessions: [] } };
+    }
     if (url.endsWith('/v1/artifacts/read')) return { status: 200, data: artifactReadResponse(body,
       id => id === artifact.id ? artifact : null).data };
     if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
@@ -170,7 +193,7 @@ it.each(([
   const receiver = createActionExecutor(createCliActionDeps({ credentials, token, ...sessionCrypto,
     sessionId: '', serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'https://approval-home.test',
     externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: installation.secretKey,
-    machineAdmissionTransport: origin.machineAdmissionTransport,
+    machineAdmissionTransport: pendingAdmission,
   }));
   const receivingExecute = vi.spyOn(receiver, 'execute');
   const outcomeReplayArtifacts = origin.replayArtifacts;
@@ -179,6 +202,18 @@ it.each(([
       serverApiUrl: 'https://approval-home.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({}) }) })
     : mode === 'e2ee' ? receiver : createActionExecutor(deps);
+  if (deliveryFailure) {
+    const result = await receiver.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+      surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
+    });
+    expect(result).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true },
+      delivery: deliveryFailure === 'lost_ack'
+        ? { status: 'outcomeUnknown', code: 'machine_admission_acknowledgement_failed' }
+        : { status: 'rejected', code: 'session_input_target_unavailable' } } });
+    expect(pendingAdmission).toHaveBeenCalledTimes(deliveryFailure === 'before_pending' || deliveryFailure === 'lost_ack' ? 1 : 0);
+    expect([...delivered]).toEqual(deliveryFailure === 'lost_ack' ? ['approval-result:approval'] : []);
+    return;
+  }
   if (canRelay) {
     // The hosting origin has its authenticated Machine transport. Settle its
     // already-recorded outcome before the standalone deciding CLI rejoins it.

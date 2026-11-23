@@ -892,6 +892,9 @@ a phase, class, code and HTTP status. It carries no target identity or input
 content. Receipts that omit it remain valid. Earlier strict development
 readers require matching Protocol and host source. The 0.2 frontier
 `24731ff73c` has no Session input admission schema. Pending storage is unchanged.
+Deferred approval-result delivery reports `session_input_target_unavailable`
+when Home reports that the exact originating Session is unavailable before
+Pending admission. The run record still reports the approved Action's outcome.
 
 Execution-run Action completion observations and review, plan and narration terminal
 values retain optional `runtimeIssueV1`. External-linked takeover operation errors

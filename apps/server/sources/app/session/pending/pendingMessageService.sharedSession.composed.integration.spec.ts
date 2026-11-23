@@ -1254,6 +1254,42 @@ describe("pendingMessageService (shared sessions)", () => {
         ]);
     });
 
+    it.each(["before admission", "after access admission"] as const)(
+        "leaves no Pending input when the target Session is deleted %s",
+        async (when) => {
+            const owner = await createAccount("deleted-pending-target");
+            const session = await createSession(owner.id);
+            const input = { actorUserId: owner.id, sessionId: session.id, ciphertext: "input" };
+            expect(await enqueuePendingMessage({ ...input, localId: "control" }))
+                .toMatchObject({ ok: true, didWrite: true });
+
+            const deleteSession = () => db.session.delete({ where: { id: session.id } });
+            const transaction = db.$transaction;
+            let deleted = false;
+            if (when === "before admission") {
+                await deleteSession();
+                deleted = true;
+            } else {
+                // Account access has been admitted before this storage transaction starts.
+                db.$transaction = (async (...args: Parameters<typeof db.$transaction>) => {
+                    if (!deleted) {
+                        await deleteSession();
+                        deleted = true;
+                    }
+                    return transaction.apply(db, args);
+                }) as typeof db.$transaction;
+            }
+            try {
+                expect(await enqueuePendingMessage({ ...input, localId: "deleted-target" }))
+                    .toMatchObject({ ok: false, error: "session-not-found" });
+            } finally {
+                db.$transaction = transaction;
+            }
+            expect(deleted).toBe(true);
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
+        },
+    );
+
     it('finishes one Account Pending admission across grant withdrawal and checks the next request', async () => {
         const owner = await createAccount('admitted-request-owner');
         const collaborator = await createAccount('admitted-request-editor');
