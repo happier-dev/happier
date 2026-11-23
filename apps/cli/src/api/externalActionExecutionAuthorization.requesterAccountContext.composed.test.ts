@@ -1359,6 +1359,21 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     expect(delivered.executionAuthorization?.binding.managedAdmission).toBeUndefined();
   });
+  it.each([
+    ['account-owned', 'controller_unavailable'],
+    ['parent', 'controller_retired'],
+  ] as const)('refuses managed Exec against a %s controller before dispatch', async (scopedControllerMismatch, errorCode) => {
+    const events: string[] = [];
+    const actionId = 'machines.managed.exec';
+    const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: actionId,
+      scopedManagedController: true, scopedControllerMismatch });
+    const result = await dispatchOriginalAccountAction({ actionId,
+      input: { homeId: homeIdentityId, managedId: 'retained-machine', argv: ['true'] },
+      requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
+      credentials: { token: token(), encryption: null }, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId });
+    expect(result).toMatchObject({ ok: false, errorCode, effectAttempted: false });
+    expect(events).toEqual(['managed-read']);
+  });
   it.each(['plain', 'e2ee'] as const)('inspects the exact managed controller with an invocation codec and no requester credentials (%s)', async mode => {
     const events: string[] = [];
     const target = await home(mode, events, { scopedManagedController: true, inventoryUnavailable: true,

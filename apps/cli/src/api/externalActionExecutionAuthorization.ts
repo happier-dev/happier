@@ -1155,8 +1155,10 @@ async function prepareOriginalAccountAction(
         serverHttpBaseUrl: homeUrl, homeId: managed.homeId, managedId: managed.managedId,
         ...(input.signal ? { signal: input.signal } : {}) }));
       if (row.id !== managed.managedId || row.homeId !== managed.homeId
-        || (row.controller ? row.controller.machineId !== input.target.machineId
-          : !isManagedAccountNativeControlInvocationV1(input.actionId, input.input))) return fail('controller_retired');
+        || (row.controller && row.controller.machineId !== input.target.machineId)) return fail('controller_retired');
+      if (!row.controller && !isManagedAccountNativeControlInvocationV1(input.actionId, input.input)) {
+        return fail(managedAdmission.actionId === MANAGED_EXEC_ACTION_ID_V1 ? 'controller_unavailable' : 'controller_retired');
+      }
       if ((row.enrollmentAccountId === accountId || managedAdmission.actionId === MANAGED_EXEC_ACTION_ID_V1)
         && row.custodianAccountId !== accountId) {
         if (!row.controller || !row.controllerAccess) return fail('controller_unavailable');
