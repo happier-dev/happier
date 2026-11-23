@@ -18,7 +18,9 @@ import { createClientActionReverseDispatcher } from '../../../../../../cli/src/s
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { Modal } from '@/modal';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -84,9 +86,12 @@ const [{ getActiveServerSnapshot }, { setActiveServerId },
     import('@/sync/runtime/orchestration/appliedActiveServerRuntime'), import('@/sync/domains/settings/settings'),
     import('@/components/systemTasks/systemTasksRuntime'), import('./useRelayAccessControl'),
 ]);
+let restoreNativeConfirmation: (() => void) | undefined;
 
 afterEach(async () => {
     await standardCleanup();
+    restoreNativeConfirmation?.();
+    restoreNativeConfirmation = undefined;
     const [{ resetRemoteHostCatalogEngineForTests }, { resetRemoteHostCatalogSnapshotsForTests }] = await Promise.all([
         import('@/sync/engine/settings/remoteHostCatalogEngine'), import('@/sync/store/settings/remoteHostCatalogSnapshot'),
     ]);
@@ -107,6 +112,26 @@ afterEach(async () => {
     bridge.listeners.clear();
     vi.unstubAllGlobals();
 });
+
+function holdNativeConfirmation() {
+    const choice = createDeferred<boolean>();
+    let visible: readonly [string, string | undefined] | undefined;
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementationOnce(async (title, message) => {
+        visible = [title, message];
+        return await choice.promise;
+    });
+    restoreNativeConfirmation = () => {
+        choice.resolve(false);
+        confirm.mockRestore();
+    };
+    return {
+        shown: () => waitForHomeGovernance(() => {
+            if (!visible) throw new Error('Expected the Action native confirmation');
+            return visible.join(' ');
+        }),
+        answer: choice.resolve,
+    };
+}
 
 async function openRelay(actionsSettingsV1: unknown, identity?: Readonly<{ accountId: string; serverIdentityId: string }>, local = false) {
     const accountId = identity?.accountId ?? 'account';
@@ -183,165 +208,87 @@ it('signed-out device Runtime draft still starts at the native owner', async () 
     expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.start.v1')).toBe(true);
 });
 
-it('signed-in Runtime admission keeps configured approval pending then adopts the existing runner task exactly once', async () => {
+it('signed-in Runtime waits for native confirmation and adopts the existing runner task exactly once', async () => {
     const { serverId } = await openRelay({ v: 1, actions: { 'remote_hosts.relay.access.status': { enabled: false },
         'relay.runtime.start': { approvalRequiredSurfaces: ['ui'] } } });
     const { useLocalRelayRuntimeControl } = await import('../localControl/useLocalRelayRuntimeControl');
     const runtime = await renderHook(() => useLocalRelayRuntimeControl({ runner: getSystemTasksRunner(),
         actionScope: { serverId, accountId: 'account' } }));
     await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.status.v1')).toBe(true));
+    const confirmation = holdNativeConfirmation();
     let pending!: Promise<void>;
     await act(async () => { pending = runtime.getCurrent().startRelay(); });
-    await waitForHomeGovernance(() => expect(runtime.getCurrent().approval.approvalPending).toBe(true));
+    await confirmation.shown();
     expect(runtime.getCurrent().isBusy).toBe(true);
     expect(bridge.specs.filter(spec => spec.kind === 'relay.runtime.start.v1')).toEqual([]);
-    const artifactId = runtime.getCurrent().approval.approvalId!;
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    expect(home.artifacts(serverId).list()).toEqual([]);
     await act(async () => {
-        expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
-            { surface: 'ui', serverId, expectedAccountId: 'account' })).toMatchObject({ ok: true });
+        confirmation.answer(true);
+        await pending;
     });
-    // Deliver the Artifact projection in a separate React flush; its mounted
-    // continuation settles the original pending operation, not the decision.
-    await waitForHomeGovernance(() => expect(runtime.getCurrent().approval.approvalPending).toBe(false));
-    await act(async () => { await pending; });
     expect(bridge.specs.filter(spec => spec.kind === 'relay.runtime.start.v1')).toHaveLength(1);
     const taskId = bridge.taskIds[bridge.specs.findIndex(spec => spec.kind === 'relay.runtime.start.v1')]!;
     expect(runtime.getCurrent().activeTaskSnapshot).toMatchObject({ taskId, status: 'running', result: null });
-    await act(async () => {
-        await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
-            { surface: 'ui', serverId, expectedAccountId: 'account' });
-    });
-    expect(bridge.specs.filter(spec => spec.kind === 'relay.runtime.start.v1')).toHaveLength(1);
-    // A read joins this runner directly, without a second task lifecycle or task-id registry.
     const statusId = bridge.taskIds[bridge.specs.findIndex(spec => spec.kind === 'relay.runtime.status.v1')]!;
     expect(getSystemTasksRunner().getTaskSpec?.(statusId)).toMatchObject({ kind: 'relay.runtime.status.v1' });
 });
 
-it('opening the first Inbox approval retains the live Relay author and its native configuration exactly once', async () => {
+it('holds local Relay Save until native confirmation and sends private configuration only to the runner', async () => {
     const { serverId } = await openRelay({ v: 1, actions: { 'remote_hosts.relay.access.status': { enabled: false },
         'relay.access.configure': { approvalRequiredSurfaces: ['ui'] } } });
-    storage.setState({ isDataReady: true });
-    const [{ WorkspaceProvider }, { DestinationInstanceHost }, { resolveCompactAppDestinations, hrefForDestinationRef },
-        { RelayAccessControlSection }, { createRelayAccessStatusTaskKind, createSystemTasksRunner }, { getRelayAccessProvider },
-        { createDefaultActionExecutor }] = await Promise.all([
-        import('@/components/appShell/workspace/WorkspaceProvider'),
-        import('@/components/appShell/workspace/DestinationInstanceHost'),
-        import('@/components/appShell/destinations/compactAppDestinationCatalog'),
-        import('./RelayAccessControlSection'), import('@happier-dev/cli-common/systemTasks'),
-        import('@happier-dev/cli-common/relayAccess'), import('@/sync/ops/actions/defaultActionExecutor'),
-    ]);
+    const [{ RelayAccessControlSection }, { createRelayAccessStatusTaskKind, createSystemTasksRunner }, { getRelayAccessProvider }] =
+        await Promise.all([import('./RelayAccessControlSection'), import('@happier-dev/cli-common/systemTasks'),
+            import('@happier-dev/cli-common/relayAccess')]);
     bridge.statusRunner = createSystemTasksRunner({ kinds: {
         'relay.access.status.v1': createRelayAccessStatusTaskKind({ readConfig: async () => null,
             getProvider: getRelayAccessProvider, createExecutionContext: () => ({ env: { NODE_ENV: 'test' }, upstreamUrl: null }) }),
     } });
-    const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
-        externalSessions: false, inbox: true, workflows: false, friends: false,
-    } });
-    let mounts = 0;
-    let retirements = 0;
-    function RelayAuthor() {
-        React.useEffect(() => { mounts += 1; return () => { retirements += 1; }; }, []);
-        return <RelayAccessControlSection runner={getSystemTasksRunner()} actionScope={{ serverId, accountId: 'account' }} />;
-    }
-    // The real provider/adapter/router and destination host own retention. This
-    // minimal outlet only substitutes Expo's native scene-loading boundary.
-    const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
-        {navigation => <>
-            {React.createElement('RelayWorkspaceState', { navigation })}
-            {Object.values(navigation.state.tabs).map(tab => {
-                const focused = Object.values(navigation.state.groups).some(group => group.activeTabId === tab.id);
-                return <DestinationInstanceHost key={tab.id} tabId={tab.id} ref={tab.target}
-                    pathname={hrefForDestinationRef(catalog, tab.target)?.split('?')[0] ?? '/'} focused={focused} visible={focused}
-                    navigation={navigation.navigationForTab(tab.id)}>
-                    {tab.target.kind === 'inbox' ? React.createElement('RelayApprovalReview', { artifactId: tab.target.params.id }) : <RelayAuthor />}
-                </DestinationInstanceHost>;
-            })}
-        </>}
-    </WorkspaceProvider>);
+    const screen = await renderScreen(<RelayAccessControlSection runner={getSystemTasksRunner()}
+        actionScope={{ serverId, accountId: 'account' }} />);
     await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.choice:lan')
         .some(node => node.props.disabled === false)).toBe(true));
     await screen.pressByTestIdAsync('settings.server.relayAccess.choice:lan');
     await waitForHomeGovernance(() => expect(screen.findByTestId('settings.server.relayAccess.lanUrl')).not.toBeNull());
-    // A method whose declared fields are incomplete cannot be saved: Save waits for the URL.
     expect(screen.findAllByTestId('settings.server.relayAccess.save').every(node => node.props.disabled === true)).toBe(true);
-    await act(async () => {
-        screen.changeTextByTestId('settings.server.relayAccess.lanUrl', 'https://user:fixture-only-relay-material@relay.fixture.test/relay');
-    });
-    await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.save').some(node => node.props.disabled === false)).toBe(true));
-    // Save's live continuation intentionally waits for the human decision.
-    // Fire the actual control without awaiting that decision in this test turn.
+    const url = 'https://user:fixture-only-relay-material@relay.fixture.test/relay';
+    await act(async () => { screen.changeTextByTestId('settings.server.relayAccess.lanUrl', url); });
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.save')
+        .some(node => node.props.disabled === false)).toBe(true));
+    const confirmation = holdNativeConfirmation();
     await act(async () => { screen.pressByTestId('settings.server.relayAccess.save'); });
-    const created = await waitForHomeGovernance(() => {
-        const row = home.artifacts(serverId).list().find(row => {
-            const body = home.artifacts(serverId).readPlainBody(row.id);
-            return body !== null && ApprovalRequestSchema.safeParse(JSON.parse(body)).success;
-        });
-        expect(row).toBeDefined();
-        return row!;
+    expect(await confirmation.shown()).not.toContain('fixture-only-relay-material');
+    expect(home.artifacts(serverId).list()).toEqual([]);
+    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1')).toEqual([]);
+    await act(async () => { confirmation.answer(true); });
+    await waitForHomeGovernance(() => {
+        expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1')).toMatchObject([
+            { params: { config: relaySelection('lan', { url }) } },
+        ]);
     });
-    const request = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(created.id) ?? 'null'));
-    expect(request).toMatchObject({ actionId: 'relay.access.configure', status: 'open', approval: { flow: 'blocking' } });
-    expect(JSON.stringify(request).includes('fixture-only-relay-material')).toBe(false);
-    const { getSharedBlockingApprovalCoordinator } = await import('@happier-dev/protocol/actions/blockingApprovalCoordinator');
-    await waitForHomeGovernance(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(created.id)).toBe(1));
-    await act(async () => { await Promise.resolve(); });
-    expect(screen.findByTestId('home-reach-relay-approval')).not.toBeNull();
-    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1').length).toBe(0);
-    const notice = screen.findAllByTestId('home-reach-relay-approval').find(node => typeof node.props.onOpenApproval === 'function');
-    const reviewButton = notice?.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function').at(-1);
-    await pressTestInstanceAsync(reviewButton, 'pending approval Review button');
-    await waitForHomeGovernance(() => expect(screen.root.findAllByType('RelayApprovalReview').length).toBe(1));
-    expect(mounts).toBe(1);
-    expect(retirements).toBe(0);
-    const artifactId = screen.root.findByType('RelayApprovalReview').props.artifactId as string;
-    expect(artifactId).toBeTruthy();
-    await act(async () => {
-        expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
-            { surface: 'ui', serverId, expectedAccountId: 'account' })).toMatchObject({ ok: true });
-    });
-    await waitForHomeGovernance(() => expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1').length).toBe(1));
-    const native = bridge.specs.find(spec => spec.kind === 'relay.access.configure.v1')!;
-    const config = native.params?.config;
-    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Expected native relay config');
-    expect(config).toEqual(relaySelection('lan', { url: 'https://user:fixture-only-relay-material@relay.fixture.test/relay' }));
-    await act(async () => {
-        await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
-            { surface: 'ui', serverId, expectedAccountId: 'account' });
-    });
-    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1').length).toBe(1);
-    expect(retirements).toBe(0);
 });
 
-it.each(['reject', 'retire'] as const)('blocking native Relay input remains private and unissued when its human continuation is %s', async decision => {
+it.each(['reject', 'retire'] as const)('keeps native Relay input private and unissued when native confirmation is %s', async decision => {
     const { relay, serverId } = await openRelay({ v: 1, actions: {
         'relay.access.status': { enabled: false },
         'relay.access.configure': { approvalRequiredSurfaces: ['ui'] },
     } }, undefined, true);
     await waitForHomeGovernance(() => expect(relay.getCurrent().actionServerId).toBe(serverId));
+    const confirmation = holdNativeConfirmation();
     let pending!: Promise<string | null>;
     await act(async () => {
         pending = relay.getCurrent().configure({ config: relaySelection('lan', {
             url: 'https://user:fixture-only-blocking-material@relay.fixture.test/relay',
         }) });
     });
-    await waitForHomeGovernance(() => expect(relay.getCurrent().approval.approvalPending).toBe(true));
-    const artifactId = relay.getCurrent().approval.approvalId!;
-    const body = home.artifacts(serverId).readPlainBody(artifactId)!;
-    expect(body.includes('fixture-only-blocking-material')).toBe(false);
-    const { getSharedBlockingApprovalCoordinator } = await import('@happier-dev/protocol/actions/blockingApprovalCoordinator');
-    await waitForHomeGovernance(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1));
+    expect(await confirmation.shown()).not.toContain('fixture-only-blocking-material');
+    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1')).toEqual([]);
+    if (decision === 'retire') await act(async () => { await home.switchAccount(serverId, 'replacement-account'); });
     await act(async () => {
-        if (decision === 'retire') await home.switchAccount(serverId, 'replacement-account');
-        else {
-            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-            expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'reject' },
-                { surface: 'ui', serverId, expectedAccountId: 'account' })).toMatchObject({ ok: true });
-        }
+        confirmation.answer(decision === 'retire');
+        await expect(pending).resolves.toBeNull();
     });
-    await expect(pending).resolves.toBeNull();
-    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1').length).toBe(0);
-    expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(0);
+    expect(bridge.specs.filter(spec => spec.kind === 'relay.access.configure.v1')).toEqual([]);
+    expect(home.artifacts(serverId).list()).toEqual([]);
 });
 
 it('native task cancellation is scoped to the admitted Account and requests cancellation without claiming termination', async () => {
@@ -454,7 +401,7 @@ it('native task progress logs retain their root fallback only after a native pat
     expect(opened).toEqual(['/fixture/.happier/logs', '/fixture/.happier']);
 });
 
-it('rejecting native task log approval does not create a root-fallback approval or native effect', async () => {
+it('declining the native log confirmation issues neither the log open nor its root fallback', async () => {
     const { serverId } = await openRelay({ v: 1, actions: { 'remote_hosts.relay.access.status': { enabled: false },
         'relay.runtime.open_path': { approvalRequiredSurfaces: ['ui'] } } });
     installDesktopCommandBoundary(async (command: string) => {
@@ -465,20 +412,16 @@ it('rejecting native task log approval does not create a root-fallback approval 
     const screen = await renderScreen(<SystemTaskProgressCard snapshot={{ taskId: 'local-runtime-task', status: 'running',
         currentStepId: null, latestMessage: null, awaitingInput: false, cancelRequested: false, events: [], result: null }} />);
     await waitForHomeGovernance(() => expect(screen.findAllByTestId('system-task-progress-open-logs').some(node => node.props.disabled === false)).toBe(true));
+    const confirmation = holdNativeConfirmation();
     let pending!: Promise<void>;
     await act(async () => { pending = pressProgressLogs(screen); });
-    await waitForHomeGovernance(() => expect(screen.findByTestId('system-task-logs-approval')).not.toBeNull());
-    expect(home.artifacts(serverId).list().length).toBe(1);
-    const artifactId = home.artifacts(serverId).list()[0].id;
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    await confirmation.shown();
     await act(async () => {
-        expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'reject' },
-            { surface: 'ui', serverId, expectedAccountId: 'account' })).toMatchObject({ ok: true });
+        confirmation.answer(false);
+        await pending;
     });
-    await waitForHomeGovernance(() => expect(screen.findByTestId('system-task-logs-approval')).toBeNull());
-    await act(async () => { await pending; });
-    expect(home.artifacts(serverId).list().length).toBe(1);
-    expect(bridge.desktopCalls.length).toBe(0);
+    expect(home.artifacts(serverId).list()).toEqual([]);
+    expect(bridge.desktopCalls).toEqual([]);
 });
 
 it('signed-out native task log outcome unknown does not issue a second root open', async () => {
@@ -906,7 +849,7 @@ it('an agent client open-path Action without an originating Machine opens the ex
         expect(accepted).toBe(true);
         expect(invoke.mock.calls).toEqual([['system_tasks_open_log_path', { path: '/home/user/.happier/downloaded-app' }]]);
         const retained = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(approval.id) ?? 'null'));
-        expect(retained).toMatchObject({ status: 'executed', execution: { ok: true, effectAttempted: true,
+        expect(retained).toMatchObject({ status: 'executed', execution: { ok: true,
             result: { status: 'completed' } } });
         await pending;
         expect(invoke.mock.calls).toEqual([['system_tasks_open_log_path', { path: '/home/user/.happier/downloaded-app' }]]);
@@ -977,7 +920,7 @@ it('waived Save and Disable share the Action task owner and captured host/Home, 
     expect(home.requestsFor('/v1/account/entity-rows/remote-hosts').length).toBeGreaterThan(0);
 });
 
-it.each(['configure', 'configureLan', 'configureLanCredentials', 'disable'] as const)('Account Ask first renders the safe %s intent and holds it until the live Inbox approval decision', async operation => {
+it.each(['configure', 'configureLan', 'configureLanCredentials', 'disable'] as const)('Account Ask holds the safe %s intent until native confirmation', async operation => {
     const { relay, serverId, host, issued } = await openRelay({ v: 1, actions: {
         'remote_hosts.relay.configure': { approvalRequiredSurfaces: ['ui'] },
     } });
@@ -988,52 +931,21 @@ it.each(['configure', 'configureLan', 'configureLanCredentials', 'disable'] as c
             ? 'https://lan-user:lan-password@relay.example.test/relay?token=lan-query-secret#lan-fragment-secret'
             : 'http://localhost:3000' })
         : relaySelection('cloudflareNamed', { hostname: 'relay.example.test' }, cloudflareCredentialRefs);
+    const confirmation = holdNativeConfirmation();
     let pending!: Promise<string | null>;
     await act(async () => {
         pending = operationKind === 'configure'
             ? relay.getCurrent().configure({ config })
             : relay.getCurrent().disable();
     });
-    const approval = await waitForHomeGovernance(() => {
-        const row = home.artifacts(serverId).list().find(row => {
-            const body = home.artifacts(serverId).readPlainBody(row.id);
-            return body !== null && ApprovalRequestSchema.safeParse(JSON.parse(body)).success;
-        });
-        expect(row).toBeDefined();
-        return row!;
-    });
-    const request = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(approval.id) ?? 'null'));
-    expect(request).toMatchObject({ status: 'open', actionId: 'remote_hosts.relay.configure',
-        approval: { flow: 'blocking', result: 'required' } });
-    const { describeApprovalActionFields } = await import('@happier-dev/protocol/actions');
-    const { ActionApprovalFieldsCard } = await import('@/components/approvals/ActionApprovalFieldsCard');
-    const presentation = describeApprovalActionFields(request);
-    const details = await renderScreen(<ActionApprovalFieldsCard presentation={presentation} serverId={serverId} />);
-    const text = details.getTextContent();
-    expect(text).toContain(host.id);
-    expect(request.actionArgs).toMatchObject({ operation: { kind: operationKind } });
-    expect(text).toContain(operationKind === 'configure' ? 'Configure relay' : 'Disable relay');
-    expect(presentation.unrepresentable).toBeNull();
-    if (operationKind === 'configure') {
-        expect(request.actionArgs).toMatchObject({ operation: { config: { provider: { kind: 'builtin', id: configId } } } });
-        if (configId === 'cloudflareNamed') expect(request.actionArgs).toMatchObject({ operation: { config: {
-            credentialRefs: cloudflareCredentialRefs,
-        } } });
-        expect(text).toContain(operation === 'configureLanCredentials' ? 'https://relay.example.test/relay'
-            : configId === 'lan' ? 'http://localhost:3000' : 'relay.example.test');
-    } else {
-        expect(text).not.toContain('cloudflareNamed');
-        expect(text).not.toContain('relay.example.test');
-    }
+    const visible = await confirmation.shown();
     for (const secret of ['lan-user', 'lan-password', 'lan-query-secret', 'lan-fragment-secret']) {
-        expect(text).not.toContain(secret);
-        expect(JSON.stringify(request)).not.toContain(secret);
+        expect(visible).not.toContain(secret);
     }
+    expect(home.artifacts(serverId).list()).toEqual([]);
     expect(bridge.specs.filter(spec => spec.kind !== 'relay.access.status.v1')).toEqual([]);
-    const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
-    const decision = await renderHook(() => useApprovalDecisionHandler({ id: approval.id, header: null }, request, '', serverId));
     await act(async () => {
-        expect(await decision.getCurrent()('approve')).toBe(true);
+        confirmation.answer(true);
         expect(await pending).not.toBeNull();
     });
     const mutation = bridge.specs.find(spec => spec.kind === `relay.access.${operationKind}.v1`);
