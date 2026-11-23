@@ -108,6 +108,18 @@ describe('daemon start graph in the single CLI graph', () => {
     expect(HOT_OWNERS.filter((owner) => !startGraph.has(owner))).toEqual([]);
   });
 
+  it('keeps the Protocol root barrel out of the full daemon startup graph', () => {
+    expect(startGraph.has('packages/protocol/src/index.ts')).toBe(false);
+  });
+
+  it('registers native Action RPC methods without importing the full Action catalog from the registrar', () => {
+    const registrar = 'apps/cli/src/rpc/handlers/registerActionSpecRpcHandlers.ts';
+    expect(startGraph.has(registrar)).toBe(true);
+    const eagerCatalogImports = inputs[registrar].imports.filter((edge) =>
+      edge.path === 'packages/protocol/src/actions/actionSpecs.ts' && edge.kind !== 'dynamic-import');
+    expect(eagerCatalogImports.map((edge) => edge.path)).toEqual([]);
+  });
+
   it('keeps owners the idle daemon never runs out of it', () => {
     expect(COLD_OWNERS.filter((owner) => !inputs[owner]), 'cold owners must stay bundled').toEqual([]);
     expect(COLD_OWNERS.filter((owner) => startGraph.has(owner))).toEqual([]);

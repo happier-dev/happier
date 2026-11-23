@@ -17,7 +17,6 @@ import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequeste
 import { isDeploymentEnvironmentPlacementActionV1, readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ExternalActionActionIdV1Schema, type ExternalActionExecutionAuthorizationV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -109,6 +108,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
             machineKey: resolveAccountContentSecretKey(credentials.encryption),
           }
         : credentials.encryption;
+    const { getActionSpec, resolveActionExecutionPlacementForInput } = await import('@happier-dev/protocol/actions/actionSpecs');
     const actionSpec = getActionSpec(operation.actionId);
     const executionPlacement = resolveActionExecutionPlacementForInput(actionSpec, operation.input, sessionActionOrigin.caller, operation.surface ?? 'agent');
     let deploymentMachineId: string | undefined;

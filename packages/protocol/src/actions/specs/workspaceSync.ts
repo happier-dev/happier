@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS } from '../actionIds.js';
-import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipsListActionOutputV1Schema, WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipReplaceActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
+import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipsListActionOutputV1Schema, WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1, WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
 import type { PreNormalizedActionSpec } from './definition.js';
@@ -85,7 +85,7 @@ function createWorkspaceSyncActionSpecs() {
       ],
     },
     outputSchema: WorkspaceSyncRelationshipCreateResultV1Schema,
-    inputSchema: WorkspaceSyncRelationshipCreateActionInputV1Schema,
+    inputSchema: WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1['workspace.sync.relationship.create'],
   } satisfies PreNormalizedActionSpec;
 
   return Object.freeze([
@@ -145,7 +145,7 @@ function createWorkspaceSyncActionSpecs() {
           options: [{ value: 'use_existing', label: 'Keep existing folders' }] },
       ],
     },
-    inputSchema: WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+    inputSchema: WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1['workspace.sync.relationship.replace'],
     outputSchema: WorkspaceSyncRelationshipCreateResultV1Schema,
   } satisfies PreNormalizedActionSpec,
   {

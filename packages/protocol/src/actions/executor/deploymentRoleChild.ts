@@ -14,7 +14,6 @@ import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1
   isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
-import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../externalActionApi.js';
@@ -335,8 +334,6 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
   const reviewedChild = proof.reviewedChild;
   const rootActionId = proof.rootActionId;
   if (!reviewedChild || !rootActionId || !authorization || !http) return;
-  // Without an invocation envelope the issuer received a core ActionId.
-  const coreWriter = !proof.envelope && getActionSpec(proof.qualifiedActionId as ActionId).sideEffectClass === 'write';
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
     originalAuthorization: { value: originalAuthorization },
@@ -355,7 +352,9 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
           return http.createRequestHeaders({ ...parentRequest, effectActionId: reviewedChild.actionId, reviewedChild });
         // A writer's Artifact/currentness GET prepares its effect under the
         // admitted root; the exact child mutation retains its review proof.
-        if (coreWriter && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET')
+        // Without an invocation envelope the issuer received a core ActionId.
+        if (!proof.envelope && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET'
+          && (await import('../actionSpecs.js')).getActionSpec(proof.qualifiedActionId as ActionId).sideEffectClass === 'write')
           return http.createRequestHeaders({ ...parentRequest, effectActionId: rootActionId });
         const credentialPurpose = request.effectActionId === rootActionId
           ? readTeamCredentialActionHttpPurposeV1(request) : null;

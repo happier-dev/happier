@@ -1,5 +1,5 @@
 import { SESSION_TURN_CANCEL_ACTION_ID_V1, type ActionId } from '../actionIds.js';
-import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
+import type { ActionSpec } from '../specs/definition.js';
 import { isSessionStateFieldActionId } from '../sessionStateFieldActions.js';
 import type { ActionContextualDefaults } from '../contextualDefaults.js';
 import { resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
@@ -196,7 +196,7 @@ export async function resolveActionCurrentSessionScopeFailure(
     return refuse('default_session_unavailable');
   }
 
-  const sideEffectClass = scopeSideEffectClass ?? getActionSpec(actionId).sideEffectClass;
+  const sideEffectClass = scopeSideEffectClass ?? (await import('../actionSpecs.js')).getActionSpec(actionId).sideEffectClass;
   if (context.sessionListAccess === 'current_session' && sideEffectClass !== 'read') {
     return refuse('current_session_only');
   }

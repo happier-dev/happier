@@ -5,15 +5,14 @@ import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/pr
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineReachabilityConfigureFailureDetailsV1Schema, MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
-import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/machines/filesystemFailure';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
-import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec, isPluginProvenanceOnlyActionId, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
-import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionSpec, ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1, projectSessionFollowSourceKeyPreparationAfterSetV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
@@ -38,7 +37,7 @@ import {
 export type ActionSpecRpcHandlerSpec = Readonly<{
     id: ActionId;
     operation?: unknown;
-    sideEffectClass?: ReturnType<typeof getActionSpec>['sideEffectClass'];
+    sideEffectClass?: ActionSpec['sideEffectClass'];
     surfaces?: Readonly<{ rpc?: boolean }>;
     bindings?: Readonly<{ rpcMethod?: string | null; rpcMethodAliases?: readonly string[] }>;
     surfaceBindings?: ActionSpecSurfaceBindings;
@@ -335,15 +334,14 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
             continue;
         }
 
-        let resolvedSpec: ActionSpecRpcHandlerSpec | undefined;
-        const readSpec = (): ActionSpecRpcHandlerSpec => resolvedSpec ??= params.actionSpecs ? declaration : getActionSpec(actionId);
         const handleAction = async (
             input: unknown,
             context?: RpcHandlerContext,
             method: string = rpcMethod,
             isAlias: boolean = method !== rpcMethod,
         ) => {
-            const spec = readSpec();
+            const spec = params.actionSpecs ? declaration
+                : (await import('@happier-dev/protocol/actions/actionSpecs')).getActionSpec(actionId);
             const typedActionId = actionId;
             if (context?.machineAdmission
                 && (typedActionId === 'session.spawn_new' || typedActionId === 'execution.run.start'
@@ -397,7 +395,7 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     if (context?.authorization?.kind !== 'session.write'
                         || context.authorization.sessionId !== target.sessionId
                         || !envelope.data.pluginCaller
-                        || !isPluginProvenanceOnlyActionId(typedActionId)
+                        || !(await import('@happier-dev/protocol/actions/actionSpecs')).isPluginProvenanceOnlyActionId(typedActionId)
                         || (envelope.data.defaultSessionId !== undefined
                             && envelope.data.defaultSessionId !== target.sessionId)) {
                         return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
@@ -515,6 +513,7 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 } : {}),
             });
             if (typedActionId === 'scm.diffSummary.generate' && !result.ok && result.errorCode === 'invalid_parameters') {
+                const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
                 const validated = getActionSpec(typedActionId).inputSchema.safeParse(semanticInput);
                 if (!validated.success) logger.infoFile('[RPC] SCM input validation failed', {
                     actionId: typedActionId,

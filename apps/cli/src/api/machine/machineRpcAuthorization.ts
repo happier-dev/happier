@@ -1,11 +1,11 @@
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1,
   ManagedPluginWebhookOriginV1Schema,
   ManagedPluginWebhookRequestV1Schema,
 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -115,7 +115,6 @@ import {
   SESSION_SPAWN_NEW_RPC_SCOPES,
   MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
 } from '@/rpc/handlers/actionSpecRpcRegistration';
-import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   PRIVATE_SPAWN_SESSION_RPC_METHODS,
   SpawnDaemonSessionRequestSchema,
@@ -399,7 +398,8 @@ export function doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
   }
   if (isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId)) {
     const envelope = routing.source.originalActionEnvelope;
-    const original = envelope?.v === 1 ? getActionSpec(authorization.binding.actionId).inputSchema.safeParse(envelope.input) : undefined;
+    const inputSchema = WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1[authorization.binding.actionId];
+    const original = envelope?.v === 1 ? inputSchema.safeParse(envelope.input) : undefined;
     return doesWorkspaceSyncSourceRootMatchRouting(authorization, routing.source)
       && routing.target.accountServerId === authorization.binding.serverIdentityId
       // Protected input is opened and matched by the admitted source controller.

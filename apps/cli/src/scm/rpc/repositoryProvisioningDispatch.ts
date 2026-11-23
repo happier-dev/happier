@@ -1,12 +1,12 @@
 import { isAbsolute, resolve } from 'node:path';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol';
+import { ScmRepositoryCloneInputSchema, type ScmRepositoryCloneInput, type ScmRepositoryCloneOutput } from '@happier-dev/protocol/scm/repositoryClone';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { ResolvedSessionProjectFilesV1 as SessionProjectFilesV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
-import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
+import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
 
 import { resolveDefaultScmBackendRegistry, runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { resolveScmBackendById, type ScmBackendRegistry } from '@/scm/registry';

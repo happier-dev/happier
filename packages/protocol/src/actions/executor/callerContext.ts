@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import * as z from '../../zodRuntimePolicy.js';
-import { ActionSurfaceSchema, type ActionSurfaces } from '../actionSpecs.js';
+import { ActionSurfaceSchema, type ActionSurfaces } from '../metadata.js';
 import type { ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
 import { type ActionId } from '../actionIds.js';

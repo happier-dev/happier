@@ -3,7 +3,6 @@ import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS, isWorkf
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { getActionSpec, requiresRequesterAppReview } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   buildUiActionDispatchRequestV1, type UiActionDispatchRequestV1,
   clientActionUnavailable,
@@ -16,7 +15,7 @@ import {
   voiceRunActionClientRpcMethod, UiActionDispatchResultV1Schema, type VoiceRunActionDispatchRequestV1,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import { projectApprovalExecutionOriginCaller } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectApprovalExecutionOriginCaller } from '@happier-dev/protocol/actions/executor/approvalOrigins';
 import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isWorkflowAuthoringActionId, workflowDraftClientRpcMethod, WorkflowDraftGetInputV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { PluginExecutionOriginActionIdSchema, PluginExecutionOriginActionInputSchemas } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
@@ -83,6 +82,7 @@ export function createClientActionReverseDispatcher(
     // Voice, Settings and client-wide effects use the answering Account client's owners even when
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
+    const { getActionSpec, requiresRequesterAppReview } = await import('@happier-dev/protocol/actions/actionSpecs');
     const spec = getActionSpec(actionId);
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
       || requiresRequesterAppReview(spec, input, context.actionCaller, context.surface)

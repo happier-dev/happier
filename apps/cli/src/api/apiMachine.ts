@@ -30,7 +30,6 @@ import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -2003,6 +2002,7 @@ export class ApiMachineClient {
                         ok: false, errorCode: 'workspace_file_replace_requester_unavailable', error: 'The verified workspace replacement requester is unavailable',
                     };
                     // The owner admits signed-root Actions only; a human-secret or internal Action id is refused here.
+                    const { SignedRootActionIdSchema } = await import('@happier-dev/protocol/actions/actionSpecs');
                     const signedRootActionId = SignedRootActionIdSchema.safeParse(actionId);
                     if (!signedRootActionId.success) return {
                         ok: false, errorCode: 'workspace_action_not_admitted', error: 'The Action is not admitted on this Machine',
@@ -3582,6 +3582,7 @@ export class ApiMachineClient {
             observeExecution: this.actionOperationRuntime.observeExecution,
             resolveActionExecutor: () => ({ execute: async (actionId, input, context) => {
                 const owner = this.externalActionIngressOwner;
+                const { SignedRootActionIdSchema } = await import('@happier-dev/protocol/actions/actionSpecs');
                 const signed = SignedRootActionIdSchema.safeParse(actionId);
                 const heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null;
                 if (!owner || this.projectionSchedulingClosed || !signed.success

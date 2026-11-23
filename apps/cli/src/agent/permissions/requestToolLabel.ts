@@ -1,4 +1,4 @@
-import { getActionSpec } from '@happier-dev/protocol/actions';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readHappierActionCallId } from '@happier-dev/protocol/actions/happierActionCall';
 import { resolveMcpToolTitle } from '@happier-dev/session-core/tools';
 

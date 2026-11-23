@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { getActionSpec, listActionSpecRpcRegistrations, listActionSpecs } from './actionSpecs.js';
+import { listActionSpecRpcRegistrations } from './actionRpcTransport.js';
+import { getActionSpec, listActionSpecBindingDeclarations, listActionSpecs } from './actionSpecs.js';
 
 // Retained-bytes contract (P03-CODE-COVERAGE): the daemon and the session host
 // register Action RPC handlers at boot and look up a few specs by id. Neither
@@ -16,7 +17,8 @@ describe('Action RPC registration index', () => {
     const code = [
       'const heap = () => { globalThis.gc(); globalThis.gc(); return process.memoryUsage().heapUsed; };',
       `const catalog = await import(${JSON.stringify(entry)});`,
-      'const registrations = catalog.listActionSpecRpcRegistrations().length;',
+      `const transport = await import(${JSON.stringify(new URL('./actionRpcTransport.ts', import.meta.url).href)});`,
+      'const registrations = transport.listActionSpecRpcRegistrations().length;',
       "const spec = catalog.getActionSpec('session.spawn_new').id;",
       'const before = heap();',
       'const count = catalog.listActionSpecs().length;',
@@ -34,6 +36,9 @@ describe('Action RPC registration index', () => {
   }, 120_000);
 
   it('projects exactly the RPC methods of the normalized catalog, and lookups return the listed rows', () => {
+    const declaredRegistrations = listActionSpecBindingDeclarations()
+      .filter((row) => row.surfaces.rpc && typeof row.bindings?.rpcMethod === 'string' && row.bindings.rpcMethod.length > 0);
+    expect(listActionSpecRpcRegistrations()).toEqual(declaredRegistrations);
     const fromCatalog = listActionSpecs()
       .filter((spec) => spec.surfaces.rpc === true && spec.bindings?.rpcMethod)
       .map((spec) => [spec.id, spec.bindings?.rpcMethod, [...(spec.bindings?.rpcMethodAliases ?? [])]]);

@@ -10,6 +10,8 @@ import {
   type ExternalActionTargetV1,
 } from './externalActionApi.js';
 
+export { listActionSpecRpcRegistrations, type ActionSpecRpcRegistration } from './actionRpcRegistrations.generated.js';
+
 /**
  * Strict host-to-daemon Action request wrapper for transport-owned routing
  * facts. `input` remains the complete semantic Action input; target metadata

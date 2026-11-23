@@ -1264,9 +1264,13 @@ export const WorkspaceSyncRelationshipReplaceActionInputV1Schema = lazyZodSchema
   destinationIntent: z.literal('use_existing'),
 }));
 export type WorkspaceSyncRelationshipReplaceActionInputV1 = z.infer<typeof WorkspaceSyncRelationshipReplaceActionInputV1Schema>;
+export const WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 = Object.freeze({
+  'workspace.sync.relationship.create': WorkspaceSyncRelationshipCreateActionInputV1Schema,
+  'workspace.sync.relationship.replace': WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+});
 export const WorkspaceSyncRelationshipWriteActionInputV1Schema = lazyZodSchema(() => z.union([
-  WorkspaceSyncRelationshipCreateActionInputV1Schema,
-  WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+  WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1['workspace.sync.relationship.create'],
+  WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1['workspace.sync.relationship.replace'],
 ]));
 export type WorkspaceSyncRelationshipWriteActionInputV1 = z.infer<typeof WorkspaceSyncRelationshipWriteActionInputV1Schema>;
 

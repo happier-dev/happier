@@ -2282,8 +2282,8 @@ export function listUiActionSpecsForPlacement(placement: string): readonly Actio
 
 /**
  * Binding facts of every Action, in catalog order, read from the declarations:
- * normalization never changes `surfaces.rpc` or `bindings`. RPC registration and
- * the MCP tool catalog select from these and normalize only the Actions they use.
+ * normalization never changes `surfaces.rpc` or `bindings`. The catalog generator
+ * projects startup RPC and MCP routing from these declarations.
  */
 export type ActionSpecBindingDeclaration = Readonly<{
   id: ActionId;
@@ -2310,22 +2310,7 @@ export function listActionSpecMcpToolBindings(): readonly (readonly [name: strin
   return ACTION_SPEC_MCP_TOOL_BINDINGS as readonly (readonly [name: string, id: ActionId])[];
 }
 
-/** RPC registration facts of every Action: id, primary method, aliases. */
-export type ActionSpecRpcRegistration = Readonly<{
-  id: ActionId;
-  surfaces: Readonly<{ rpc: true }>;
-  bindings: NonNullable<ActionSpec['bindings']> & Readonly<{ rpcMethod: string }>;
-}>;
-
-const ACTION_SPEC_RPC_REGISTRATIONS: readonly ActionSpecRpcRegistration[] = lazyActionSpecArray(() => Object.freeze(
-  ACTION_SPEC_BINDING_DECLARATIONS.filter((spec): spec is ActionSpecRpcRegistration => (
-    spec.surfaces.rpc && typeof spec.bindings?.rpcMethod === 'string' && spec.bindings.rpcMethod.length > 0
-  )),
-));
-
-export function listActionSpecRpcRegistrations(): readonly ActionSpecRpcRegistration[] {
-  return ACTION_SPEC_RPC_REGISTRATIONS;
-}
+export { listActionSpecRpcRegistrations, type ActionSpecRpcRegistration } from './actionRpcRegistrations.generated.js';
 
 /** One Action by id, normalized on first read; undefined for an unknown id. */
 export function findActionSpec(id: string): ActionSpec | undefined {
