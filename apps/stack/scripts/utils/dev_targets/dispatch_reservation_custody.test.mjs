@@ -226,8 +226,9 @@ admission_error_pipe=$3
 admission_error_log=$4
 mkfifo "$custody_pipe" "$admission_error_pipe"
 exec 9<>"$custody_pipe"
-run_selected_ssh_with_custody &
-wait "$!"
+[ "$heavyweight_admission_required" = 1 ] || admission_error_pipe=
+run_selected_ssh_with_custody
+wait "$ssh_pid"
 `);
     const child = spawn('/bin/sh', [controllerFile, record, fixture.path('lifetime.pipe'), fixture.path('error.pipe'), fixture.path('error.log')], {
       env: { ...process.env, PATH: `${fixture.root}:${process.env.PATH}` }, detached: true,
@@ -256,3 +257,43 @@ wait "$!"
     await assert.rejects(readFile(record), { code: 'ENOENT' });
   });
 }
+
+test('the remote controller owns SSH directly and preserves admission stderr and status', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ssh-parent-' });
+  const source = await readFile(launcher, 'utf8');
+  const slice = (start, end) => {
+    const from = source.indexOf('\n' + start);
+    const to = source.indexOf('\n' + end, from + 1);
+    assert.ok(from > 0 && to > from);
+    return source.slice(from, to);
+  };
+  const script = fixture.path('controller.sh');
+  const log = fixture.path('admission.log');
+  await writeFile(script, `
+admission_error_log=$1
+admission_error_pipe=$1.pipe
+custody_pipe=/dev/null
+heavyweight_admission_required=1
+requires_remote_dependencies=0
+explicit_tty=0
+_selected_available=1
+mkfifo "$admission_error_pipe" || exit 1
+# Replace only the SSH transport. The launcher and stderr pipeline are real.
+run_selected_ssh() {
+  exec /bin/sh -c 'printf "%s\\n" "$PPID"; printf "%s\\n" HSTACK_ADMISSION_CAPACITY:fixture >&2; exit 75'
+}
+printf "%s\\n" "$$"
+${slice('run_selected_ssh_with_custody() {', 'admission_error_log=')}
+${slice('reservation_remote_pending=1\n','cancel_remote_execution() {')}
+${slice('wait "$ssh_pid"','trap - HUP INT TERM')}
+exit "$status"
+`);
+  const result = spawnSync('/bin/sh', [script, log], { encoding: 'utf8', timeout: 5000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 75);
+  assert.equal(result.stderr, 'HSTACK_ADMISSION_CAPACITY:fixture\n');
+  assert.equal(await readFile(log, 'utf8'), result.stderr);
+  const [controller, transportParent] = result.stdout.trim().split('\n');
+  assert.match(controller, /^\d+$/);
+  assert.equal(transportParent, controller, 'SSH needs no intermediate waiting shell');
+});

@@ -2681,23 +2681,19 @@ exec 9<> "$custody_pipe"
 [ "$control_stdin" != 1 ] || exec 5<&0
 [ "$explicit_tty" != 1 ] || exec 4<&0
 run_selected_ssh_with_custody() {
-  # Only the controller owns its reservation lock. SSH, the pipeline wrapper
-  # and its stderr reader may survive controller death and must not keep a
-  # dead reservation active when the existing orphan sweep observes it.
-  exec 8>&-
-  # Retain every execution-qualified result for routing and show its native
-  # reason, including refusals that AUTO can recover by choosing another worker.
-  # SSH -E contains only SSH errors.
-  if { [ "$heavyweight_admission_required" -eq 1 ] || [ "$requires_remote_dependencies" -eq 1 ]; } && [ "$explicit_tty" != 1 ]; then
-    exec 9>&-
-    tee "$admission_error_log" < "$admission_error_pipe" >&2 &
+  # The controller owns the reservation and joins both children. Close its
+  # lock and lifetime pipe in the stderr reader, which can outlive the controller.
+  admission_error_reader=
+  if [ -n "$admission_error_pipe" ]; then
+    tee "$admission_error_log" 8>&- 9>&- < "$admission_error_pipe" >&2 &
     admission_error_reader=$!
-    (run_selected_ssh < "$custody_pipe" 2> "$admission_error_pipe")
-    admission_transport_status=$?
-    wait "$admission_error_reader" || return 1
-    return "$admission_transport_status"
+    run_selected_ssh 8>&- < "$custody_pipe" 2> "$admission_error_pipe" &
+  elif [ "$explicit_tty" = 1 ]; then
+    run_selected_ssh 8>&- <&4 &
+  else
+    run_selected_ssh 8>&- < "$custody_pipe" &
   fi
-  if [ "$explicit_tty" = 1 ]; then run_selected_ssh <&4; else run_selected_ssh < "$custody_pipe"; fi
+  ssh_pid=$!
 }
 admission_error_log=
 admission_error_pipe=
@@ -2761,8 +2757,7 @@ reservation_remote_pending=1
 if [ "$_selected_available" = busy ]; then
   printf '[preferred-execution] workers busy; queued on %s for memory, waiting (Ctrl-C cancels)\n' "$selected_name" >&2
 fi
-run_selected_ssh_with_custody &
-ssh_pid=$!
+run_selected_ssh_with_custody
 cancel_remote_execution() {
   if cancel_remote_execution_record "$pid_file" "$execution_id" custody_cancel; then
     reservation_remote_pending=0
@@ -2827,6 +2822,10 @@ if [ "$control_stdin" = 1 ]; then
 fi
 wait "$ssh_pid"
 status=$?
+# Drain the refusal diagnostic before dispatch recovery reads its log.
+if [ -n "$admission_error_reader" ]; then
+  wait "$admission_error_reader" || status=1
+fi
 trap - HUP INT TERM
 if [ "$status" -eq 255 ] && ssh_refused_before_session "$authoritative_ssh_error_log"; then
   reservation_remote_pending=0
