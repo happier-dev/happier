@@ -18973,6 +18973,7 @@ settingsSession: {
           op: { added: "Adicionado", removed: "Removido", changed: "Alterado" },
           unavailable: "As escolhas de configuração deste projeto ainda não estão disponíveis aqui.",
           titlePending: "Usar uma configuração partilhada",
+          applyTo: "Aplicar a",
           pendingAdds: "O que adiciona",
           pendingRuns: "O que executaria",
           notNow: "Agora não",

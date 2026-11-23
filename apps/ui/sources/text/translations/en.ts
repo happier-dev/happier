@@ -22277,6 +22277,7 @@ const enProjects = {
       op: { added: "Added", removed: "Removed", changed: "Changed" },
       unavailable: "This project’s setup choices aren’t available here yet.",
       titlePending: "Use a shared setup",
+      applyTo: "Apply to",
       pendingAdds: "What it adds",
       pendingRuns: "What it would run",
       notNow: "Not now",

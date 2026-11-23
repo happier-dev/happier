@@ -2824,6 +2824,67 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
 });
 
 describe('Project setup layers on the Scripts page (plan A L6)', () => {
+  it('renders only the changed visible setup selection among 1,000 Projects', async () => {
+    const { useProjectSetupRow } = await import('./useProjectSetupRow');
+    const { Text } = await import('@/components/ui/text/Text');
+    const scope = { serverId: workspace.serverId, accountId: 'account-1' };
+    const projectRefs = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `workspace-${index}`, serverId: scope.serverId, machineId: `machine-${index % 100}`,
+      rootPath: `/repo/${index}`, createdAtMs: 1, projectKey: `project-${index}`,
+    }));
+    const organizations: ProjectOrganizationRow[] = projectRefs.map(ref => ({
+      key: { kind: 'project-organization', serverId: scope.serverId, projectKey: ref.projectKey },
+      revision: 1, value: { label: ref.projectKey },
+    }));
+    const incoming = { scope, status: 'ready' as const, coverage: 'complete' as const, workspaceRefs: projectRefs,
+      organizations, relationships: [], revisionsByPhysicalKey: {} };
+    const before = storage.getState();
+    onTestFinished(() => { storage.setState({ profileScope: before.profileScope, projectAccountRows: before.projectAccountRows }); });
+    storage.setState({ profileScope: scope });
+    storage.getState().activateProjectAccountRowsScope(scope);
+    storage.getState().applyProjectAccountRowsForScope(scope, incoming);
+    const renders = new Map<string, number>();
+    function VisibleSetupSelection({ workspace }: { workspace: typeof projectRefs[number] }) {
+      const row = useProjectSetupRow({ serverId: workspace.serverId, machineId: workspace.machineId,
+        workspaceId: workspace.id, rootPath: workspace.rootPath });
+      renders.set(workspace.id, (renders.get(workspace.id) ?? 0) + 1);
+      return <Text>{row?.organization.label}</Text>;
+    }
+    const visible = [projectRefs[19], projectRefs[499], projectRefs[999]];
+    const screen = await renderScreen(<>{visible.map(workspace => <VisibleSetupSelection key={workspace.id} workspace={workspace} />)}</>);
+    expect(screen.getTextContent()).toContain('project-999');
+    renders.clear();
+    const equal = structuredClone(incoming);
+    await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, equal); });
+    expect([...renders]).toEqual([]);
+    const unrelated = { ...equal, organizations: equal.organizations.map((row, index) =>
+      index === 0 ? { ...row, revision: 2, value: { label: 'other' } } : row) };
+    await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, unrelated); });
+    expect([...renders]).toEqual([]);
+    const selected = { ...unrelated, organizations: unrelated.organizations.map((row, index) =>
+      index === 999 ? { ...row, revision: 2, value: { label: 'selected' } } : row) };
+    await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, selected); });
+    expect([...renders]).toEqual([['workspace-999', 1]]);
+    expect(screen.getTextContent()).toContain('selected');
+    console.info('TS.A.setupShape visible selection commits', { projects: projectRefs.length, visible: visible.length,
+      unchanged: 0, unrelated: 0, changed: Object.fromEntries(renders) });
+  });
+
+  it('names the import target and offers to change it before any acceptance', async () => {
+    const { ProjectSharedSetupUpdateView } = await import('./ProjectSharedSetupUpdateSheet');
+    const chooseTarget = vi.fn();
+    const decide = vi.fn();
+    const screen = await renderScreen(<ProjectSharedSetupUpdateView snapshot={null}
+      rows={[]} sourceName="Acme web" machineName="Devbox" pending
+      targetCheckout="/work/acme-web" onChangeTarget={chooseTarget}
+      scope="thisTime" onScopeChange={() => {}} busy={null} failure={null} onRetry={() => {}}
+      onDecide={decide} onClose={() => {}} />);
+    expect(screen.getTextContent()).toContain('/work/acme-web');
+    await act(async () => { await screen.pressByTestIdAsync('project-shared-setup-update.change-target'); });
+    expect(chooseTarget).toHaveBeenCalledOnce();
+    expect(decide).not.toHaveBeenCalled();
+  });
+
   it.each(['current', 'notRequired', 'needsReview', 'unprepared'] as const)(
     'offers content acceptance with executable consent only when readiness requires it (%s)', async kind => {
       const { ProjectSharedSetupUpdateView, readProjectSharedSetupUpdateRows } = await import('./ProjectSharedSetupUpdateSheet');

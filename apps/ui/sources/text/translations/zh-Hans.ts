@@ -18486,6 +18486,7 @@ settingsSession: {
           op: { added: "已添加", removed: "已移除", changed: "已更改" },
           unavailable: "此项目的设置选项在这里尚不可用。",
           titlePending: "使用共享设置",
+          applyTo: "应用到",
           pendingAdds: "会添加的内容",
           pendingRuns: "会运行的内容",
           notNow: "暂不",

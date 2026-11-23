@@ -18977,6 +18977,7 @@ settingsSession: {
               op: { added: "Hinzugefügt", removed: "Entfernt", changed: "Geändert" },
               unavailable: "Die Setup-Optionen dieses Projekts sind hier noch nicht verfügbar.",
               titlePending: "Geteiltes Setup verwenden",
+              applyTo: "Anwenden auf",
               pendingAdds: "Was es hinzufügt",
               pendingRuns: "Was es ausführen würde",
               notNow: "Nicht jetzt",

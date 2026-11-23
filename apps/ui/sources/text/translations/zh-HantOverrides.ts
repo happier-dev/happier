@@ -14422,6 +14422,7 @@ settingsSession: {
               op: { added: "已新增", removed: "已移除", changed: "已變更" },
               unavailable: "此專案的設定選項在這裡尚無法使用。",
               titlePending: "使用共享設定",
+              applyTo: "套用至",
               pendingAdds: "會新增的內容",
               pendingRuns: "會執行的內容",
               notNow: "暫不",

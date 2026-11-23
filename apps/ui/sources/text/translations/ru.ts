@@ -18820,6 +18820,7 @@ settingsSession: {
           op: { added: "Добавлено", removed: "Удалено", changed: "Изменено" },
           unavailable: "Настройки этого проекта здесь пока недоступны.",
           titlePending: "Использовать общую настройку",
+          applyTo: "Применить к",
           pendingAdds: "Что добавляет",
           pendingRuns: "Что будет запущено",
           notNow: "Не сейчас",

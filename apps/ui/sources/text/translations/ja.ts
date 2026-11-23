@@ -18780,6 +18780,7 @@ settingsSession: {
           op: { added: "追加", removed: "削除", changed: "変更" },
           unavailable: "このプロジェクトのセットアップの選択は、ここではまだ使えません。",
           titlePending: "共有セットアップを使う",
+          applyTo: "適用先",
           pendingAdds: "追加されるもの",
           pendingRuns: "実行される内容",
           notNow: "今はしない",

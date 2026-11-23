@@ -18692,6 +18692,7 @@ settingsSession: {
           op: { added: "Dodano", removed: "Usunięto", changed: "Zmieniono" },
           unavailable: "Opcje konfiguracji tego projektu nie są tu jeszcze dostępne.",
           titlePending: "Użyj udostępnionej konfiguracji",
+          applyTo: "Zastosuj do",
           pendingAdds: "Co dodaje",
           pendingRuns: "Co by uruchomiła",
           notNow: "Nie teraz",

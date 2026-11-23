@@ -23,6 +23,9 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
+import { seedAndOpenProjectDraft } from '@/components/projects/activation/projectOpenDraftSeed';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
   listProjectSetupEffect,
@@ -39,6 +42,7 @@ import type {
 import { useProjectSharedSetupReview } from './useProjectSharedSetupReview';
 import { useProjectSetupRow } from './useProjectSetupRow';
 import type { ProjectSharedSetupReviewSnapshot } from './projectSharedSetupReview';
+import { PROJECT_OPEN_SHARED_SETUP_PARAM } from './sharedSetupRoute';
 
 type Decide = (
   request: ProjectSharedSetupUpdateRequest,
@@ -145,7 +149,18 @@ function ProjectSharedSetupUpdateBody(
   const changed = snapshot?.kind === 'ready' && snapshot.change.kind === 'changed';
   useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, changed, props.pending),
     [props.sourceName, changed, props.pending]));
-  const { decide, onClose } = props;
+  const { decide, onClose, binding, sourceId, workspace } = props;
+  const navigateToOpen = useNavigateToProjectOpen();
+  const changeTarget = () => {
+    fireAndForget(seedAndOpenProjectDraft({
+      lifetime: binding,
+      selection: { serverId: workspace.serverId },
+      navigate: route => {
+        onClose();
+        navigateToOpen({ ...route, params: { ...route.params, [PROJECT_OPEN_SHARED_SETUP_PARAM]: sourceId } });
+      },
+    }), { tag: 'ProjectSharedSetupUpdate.changeTarget' });
+  };
   const choose = React.useCallback(
     async (decision: ProjectSharedSetupUpdateDecision) => {
       if (!request) return;
@@ -169,6 +184,8 @@ function ProjectSharedSetupUpdateBody(
       sourceName={props.sourceName}
       machineName={props.machineName}
       pending={props.pending}
+      targetCheckout={props.pending ? workspace.rootPath : undefined}
+      onChangeTarget={props.pending ? changeTarget : undefined}
       scope={scope}
       onScopeChange={setScope}
       busy={busy}
@@ -187,6 +204,8 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   sourceName: string | null;
   machineName: string;
   pending?: boolean;
+  targetCheckout?: string;
+  onChangeTarget?: () => void;
   scope: ProjectSetupScope;
   onScopeChange: (scope: ProjectSetupScope) => void;
   busy: ProjectSharedSetupUpdateDecision | null;
@@ -295,7 +314,30 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   return (
     <View style={styles.body}>
       {/* The lab draws the sheet's sections with page anatomy (as Share setup): description above, hairline rows. */}
-      <ListPresentationProvider value="page">{content}</ListPresentationProvider>
+      <ListPresentationProvider value="page">
+        {props.targetCheckout ? (
+          <ItemGroup surface="none">
+            <Item
+              mode="info"
+              title={t('projects.scripts.sharedUpdate.applyTo')}
+              subtitle={`${props.machineName} · ${props.targetCheckout}`}
+              subtitleLines={3}
+              showChevron={false}
+              rightElementOutsidePressable
+              accessoryLayout="inline"
+              rightElement={props.onChangeTarget ? <RoundButton
+                size="small"
+                display="secondary"
+                testID="project-shared-setup-update.change-target"
+                title={t('common.change')}
+                disabled={busy !== null}
+                onPress={props.onChangeTarget}
+              /> : undefined}
+            />
+          </ItemGroup>
+        ) : null}
+        {content}
+      </ListPresentationProvider>
       {/* Lab L6-updateSheet: what nothing-runs-yet means sits beside the decision it qualifies. */}
       <View style={styles.footer}>
       {decidable && needsPreparation ? (
