@@ -376,7 +376,7 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
      * launch leaves nothing behind and a synchronous operation snapshot cannot
      * arrive before its presentation custody exists.
      */
-    onDaemonActionOperationAdmitted?: (operation: ActionOperationDeclarationV1) => void;
+    onDaemonActionOperationAdmitted?: (operation: ActionOperationDeclarationV1, requestId: string) => void;
     /**
      * The mounted plugin owning the request (host-stamped, never author-supplied).
      * Direct host presentation deliberately has no plugin caller.
@@ -1041,15 +1041,13 @@ function createClientActionUi(
                 isCurrent,
                 ...(authority ? { executionTarget: { machineId: authority.machineId, serverId: authority.serverId ?? accountLifetime.scope.serverId } } : {}),
                 executeSelectedOperation: async (payload, operationOptions) => {
-                    const requestId = randomUUID();
                     const executionOptions = {
                         ...(operationOptions?.signal ? { signal: operationOptions.signal } : {}),
                         ...(retained ? { selectedActionInput: options?.preparedReviewWorkspace, consumeSelectedActionInput: true } : {}),
                     };
                     const executePrepared = clientActionExecuteAction({
                         ...input,
-                        actionRequestId: requestId,
-                        onDaemonActionOperationAdmitted: () => {
+                        onDaemonActionOperationAdmitted: (_operation, requestId) => {
                             operationOptions?.onDaemonActionOperationAdmitted?.(requestId);
                         },
                     }, selection, signal, selectedInputs, () => authority);
@@ -2788,7 +2786,7 @@ async function executeContributedAction(
     const admittedOperation = input.readObservation ? undefined : projectedAction.operation;
     const admittedRequestId = input.actionRequestId;
     if (admittedOperation && admittedRequestId) {
-        input.onDaemonActionOperationAdmitted?.(admittedOperation);
+        input.onDaemonActionOperationAdmitted?.(admittedOperation, admittedRequestId);
     }
     const actionInput = normalizedInput;
     const projectionScope = {
@@ -2968,7 +2966,7 @@ export function createPluginSurfaceActionDispatchHandler(
         const outcome = await dispatchPluginSurfaceAction({
             actionRequestId: request.requestId,
             ...(options?.onDaemonActionOperationAdmitted ? {
-                onDaemonActionOperationAdmitted: () => options.onDaemonActionOperationAdmitted?.(request.requestId),
+                onDaemonActionOperationAdmitted: (_operation, requestId) => options.onDaemonActionOperationAdmitted?.(requestId),
             } : {}),
             ...(input.actionAccountLifetime ? { actionAccountLifetime: input.actionAccountLifetime } : {}),
             callerPluginId: input.pluginId,

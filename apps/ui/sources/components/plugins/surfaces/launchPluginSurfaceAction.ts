@@ -43,11 +43,11 @@ export async function launchPluginSurfaceAction(
     const outcome = await dispatchPluginSurfaceAction({
         ...dispatchInput,
         actionRequestId: requestId,
-        onDaemonActionOperationAdmitted: (operation) => {
+        onDaemonActionOperationAdmitted: (operation, admittedRequestId) => {
             actionOperationPresentationCoordinator.register({
                 serverId: targetServerId,
                 accountId: operationAccountScope?.serverId === targetServerId ? operationAccountScope.accountId : '',
-                requestId,
+                requestId: admittedRequestId,
                 onStart: operation.presentation.onStart,
                 ...(operationOrigin ? { origin: operationOrigin } : {}),
             });
