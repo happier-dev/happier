@@ -455,7 +455,7 @@ describe('the mounted PostHog Overview', () => {
         await expect(page.getByText('submitPlan — onboarding/plan.tsx:88')).resolves.toBeDefined();
         // ② Spread: each count once, as a tile.
         await expect(page.getByRole('heading', { name: 'Spread' })).resolves.toBeDefined();
-        await expect(page.getByText('Users affected')).resolves.toBeDefined();
+        await expect(page.getByRole('group', { name: 'Users affected: 57, Users affected' })).resolves.toBeDefined();
         const bodyText = document.body.textContent ?? '';
         expect(bodyText.match(/57/gu) ?? []).toHaveLength(1);
         expect(bodyText.match(/96/gu) ?? []).toHaveLength(1);

@@ -544,7 +544,7 @@ describe('the mounted Sentry issue detail body', () => {
     const harness = createHarness({
       readSummary: async () => ({
         ...(ISSUE_BODY as Readonly<Record<string, JsonValue>>),
-        userCount: 112,
+        userCount: 4021,
         firstRelease: { version: 'checkout@4.12.0' },
         eventTrend: [
           { atMs: 1_760_000_000_000 - 3_600_000, count: 3 },
@@ -572,9 +572,8 @@ describe('the mounted Sentry issue detail body', () => {
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, () => 'overview', false, withFacts);
 
     await expect(page.getByRole('heading', { name: 'Spread' })).resolves.toBeDefined();
-    await expect(page.getByText('Users affected')).resolves.toBeDefined();
-    await expect(page.getByText('checkout@4.12.0')).resolves.toBeDefined();
-    await expect(page.getByText('First seen in')).resolves.toBeDefined();
+    await expect(page.getByRole('group', { name: 'Users affected: 112, Users affected' })).resolves.toBeDefined();
+    await expect(page.getByRole('group', { name: 'First seen in: checkout@4.12.0, First seen in' })).resolves.toBeDefined();
     await expect(page.getByText('Last 24 hours')).resolves.toBeDefined();
     // Users and events are read once and shown once: the tile, not a Facts row or a "Sentry now" row too.
     const bodyText = document.body.textContent ?? '';
