@@ -178,6 +178,16 @@ export function useVoiceSetupBlock(input: Readonly<{
     };
 }
 
+export const VoiceSetupBlockProjection = React.memo(function VoiceSetupBlockProjection(props: Readonly<{
+    layout: Parameters<typeof useVoiceSetupBlock>[0]['layout'];
+    publish: (item: SetupBlockItem | null) => void;
+}>) {
+    const item = useVoiceSetupBlock({ layout: props.layout });
+    React.useLayoutEffect(() => { props.publish(item); }, [item, props.publish]);
+    React.useLayoutEffect(() => () => props.publish(null), [props.publish]);
+    return null;
+});
+
 /**
  * The tile at rest: the Voice mark, what is done, and what comes next. At glyph size the readiness
  * light read as a stray crescent beside its peers' line icons, so the tile draws the mark as every
