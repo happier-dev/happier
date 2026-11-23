@@ -209,7 +209,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, stop: skip };
         syncPresentation();
-        cancel = layer.fadeIn(() => finish('settled'), rise, duration);
+        cancel = layer.fadeIn(() => finish('settled'), rise && !readReducedMotionPreference(), duration);
         const backdrop = leaving?.webBackdrop;
         for (const region of backdrop ? [backdrop] : leaving ? [leaving.clone!, ...leaving.webChrome ?? []] : []) {
             leaves.push(region.animate([{ opacity: 1 }, { opacity: 0 }],

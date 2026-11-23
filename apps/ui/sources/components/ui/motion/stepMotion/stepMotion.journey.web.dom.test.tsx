@@ -137,15 +137,17 @@ function click(node: HTMLElement, id: number) {
     node.dispatchEvent(event);
 }
 
-it('commits the new step immediately, ignores the previous pointer release, and settles as the next press acts', async () => {
+it.each([false, true])('commits the new step with reduced motion %s, ignores the previous pointer release, and settles as the next press acts', async (reduced) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    // Exercise the capture-free entrance even when an earlier journey warmed the WebGL renderer.
+    stageRendererWaiting = true;
     // The browser supports CSS.escape, which jsdom does not implement. This journey uses simple IDs.
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     const previousMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn((media: string) => Object.assign(new EventTarget(), {
-        matches: true, media, onchange: null, addListener() {}, removeListener() {},
+        matches: reduced, media, onchange: null, addListener() {}, removeListener() {},
     }));
-    setReducedMotionPreferenceOverride(true);
+    setReducedMotionPreferenceOverride(reduced);
     const previousAnimate = HTMLElement.prototype.animate;
     const cancel = vi.fn();
     const animate = vi.fn(function (this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
@@ -196,14 +198,21 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         const entrance = animate.mock.results[0]?.value;
         expect(entrance?.element.contains(find('ready-heading'))).toBe(true);
         expect(entrance?.timing.duration).toBe(200);
-        expect(entrance?.frames.at(0)).toMatchObject({ opacity: 0, transform: 'translateY(4px)' });
-        expect(Number(entrance?.frames[3]?.opacity)).toBeGreaterThan(0.65);
-        expect(entrance?.frames.at(-1)).toMatchObject({ opacity: 1, transform: 'translateY(0px)' });
-        const body = animate.mock.results[1]?.value;
-        expect(body?.element.contains(find('next'))).toBe(true);
-        expect(body?.frames[1]?.opacity).toBe(0);
-        expect(body?.frames.at(-1)?.opacity).toBe(1);
-        // The fallback crosses the two steps: the departing step stays painted and fades while the next one rises.
+        if (reduced) {
+            expect(entrance?.frames).toEqual([{ opacity: 0 }, { opacity: 1 }]);
+            // Reduced motion cross-fades the whole step without a staggered body entrance.
+            expect(animate.mock.results.some(result => result.value.element !== entrance?.element
+                && result.value.element.contains(find('next')))).toBe(false);
+        } else {
+            expect(entrance?.frames.at(0)).toMatchObject({ opacity: 0, transform: 'translateY(4px)' });
+            expect(Number(entrance?.frames[3]?.opacity)).toBeGreaterThan(0.65);
+            expect(entrance?.frames.at(-1)).toMatchObject({ opacity: 1, transform: 'translateY(0px)' });
+            const body = animate.mock.results[1]?.value;
+            expect(body?.element.contains(find('next'))).toBe(true);
+            expect(body?.frames[1]?.opacity).toBe(0);
+            expect(body?.frames.at(-1)?.opacity).toBe(1);
+        }
+        // The departing step stays painted and fades while the next step enters.
         const paintCopies = () => [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].filter(node => node.inert);
         const copy = paintCopies()[0];
         expect(copy?.textContent).toContain('Approve');
@@ -225,7 +234,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
 
         pointerDown(find('next'), 3);
         click(find('next'), 3);
-        expect(cancel).toHaveBeenCalledTimes(3);
+        expect(cancel).toHaveBeenCalledTimes(animate.mock.results.length);
         expect(paintCopies()).toEqual([]);
         expect(destinationClick).toHaveBeenCalledOnce();
         expect(motionEnd).toHaveBeenCalledExactlyOnceWith('skipped');
@@ -236,6 +245,8 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         container.remove();
         window.matchMedia = previousMatchMedia;
         setReducedMotionPreferenceOverride(null);
+        stageRendererWaiting = false;
+        reportStageRendererReady = undefined;
         bounds.mockRestore();
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
         vi.unstubAllGlobals();
