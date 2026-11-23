@@ -129,6 +129,37 @@ it('keeps the refused admission unavailable while a concurrent admission reopens
   expect(await recovering).toMatchObject({ status: 'ready' });
 });
 
+it('recovers every changed automation when three recovery batches overlap', async () => {
+  const actionId = 'machines.command.run';
+  const automationIds = ['first', 'second', 'third'];
+  const rows = automationIds.map(automationId => ({ automationId, triggerId: `${automationId}-trigger`,
+    triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'actor',
+    actionIds: [actionId], phase: 'after' }));
+  let releaseFirstRead!: () => void;
+  const firstRead = new Promise<void>(resolve => { releaseFirstRead = resolve; });
+  const reads: string[][] = [];
+  const port = createActionAutomationPortV1({
+    accountId: 'actor',
+    seed: async () => ({ v: 1, rows: [] }),
+    refresh: async ({ automationIds }) => {
+      reads.push([...automationIds]);
+      if (automationIds.includes('first')) await firstRead;
+      return { v: 1, rows: rows.filter(row => automationIds.includes(row.automationId)) };
+    },
+    settle: async () => {},
+  });
+  const args = { actionId, input: { command: 'printf recovered' }, context: { defaultSessionMachineId: 'machine' } };
+  expect(await port.select(args)).toMatchObject({ status: 'ready', after: [] });
+
+  const recoveries = automationIds.map(entityId => port.refreshChanges([{ kind: 'automation', entityId }]));
+  expect(reads).toEqual([['first']]);
+  releaseFirstRead();
+  await Promise.all(recoveries);
+
+  expect((await port.select(args)).after.map(row => row.automationId)).toEqual(automationIds);
+  expect(reads).toEqual(automationIds.map(id => [id]));
+});
+
 it.each([
   { scenario: 'keeps equal-revision Workflow consent without a step compare', revision: 1, reads: [], hasChild: false, addsNativeAction: false },
   { scenario: 'keeps unchanged child Workflow consent without materialization', revision: 1, reads: ['root', 'child'], hasChild: true, addsNativeAction: false },

@@ -413,7 +413,8 @@ export function createActionAutomationPortV1(options: Readonly<{
           .map(change => change.entityId))],
       };
       if (selection.automationIds.length === 0 && selection.workflowDefinitionIds.length === 0) return;
-      if (state === 'loading') await loading;
+      // Another recovery can take the same slot while this caller is awaiting it.
+      while (state === 'loading') await loading;
       if (state !== 'ready') return;
       loading = readRows(() => refresh(selection), selection);
       await loading;
