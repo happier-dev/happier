@@ -27,11 +27,11 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
         && areServerAccountScopesEqual(accountLifetime.scope, repository.scope)
         && repository.getSnapshot().threads[discussionId]?.status !== 'revoked', [accountLifetime, discussionId, repository]);
     const subscribe = React.useCallback((notify: () => void) => {
-        if (!enabled) return () => {};
+        if (!enabled || discussionId === null) return () => {};
         const retirement = accountLifetime?.onRetire(notify);
-        const unsubscribe = repository.subscribe(notify);
+        const unsubscribe = repository.subscribeSummaryObservation(discussionId, notify);
         return () => { retirement?.dispose(); unsubscribe(); };
-    }, [accountLifetime, repository, enabled]);
+    }, [accountLifetime, discussionId, repository, enabled]);
     const readAccess = React.useCallback(() => {
         if (discussionId === null || !enabled || !accountLifetime?.isCurrent() || !areServerAccountScopesEqual(accountLifetime.scope, repository.scope)) return 'unavailable';
         const thread = repository.getSnapshot().threads[discussionId];
@@ -46,8 +46,8 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
         const cancel = () => abort.abort();
         signal?.addEventListener('abort', cancel, { once: true });
         const retirement = accountLifetime?.onRetire(cancel);
-        setProjection(previous => ({ key, status: 'loading', settings: previous?.key === key ? previous.settings : null,
-            operation: null, saving: false }));
+        setProjection(previous => ({ key, status: previous?.key === key && previous.status === 'ready' ? 'ready' : 'loading',
+            settings: previous?.key === key ? previous.settings : null, operation: null, saving: false }));
         const promise = (async () => {
             try {
                 const outcome = await repository.getSettings(discussionId, abort.signal);
@@ -101,13 +101,23 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
     React.useEffect(() => {
         mounted.current = true;
         const abort = new AbortController();
+        const unsubscribe = enabled && discussionId !== null
+            ? repository.subscribeSettingsChanges(discussionId, () => {
+                if (write.current?.key === key) {
+                    void write.current.promise.then(() => refresh(abort.signal));
+                } else {
+                    if (read.current?.key === key) read.current.abort.abort();
+                    void refresh(abort.signal);
+                }
+            }) : undefined;
         if (enabled) void refresh(abort.signal);
         return () => {
             mounted.current = false;
+            unsubscribe?.();
             abort.abort();
             if (write.current?.key === key) write.current.abort.abort();
         };
-    }, [enabled, key, refresh]);
+    }, [discussionId, enabled, key, refresh, repository]);
     const visible = enabled && access !== 'unavailable' && projection?.key === key ? projection : null;
     return {
         status: !enabled ? 'idle' as const : visible?.status ?? (access === 'unavailable' ? 'unavailable' as const : 'loading' as const),

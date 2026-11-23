@@ -18,6 +18,7 @@ type ActiveWatch = Readonly<{
     address: Readonly<{ serverId: string }>;
     onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>, readStateOnlyIds?: ReadonlySet<string>,
         docArtifactIds?: ReadonlySet<string>, messageChanges?: ReadonlyMap<string, DiscussionMessageChanges>): void;
+    onSettingsInvalidated?: (discussionId: string) => void;
     includeDocSourceChanges?: () => boolean;
     onSnapshotInvalidated?: () => void;
     readNotCurrent?: () => boolean;
@@ -34,6 +35,7 @@ export function watchMountedDiscussions(input: Readonly<{
     scope: ServerAccountScope;
     address: Readonly<{ serverId: string }>;
     onInvalidated: ActiveWatch['onInvalidated'];
+    onSettingsInvalidated?: (discussionId: string) => void;
     includeDocSourceChanges?: () => boolean;
     onSnapshotInvalidated?: () => void;
     /**
@@ -46,6 +48,7 @@ export function watchMountedDiscussions(input: Readonly<{
         scope: Object.freeze({ ...input.scope }),
         address: Object.freeze({ ...input.address }),
         onInvalidated: input.onInvalidated,
+        onSettingsInvalidated: input.onSettingsInvalidated,
         includeDocSourceChanges: input.includeDocSourceChanges,
         onSnapshotInvalidated: input.onSnapshotInvalidated,
         readNotCurrent: input.readNotCurrent,
@@ -54,6 +57,7 @@ export function watchMountedDiscussions(input: Readonly<{
     const stopSnapshotWatch = input.onSnapshotInvalidated ? subscribeHomeAccountChange(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, watch.address.serverId) || event.feedPageConsumed) return;
         if (event.discussionAffects === false) return;
+        for (const id of event.discussionSettingsChangedIds ?? []) watch.onSettingsInvalidated?.(id);
         // Ordinary focused wakes are followed by their detailed page. A blocked
         // cursor/snapshot repair instead requests current projections without
         // claiming that the missing historical page was materialized. A local
@@ -89,12 +93,15 @@ export function publishMountedDiscussionChanges(input: Readonly<{
     if (activeWatches.size === 0) return;
     const revisions = new Map<string, number>();
     const readStateOnly = new Map<string, boolean>();
+    const settingsChangedIds = new Set<string>();
     const messageChanges = new Map<string, DiscussionMessageChanges>();
     const after = input.afterCursor ?? 0;
     for (const change of input.changes) {
         if (change.kind !== 'discussion') continue;
         revisions.set(change.entityId, Math.max(revisions.get(change.entityId) ?? 0, change.cursor));
         const hint = readDiscussionChangeHintV1(change.hint);
+        const settingsCursor = hint?.settingsChangedAt === true ? change.cursor : hint?.settingsChangedAt;
+        if (settingsCursor !== undefined && settingsCursor > after) settingsChangedIds.add(change.entityId);
         readStateOnly.set(change.entityId, readStateOnly.get(change.entityId) !== false
             && hint?.changes.readState === true && hint.changes.resource !== true);
         const messages = hint?.messageChanges;
@@ -126,6 +133,7 @@ export function publishMountedDiscussionChanges(input: Readonly<{
             else if (docChanged) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds, docArtifactIds);
             else if (readStateOnlyIds.size > 0) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds);
             else watch.onInvalidated(discussionIds, revisions);
+            for (const id of settingsChangedIds) watch.onSettingsInvalidated?.(id);
         } catch {
             // A presentation refresh cannot suppress sibling observers or the
             // AccountChange owner's own canonical materialization/checkpoint.

@@ -1,4 +1,4 @@
-import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
+import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1, DISCUSSION_SETTINGS_CHANGE_HINT_V1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { scheduleAccountActivityBadgeRefresh } from '@/app/activity/refreshAccountActivityBadgePushes';
 import { afterTx, type Tx } from '@/storage/inTx';
@@ -7,11 +7,12 @@ import { notifyDiscussionHumanPresenceAccessChanged } from '@/app/session/humanP
 
 /** First-class invalidation reaches the current resource audience after commit. */
 export async function markDiscussionReadersChangedInTx(input: Readonly<{
-    tx: Tx; discussionId: string; additionalAccountIds?: readonly string[]; accessChanged?: boolean; messageSeq?: number;
+    tx: Tx; discussionId: string; additionalAccountIds?: readonly string[]; accessChanged?: boolean; messageSeq?: number; settingsChanged?: true;
 }>): Promise<AccountChangePublication[]> {
     const audience = await resolveDiscussionAudienceInTx(input.tx, input.discussionId);
-    const hint: DiscussionChangeHintV1 = input.messageSeq === undefined ? DISCUSSION_CHANGE_HINT_V1 : {
-        ...DISCUSSION_CHANGE_HINT_V1,
+    const base = input.settingsChanged ? DISCUSSION_SETTINGS_CHANGE_HINT_V1 : DISCUSSION_CHANGE_HINT_V1;
+    const hint: DiscussionChangeHintV1 = input.messageSeq === undefined ? base : {
+        ...base,
         messageChanges: { latestSeq: input.messageSeq, previousResourceCursor: 0, previous: [] },
     };
     return markDiscussionAudiencesChangedInTx(input.tx,

@@ -501,6 +501,7 @@ export function buildAccountChangeWakeUpdate(
     changeCursor: number, updateId: string,
     changes?: Readonly<{ changeKinds: readonly ChangeKind[]; entityIds: readonly string[];
         artifactKinds?: readonly string[];
+        discussionSettingsChangedIds?: readonly string[];
         sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
         /** Every change's row facts are pushed to this Session's audience. */
         rowFactsPushedSessionId?: string }>,
@@ -508,6 +509,7 @@ export function buildAccountChangeWakeUpdate(
     return {
         id: updateId,
         seq: changeCursor,
+        ...(changes?.discussionSettingsChangedIds ? { discussionSettingsChangedIds: [...changes.discussionSettingsChangedIds] } : {}),
         body: { t: 'account-change', ...(changes ? {
             changeKinds: [...changes.changeKinds], entityIds: [...changes.entityIds],
             ...(changes.artifactKinds !== undefined ? { artifactKinds: [...changes.artifactKinds] } : {}),

@@ -4361,6 +4361,15 @@ no persisted shape, compatibility adapter or new protocol epoch.
 
 ## Discussion list outcomes (0.3 development)
 
+A changed Discussion setting invalidates the mounted settings for that
+Discussion. The existing AccountChange hint carries its cursor through later
+writes to the same Discussion so a focused Home can catch up in order. A
+connected secondary Home, which has no feed cursor, gets the affected Discussion
+IDs on the existing Account wake envelope. The Account wake body and the
+settings response retain their shapes. Older readers can still accept the wake,
+and existing hints without a settings cursor continue to describe summary
+changes. No SQL schema migration is needed.
+
 Discussion summaries add optional, closed `roundOutcomeV1` and nullable
 `openCommentCount` read facts. Current server writes maintain them with the
 existing Workflow and Discussion transactions; stored round readers drop unknown

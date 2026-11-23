@@ -115,6 +115,8 @@ export type HomeAccountChangeEvent = Readonly<{
     managedMachineChangedIds?: readonly string[];
     /** Every reported change is an addressed managed row, with no preset or authority changes mixed in. */
     managedMachineRowsOnly?: true;
+    /** Exact settings invalidation from a secondary Home's Account wake. */
+    discussionSettingsChangedIds?: readonly string[];
     /** Exact producer domain fact; absence retains Discussion access/recovery revalidation. */
     discussionAffects?: boolean;
     /** Exact resource/source/access producer fact; absence stays conservative. */
@@ -171,6 +173,7 @@ type HomeAccountChangeDetails = Readonly<{
     managedMachineInventoryAffect?: boolean;
     /** Canonical planner row ids; absent remains a full inventory recovery. */
     managedMachineChangedIds?: readonly string[];
+    discussionSettingsChangedIds?: readonly string[];
     discussionAffects?: boolean;
     savedSecretCatalogAffects?: boolean;
     usageQueryAffects?: boolean;
@@ -429,9 +432,11 @@ export function publishHomeAccountChangeWake(
     wake: HomeAccountChangeWake,
     source: 'socket' | 'catch-up-pending',
     isSessionListMember?: (sessionId: string) => boolean,
+    discussionSettingsChangedIds?: readonly string[],
 ): HomeAccountChangeEvent {
     if (wake.t === 'account-change') return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
         source, changeKinds: wake.changeKinds, artifactKinds: wake.artifactKinds, sessionSystemRecords: wake.sessionSystemRecords,
+        ...(source === 'socket' && discussionSettingsChangedIds ? { discussionSettingsChangedIds } : {}),
     }, isSessionListMember);
     // This synthetic row routes an admitted socket fact through the incumbent
     // planner only. It advances no cursor and is never checkpoint evidence.
@@ -595,6 +600,8 @@ export function publishHomeAccountChangeForRouting(
         ...(managedMachineRowsOnly ? { managedMachineRowsOnly: true as const } : {}),
         // Preserve the producer's exact non-Discussion fact even when other
         // Account consumers still need a conservative, content-free wake.
+        ...(details?.discussionSettingsChangedIds
+            ? { discussionSettingsChangedIds: Object.freeze([...details.discussionSettingsChangedIds]) } : {}),
         ...(details?.discussionAffects !== undefined ? { discussionAffects: details.discussionAffects }
             : workflowRunOnly ? { discussionAffects: false } : {}),
         ...(details?.savedSecretCatalogAffects !== undefined ? { savedSecretCatalogAffects: details.savedSecretCatalogAffects } : {}),

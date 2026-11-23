@@ -401,6 +401,7 @@ export function createDiscussionRepository(options: Readonly<{
     const mountedThreads = new Map<string, number>();
     const mountedSummaries = new Map<string, number>();
     const summaryObservers = new Map<string, Set<() => void>>();
+    const settingsObservers = new Map<string, Set<() => void>>();
     const notifySummaryObservers = (discussionId: string) => {
         for (const listener of [...summaryObservers.get(discussionId) ?? []]) listener();
     };
@@ -1599,6 +1600,12 @@ export function createDiscussionRepository(options: Readonly<{
             observers.add(listener);
             return () => { observers.delete(listener); if (!observers.size) summaryObservers.delete(discussionId); };
         },
+        subscribeSettingsChanges(discussionId: string, listener: () => void) {
+            const observers = settingsObservers.get(discussionId) ?? new Set<() => void>();
+            settingsObservers.set(discussionId, observers);
+            observers.add(listener);
+            return () => { observers.delete(listener); if (!observers.size) settingsObservers.delete(discussionId); };
+        },
         /** Dependent private reads share the resource's existing currentness and access-loss owner. */
         captureReadOperation(discussionId: string) {
             const operation = captureOperation(discussionId);
@@ -1748,6 +1755,9 @@ export function createDiscussionRepository(options: Readonly<{
                         if (anchors.some(anchor => failed(getListSnapshot(anchor).lists.active.status)
                             || failed(getListSnapshot(anchor).lists.archived.status))) return true;
                         return [...mountedThreads.keys(), ...mountedSummaries.keys()].some(id => failed(snapshot.threads[id]?.status));
+                    },
+                    onSettingsInvalidated: discussionId => {
+                        for (const listener of settingsObservers.get(discussionId) ?? []) listener();
                     },
                     onInvalidated: (discussionIds, revisions, readStateOnlyIds, docArtifactIds, messageChanges) => {
                         void refreshLoaded(discussionIds, revisions, { readStateOnlyIds, docArtifactIds, messageChanges });

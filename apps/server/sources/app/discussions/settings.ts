@@ -41,7 +41,7 @@ export async function setDiscussionSettings(input: SettingsActor & Readonly<{ se
         if (!row) return discussionFailure('discussion_not_found');
         if (!isDeepStrictEqual(row.settingsV1 ?? {}, parsed.data)) {
             await tx.discussion.update({ where: { id: input.discussionId }, data: { settingsV1: parsed.data } });
-            await markDiscussionReadersChangedInTx({ tx, discussionId: input.discussionId });
+            await markDiscussionReadersChangedInTx({ tx, discussionId: input.discussionId, settingsChanged: true });
         }
         return discussionSuccess({ discussionId: input.discussionId, settings: parsed.data });
     }, { prepare: () => prepareDiscussionMutationAccounts(input) });

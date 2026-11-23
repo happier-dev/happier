@@ -32,6 +32,7 @@ interface AccountChangeWake {
     changeKinds: Set<ChangeKind>;
     entityIds: Set<string>;
     artifactKinds?: Set<string> | null;
+    discussionSettingsChangedIds?: Set<string>;
     sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null;
     /**
      * The rows this transaction committed for the Account, as stored, keyed by kind and entity
@@ -180,6 +181,8 @@ async function coalesceDiscussionChangeHintInTx(
     const next = readDiscussionChangeHintV1(hint) ?? DISCUSSION_CHANGE_HINT_V1;
     if (!current) return next;
     const existing = readDiscussionChangeHintV1(current.hint);
+    const settingsChangedAt = next.settingsChangedAt ?? (existing?.settingsChangedAt === true
+        ? current.cursor : existing?.settingsChangedAt);
     const previousMessages = existing?.messageChanges;
     const latestSeq = next.messageChanges?.latestSeq;
     let messageChanges: DiscussionChangeHintV1['messageChanges'];
@@ -201,6 +204,7 @@ async function coalesceDiscussionChangeHintInTx(
             // Unknown retained hints cannot prove that only a cursor changed.
             ...(!existing || existing.changes.resource || next.changes.resource ? { resource: true } : {}),
         },
+        ...(settingsChangedAt === undefined ? {} : { settingsChangedAt }),
         ...(messageChanges ? { messageChanges } : {}),
     };
 }
@@ -273,6 +277,10 @@ function scheduleAccountChangeWake(
             if (artifactKinds == null) wake.artifactKinds = null;
             else for (const artifactKind of artifactKinds) (wake.artifactKinds ??= new Set()).add(artifactKind);
         }
+        if (kind === 'discussion' && readDiscussionChangeHintV1(hint)?.settingsChangedAt === true) {
+            const settingsIds = wake.discussionSettingsChangedIds ??= new Set();
+            for (const entityId of entityIds) settingsIds.add(entityId);
+        }
         collectSessionSystemRecordWakeTargets(wake, kind, entityIds, hint);
     }
     if (pending) return;
@@ -293,6 +301,7 @@ function scheduleAccountChangeWake(
             payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12), {
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
                 ...(wake.artifactKinds ? { artifactKinds: [...wake.artifactKinds] } : {}),
+                ...(wake.discussionSettingsChangedIds ? { discussionSettingsChangedIds: [...wake.discussionSettingsChangedIds] } : {}),
                 ...(wake.sessionSystemRecords ? { sessionSystemRecords: [...wake.sessionSystemRecords.values()] } : {}),
             }),
             recipientFilter: { type: 'account-stored-content-v3',

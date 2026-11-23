@@ -20,9 +20,12 @@ import { DiscussionCreateRequestV1Schema, type DiscussionCreateRequestV1, type D
 import { DiscussionCreateResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionAccessGrantsListResponseV1Schema, DiscussionAccessGrantMutationResponseV1Schema, DiscussionLeaveResponseV1Schema } from '@happier-dev/protocol/discussions/access';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { DiscussionSettingsResponseV1Schema } from '@happier-dev/protocol/discussions/settings';
 import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
 import { act, flushHookEffects, renderHook } from '@/dev/testkit';
 import { useSyncExternalStore } from 'react';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { useDiscussionSettings } from '@/components/discussions/useDiscussionSettings';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { useDiscussionActiveListSnapshot, useDiscussionCollectionSnapshot, useDiscussionRepositorySnapshot } from './useDiscussionRepositorySnapshot';
 
@@ -31,13 +34,72 @@ import { publishMountedDiscussionChanges } from '@/sync/domains/discussions/disc
 import { fetchChanges } from '@/sync/api/session/apiChanges';
 import { runSocketReconnectCatchUpViaChanges } from '@/sync/runtime/orchestration/socketReconnectViaChanges';
 import { applyPlannedChangeActions } from '@/sync/runtime/orchestration/changesApplier';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     clearDiscussionRepositoryRegistryForTests,
     getDiscussionRepository,
 } from './discussionRepositoryRegistry';
 
 import { address, scope, summary, message, listResult, readResult, client } from './discussionRepository.testkit';
+
+it.each(['focused', 'secondary'] as const)('refreshes only the mounted settings for the Discussion whose override changed (%s Home)', async home => {
+    const settingsReads: string[] = [];
+    let afterTurns = 3;
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        const discussionId = path.split('/')[3]!;
+        if (path.endsWith('/settings')) {
+            settingsReads.push(discussionId);
+            return response({ discussionId, settings: { coordination: { autonomousCheckIn: { afterTurns } } } });
+        }
+        return response({ discussion: storedSummary(discussionId) });
+    }) });
+    const accountLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const leaveA = repository.mount({ discussionId: 'discussion-a', projection: 'summary' });
+    const leaveB = repository.mount({ discussionId: 'discussion-b', projection: 'summary' });
+    const hooks = await renderHook(() => ({
+        a: useDiscussionSettings({ repository, discussionId: 'discussion-a', accountLifetime, enabled: true }),
+        b: useDiscussionSettings({ repository, discussionId: 'discussion-b', accountLifetime, enabled: true }),
+    }));
+    try {
+        await vi.waitFor(() => expect(hooks.getCurrent().a.override).toEqual({ afterTurns: 3 }));
+        expect(hooks.getCurrent().b.override).toEqual({ afterTurns: 3 });
+        settingsReads.length = 0;
+        afterTurns = 6;
+        await act(async () => {
+            const wake = UpdateContainerSchema.parse({
+                id: 'settings-wake', seq: 1, createdAt: 1, discussionSettingsChangedIds: ['discussion-a'],
+                body: { t: 'account-change', changeKinds: ['discussion'], entityIds: ['discussion-a', 'discussion-b'] },
+            });
+            if (wake.body.t !== 'account-change') throw new Error('Expected an Account wake');
+            publishHomeAccountChangeWake(scope.serverId, wake.body, home === 'secondary' ? 'socket' : 'catch-up-pending',
+                undefined, wake.discussionSettingsChangedIds);
+            if (home === 'focused') {
+                publishMountedDiscussionChanges({ ...scope, afterCursor: 0, changes: [{
+                    kind: 'discussion', entityId: 'discussion-a', cursor: 1, changedAt: 1,
+                    hint: { v: 1, discussions: true, changes: { resource: true }, settingsChangedAt: true },
+                }] });
+            }
+        });
+        await flushHookEffects();
+        expect(settingsReads).toEqual(['discussion-a']);
+        expect(hooks.getCurrent().a.override).toEqual({ afterTurns: 6 });
+        expect(hooks.getCurrent().b.override).toEqual({ afterTurns: 3 });
+        settingsReads.length = 0;
+        await act(async () => {
+            publishMountedDiscussionChanges({ ...scope, afterCursor: 1, changes: [{
+                kind: 'discussion', entityId: 'discussion-a', cursor: 2, changedAt: 2,
+                hint: { v: 1, discussions: true, changes: { resource: true }, settingsChangedAt: 1 },
+            }] });
+        });
+        await flushHookEffects();
+        expect(settingsReads).toEqual([]);
+    } finally {
+        await hooks.unmount();
+        leaveA();
+        leaveB();
+        repository.clear();
+    }
+});
 
 it('does not publish an empty ready thread from a summary before its first history read', async () => {
     const history = createDeferred<Response>();
@@ -946,6 +1008,8 @@ function httpClient(request: (path: string, init?: RequestInit) => Promise<Respo
                 mentionedAccountIds: input.mentionedAccountIds === undefined ? undefined : [...input.mentionedAccountIds],
                 mentionedSessionIds: input.mentionedSessionIds === undefined ? undefined : [...input.mentionedSessionIds], replyTarget: input.replyTarget },
         }, context, signal })),
+        getSettings: async (discussionId, signal) => opened(DiscussionSettingsResponseV1Schema,
+            await execute({ actionId: 'discussion.settings.get', input: { discussionId }, context, signal })),
         participants: async (discussionId, signal) => opened(DiscussionParticipantsListResponseV1Schema, await execute({ actionId: 'discussion.participants.list', input: { discussionId }, context, signal })),
         listGrants: async (discussionId, signal) => opened(DiscussionAccessGrantsListResponseV1Schema, await execute({ actionId: 'discussion.access.grants.list', input: { discussionId }, context, signal })),
         invite: (input, signal) => mutation('discussion.invite', input, signal),

@@ -15,6 +15,8 @@ export const DiscussionChangeHintV1Schema = z.strictObject({
     readState: z.optional(z.literal(true)),
     resource: z.optional(z.literal(true)),
   }).check(z.refine(changes => changes.readState === true || changes.resource === true)),
+  /** true denotes this row's cursor; a number retains a change before a later write. */
+  settingsChangedAt: z.optional(z.union([z.literal(true), z.number().check(z.int(), z.minimum(1))])),
   messageChanges: z.optional(z.strictObject({
     latestSeq: z.optional(z.number().check(z.int(), z.minimum(1))),
     previousResourceCursor: z.number().check(z.int(), z.minimum(0)),
@@ -30,6 +32,11 @@ export const DISCUSSION_CHANGE_HINT_V1: DiscussionChangeHintV1 = Object.freeze({
   v: 1,
   discussions: true,
   changes: Object.freeze({ resource: true }),
+});
+
+export const DISCUSSION_SETTINGS_CHANGE_HINT_V1: DiscussionChangeHintV1 = Object.freeze({
+  ...DISCUSSION_CHANGE_HINT_V1,
+  settingsChangedAt: true,
 });
 
 export const DISCUSSION_READ_STATE_CHANGE_HINT_V1: DiscussionChangeHintV1 = Object.freeze({

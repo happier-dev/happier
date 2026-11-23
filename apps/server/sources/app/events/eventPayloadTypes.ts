@@ -1,7 +1,7 @@
 import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { Socket } from "socket.io";
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
-import type { EphemeralUpdate, SessionPersonalEventEphemeralV1 } from "@happier-dev/protocol/updates";
+import type { EphemeralUpdate, SessionPersonalEventEphemeralV1, UpdateContainer } from "@happier-dev/protocol/updates";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
@@ -437,6 +437,7 @@ export type EphemeralEvent = Extract<EphemeralUpdate, { type: 'local-service-pub
 // === EVENT PAYLOAD TYPES ===
 
 export interface UpdatePayload {
+    discussionSettingsChangedIds?: UpdateContainer['discussionSettingsChangedIds'];
     id: string;
     seq: number;
     body: {

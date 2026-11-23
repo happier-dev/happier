@@ -382,6 +382,9 @@ export const UpdateContainerSchema = lazyZodSchema(() => z.looseObject({
   seq: z.number().check(z.int(), z.minimum(0)),
   createdAt: TimestampMsSchema,
   body: UpdateBodySchema,
+  // Advisory Account wake routing for Homes that do not consume a changes page.
+  // Older readers still accept the unchanged strict Account wake body.
+  discussionSettingsChangedIds: z.optional(z.array(z.string())),
 }));
 
 export type UpdateContainer = z.infer<typeof UpdateContainerSchema>;

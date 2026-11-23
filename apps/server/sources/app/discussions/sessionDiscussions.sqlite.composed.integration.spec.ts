@@ -7,12 +7,14 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import { DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { buildDiscussionMutationRequestBodyV1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionAgentPostResponseV1Schema, DiscussionAgentPublisherResponseV1Schema,
     DISCUSSION_AGENT_POST_EVENT_V1, DISCUSSION_HTTP_PATHS_V1, type DiscussionCreateRequestV1 } from '@happier-dev/protocol/discussions/api';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createDiscussionMessageRefV1, DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { db } from '@/storage/db';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { eventRouter } from '@/app/events/eventRouter';
+import { getAccountStoredContentV3SocketRoom } from '@/app/api/socketRooms';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -2208,6 +2210,40 @@ describe('First-class Discussions service (SQLite)', () => {
             principal: { kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: watcher.id,
         }))).observations).toEqual([]);
     });
+    it('publishes the addressed settings change to the live audience and retains its cursor through later messages', async () => {
+        const { owner, discussionId } = await fixture();
+        const emit = vi.fn();
+        const ownerRoom = getAccountStoredContentV3SocketRoom(owner.id);
+        eventRouter.setIo({ to: room => ({ emit: room === ownerRoom ? emit : vi.fn(), disconnectSockets: vi.fn() }) });
+        onTestFinished(() => { eventRouter.clearIo(); });
+        const wakes = () => emit.mock.calls.flatMap(([event, payload]) => {
+            const update = UpdateContainerSchema.safeParse(payload);
+            return event === 'update' && update.success && update.data.body.t === 'account-change'
+                && update.data.body.changeKinds?.includes('discussion') ? [update.data] : [];
+        });
+        const readRow = () => db.accountChange.findUniqueOrThrow({
+            where: { accountId_kind_entityId: { accountId: owner.id, kind: 'discussion', entityId: discussionId } },
+            select: { cursor: true, hint: true },
+        });
+        const change = () => setDiscussionSettings({ authentication, actorAccountId: owner.id, discussionId,
+            settings: { coordination: { autonomousCheckIn: { afterTurns: 3 } } },
+        });
+        expect(await change()).toMatchObject({ ok: true });
+        const settings = await readRow();
+        expect(settings.hint).toMatchObject({ settingsChangedAt: true });
+        expect(wakes()).toMatchObject([{ discussionSettingsChangedIds: [discussionId] }]);
+        emit.mockClear();
+        expect(await change()).toMatchObject({ ok: true });
+        expect(wakes()).toEqual([]);
+        for (const content of ['First update', 'Second update']) {
+            expect(await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId,
+                request: postRequest(content) })).toMatchObject({ ok: true });
+        }
+        expect((await readRow()).hint).toMatchObject({ settingsChangedAt: settings.cursor });
+        expect(wakes()).toHaveLength(2);
+        for (const wake of wakes()) expect(wake).not.toHaveProperty('discussionSettingsChangedIds');
+    });
+
     it.each([
         { name: 'Account default', accountAfterTurns: 2, override: undefined, expectedAfterTurns: 2 },
         { name: 'configured limit', accountAfterTurns: 5, override: { afterTurns: 3 }, expectedAfterTurns: 3 },
