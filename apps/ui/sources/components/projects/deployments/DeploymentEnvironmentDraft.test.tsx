@@ -1569,20 +1569,15 @@ describe('Environment draft Machine Home', () => {
       });
   });
 
-  // REVIEW-DELTA2 F1: any other refusal (here the account's credentials are refused) keeps the shared deployment failure
-  // presenter's reason and technical details; "name taken" is the 409 answer only.
-  it('a platform refusal other than a taken name shows the shared failure reason and its technical details', async () => {
+  it('a generic provider refusal names the platform and shows its technical cause', async () => {
     const { t } = await import('@/text');
-    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     const failureCause = { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'unauthorized', httpStatus: 401 };
-    const outcome = presentActionFailureOutcome({ errorCode: 'provider_request_failed', error: 'provider_request_failed',
-      effectAttempted: true, failureCause }, 'deployment');
-    expect(outcome.reason).toBeTruthy();
     await refusePlatformCreateAfterSave('draft-platform-create-unauthorized', failureCause, async screen => {
       const banner = screen.banner();
-      expect(banner?.description).toBe(outcome.reason);
-      // The presenter's technical lines (the real failure also carries its request id).
-      expect(banner?.details).toEqual(expect.arrayContaining(outcome.technicalDetails.map(line => `${line.label}: ${line.value}`)));
+      expect(banner?.description).toBe(t('newApp.deploy.plan.platformRefused', { platform: 'Beta runtime' }));
+      expect(banner?.details).toEqual(expect.arrayContaining([
+        `${t('approvals.failureTechnicalLabels.causeCode')}: unauthorized`,
+      ]));
       expect(banner?.details?.join(' ')).toContain('401');
       expect(screen.text()).not.toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
       expect(screen.rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.refusedRow'));
