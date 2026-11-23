@@ -5096,8 +5096,8 @@ describe('PluginSurfacePlacementHost', () => {
                 expect(mountedContext.surface.machineExecutionReady).toBe(false);
                 expect(inventoryRequests).toBe(0);
                 await expect(mountedContext.hostApi.executeAction('plugins.list', {})).rejects.toMatchObject({
-                    code: 'unavailable',
-                    diagnostics: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+                    code: 'target_unavailable',
+                    diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'target_unavailable' })]),
                 });
                 expect(inventoryRequests).toBe(0);
                 // Inspector defers its own read while readiness is false;
