@@ -6,6 +6,7 @@ import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
 import { markPendingStateChangedRecipients } from '@/app/session/pending/markPendingStateChangedRecipients';
 import { updateSessionMetadata } from '@/app/session/sessionWriteService';
+import { SESSION_ROW_ONLY_HINT_KEYS } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { markSessionProjectionRecipientsChanged } from "./markSessionProjectionRecipientsChanged";
@@ -42,6 +43,23 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it('publishes only Session-row hint keys the changes planner recognizes for Pending', async () => {
+        const account = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await inTx(tx => markPendingStateChangedRecipients({
+            tx, sessionId: session.id, pendingVersion: 3, pendingCount: 2, pendingBlockedCount: 1,
+            meaningfulActivityAt: new Date(1_700_000_000_123),
+            activationTarget: { accountId: account.id, requestId: 'activation-one' },
+        }));
+        const { hint } = await db.accountChange.findUniqueOrThrow({
+            where: { accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id } },
+            select: { hint: true },
+        });
+        expect(hint).toMatchObject({ pendingVersion: 3, pendingCount: 2, pendingBlockedCount: 1,
+            meaningfulActivityAt: 1_700_000_000_123, pendingActivationRequestId: 'activation-one' });
+        expect(Object.keys(hint ?? {}).filter(key => !SESSION_ROW_ONLY_HINT_KEYS.has(key))).toEqual([]);
     });
 
     it.each(['pending', 'metadata'] as const)('keeps a receiver Follow wake independent of unrelated Session changes and cursor acknowledgement (%s)', async kind => {

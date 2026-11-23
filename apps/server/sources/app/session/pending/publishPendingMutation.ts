@@ -1,3 +1,4 @@
+import type { PendingSessionRowChangeHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { buildPendingChangedUpdate, eventRouter } from '@/app/events/eventRouter';
 import {
     loadSessionTranscriptPublicationRecipientProjection,
@@ -15,7 +16,7 @@ import { PendingActivationRequestedEphemeralV1Schema } from '@happier-dev/protoc
 
 export function buildPendingActivationRequestHint(
     activationTarget: PendingActivationTarget | undefined,
-): Readonly<{ pendingActivationRequestId: string }> | undefined {
+): Readonly<Required<Pick<PendingSessionRowChangeHintV1, 'pendingActivationRequestId'>>> | undefined {
     return activationTarget ? { pendingActivationRequestId: activationTarget.requestId } : undefined;
 }
 

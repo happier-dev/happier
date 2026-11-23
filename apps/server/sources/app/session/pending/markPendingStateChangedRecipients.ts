@@ -1,3 +1,4 @@
+import type { PendingSessionRowChangeHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { markSessionProjectionRecipientsChanged, type SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import type { Tx } from "@/storage/inTx";
 import { buildPendingActivationRequestHint } from "@/app/session/pending/publishPendingMutation";
@@ -20,7 +21,7 @@ export async function markPendingStateChangedRecipients(params: {
         pendingCount: params.pendingCount,
         ...(typeof params.pendingBlockedCount === "number" ? { pendingBlockedCount: params.pendingBlockedCount } : {}),
         ...(typeof meaningfulActivityAt === "number" ? { meaningfulActivityAt } : {}),
-    };
+    } satisfies PendingSessionRowChangeHintV1;
     return await markSessionProjectionRecipientsChanged({
         tx: params.tx,
         sessionId: params.sessionId,

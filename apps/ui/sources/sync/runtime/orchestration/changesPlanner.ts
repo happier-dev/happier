@@ -508,24 +508,11 @@ export function classifyChangeForCheckpoint(
  * list refresh. Any hint outside this set (archive, deletion, responsibility, or a
  * future producer) conservatively re-reads the list.
  */
-const ROW_LEVEL_SESSION_CHANGE_HINT_KEYS: ReadonlySet<string> = new Set([
-    // Protocol-owned row-only hint facts (message, metadata, agent-state, activity, ready, enrichment).
-    ...SESSION_ROW_ONLY_HINT_KEYS,
-    // Server pending-queue and discussion publications carry no protocol hint schema; this is the UI's own list.
-    'v',
-    'pendingVersion',
-    'pendingCount',
-    'pendingBlockedCount',
-    'meaningfulActivityAt',
-    'pendingActivationRequestId',
-    'sessionDiscussions',
-]);
-
 export function isRowLevelSessionChangeHint(hint: unknown): boolean {
     if (hint === null || hint === undefined) return true;
     if (!isRecord(hint)) return false;
     const keys = Object.keys(hint);
-    return keys.every((key) => ROW_LEVEL_SESSION_CHANGE_HINT_KEYS.has(key))
+    return keys.every((key) => SESSION_ROW_ONLY_HINT_KEYS.has(key))
         // `v` alone versions some other hint family; it is not a row write by itself.
         && keys.some((key) => key !== 'v');
 }

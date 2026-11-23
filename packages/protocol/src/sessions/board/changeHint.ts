@@ -75,10 +75,24 @@ const SessionRowOnlyHintSchema = z.union([
   z.strictObject({ latestReadyEventSeq: sequence, latestReadyEventAt: sequence, ...rowHintFacts }),
 ]);
 
-/** Every key a known row-only hint may carry, derived from the schema above (its single owner). */
-export const SESSION_ROW_ONLY_HINT_KEYS: ReadonlySet<string> = new Set(
-  SessionRowOnlyHintSchema.def.options.flatMap((option) => Object.keys(option.def.shape)),
-);
+const pendingSessionRowHintFacts = {
+  pendingVersion: sequence,
+  pendingCount: sequence,
+  pendingBlockedCount: z.optional(sequence),
+  meaningfulActivityAt: z.optional(sequence),
+  pendingActivationRequestId: z.optional(z.string()),
+};
+const PendingSessionRowChangeHintV1Schema = z.strictObject(pendingSessionRowHintFacts);
+export type PendingSessionRowChangeHintV1 = z.infer<typeof PendingSessionRowChangeHintV1Schema>;
+
+/** Session list projection keys. The record-specific proof below remains shape-based. */
+export const SESSION_ROW_ONLY_HINT_KEYS: ReadonlySet<string> = new Set([
+  ...SessionRowOnlyHintSchema.def.options.flatMap((option) => Object.keys(option.def.shape)),
+  ...Object.keys(pendingSessionRowHintFacts),
+  // Version and Discussion keys previously accepted by the Session list planner.
+  'v',
+  'sessionDiscussions',
+]);
 
 /** Unknown and legacy hints remain conservative; only known row facts exclude record changes. */
 export function isSessionSystemRecordUnchangedHintV1(hint: unknown) {
