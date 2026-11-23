@@ -3,7 +3,7 @@ import type { SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiSessionStatusGet } from '@/sync/ops/actions/sessionStatusAction';
+import { readUiSessionStatus } from '@/sync/ops/actions/sessionStatusAction';
 import { readSessionReadinessRepair } from './sessionReadinessViewModel';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -72,11 +72,11 @@ export function useSessionReadiness(input: Readonly<{
                     if (!areServerAccountScopesEqual(account.accountLifetime.scope, accountLifetime.scope)) {
                         throw new Error('action_account_scope_changed');
                     }
-                    const result = SessionStatusActionResultV1Schema.parse(await createUiSessionStatusGet(account, { refreshReadiness, readAdmittedInventory })({
+                    const result = SessionStatusActionResultV1Schema.parse(await readUiSessionStatus(account, {
                         sessionId, serverId: accountLifetime.scope.serverId, readiness: true, operation,
                         ...(credentialPurpose ? { credentialPurpose } : {}), signal: controller.signal,
                         ...(credentialTeamSelection ? { credentialTeamSelection } : {}),
-                    }));
+                    }, { refreshReadiness, readAdmittedInventory }));
                     if (!current()) return;
                     const requested = result.ok !== false && result.readiness?.operation === operation;
                     const machine = requested ? result.readiness?.machine : null;

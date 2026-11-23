@@ -119,7 +119,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiActionAutomationPortV1 } from '@/sync/ops/actions/actionAutomations';
-import { createUiSessionStatusGet } from '@/sync/ops/actions/sessionStatusAction';
+import { readUiSessionStatus } from '@/sync/ops/actions/sessionStatusAction';
 
 import {
     createPluginActionCurrentIntentHandler,
@@ -1612,7 +1612,7 @@ async function executeClientContributedAction(
         if (!exactId) throw new PluginError({ code: 'session_target_unavailable' });
         const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, input.signal);
         try {
-            const result = SessionStatusActionResultV1Schema.parse(await createUiSessionStatusGet(account)({ sessionId: exactId,
+            const result = SessionStatusActionResultV1Schema.parse(await readUiSessionStatus(account, { sessionId: exactId,
                 serverId: accountLifetime.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) }));
             if (result.ok === false) throw new PluginError({ code: result.code });
             const contributedAction = result.session.machineId ? {

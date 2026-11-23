@@ -56,7 +56,7 @@ import { isPluginSkillIdV1 } from '@happier-dev/protocol/prompts/library/skills/
 import { readFoundSkillBundle } from '@/sync/domains/transfers/runtime/transferRuntime/families/foundSkillTransfers';
 import { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { createUiProjectContextAction } from './projectContextAction';
-import { createUiSessionStatusGet } from './sessionStatusAction';
+import { readUiSessionStatus } from './sessionStatusAction';
 import { createUiSessionHandoffRecoveryActionDeps } from './sessionHandoffRecoveryActionDeps';
 import { createUiPetChooseAction } from './petChooseAction';
 import { createUiPetActionExecute, createUiPetImportPrepare } from './petActionDeps';
@@ -4828,7 +4828,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }),
     sessionList: listSessionsForVoiceTool,
     sessionRead: createUiSessionRead(accountContext),
-    sessionStatusGet: createUiSessionStatusGet(accountContext),
+    sessionStatusGet: readUiSessionStatus.bind(undefined, accountContext),
     readSessionManager: async ({ address, signal }) => {
       if (!accountContext || !areServerProfileIdentifiersEquivalent(address.serverId, accountContext.serverId)) return { kind: 'unavailable' };
       try {

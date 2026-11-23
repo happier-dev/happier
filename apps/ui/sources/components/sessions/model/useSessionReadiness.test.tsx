@@ -23,7 +23,7 @@ const network = await installSessionOpsNetworkBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { useSessionReadiness } = await import('./useSessionReadiness');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-const { createUiSessionStatusGet } = await import('@/sync/ops/actions/sessionStatusAction');
+const { readUiSessionStatus } = await import('@/sync/ops/actions/sessionStatusAction');
 const { refreshMachineAgents } = await import('@/agents/machineAgents/useMachineAgents');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
@@ -346,11 +346,13 @@ it('shares exact native repair facts with the status Action and refreshes throug
     const repair = { actionId: 'machines.agents.signIn.start', input: { machineId: machine.id, agentId: 'codex', method: 'native' } };
     await vi.waitFor(() => expect(hook.getCurrent().repair).toEqual(repair));
     await act(async () => {
-        const account = await captureLazyActionAccountContext(home.id);
-        try {
-            expect(await createUiSessionStatusGet(account)({ sessionId: session.id, readiness: true }))
-                .toMatchObject({ ok: true, readiness: { cause: 'agent', agent: { state: 'needsSignIn', repair } } });
-        } finally { account.dispose(); }
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id, readiness: true }, {
+            surface: 'agent', authority: 'account_automation', serverId: home.id, expectedAccountId: scope.accountId,
+            defaultSessionId: session.id,
+        });
+        expect(result.ok, result.ok ? undefined : JSON.stringify(result)).toBe(true);
+        expect(result).toMatchObject({ result: { readiness: { cause: 'agent', agent: { state: 'needsSignIn', repair } } } });
     });
     await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
     const inventory = (await import('@/agents/machineAgents/machineAgentInventoryStore')).machineAgentInventoryStore;
@@ -363,11 +365,13 @@ it('shares exact native repair facts with the status Action and refreshes throug
     });
     signedIn = true; // Native acknowledgement supplied by the real inventory transport boundary.
     const before = network.httpRequests.filter(request => request.method === 'GET' && new URL(request.url).pathname === `/v2/sessions/${session.id}`).length;
+    const inventoryReadsBeforeRefresh = network.requests.filter(request => request.method === 'capabilities.detect').length;
     await act(async () => { await refreshMachineAgents({ serverId: home.id, machineId: machine.id,
         accountLifetime, agentId: 'codex', force: true }); });
     await vi.waitFor(() => expect(hook.getCurrent().readiness?.status).toBe('ready'));
     offInventory();
     expect(network.httpRequests.filter(request => request.method === 'GET' && new URL(request.url).pathname === `/v2/sessions/${session.id}`), JSON.stringify(inventoryEvents)).toHaveLength(before + 1);
+    expect(network.requests.filter(request => request.method === 'capabilities.detect')).toHaveLength(inventoryReadsBeforeRefresh + 1);
     expect(network.requests.some(request => request.method === 'daemon.agents.signIn.prepare')).toBe(false);
 });
 
@@ -400,7 +404,7 @@ it('answers a Session the Home reports missing as not found, so a picked Session
         ? Response.json({ error: 'Session not found' }, { status: 404 }) : null);
     const account = await captureLazyActionAccountContext(home.id);
     try {
-        expect(await createUiSessionStatusGet(account)({ sessionId: 'gone' })).toEqual({ ok: false, code: 'session_not_found' });
+        expect(await readUiSessionStatus(account, { sessionId: 'gone' })).toEqual({ ok: false, code: 'session_not_found' });
     } finally { account.dispose(); }
 });
 
@@ -415,8 +419,8 @@ it('reads a Session the Action context names by the Home profile id when the cap
     try {
         expect(account.serverId).toBe('srv_status_portable');
         // The Home answers; it is not refused as another Home's Session.
-        expect(await createUiSessionStatusGet(account)({ sessionId: 'gone', serverId: home.id })).toEqual({ ok: false, code: 'session_not_found' });
-        expect(await createUiSessionStatusGet(account)({ sessionId: 'gone', serverId: 'another-home' })).toEqual({ ok: false, code: 'server_scope_mismatch' });
+        expect(await readUiSessionStatus(account, { sessionId: 'gone', serverId: home.id })).toEqual({ ok: false, code: 'session_not_found' });
+        expect(await readUiSessionStatus(account, { sessionId: 'gone', serverId: 'another-home' })).toEqual({ ok: false, code: 'server_scope_mismatch' });
     } finally { account.dispose(); }
 });
 

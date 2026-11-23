@@ -49,10 +49,14 @@ import { readAgentSessionCompactionAvailability } from '@/agents/backendCatalog/
 import { listPendingRequests, projectSessionStatusPendingRequestsV1 } from '@happier-dev/session-core/pending';
 import { readPendingRequestFactsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
-/** Status stays usable without a running Agent; detail reads are explicit and use the existing inventory. */
-export function createUiSessionStatusGet(account: LazyActionAccountContext | null | undefined,
-  options?: Readonly<{ refreshReadiness?: boolean; readAdmittedInventory?: boolean }>): NonNullable<ActionExecutorDeps['sessionStatusGet']> {
-  return async ({ sessionId, readiness, includeAcceptedWorkspace, operation, credentialPurpose, credentialTeamSelection, serverId, signal }) => {
+type SessionStatusGet = NonNullable<ActionExecutorDeps['sessionStatusGet']>;
+
+/** Shared Session Status operation for the Action and an already scoped picker read. */
+export async function readUiSessionStatus(
+  account: LazyActionAccountContext | null | undefined,
+  { sessionId, readiness, includeAcceptedWorkspace, operation, credentialPurpose, credentialTeamSelection, serverId, signal }: Parameters<SessionStatusGet>[0],
+  options?: Readonly<{ refreshReadiness?: boolean; readAdmittedInventory?: boolean }>,
+): ReturnType<SessionStatusGet> {
     if (!account) return { ok: false, code: 'not_authenticated' };
     account.assertCurrent();
     signal?.throwIfAborted();
@@ -349,5 +353,4 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
       } catch { signal?.throwIfAborted(); account.assertCurrent(); }
     }
     return { ...result, readiness: model.readiness };
-  };
 }
