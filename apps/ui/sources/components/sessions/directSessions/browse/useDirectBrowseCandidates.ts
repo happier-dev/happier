@@ -8,6 +8,7 @@ export type DirectBrowseCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;
     updatedAtMs: number;
+    createdAtMs?: number;
     activity?: DirectSessionActivityV1;
     details?: Record<string, unknown>;
 }>;
@@ -34,6 +35,7 @@ function mergeDirectBrowseCandidate(current: DirectBrowseCandidate, next: Direct
         remoteSessionId: current.remoteSessionId,
         title: hasCandidateTitle(next) ? next.title : current.title,
         updatedAtMs: Math.max(current.updatedAtMs, next.updatedAtMs),
+        createdAtMs: next.createdAtMs ?? current.createdAtMs,
         activity: next.activity ?? current.activity,
         details: mergeCandidateDetails(current.details, next.details),
     };
@@ -128,6 +130,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 remoteSessionId: candidate.remoteSessionId,
                 title: candidate.title,
                 updatedAtMs: candidate.updatedAtMs,
+                createdAtMs: candidate.createdAtMs,
                 activity: candidate.activity,
                 details: candidate.details,
             })) satisfies readonly DirectBrowseCandidate[];
