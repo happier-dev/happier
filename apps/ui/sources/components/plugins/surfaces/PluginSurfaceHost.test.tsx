@@ -20,7 +20,7 @@ import { preloadTranslations, setPreferredLanguageFromSettings } from '@/text/i1
 import NodeModule from 'node:module';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { PluginAccountSettingsMutationRequestV1Schema, PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
-import { ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { act } from 'react-test-renderer';
@@ -3358,14 +3358,37 @@ describe('PluginSurfacePlacementHost', () => {
         const checkRequests: ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse>[] = [];
         const checkAuthority: (string | null)[] = [];
         const notInstalled = { available: false, code: 'docker_sandbox_unavailable' };
+        const { createExternalActionAccountHttpBoundary, servedMachineActionRelayInstallationPublicKey } =
+            await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const checkBoundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://server-a', serverIdentityId: 'srv_server_a', accountId: 'account-a',
+            machineId: 'machine_1', installationId: 'addressed-installation', tokenEpoch: 0,
+            actionId: 'machines.provisioners.check',
+            execute: (_input, { envelope, requestHeaders }) => {
+                checkRequests.push(ExternalActionRequestEnvelopeV1Schema.parse(envelope));
+                checkAuthority.push(requestHeaders.get('X-Happier-Authority-Ceiling'));
+                return notInstalled;
+            },
+        });
+        const addressedMachine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'account-a',
+            machine: { activeAt: Date.now(), installationId: 'addressed-installation',
+                installationPublicKey: await servedMachineActionRelayInstallationPublicKey() } });
+        const addressedRow = createPlainMachineRowFixture({ id: addressedMachine.id, accountId: 'account-a', machine: addressedMachine });
+        const checkPaths = new Set([
+            '/v1/actions/machines.provisioners.check',
+            bindExternalActionExecutionAuthorizationHttpPathV1('machines.provisioners.check'),
+            bindExternalActionExecutionAuthorizationVerifyHttpPathV1('machines.provisioners.check'),
+        ]);
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, (path, init) => {
-            if (path === '/v1/actions/machines.provisioners.check') {
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
-                checkRequests.push(request);
-                checkAuthority.push(new Headers(init?.headers).get('X-Happier-Authority-Ceiling'));
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.check',
-                    requestId: request.requestId, execution: { ok: true, result: notInstalled } }));
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+                return createMachineReadBatchResponseFixture(init.body, id => id === addressedRow.id ? addressedRow : null);
             }
+            if (path === '/v1/machines') return Response.json([addressedRow]);
+            if (path === `/v1/machines/${addressedMachine.id}` && (init?.method ?? 'GET') === 'GET') {
+                return Response.json({ machine: addressedRow });
+            }
+            if (checkPaths.has(path)) return checkBoundary.handle(new URL(path, 'https://server-a'), init)
+                .then(response => response ?? Response.json({ error: 'not_found' }, { status: 404 }));
             if (path !== '/v1/actions/machines.provisioners.list') return undefined;
             const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
             requests.push(request);
@@ -3385,10 +3408,9 @@ describe('PluginSurfacePlacementHost', () => {
             binding: { pluginId: 'acme.browser', destinationId: 'machine-tools', rendererId: 'native-panel', container: 'appPage', target: { kind: 'machine' } },
             renderer: { kind: 'reactNative', contributionId: 'native-panel' }, display: { label: 'Machine tools' },
         });
-        const target = { kind: 'machine' as const, serverId: 'server-a', machineId: 'machine_1' };
+        const target = { kind: 'machine' as const, serverId: 'server-a', machineId: addressedMachine.id };
         const { storage } = await import('@/sync/domains/state/storage');
-        storage.getState().applyMachines([createMachineFixture({ id: target.machineId, activeAt: Date.now(),
-            installationId: 'addressed-installation' })], true, { sourceServerId: target.serverId });
+        storage.getState().applyMachines([addressedMachine], true, { sourceServerId: target.serverId });
         const pages = resolvePluginPages({ target, placements: [placement] });
         const page = pages[0];
         if (!page) throw new Error('Expected admitted Machine page');
@@ -3426,7 +3448,7 @@ describe('PluginSurfacePlacementHost', () => {
             } });
             expect(checkAuthority).toEqual([null, 'account_automation']);
             await expect(renderContext.hostApi.executeAction('machines.provisioners.check', { ...checkInput, homeId: 'foreign-home' }))
-                .rejects.toMatchObject({ code: 'unavailable' });
+                .rejects.toMatchObject({ code: 'server_target_mismatch' });
             expect(checkRequests).toHaveLength(2);
             const request = { provisioner };
             await renderContext.hostApi.openManagedMachineConfiguration(request);
