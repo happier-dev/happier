@@ -254,6 +254,8 @@ type NewSessionScreenProps = Readonly<{
     inputPlaceholder?: string;
     /** `compact`: an embedding page's ask box keeps only machine and model (see `AgentInput`). */
     composerControlPreset?: 'full' | 'compact';
+    /** Lets an embedding field retain its seat until the hydrated editor is committed. */
+    onDraftPresented?: (draftId: string) => void;
 }>;
 
 export function NewSessionScreen(props: NewSessionScreenProps) {
@@ -357,6 +359,11 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             shouldWriteRouteParam: true,
         };
     }, [draftOrigin, resolveOrdinaryEntry, routeDraftId]);
+    const { onDraftPresented } = props;
+    // Child effects register the focus target before the embedding field retires.
+    React.useEffect(() => {
+        onDraftPresented?.(draftIdentity.draftId);
+    }, [draftIdentity.draftId, onDraftPresented]);
     const committedDraftIdRef = React.useRef(draftIdentity.draftId);
     React.useLayoutEffect(() => {
         committedDraftIdRef.current = draftIdentity.draftId;

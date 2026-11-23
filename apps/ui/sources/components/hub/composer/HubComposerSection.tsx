@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet as NativeStyleSheet, TextInput as NativeTextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
@@ -13,14 +13,16 @@ import { useNewSessionEmbeddedHostState } from '@/components/sessions/new/naviga
 import { useNewSessionShellHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
+import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { rememberOrdinaryNewSessionDraftId } from '@/sync/domains/state/newSessionTargetUiState';
+import { writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { t } from '@/text';
 import { useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 
-import { commitHomeComposerOpen } from './commitHomeComposerOpen';
 import { HubComposerSuggestions, type HomeComposerSuggestionFill } from './suggestions/HubComposerSuggestions';
 
 /**
@@ -139,17 +141,30 @@ function HubComposerHeld(props: HubComposerSectionProps & Readonly<{ height: num
     )} />;
 }
 
-function HubComposerClosed(props: Readonly<{ draftId: string | null; onOpen: () => void }>) {
+function HubComposerClosed(props: Readonly<{ draftId: string | null; onOpen: () => void; onBlur: () => void }>) {
     const { theme } = useUnistyles();
-    const scope = useActiveServerAccountScope() ?? null;
-    const { hasText, isBot, name } = useNewSessionDraftDockPresentation(scope, props.draftId);
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const { draftId, onOpen } = props;
+    const { hasText, isBot, name, text } = useNewSessionDraftDockPresentation(lifetime?.scope ?? null, draftId, true);
     const label = name ?? (isBot ? t('bots.new') : t('session.inputPlaceholder'));
     const draftBadge = hasText ? t('sessionDrafts.badge') : null;
-    useKeyboardShortcutHandlers({ 'composer.focus': props.onOpen });
+    const input = React.useRef<NativeTextInput>(null);
+    const focus = React.useCallback(() => input.current?.focus(), []);
+    const setText = React.useCallback((next: string) => {
+        if (!draftId || !lifetime?.isCurrent()) return;
+        writeNewSessionDraft({ scope: lifetime.scope, draftId, patch: { text: next }, materializationIntent: 'userEdit' });
+        if (next.trim()) rememberOrdinaryNewSessionDraftId(lifetime.scope, draftId);
+    }, [draftId, lifetime]);
+    useKeyboardShortcutHandlers({ 'composer.focus': focus });
     return (
-        <Pressable testID="hub-composer.open" accessibilityRole="button" accessibilityLabel={label}
-            accessibilityValue={draftBadge ? { text: draftBadge } : undefined} onPress={props.onOpen}>
-            <AgentInputNewSessionRestingBox placeholder={label} trailing={draftBadge
+        <Pressable accessible={false} focusable={false} onPress={focus}>
+            <AgentInputNewSessionRestingBox input={(
+                <TextInput ref={input} testID="hub-composer.open" accessibilityLabel={label}
+                    accessibilityValue={draftBadge ? { text: draftBadge } : undefined}
+                    placeholder={label} placeholderTextColor={theme.colors.composer.chipTint}
+                    style={styles.input} multiline numberOfLines={1} value={text ?? ''} editable={Boolean(lifetime && draftId)}
+                    onFocus={onOpen} onBlur={props.onBlur} onChangeText={setText} />
+            )} trailing={draftBadge
                 ? <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>{draftBadge}</Text>
                 : null} />
         </Pressable>
@@ -160,15 +175,22 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
     const { host, markDemanded } = useNewSessionEmbeddedHostState();
     const draftId = typeof host.params.draftId === 'string' ? host.params.draftId : null;
     const setHostParams = host.setParams;
-    const cancelFocus = React.useRef<(() => void) | undefined>(undefined);
-    React.useEffect(() => () => cancelFocus.current?.(), [draftId]);
+    const focusedDraft = React.useRef<string | null>(null);
     const open = React.useCallback(() => {
-        commitHomeComposerOpen(() => {
-            markDemanded();
-            cancelFocus.current?.();
-            cancelFocus.current = draftId ? focusNewSessionComposerWhenPresented(draftId) : undefined;
-        });
+        focusedDraft.current = draftId;
+        React.startTransition(markDemanded);
     }, [draftId, markDemanded]);
+    const blur = React.useCallback(() => { focusedDraft.current = null; }, []);
+    const [presented, setPresented] = React.useState<Readonly<{ draftId: string; focus: boolean }> | null>(null);
+    const onDraftPresented = React.useCallback((id: string) => {
+        const focus = focusedDraft.current === id;
+        setPresented(current => current?.draftId === id ? current : { draftId: id, focus });
+    }, []);
+    const editorPresented = host.demanded && presented?.draftId === draftId;
+    // The original field owns focus until the real input can be seen and focused.
+    React.useLayoutEffect(() => {
+        if (editorPresented && draftId && presented?.focus) return focusNewSessionComposerWhenPresented(draftId);
+    }, [draftId, editorPresented, presented?.focus]);
 
     const fill = React.useCallback((suggestion: HomeComposerSuggestionFill) => {
         markDemanded();
@@ -185,13 +207,19 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
             testID="hub-composer.intent"
         >
             <NewSessionEmbeddedHostProvider host={host}>
+                {!editorPresented ? <HubComposerClosed key={draftId} draftId={draftId} onOpen={open} onBlur={blur} /> : null}
                 {host.demanded ? (
-                    <React.Suspense fallback={<HubComposerClosed draftId={draftId} onOpen={open} />}>
-                        <ComposerBannerCollapseProvider key={draftId ?? 'home-composer'}>
-                            <NewSessionScreenEntry presentation="embedded" />
-                        </ComposerBannerCollapseProvider>
-                    </React.Suspense>
-                ) : <HubComposerClosed draftId={draftId} onOpen={open} />}
+                    <View style={editorPresented ? undefined : styles.pendingEditor}
+                        pointerEvents={editorPresented ? 'auto' : 'none'}
+                        accessibilityElementsHidden={!editorPresented}
+                        importantForAccessibility={editorPresented ? 'auto' : 'no-hide-descendants'}>
+                        <React.Suspense fallback={null}>
+                            <ComposerBannerCollapseProvider key={draftId ?? 'home-composer'}>
+                                <NewSessionScreenEntry presentation="embedded" onDraftPresented={onDraftPresented} />
+                            </ComposerBannerCollapseProvider>
+                        </React.Suspense>
+                    </View>
+                ) : null}
             </NewSessionEmbeddedHostProvider>
         </View>
     );
@@ -199,6 +227,13 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
 }
 
 const styles = StyleSheet.create((theme) => ({
+    input: {
+        color: theme.colors.input.text,
+        fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
+        lineHeight: MULTI_TEXT_INPUT_BASE_LINE_HEIGHT,
+        padding: 0,
+    },
+    pendingEditor: { ...NativeStyleSheet.absoluteFillObject, opacity: 0 },
     stack: {
         gap: 10,
     },

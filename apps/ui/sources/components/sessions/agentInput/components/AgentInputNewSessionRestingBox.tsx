@@ -11,7 +11,6 @@ import { useSetting } from '@/sync/store/settingsReadHooks';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { isGlassComposerSurface } from '../composerSurfaceStyle';
 import { instrumentStripStyles } from '../instrumentStrip/instrumentStripStyles';
-import { AgentInputDocumentPreviewText } from './AgentInputDocumentPreviewText';
 import {
     AGENT_INPUT_FIELD_CONTAINER_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
@@ -26,8 +25,8 @@ import {
     resolveAgentInputPhonePanelLayoutStyle,
 } from './agentInputChromeStyles';
 
-/** The empty New Session field and its chrome, without the editor or live controls. */
-export function AgentInputNewSessionRestingBox(props: Readonly<{ placeholder: string; trailing?: React.ReactNode }>) {
+/** The New Session field and its resting chrome, without the full editor or live controls. */
+export function AgentInputNewSessionRestingBox(props: Readonly<{ input: React.ReactNode; trailing?: React.ReactNode }>) {
     const { theme } = useUnistyles();
     const { width } = useWindowDimensions();
     const boundary = useAtmosphereBandBoundary();
@@ -47,7 +46,7 @@ export function AgentInputNewSessionRestingBox(props: Readonly<{ placeholder: st
                     <View dataSet={themeSurfaceDataSet(inputSurface.surface, inputSurface.part, inputSurface.state)}
                         style={[styles.field, surfaceOverridesEnabled ? themeSurfaceStyles.surface(inputSurface) : null]}>
                         <View style={styles.prompt}>
-                            <AgentInputDocumentPreviewText value="" placeholder={props.placeholder} references={[]} fieldInset={false} singleLine />
+                            {props.input}
                         </View>
                         {props.trailing}
                     </View>

@@ -1247,7 +1247,7 @@ describe('multi-Home Session creation composition', () => {
         modalBoundary.confirm.mockResolvedValue(true);
         try {
             expect(screen.findByTestId('hub-composer.open')?.props.accessibilityValue?.text).toBeTruthy();
-            await screen.pressByTestIdAsync('hub-composer.open');
+            await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             const homeComposer = screen.root.findByType(AgentInput);
             expect(composerText(homeComposer)).toBe('Describe this picture');
@@ -1269,11 +1269,38 @@ describe('multi-Home Session creation composition', () => {
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
             expect(records.get(draftId)?.content).toBeNull();
             await screen.update(element(false));
-            await screen.pressByTestIdAsync('hub-composer.open');
+            await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             expect(composerText(screen.root.findByType(AgentInput))).toBe('');
             expect(screen.root.findByType(AgentInput).props.attachmentRowItems).toEqual([]);
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
+    it('accepts immediate Home typing and keeps every character when the editor opens', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = async url => coreHttp(new URL(url).pathname);
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('home-composer-first-keys', { applyConnectionManager: true }));
+        const { HubComposerSection } = await import('@/components/hub/composer/HubComposerSection');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const navigation = { push: routeBoundary.push, replace: routeBoundary.replace, back: () => {} };
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}>
+            <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: true, isFocused: () => true, visible: true, navigation }}>
+                <HubComposerSection suggestions="none" />
+            </DestinationInstanceContext.Provider>
+        </InjectedAuthProvider>);
+        try {
+            const input = screen.findByTestId('hub-composer.open')!;
+            expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+            expect(input.props.onChangeText).toBeTypeOf('function');
+            expect(input.props.editable).toBe(true);
+            await act(async () => {
+                input.props.onFocus();
+                input.props.onChangeText('R');
+                input.props.onChangeText('Review the patch');
+            });
+            await vi.waitFor(() => expect(composerText(screen.root.findByType(AgentInput))).toBe('Review the patch'));
         } finally { await screen.unmount(); }
     });
 
@@ -1311,7 +1338,7 @@ describe('multi-Home Session creation composition', () => {
             } finally { stop(); }
             expect(storage.getState().machineListByServerId[homeAScopeId]).toHaveLength(492);
             expect({ initialModels, publicationModels }).toEqual({ initialModels: 0, publicationModels: 0 });
-            await screen.pressByTestIdAsync('hub-composer.open');
+            await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
             await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionLaunchSurface)).toHaveLength(1));
             expect(screen.findByTestId('hub-composer.open')).toBeNull();
             expect(routeBoundary.push).not.toHaveBeenCalled();
@@ -1341,7 +1368,7 @@ describe('multi-Home Session creation composition', () => {
         };
         const screen = await renderScreen(element(true));
         try {
-            await screen.pressByTestIdAsync('hub-composer.open');
+            await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
             await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionComposerCard)).toHaveLength(1));
             const composer = screen.root.findByType(NewSessionComposerCard);
             let rebuilt = 0;
@@ -1386,7 +1413,7 @@ describe('multi-Home Session creation composition', () => {
         const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offsetMs);
         const screen = await renderScreen(element(true));
         try {
-            await screen.pressByTestIdAsync('hub-composer.open');
+            await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             await flushHookEffects();
             const settled = censusReads;
@@ -1394,7 +1421,7 @@ describe('multi-Home Session creation composition', () => {
                 offsetMs += 60_000;
                 await screen.update(element(false));
                 await screen.update(element(true));
-                await screen.pressByTestIdAsync('hub-composer.open');
+                await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
                 await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
                 await flushHookEffects();
                 await act(async () => { await new Promise<void>(resolve => setImmediate(resolve)); });

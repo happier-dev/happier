@@ -81,13 +81,21 @@ export function getNewSessionDraftActionIdentity(
 }
 
 /** The folded composer's identity and text marker, without subscribing it to every draft edit. */
-export function useNewSessionDraftDockPresentation(scope: ServerAccountScope | null, draftId: string | null): Readonly<{ hasText: boolean } & NewSessionDraftIdentity> {
+export function useNewSessionDraftDockPresentation(
+    scope: ServerAccountScope | null,
+    draftId: string | null,
+    includeText = false,
+): Readonly<{ hasText: boolean; text?: string } & NewSessionDraftIdentity> {
     const subscribe = React.useCallback((listener: () => void) => (
         scope && draftId ? subscribeSessionDraft(scope, { kind: 'newSession', draftId }, listener) : () => undefined
     ), [draftId, scope]);
     const selectPresentation = useShallow((snapshot: SessionDraftSnapshot | null) => {
         const text = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'composer', field: 'text' }) : null;
-        return { hasText: typeof text === 'string' && text.trim().length > 0, ...readNewSessionDraftIdentity(snapshot?.document) };
+        return {
+            hasText: typeof text === 'string' && text.trim().length > 0,
+            ...(includeText ? { text: typeof text === 'string' ? text : '' } : {}),
+            ...readNewSessionDraftIdentity(snapshot?.document),
+        };
     });
     const getSnapshot = React.useCallback(() => selectPresentation(scope && draftId
         ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null), [draftId, scope, selectPresentation]);
