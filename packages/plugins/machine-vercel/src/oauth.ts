@@ -271,7 +271,7 @@ async function retainedIdentity(
   return { subject, email };
 }
 
-/** The team probe is the token mode's; only the person's identity comes from the sign-in. */
+/** The team probe is the token mode's; the person's identity and the OAuth credential kind come from the sign-in. */
 function signedIn(
   result: Exclude<ConnectedAccountAuthCompletionResult, { status: 'configurationRequired' }>,
   identity: Identity,
@@ -287,6 +287,7 @@ function signedIn(
   }
   return {
     ...result,
+    credentialKind: 'oauth' as const,
     providerIdentity: {
       accountId: identity.subject,
       email: identity.email,
@@ -575,6 +576,7 @@ export async function refreshVercelOAuth(
     const scope = scopeOf(context);
     return {
       status: 'connected',
+      credentialKind: 'oauth',
       expiresAt: grant.expiresAtMs,
       scopes: [],
       providerIdentity: {

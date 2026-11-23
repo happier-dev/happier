@@ -41,6 +41,7 @@ import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../../packages
 import { createAgentProviderCatalogObservationService } from './agentCatalogObservation';
 import { createProviderProbeHttpClient } from './client';
 import { startGatewayMessagesUpstream } from './gatewayJourney.testkit';
+import { createVercelOAuthInventoryTargetResolver } from './vercelOAuthInventory.testkit';
 import { createProviderProbeScheduler } from './scheduler';
 
 const service = { pluginId: vercelMachine.manifest.id, localId: 'vercel-account' };
@@ -117,9 +118,8 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       let currentRevision = revision;
       let currentToken = vendorToken;
       const rotatedToken = 'fixture-vercel-oauth-rotated-token';
-      const resolveTarget = vi.fn<Parameters<typeof createConnectedAccountPurposeBindingOwner>[0]['resolveTarget']>(async target =>
-        accountConnected && target.kind === 'account' && target.account.accountId === account.accountId
-          ? { account, displayName: 'Selected Vercel team' } : null);
+      const resolveTarget = createVercelOAuthInventoryTargetResolver({ account, displayName: 'Selected Vercel team',
+        kind: 'oauth', readCredentialRevision: () => currentRevision, isConnected: () => accountConnected });
       const materializeAccount = vi.fn<Parameters<typeof createConnectedAccountPurposeBindingOwner>[0]['materializeAccount']>(
         async ({ credentialRevisionBasis, request, signal }) => {
           credentialRevisionBasis?.captureCredentialRevision(currentRevision);

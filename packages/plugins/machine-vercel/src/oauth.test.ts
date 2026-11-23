@@ -326,6 +326,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
     const result = await h.mode.complete(completion, h.authentication);
     expect(result).toMatchObject({
       status: 'connected',
+      credentialKind: 'oauth',
       displayName: 'Example team',
       providerIdentity: {
         accountId: 'user_subject',
@@ -390,6 +391,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
     const result = await h.mode.reconcile(h.authentication);
     expect(result).toMatchObject({
       status: 'connected',
+      credentialKind: 'oauth',
       displayName: 'Other team',
       providerIdentity: {
         accountId: 'user_subject',
@@ -438,6 +440,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
     const result = await h.runtime.refresh({ ...h.mutation, stagedCredentials: legacy.store });
     expect(result).toMatchObject({
       status: 'connected',
+      credentialKind: 'oauth',
       providerIdentity: { accountId: 'user_subject', organizationId: teamId },
     });
     expect(result).toHaveProperty(
@@ -490,6 +493,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
     const live = await harness({ values: { teamId }, retained: signedIn });
     expect(await live.runtime.status(live.read)).toMatchObject({
       status: 'connected',
+      credentialKind: 'oauth',
       expiresAt: Number(signedIn.expiresAtMs),
       providerIdentity: { accountId: 'user_subject', organizationId: teamId },
     });

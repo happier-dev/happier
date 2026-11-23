@@ -24,6 +24,7 @@ import * as vercelGateway from '../../../../../packages/plugins/vercel-ai-gatewa
 
 import { createProviderProbeHttpClient, type ProviderProbeTransportRequest } from './client';
 import { createRuntimeProviderServices } from './runtimeServices';
+import { createVercelOAuthInventoryTargetResolver } from './vercelOAuthInventory.testkit';
 
 const definition = ProviderContributionV1Schema.parse(vercelGateway.PLUGIN_MANIFEST.contributes.providers[0]);
 const provider = { pluginId: vercelGateway.PLUGIN_MANIFEST.id, localId: definition.id };
@@ -136,8 +137,8 @@ it('reads only the selected Vercel account usage through its finite request-auth
   const owner = createConnectedAccountPurposeBindingOwner({
     store: { read: async () => ({ v: 1, bindings: [] }), update: denied, subscribe: () => ({ dispose() {} }) },
     selectTarget: denied, projectTargetAccounts: denied, assertTargetAccountMaterializable: denied,
-    resolveTarget: async target => target.kind === 'account' && target.account.accountId === account.accountId
-      ? { account, displayName: 'Selected Vercel account' } : null,
+    resolveTarget: createVercelOAuthInventoryTargetResolver({ account, displayName: 'Selected Vercel account',
+      kind: 'oauth', readCredentialRevision: () => revision }),
     resolveCredentialRevision: async () => revision,
     materializeAccount: materialize,
   });
