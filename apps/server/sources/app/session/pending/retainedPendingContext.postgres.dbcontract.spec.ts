@@ -121,13 +121,16 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('r
         expect(await materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: quietId } });
 
         if (scenario === 'reconnect' || scenario === 'successor') {
-            const next = await presence.registerPublisher({ socket: scenario === 'reconnect' ? socket : {}, binding,
-                completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+            const next = await createSessionPublisherPresence().registerPublisher({ socket: {}, binding,
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 },
+                ...(scenario === 'reconnect' ? { retainedContext: { localIds: [quietId] } } : {}),
+            });
             if (next.status !== 'registered') throw new Error('Replacement publisher fixture refused');
             publisherAuthority = { ...binding, committedFence: next.committedFence };
             expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
-                sessionId: session.id, localId: quietId } } })).toMatchObject({
-                deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain' });
+                sessionId: session.id, localId: quietId } } })).toMatchObject(scenario === 'reconnect'
+                ? { status: 'queued', deliveryState: 'delivering', deliveryBlockedReason: null }
+                : { status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain' });
         }
         if (scenario === 'ordinary-head') {
             expect(await enqueue(ordinaryId)).toMatchObject({ ok: true });

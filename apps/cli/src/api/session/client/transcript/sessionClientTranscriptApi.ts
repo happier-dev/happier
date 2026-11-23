@@ -143,6 +143,8 @@ export type VoiceAgentTranscriptTurnCommitParams = Readonly<{
     assistant: Readonly<{ text: string; localId: string; meta: Record<string, unknown> }>;
 }>;
 
+type RetainedPendingContext = import('@happier-dev/protocol/sessions/pending/retainedPendingContextV1').RetainedPendingContextV1;
+
 type SessionAliveMode = 'local' | 'remote';
 type SessionAlivePayload = Readonly<{
     sid: string;
@@ -151,6 +153,7 @@ type SessionAlivePayload = Readonly<{
     mode: SessionAliveMode;
     latestTurnStatus?: PrimaryTurnStatusV1;
     latestTurnStatusObservedAt?: number;
+    retainedContext?: RetainedPendingContext;
 }>;
 type SessionPresenceSnapshot = Readonly<{
     thinking: boolean;
@@ -270,6 +273,7 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         observedAt: number;
     }> | null;
     onPresence?: (presence: SessionPresenceSnapshot) => void;
+    readRetainedPendingContext?: () => RetainedPendingContext | undefined;
     getMetadataSnapshot: () => Metadata | null;
     updateAgentState: (handler: (metadata: AgentState) => AgentState) => Promise<void>;
     getAgentStateRequestStore?: () => AgentStateRequestStore | null;
@@ -445,6 +449,11 @@ export function createSessionClientTranscriptApi(
         const socket = deps.getSocket();
         if (!socket.connected) return false;
 
+        const retainedContext = deps.readRetainedPendingContext?.();
+        if (retainedContext) {
+            socket.emit('session-alive', { ...payload, retainedContext });
+            return true;
+        }
         if (
             payload.thinking
             || isActiveLatestTurnStatus(payload.latestTurnStatus)

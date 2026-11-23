@@ -27,6 +27,8 @@ import { SessionFollowInputV1Schema, deriveSessionFollowInputLocalIdV1, deriveSe
 import { decodeBase64 } from 'privacy-kit';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
+import { materializeNextPendingMessage } from '@/app/session/pending/materializeNextPendingMessage';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
@@ -416,6 +418,28 @@ describe('SessionFollowEdge service', () => {
             const nextTurn = await send(later, 'next_turn');
             expect(nextTurn.statusCode, nextTurn.body).toBe(200);
             expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(2);
+            const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id,
+                original: { sourceSessionId: source.id, sourceTurn: first } });
+            const binding = { accountId: owner.id, machineId: machine.id, sessionId: destination.id };
+            const snapshot = { state: 'idle', activeCount: 0 } as const;
+            const socket = {};
+            const publisher = await createSessionPublisherPresence().registerPublisher({
+                socket, binding, completeActivitySnapshot: snapshot,
+            });
+            if (publisher.status !== 'registered') throw new Error(`Fixture publisher: ${publisher.reason}`);
+            expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: destination.id,
+                publisherAuthority: { ...binding, committedFence: publisher.committedFence },
+                deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready',
+            })).toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+            const retainedContext = { localIds: [localId] };
+            // A new presence instance has no memory of the previous Home's sockets.
+            const registration = { socket: {}, binding, completeActivitySnapshot: snapshot, retainedContext };
+            expect(await createSessionPublisherPresence().registerPublisher(registration))
+                .toMatchObject({ status: 'registered' });
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: destination.id, localId } } })).toMatchObject({ status: 'queued', deliveryBlockedReason: null });
+            expect(await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } }))
+                .toMatchObject({ deliveredTurnId: null });
         });
         expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(0);
     });

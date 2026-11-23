@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from '../../../zodRuntimePolicy.js';
+import { RetainedPendingContextV1Schema } from '../../pending/retainedPendingContextV1.js';
 import { SessionMetadataPublisherPreconditionV1Schema } from '../../metadata/sessionMetadataSchemasV1.js';
 
 import {
@@ -16,6 +17,7 @@ export const SessionRuntimeActivitySnapshotRequestSchema = lazyZodSchema(() => z
   sessionId: z.string().check(z.trim(), z.minLength(1)),
   mutationId: z.string().check(z.trim(), z.minLength(1)),
   snapshot: SessionRuntimeActivitySnapshotSchema,
+  retainedContext: z.optional(RetainedPendingContextV1Schema),
 }));
 
 const SessionRuntimeActivityTransportIdentitySchema = lazyZodSchema(() => z.strictObject({

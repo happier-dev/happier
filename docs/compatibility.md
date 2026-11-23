@@ -10397,6 +10397,14 @@ to live and durable Account changes. Runner and daemon should use matching
 development sources for keyed watches. The stored Settings records and
 content-free Account change hints keep their existing shapes.
 
+Unreleased 0.3 publisher registration accepts optional retained Pending context
+on Runtime Activity snapshots and Session presence. The runner reports only
+exact informational claims it still holds before provider dispatch. Older
+runners omit the evidence, so current Home keeps the inherited-claim
+uncertainty rule for them. Load matching CLI, Home and Protocol for updated
+snapshots because older development readers reject the additional field.
+The 0.2 frontier at `001ec4ea85` has no Runtime Activity snapshot request.
+
 Unreleased 0.3 `SessionTurnV1` reads optionally expose the accepted terminal
 mutation's `automationLifecycleFacts` through the existing closed lifecycle-facts
 schema. The surrounding read projection keeps its existing additive policy.

@@ -1,3 +1,5 @@
+import type { RetainedPendingContextV1 } from '@happier-dev/protocol/sessions/pending/retainedPendingContextV1';
+import { readInheritedQuietPendingContextInTx } from '@/app/session/pending/retainedPendingContext';
 import type { Prisma } from '@prisma/client';
 import { MACHINE_DELETED_SESSION_LIFECYCLE_REASON, type MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
@@ -672,6 +674,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         binding: SessionPublisherBinding,
         snapshot: SessionRuntimeActivitySnapshot,
         observedAt?: Date,
+        retainedContext?: RetainedPendingContextV1,
     ): Promise<RegisterSessionPublisherResult> => await inTx(async (tx): Promise<PresenceInTxResult<RegisterSessionPublisherResult>> => {
         await acquireSessionAccountCursorLocksInTx(tx, [binding.sessionId]);
         const session = await tx.session.findUnique({
@@ -692,11 +695,16 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             return { status: "rejected", reason: "revision_overflow" };
         }
 
+        // A surviving publisher can still hold quiet inputs for a natural prompt.
+        // Keep that custody in place. Without the host's exact local evidence,
+        // a claim may already have been represented in a provider invocation.
+        const retainedLocalIds = await readInheritedQuietPendingContextInTx(tx, binding.sessionId, retainedContext?.localIds ?? []);
         const inherited = await tx.sessionPendingMessage.updateMany({
             where: {
                 sessionId: binding.sessionId,
                 status: "queued",
                 deliveryState: "delivering",
+                ...(retainedLocalIds.length ? { localId: { notIn: retainedLocalIds } } : {}),
             },
             data: {
                 deliveryState: "blocked",
@@ -799,6 +807,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         binding: SessionPublisherBinding;
         completeActivitySnapshot: unknown;
         observedAt?: Date;
+        retainedContext?: RetainedPendingContextV1;
     }>): Promise<RegisterSessionPublisherResult> => await serialize(params.socket, async () => {
         const snapshot = parseCompleteSnapshot(params.completeActivitySnapshot);
         if (!snapshot) return { status: "rejected", reason: "invalid-params" };
@@ -809,7 +818,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         }
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                const result = await registerOnce(params.binding, snapshot, params.observedAt);
+                const result = await registerOnce(params.binding, snapshot, params.observedAt, params.retainedContext);
                 if (result.status === "registered") {
                     rememberRegistration(params.socket, {
                         binding: { ...params.binding },
@@ -1043,12 +1052,13 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         socket: object;
         binding: SessionPublisherBinding;
         completeSnapshot: unknown;
+        retainedContext?: RetainedPendingContextV1;
     }>) => await serialize(params.socket, async () => {
         const snapshot = parseCompleteSnapshot(params.completeSnapshot);
         if (!snapshot) return { status: "rejected", reason: "invalid-params" } as const;
         const registration = registrations.get(params.socket);
         if (!registration) {
-            const result = await registerOnce(params.binding, snapshot);
+            const result = await registerOnce(params.binding, snapshot, undefined, params.retainedContext);
             if (result.status !== "registered") return result;
             rememberRegistration(params.socket, {
                 binding: { ...params.binding },

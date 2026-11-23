@@ -291,7 +291,7 @@ describe('consumed ACP input → host turn → Pending', () => {
             .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
     });
 
-    it.each(['retained', 'reconnect', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review', 'busy-wake'] as const)(
+    it.each(['retained', 'reconnect', 'reconnect-after-dispatch', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review', 'busy-wake'] as const)(
         'carries retained originals into the next Pending input (%s)', async scenario => {
         harness.resetEnv({ HAPPIER_FEATURE_SESSIONS__ENABLED: 'true', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' });
         await getOrCreateServerIdentityId();
@@ -348,6 +348,18 @@ describe('consumed ACP input → host turn → Pending', () => {
         expect(await inTx(tx => writeSessionDataKeyEnvelopeInTx(tx, { sessionId: source.id,
             recipientAccountId: owner.id, encryptedDataKey: decodeBase64(sourceResource.dataEncryptionKey),
             markRecipientChanged: false }))).toMatchObject({ ok: true });
+        const finishedSourceTurn = scenario === 'reconnect' || scenario === 'reconnect-after-dispatch'
+            ? { id: 'source-finished', status: 'completed' as const } : null;
+        if (finishedSourceTurn) {
+            await db.sessionTurn.create({ data: {
+                sessionId: source.id, turnId: finishedSourceTurn.id, status: finishedSourceTurn.status,
+                startedAt: 1n, updatedAt: 2n, terminalAt: 2n,
+                transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 1, finalAssistantMessageSeq: 1 }),
+            } });
+            await db.session.update({ where: { id: source.id }, data: {
+                latestTurnId: finishedSourceTurn.id, latestTurnStatus: finishedSourceTurn.status,
+            } });
+        }
         const sourceMessage = { localId: 'source-original', seq: 1 };
         await db.sessionMessage.create({ data: { sessionId: source.id, ...sourceMessage, messageRole: 'agent',
             content: { t: 'encrypted', c: encodeBase64(encrypt(sourceResource.dataKey, 'dataKey', {
@@ -357,8 +369,11 @@ describe('consumed ACP input → host turn → Pending', () => {
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: source.id }),
             relation: 'manager', managerSourceSessionId: source.id,
             policyJson: JSON.stringify({ preset: scenario === 'busy-wake' ? 'everything' : 'important' }) } });
-        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: scenario === 'busy-wake' ? 'wake' : 'next_turn', event: { kind: 'update_posted' },
-            original: { sourceSessionId: source.id, sourceMessage } });
+        const delivery = SessionFollowInputV1Schema.parse(finishedSourceTurn
+            ? { v: 1, delivery: 'next_turn', event: { kind: 'finished' },
+                original: { sourceSessionId: source.id, sourceTurn: finishedSourceTurn } }
+            : { v: 1, delivery: scenario === 'busy-wake' ? 'wake' : 'next_turn', event: { kind: 'update_posted' },
+                original: { sourceSessionId: source.id, sourceMessage } });
         const host = buildTrustedHostSessionInputAdmissionV1('agent');
         async function enqueueFollow(original: typeof delivery): Promise<string> {
             const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: session.id, original: original.original });
@@ -440,18 +455,24 @@ describe('consumed ACP input → host turn → Pending', () => {
         expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
             .toMatchObject({ type: 'materialized', localId: quietId });
         expect(queue.size()).toBe(0);
-        if (scenario === 'reconnect') {
+        const readQuiet = () => db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+            sessionId: session.id, localId: quietId } } });
+        const reconnectPublisher = async () => {
             const socket = transports.at(-1)!.socket;
             socket.disconnect();
             socket.connect();
             expect(await client.claimCurrentSessionPublisherAuthorityForStartup()).toMatchObject({ status: 'claimed' });
-            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
-                sessionId: session.id, localId: quietId } } })).toMatchObject({
-                deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain' });
+        };
+        if (scenario === 'reconnect') {
+            expect(await readQuiet()).toMatchObject({ status: 'queued', deliveryState: 'delivering' });
+            await reconnectPublisher();
+            expect(await readQuiet()).toMatchObject({ status: 'queued', deliveryState: 'delivering', deliveryBlockedReason: null });
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+                .toMatchObject({ pendingCount: 1, pendingBlockedCount: 0 });
         }
         if (scenario === 'successor') {
-            await client.close();
-            clients.delete(client);
+            // Simulate loss of the original process before any retirement settlement.
+            transports.at(-1)!.socket.disconnect();
             client = createClient();
             expect(await client.claimCurrentSessionPublisherAuthorityForStartup()).toMatchObject({ status: 'claimed' });
         }
@@ -520,7 +541,9 @@ describe('consumed ACP input → host turn → Pending', () => {
             throw new Error('Missing fixture admitted Follow observation');
         }
         expect(await hydrateObservation({ observation: admittedObservation, signal: new AbortController().signal }))
-            .toMatchObject({ reason: 'source_changed', recentMessages: [{ text: 'Worker original result', seq: 1 }] });
+            .toMatchObject(finishedSourceTurn
+                ? { reason: 'source_changed', workerUpdate: { ownerState: 'settled' } }
+                : { reason: 'source_changed', recentMessages: [{ text: 'Worker original result', seq: 1 }] });
         }
         const prepared = scenario === 'file-review' ? null : await reconciler({ signal: new AbortController().signal,
             followDeliveries: batch!.message.followDeliveries });
@@ -529,10 +552,12 @@ describe('consumed ACP input → host turn → Pending', () => {
         const prompt = scenario === 'file-review'
             ? (await prepareSessionInputForProviderDispatch({ prompt: batch!.message, transformedUserText: batch!.message.text,
                 providerNativeCommand: false, localId: humanId, signal: new AbortController().signal })).renderPrompt()
-            : renderSessionInputContextPromptV1({ sessionFollowUpdates: prepared?.updates,
+            : renderSessionInputContextPromptV1({ sessionFollowUpdates: prepared?.updates, workerUpdates: prepared?.workerUpdates,
                 transformedUserText: batch!.message.text });
-        if (scenario === 'file-review') expect(prompt).toContain('Continue the work\n\nYou discarded 2 changes in "src/app.ts".');
-        else if (scenario !== 'omitted') expect(prompt).toContain('Worker original result');
+        if (scenario === 'file-review') {
+            expect(prompt).toContain('Continue the work');
+            expect(prompt).toContain('<happier_review_note>');
+        } else if (scenario !== 'omitted') expect(prompt).toContain('Worker original result');
         let emitNative: ((event: AgentSessionRuntimeEvent) => void) | undefined;
         let sequence = 0;
         const native: AgentSessionRuntime = {
@@ -540,6 +565,10 @@ describe('consumed ACP input → host turn → Pending', () => {
                 expect(request.inputIds).toEqual([humanId]);
                 expect(request.input.text).toBe(prompt);
                 if (request.delivery.kind !== 'newTurn') throw new Error('Expected natural newTurn');
+                if (scenario === 'reconnect-after-dispatch') {
+                    await reconnectPublisher();
+                    return { status: 'admitted' }; // Native acceptance is unavailable after reconnect.
+                }
                 emitNative?.({ kind: 'input-accepted', sessionId: session.id, inputIds: request.inputIds,
                     delivery: request.delivery, sequence: ++sequence, emittedAtMs: Date.now() });
                 return { status: 'admitted' };
@@ -550,7 +579,7 @@ describe('consumed ACP input → host turn → Pending', () => {
         const runtime = createNativeAgentSessionOperations(native, session.id, undefined, undefined, undefined,
             undefined, undefined, { context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
                 cwd: harness.baseDir, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-                cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false } });
+                cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
         const acceptance = createSessionProviderInputOutcomeBinding({ getTarget: () => client });
         let primarySettlement: Promise<void> | undefined;
         const representedInputs = scenario === 'file-review'
@@ -568,7 +597,19 @@ describe('consumed ACP input → host turn → Pending', () => {
         const unbind = bindSessionProviderInputOutcome({ runtime, observe: acceptance.observeProviderInputOutcome,
             wakePendingMaterialization: () => client.wakePendingMaterialization() });
         try {
-            await runtime.sendTurnPrompt(prompt, { localId: humanId, turnId: `turn-${humanId}` });
+            const turnId = `turn-${humanId}`;
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: { v: 1, action: 'begin',
+                sessionId: session.id, turnId, startingInputId: humanId, mutationId: randomUUID(), observedAt: Date.now() } }))
+                .toMatchObject({ ok: true, didApply: true });
+            client.markPendingProviderInputDispatched([humanId, ...representedIds]);
+            await runtime.sendTurnPrompt(prompt, { localId: humanId, turnId });
+            if (scenario === 'reconnect-after-dispatch') {
+                expect(await readQuiet()).toMatchObject({
+                    deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain',
+                });
+                expect(primarySettlement).toBeUndefined();
+                return;
+            }
             expect(primarySettlement).toBeDefined();
             await primarySettlement;
             expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: humanId } })).toBe(1);
@@ -583,9 +624,10 @@ describe('consumed ACP input → host turn → Pending', () => {
             } else {
                 expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId: quietId } })).toBe(0);
                 expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: quietId } })).toBe(1);
-                if (scenario !== 'file-review') await waitForCondition(async () => (await db.sessionFollowEdge.findUniqueOrThrow({
-                    where: { managerSourceSessionId: source.id } })).deliveredTranscriptSeq === 1,
-                { timeoutMs: 5_000, intervalMs: 10, label: 'exact quiet original native-accepted Follow ACK' });
+                if (scenario !== 'file-review') await waitForCondition(async () => {
+                    const edge = await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } });
+                    return finishedSourceTurn ? edge.deliveredTurnId === finishedSourceTurn.id : edge.deliveredTranscriptSeq === 1;
+                }, { timeoutMs: 5_000, intervalMs: 10, label: 'exact quiet original native-accepted Follow ACK' });
             }
         } finally {
             unbind();

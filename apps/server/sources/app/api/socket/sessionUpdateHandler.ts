@@ -84,6 +84,7 @@ import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protoc
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { RetainedPendingContextV1Schema, type RetainedPendingContextV1 } from '@happier-dev/protocol/sessions/pending/retainedPendingContextV1';
 import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SessionPublisherAuthorityCheckAckSchema, SessionPublisherAuthorityCheckRequestSchema, SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT, SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivityCloseAckSchema, SessionRuntimeActivityCloseRequestSchema, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
@@ -447,6 +448,7 @@ export function sessionUpdateHandler(
     let pendingLegacyAlive: Readonly<{
         observedAtMs: number;
         sessionId: string;
+        retainedContext?: RetainedPendingContextV1;
     }> | null = null;
     let legacyAliveTimer: ReturnType<typeof setTimeout> | null = null;
     let legacyAliveStopped = false;
@@ -1576,6 +1578,7 @@ export function sessionUpdateHandler(
                 socket,
                 binding: trustedSessionPublisher.binding,
                 completeSnapshot: request.data.snapshot,
+                retainedContext: request.data.retainedContext,
             }));
             if (result.status === "rejected") {
                 if (result.reason === "invalid-params") {
@@ -1800,6 +1803,7 @@ export function sessionUpdateHandler(
                             binding: publisher.binding,
                             completeActivitySnapshot: { state: "unknown", activeCount: 0 },
                             observedAt,
+                            retainedContext: observation.retainedContext,
                         })
                         : touched;
                 },
@@ -1897,6 +1901,7 @@ export function sessionUpdateHandler(
     registerSessionEvent('session-alive', async (data: {
         sid: string;
         time: number;
+        retainedContext?: unknown;
         thinking?: boolean;
         latestTurnStatus?: unknown;
         latestTurnStatusObservedAt?: unknown;
@@ -1908,9 +1913,12 @@ export function sessionUpdateHandler(
         const observedAtMs = Date.now();
         const timestamp = Math.min(data.time, observedAtMs);
         if (timestamp < observedAtMs - 1000 * 60 * 10) return;
+        const retainedContext = data.retainedContext === undefined ? undefined
+            : RetainedPendingContextV1Schema.safeParse(data.retainedContext);
         pendingLegacyAlive = {
             observedAtMs,
             sessionId: data.sid,
+            ...(retainedContext?.success ? { retainedContext: retainedContext.data } : {}),
         };
         await flushLegacyAlive();
     });

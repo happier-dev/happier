@@ -1525,6 +1525,7 @@ export class ApiSessionClient extends EventEmitter {
             token: this.token,
             sessionId: this.sessionId,
             turnAssistantTextSnapshotStore: this.turnAssistantTextSnapshotStore,
+            readRetainedPendingContext: () => this.readUndispatchedRetainedPendingContext(),
             outboundShapeLogger: this.outboundShapeLogger,
             getSocket: () => ({
                 connected: this.socket?.connected ?? false,
@@ -1974,8 +1975,7 @@ export class ApiSessionClient extends EventEmitter {
             applyPendingCustodyDeliveryStatuses: (localIds, statuses) => this.applyPendingProviderInputCustodyStatuses(
                 localIds, new Map(statuses.map(entry => [entry.localId, entry.deliveryStatus]))),
             observePendingCustodyStatusesCurrentAt: (pendingVersion, localIds) => this.observePendingCustodyStatusesCurrentAt(pendingVersion, localIds),
-            readRetainedContextLocalIds: () => (this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? [])
-                .filter(localId => this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId)),
+            readRetainedContextLocalIds: () => this.readUndispatchedRetainedContextLocalIds(),
             setProviderInputConsumer: (callback) => {
                 this.providerInputConsumer = callback;
             },
@@ -3917,12 +3917,29 @@ export class ApiSessionClient extends EventEmitter {
         return acknowledged;
     }
 
+    private runtimeActivityAcknowledgedConnectionEpoch: number | undefined;
+
+    private readUndispatchedRetainedContextLocalIds(): string[] {
+        if (this.providerInputClosing) return [];
+        return (this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? []).filter(localId =>
+            this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId)
+            && !this.dispatchedPendingProviderInputLocalIds.has(localId)
+            && !this.terminalPendingSettlementLocalIds.has(localId));
+    }
+
+    private readUndispatchedRetainedPendingContext(): { localIds: string[] } | undefined {
+        if (this.runtimeActivityAcknowledgedConnectionEpoch === this.sessionConnectionEpoch) return undefined;
+        const localIds = this.readUndispatchedRetainedContextLocalIds();
+        return localIds.length ? { localIds } : undefined;
+    }
+
     private async updateRuntimeActivityProjectionOnSocketExact(
         projection: RuntimeActivityProjectionWrite,
         socket: Socket<ServerToClientEvents, ClientToServerEvents>,
         mutationId = resolveRuntimeActivitySnapshotMutationId(this.sessionId),
     ): Promise<RuntimeActivityProjectionSettlement> {
-        return await updateSessionRuntimeActivityProjectionWithAck({
+        const connectionEpoch = this.sessionConnectionEpoch;
+        const acknowledged = await updateSessionRuntimeActivityProjectionWithAck({
             signal: this.socketAckAbortController.signal,
             socket:
                 socket as unknown as Parameters<
@@ -3932,7 +3949,13 @@ export class ApiSessionClient extends EventEmitter {
             mutationId,
             state: projection.runtimeActivityState,
             runtimeActivityActiveCount: projection.runtimeActivityActiveCount,
+            readRetainedContext: () => this.socket === socket
+                ? this.readUndispatchedRetainedPendingContext() : undefined,
         });
+        if (this.socket === socket && this.sessionConnectionEpoch === connectionEpoch) {
+            this.runtimeActivityAcknowledgedConnectionEpoch = connectionEpoch;
+        }
+        return acknowledged;
     }
 
     private isCurrentPublisherClaimServerContract(

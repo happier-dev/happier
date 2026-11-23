@@ -186,8 +186,14 @@ for host admission uses the same exact-input settlement when disposed.
 
 A successor publisher returns only that proven pre-dispatch disposition to the
 existing Pending queue, preserving its local id, content and requested action.
-Inherited delivering claims remain `delivery_outcome_uncertain`; a late
-pre-dispatch settlement cannot overwrite that uncertainty. Historical
+When Home restarts and the same runner reconnects, registration can preserve
+claims for quiet context the runner still holds in its local queue. The runner
+reports exact local IDs from that queue before native dispatch. Home checks
+those IDs against the admitted informational claims and leaves the matching
+rows in the runner's custody for the next natural input. Registration neither
+sends nor acknowledges the context. Every inherited claim without that evidence
+remains `delivery_outcome_uncertain`. A late pre-dispatch settlement cannot
+overwrite that uncertainty. Historical
 `runtime_disposed_before_delivery` rows retain their existing behavior. A failed
 close-time write supplies no replay proof, so replacement keeps the uncertainty
 guard. This development correction requires the composed CLI/daemon replay on

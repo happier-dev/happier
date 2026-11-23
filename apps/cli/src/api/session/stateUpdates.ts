@@ -1,6 +1,6 @@
 import { backoff } from '@/utils/time';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
-import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema, type SessionRuntimeActivitySnapshotAck } from '@happier-dev/protocol/sessions/runtime/activity/transport';
+import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema, type SessionRuntimeActivitySnapshotAck, type SessionRuntimeActivitySnapshotRequest } from '@happier-dev/protocol/sessions/runtime/activity/transport';
 
 type AckableSocket = {
     emitWithAck(event: string, ...args: unknown[]): Promise<unknown>;
@@ -37,6 +37,7 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
     mutationId: string;
     state: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
+    readRetainedContext?: () => SessionRuntimeActivitySnapshotRequest['retainedContext'];
 }): Promise<Readonly<{
     disposition: 'applied' | 'unchanged';
     projection: Readonly<{
@@ -47,9 +48,11 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
     }>;
 }>> {
     return await backoff(async () => {
+        const retainedContext = opts.readRetainedContext?.();
         const request = SessionRuntimeActivitySnapshotRequestSchema.parse({
             sessionId: opts.sessionId,
             mutationId: opts.mutationId,
+            ...(retainedContext ? { retainedContext } : {}),
             snapshot: {
                 state: opts.state,
                 activeCount: opts.runtimeActivityActiveCount,
