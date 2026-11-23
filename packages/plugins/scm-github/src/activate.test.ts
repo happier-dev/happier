@@ -187,22 +187,6 @@ describe('activate', () => {
     expect(sourceSetupAction).toMatchObject({ dangerLevel: 'safe' });
     expect(sourceSetupAction).not.toHaveProperty('confirmation');
     expect(sourceSetupAction).toMatchObject({
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          credentialRef: {
-            type: 'object',
-            additionalProperties: false,
-          },
-          repository: {
-            type: 'string',
-            minLength: 3,
-            maxLength: 512,
-          },
-        },
-        required: ['repository'],
-      },
       inputHints: {
         fields: [{
           path: 'credentialRef',

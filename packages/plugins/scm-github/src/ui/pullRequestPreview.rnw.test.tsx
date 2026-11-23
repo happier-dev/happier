@@ -9,6 +9,7 @@ import {
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -130,13 +131,21 @@ async function mountOverview(
             })), digest };
           }
           if (typeof resource !== 'string' && 'hostRead' in resource && String(resource.hostRead) === 'reviews.comments.list') {
+            const finding = {
+              id: 'engine-finding', title: 'Preserve the persisted finding',
+              severity: 'high', category: 'correctness', summary: 'A finding shared with the native Review.',
+            } as const;
+            const comment = ReviewCommentV1Schema.parse({
+              v: 1, id: 'same-finding', threadId: 'same-finding', accountId: 'preview-account',
+              reviewId: 'embedded-review', finding, state: 'open', serverRevision: 3,
+              reviewTriageStatus: 'accept', body: 'The current finding explanation.', bodyVersion: 2,
+              author: { kind: 'plugin', pluginId: 'review-engine' },
+              anchor: { kind: 'file', filePath: 'cart.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+              transitions: [], edits: [], flags: {}, dispositions: {}, createdAt: 1, updatedAt: 2,
+            });
             return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({
               status: 'loaded', cursor: 'next-page', pending: {}, comments: [], unavailableFindings: [],
-              rows: [{ rowId: 'same-finding', finding: { id: 'engine-finding', title: 'Preserve the persisted finding',
-                severity: 'high', category: 'correctness', summary: 'A finding shared with the native Review.' },
-                comment: { id: 'same-finding', reviewId: 'embedded-review', state: 'open', serverRevision: 3,
-                  reviewTriageStatus: 'accept', body: 'The current finding explanation.',
-                  author: { kind: 'plugin', pluginId: 'review-engine' }, transitions: [], edits: [] } }],
+              rows: [{ rowId: comment.id, finding, comment }],
             })), digest };
           }
           return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({ digest })), digest };
