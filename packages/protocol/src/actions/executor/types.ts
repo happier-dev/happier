@@ -2689,6 +2689,10 @@ export type ActionExecutorDeps = Readonly<{
   sessionPendingActionSet?: (args: Readonly<import('../../sessions/pending/pendingRequestedActionV1.js').SessionPendingActionSetInputV1 & {
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  sessionPendingRetry?: (args: Readonly<{
+    input: import('../specs/session/pendingEdit.js').SessionPendingRetryInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<boolean>;
   sessionPendingEdit?: (args: Readonly<{
     input: import('../specs/session/pendingEdit.js').SessionPendingEditInputV1;
     context: ActionExecutorContext;

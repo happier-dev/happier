@@ -3134,6 +3134,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         },
       }),
 
+    sessionPendingRetry: accountContext ? async ({ input, context }) => {
+      context.signal?.throwIfAborted();
+      return sync.retryPendingMessageSend(input.sessionId, input.localId, {
+        serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+      });
+    } : undefined,
     sessionPendingEdit: accountContext ? createUiPendingEditAction(accountContext, opts?.pendingMessageEditIsCurrent) : undefined,
     sessionPendingSendNow: accountContext ? createUiPendingSendNowAction(accountContext) : undefined,
     sessionPendingRequeue: async ({ sessionId, localId, targetExecutionRunId, context }) => {

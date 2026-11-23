@@ -687,6 +687,12 @@ export type SessionControlActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "session.pending.retry": {
+        sessionId: string;
+        localId: string;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "session.pending.next": Record<string, never> & {
         clientId?: string | undefined;
     };
@@ -2114,6 +2120,9 @@ export type SessionControlActionResultById = {
             };
         };
         settlement: 'complete' | 'failed';
+    };
+    readonly "session.pending.retry": {
+        status: 'retry_requested';
     };
     readonly "session.pending.next": {
         status: 'none' | 'opened';

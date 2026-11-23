@@ -574,6 +574,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   session_control: [
     'session.pending.edit',
+    'session.pending.retry',
     'session.pending.sendNow',
     'session.pending.requeue',
     'session.pending.action.set',

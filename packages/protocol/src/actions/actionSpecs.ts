@@ -80,7 +80,8 @@ import { PROMPT_PICKER_ACTION_SPECS } from './promptPickerActionSpecs.js';
 import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs.js';
 import { PROMPT_INVOCATION_CREATE_ACTION_SPECS } from './promptInvocationCreateActionSpecs.js';
 import { SESSION_PENDING_NEXT_ACTION_SPECS } from './specs/session/pendingNext.js';
-import { SESSION_PENDING_EDIT_ACTION_SPECS, SessionPendingEditInputV1Schema, SessionPendingEditResultV1Schema } from './specs/session/pendingEdit.js';
+import { SESSION_PENDING_EDIT_ACTION_SPECS, SessionPendingEditInputV1Schema, SessionPendingEditResultV1Schema,
+  SessionPendingRetryInputV1Schema, SessionPendingRetryResultV1Schema } from './specs/session/pendingEdit.js';
 export { SessionPendingEditInputV1Schema, SessionPendingEditResultV1Schema } from './specs/session/pendingEdit.js';
 export type { SessionPendingEditInputV1, SessionPendingEditResultV1 } from './specs/session/pendingEdit.js';
 export type { SessionPendingNextOutput } from './specs/session/pendingNext.js';
@@ -1299,6 +1300,11 @@ type SessionPendingCustodyActionSpecDefinition =
       'session.pending.edit',
       typeof SessionPendingEditInputV1Schema,
       typeof SessionPendingEditResultV1Schema
+    >
+  | CanonicalActionSchemaDefinition<
+      'session.pending.retry',
+      typeof SessionPendingRetryInputV1Schema,
+      typeof SessionPendingRetryResultV1Schema
     >;
 
 type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{

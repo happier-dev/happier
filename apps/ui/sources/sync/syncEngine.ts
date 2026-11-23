@@ -7048,41 +7048,41 @@ class Sync {
         }
     }
 
-    async retryPendingMessageSend(sessionId: string, localId: string, options?: PendingQueueOwnerOptions): Promise<void> {
-        await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, serverWireMode, isCurrent }) => {
-        const pending = storage.getState().sessionPending[sessionId]?.messages?.find((message) =>
-            isPendingOutboxProjectionForIdentity(message, { sessionId, localId, outboxScope })
-        );
-        if (!pending) throw new Error('Pending retry requires its persisted server-account scope');
-        const projectedServerId = storage.getState().sessions[sessionId]?.serverId;
-        if (
-            !options?.serverId
-            || (projectedServerId && areServerProfileIdentifiersEquivalent(projectedServerId, outboxScope.serverId))
-            || (!projectedServerId && areServerProfileIdentifiersEquivalent(outboxScope.serverId, this.appliedServerTarget?.serverId))
-        ) {
-            this.markSessionLiveTailIntent(sessionId);
-        }
-        await setPendingMessageSendState(sessionId, localId, 'unconfirmed', outboxScope);
-        try {
-            const result = await retryPendingOutboxOperationV2({
-                sessionId,
-                localId,
-                request,
-                outboxScope,
-                serverWireMode,
-            });
-            if (!await isCurrent()) return;
-            if (!result.accepted && shouldSchedulePendingOutboxTransportRetry(serverWireMode)) {
-                this.schedulePendingOutboxOperationRetry({ sessionId, localId, outboxScope });
+    async retryPendingMessageSend(sessionId: string, localId: string, options?: PendingQueueOwnerOptions): Promise<boolean> {
+        return await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, serverWireMode, isCurrent }) => {
+            const pending = storage.getState().sessionPending[sessionId]?.messages?.find((message) =>
+                isPendingOutboxProjectionForIdentity(message, { sessionId, localId, outboxScope })
+            );
+            if (!pending) return false;
+            const projectedServerId = storage.getState().sessions[sessionId]?.serverId;
+            if (
+                !options?.serverId
+                || (projectedServerId && areServerProfileIdentifiersEquivalent(projectedServerId, outboxScope.serverId))
+                || (!projectedServerId && areServerProfileIdentifiersEquivalent(outboxScope.serverId, this.appliedServerTarget?.serverId))
+            ) {
+                this.markSessionLiveTailIntent(sessionId);
             }
-        } catch (error) {
-            if (!await isCurrent()) throw error;
-            if (isTerminalAuthError(error)) {
-                this.recordTerminalAuthSyncError(error, { serverId: outboxScope.serverId });
+            await setPendingMessageSendState(sessionId, localId, 'unconfirmed', outboxScope);
+            try {
+                const result = await retryPendingOutboxOperationV2({
+                    sessionId,
+                    localId,
+                    request,
+                    outboxScope,
+                    serverWireMode,
+                });
+                if (await isCurrent() && !result.accepted && shouldSchedulePendingOutboxTransportRetry(serverWireMode)) {
+                    this.schedulePendingOutboxOperationRetry({ sessionId, localId, outboxScope });
+                }
+            } catch (error) {
+                if (!await isCurrent()) throw error;
+                if (isTerminalAuthError(error)) {
+                    this.recordTerminalAuthSyncError(error, { serverId: outboxScope.serverId });
+                }
+                await setPendingMessageSendState(sessionId, localId, 'failed', outboxScope);
             }
-            await setPendingMessageSendState(sessionId, localId, 'failed', outboxScope);
-        }
-        }, undefined, options?.serverId);
+            return true;
+        }, undefined, options?.serverId, options?.accountLifetime);
     }
 
     async updatePendingMessage(

@@ -237,6 +237,9 @@ export function clientActionUnavailable(actionId: ThemeActionId): ActionExecuteF
 export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult;
 export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult {
   if (isThemeActionId(actionId)) return { ok: false, errorCode: 'client_not_connected', error: 'client_not_connected' };
+  if (actionId === 'session.pending.retry') return { ok: false, errorCode: 'unavailable', error: 'noClient',
+    details: { reason: 'client_unavailable', recovery: { kind: 'connect_client', rpcMethod: RPC_METHODS.UI_ACTION_EXECUTE,
+      instruction: 'Open this Session on the Happier client that originally sent the queued message, then request the retry again.' } } };
   if (actionId === 'session.draft.delete') return { ok: false, errorCode: 'unavailable', error: 'noClient',
     details: { reason: 'client_unavailable', recovery: { kind: 'connect_client', rpcMethod: RPC_METHODS.UI_ACTION_EXECUTE,
       instruction: 'Open a signed-in Happier client connected to the target Machine, then request draft deletion again.' } } };

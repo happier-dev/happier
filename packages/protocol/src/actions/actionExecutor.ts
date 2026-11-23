@@ -65,7 +65,7 @@ import { executeSessionInputHandoffV1 } from './executor/session/inputHandoff.js
 import type { SessionInputHandoffInputV1 } from '../sessions/messages/sessionInputHandoffV1.js';
 import { dispatchSessionLifecycle1, dispatchSessionLifecycle2 } from './executor/session/lifecycle.js';
 import { dispatchSessionMessages } from './executor/session/messages.js';
-import { dispatchSessionPendingEdit } from './executor/session/pendingEdit.js';
+import { dispatchSessionPendingClientAction } from './executor/session/pendingEdit.js';
 import { dispatchSessionControls1, dispatchSessionControls2, readOfferedPermissionFollowUp, completeOfferedPermissionChoice } from './executor/session/controls.js';
 import { executeSessionDelete } from './executor/session/delete.js';
 import { dispatchSessionTranscript } from './executor/session/transcript.js';
@@ -5465,8 +5465,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return completeActionResult(await deps.scopeAction({ actionId: scopeActionId, input: parsed.data, context: ctx }));
       }
       const sessionBoardActionId = isActionFamilyId(actionId, SessionBoardActionIdV1Schema) ? actionId : null;
-      const pendingEditResult = await dispatchSessionPendingEdit({ actionId, parsed, ctx, deps });
-      if (pendingEditResult) return pendingEditResult;
+      const pendingClientResult = await dispatchSessionPendingClientAction({ actionId, parsed, ctx, deps });
+      if (pendingClientResult) return pendingClientResult;
       if (actionId === 'session.pending.next') {
         return completeActionResult(deps.nextPendingSession
           ? await deps.nextPendingSession(ctx)

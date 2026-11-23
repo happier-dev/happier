@@ -427,13 +427,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [setPendingMaterializing]);
 
     const executePendingRecovery = React.useCallback(async (
-        actionId: 'session.pending.markHandled' | 'session.pending.dismiss' | 'session.pending.sendAsNew' | 'session.pending.withdraw' | 'session.pending.requeue',
+        actionId: 'session.pending.retry' | 'session.pending.markHandled' | 'session.pending.dismiss' | 'session.pending.sendAsNew' | 'session.pending.withdraw' | 'session.pending.requeue',
         message: Pick<PendingMessage, 'id' | 'localId' | 'recipient'>,
     ) => {
         if (!accountActorViewerScope) throw new Error('action_account_scope_changed');
         const { serverId, accountId } = accountActorViewerScope;
-        const result = await pendingRecoveryExecutor.execute(actionId, {
-            sessionId: props.sessionId, localId: message.localId ?? message.id, serverId,
+        const input = { sessionId: props.sessionId, localId: message.localId ?? message.id };
+        const result = await pendingRecoveryExecutor.execute(actionId, actionId === 'session.pending.retry' ? input : {
+            ...input, serverId,
             ...(message.recipient ? { targetExecutionRunId: message.recipient.runId } : {}),
         }, { surface: 'ui', authority: 'present_user', defaultSessionId: props.sessionId, serverId, expectedAccountId: accountId });
         if (!result.ok && !isActionApprovalDeclinedErrorCode(result.errorCode)) throw new Error(result.error);
@@ -485,16 +486,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const handleRetrySend = React.useCallback(async (message: PendingMessage) => {
         await runPendingDeliveryAction(message, async () => {
             try {
-                await sync.retryPendingMessageSend(
-                    props.sessionId,
-                    message.localId ?? message.id,
-                    ...(exactPendingQueueOwner ? [exactPendingQueueOwner] as const : [] as const),
-                );
+                await executePendingRecovery('session.pending.retry', message);
             } catch (e) {
                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
             }
         });
-    }, [exactPendingQueueOwner, props.sessionId, runPendingDeliveryAction]);
+    }, [executePendingRecovery, runPendingDeliveryAction]);
 
     const handleRemoveDelivery = React.useCallback(async (message: PendingMessage) => {
         await runPendingDeliveryAction(message, () => handleRemove(message));

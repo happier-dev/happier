@@ -30,6 +30,7 @@ const cases = [
   { id: 'session.draft.directory.set', input: { ref: composer.ref, directory: { kind: 'path', path: '/checkout' } }, result: { status: 'applied' } },
   { id: 'session.organization.move', input: { scope, sourceRowId: 'session-a', sourceKind: 'leaf', instructionKind: 'move-to-root', targetRowId: null, containerId: null, parentRowId: null, depth: null, edge: null }, result: { status: 'applied' } },
   { id: 'session.pending.reorder', input: { scope, sourceId: 'pending-a', position, sessionId: 'session-a', recipient: null }, result: { status: 'applied' } },
+  { id: 'session.pending.retry', input: { sessionId: 'session-a', localId: 'pending-a' }, result: { status: 'retry_requested' } },
   { id: 'workflow.authoring.conversation.bind', input: { scope, draftId: 'draft-a', stepId: null, address: { serverId: 'home-a', sessionId: 'session-a' } }, result: { status: 'applied' } },
   { id: 'composer.transaction.apply', input: { ...composer, transaction: { expectedRevision: 1, operations: [{ kind: 'text.set', text: 'Context' }] } }, result: { status: 'applied', revision: 2 } },
   { id: 'composer.attachments.pick', input: composer, result: { status: 'opened' } },
@@ -99,7 +100,7 @@ describe('mounted Action CLI parity', () => {
     });
     const expected = id === 'session.presentation.apply'
       ? { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${id}` }
-      : id === 'session.draft.delete'
+      : id === 'session.draft.delete' || id === 'session.pending.retry'
         ? { ok: false, errorCode: 'unavailable', error: 'noClient', details: { reason: 'client_unavailable',
           recovery: { kind: 'connect_client', rpcMethod: 'ui.actions.execute.v1', instruction: expect.any(String) } } }
       : id === 'workflow.authoring.conversation.bind' || id === 'session.work.get' || id === 'inbox.get'
