@@ -25,6 +25,7 @@ import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePendi
 import {
   useWorkspaceRefs,
   storage,
+  useSessionSelector,
   useProfile,
   useSetting,
   useActiveServerAccountScope,
@@ -248,8 +249,8 @@ function SessionInfoContent({
   // The shared shell deliberately retains its Session across read-state updates.
   // Info consumes the viewer/cursor itself: never invalidate the whole shell or
   // subscribe this detail surface to unrelated Sessions or transcript arrivals.
-  const readStateInputs = storage(useShallow((state) => {
-    const current = selectSessionViewShellSessionForRouteState(state, shellSession.id, sessionServerId) ?? shellSession;
+  const readStateInputs = useSessionSelector(shellSession.id, sessionServerId, useShallow((session) => {
+    const current = session ?? shellSession;
     return [current.viewer, current.lastViewedSessionSeq] as const;
   }));
   const session = React.useMemo(

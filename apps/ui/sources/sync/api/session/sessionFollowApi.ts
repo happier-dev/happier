@@ -3,7 +3,8 @@ import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/proto
 import { SessionFollowErrorCodeV1Schema, type SessionFollowErrorCodeV1, type SetSessionFollowRequest, GetSessionFollowResponseSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, SessionAutoFollowPreferencesResponseSchema, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { SessionFollowSourcesErrorCodeV1Schema, type SessionFollowSourcesErrorCodeV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { EXPLICIT_SESSION_UNFOLLOW_STATE_V1, projectSessionFollowFactsV1, type SessionAutoFollowPreferencesV1, type SessionFollowFactsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { resolveSessionEffectiveNotificationV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import type { SessionFollowActionIdV1, SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import { FollowPreviewActionInputV1Schema, FollowRuleSetActionInputV1Schema, SessionFollowActionInputSchemasV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import { equalFollowRuleReceiverV1, GetSessionFollowRuleResponseV1Schema, SetSessionFollowRuleResponseV1Schema,
@@ -26,6 +27,11 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { getStorage } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { createServerRequestForResolvedServerScope, runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { resolveServerAccountRequestContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext';
@@ -144,6 +150,32 @@ export async function readAccountSessionFollowRelations(scope: ServerAccountScop
             return response.kind === 'failed' ? response : { kind: 'ok' as const, value: ListAccountSessionFollowsResponseV1Schema.parse(response.value) };
         },
     });
+}
+
+/** Reconcile the admitted server echo into the existing Session viewer carrier. */
+function publishPersonalFollowSettlement(address: SessionAddress, facts: SessionFollowFactsV1): void {
+    const state = getStorage().getState();
+    const { serverId, sessionId } = address;
+    const session = selectHomeQualifiedSession(state, sessionId, serverId, state.sessionLocalStateScope?.serverId);
+    const projectViewer = (row: Pick<Session, 'viewer' | 'access' | 'accessLevel'>) => {
+        const viewer = row.viewer;
+        if (!viewer) return undefined;
+        const defaultRelationships = viewer.follow.defaultRelationships;
+        const follow = retainDeep(viewer.follow, { ...facts, ...(defaultRelationships ? { defaultRelationships } : {}) });
+        if (follow === viewer.follow) return undefined;
+        return { ...viewer, follow, notification: resolveSessionEffectiveNotificationV1({
+            facts: follow, isSessionOwner: isSessionAccessOwner(row.access, row.accessLevel),
+        }) };
+    };
+    if (session) {
+        const viewer = projectViewer(session);
+        if (viewer) state.applySessions([{ ...session, viewer }], 'projection');
+        return;
+    }
+    state.applyServerScopedSessionListRowPatches(serverId, [{ sessionId, patch: row => {
+        const viewer = projectViewer(row);
+        return viewer ? { viewer } : null;
+    } }]);
 }
 
 /** Shared Follow operation for the Action port and already scoped UI reads. */
@@ -267,7 +299,17 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
                     coverage: rows.continuation ? 'partial' : 'complete',
                 }) };
             }
-            return { kind: 'ok', value: parseSessionFollowActionResponse(actionId, input, payload) };
+            const value = parseSessionFollowActionResponse(actionId, input, payload);
+            if ('receiver' in actionInput && actionInput.receiver.kind === 'account'
+                && parsedSource.success && parsedSource.data.kind === 'session') {
+                const address = { serverId: context.targetServerId, sessionId: parsedSource.data.sessionId };
+                if (actionId === 'follow.set' && 'follow' in value && value.follow) {
+                    publishPersonalFollowSettlement(address, projectSessionFollowFactsV1(value.follow));
+                } else if (actionId === 'follow.remove') {
+                    publishPersonalFollowSettlement(address, projectSessionFollowFactsV1(EXPLICIT_SESSION_UNFOLLOW_STATE_V1));
+                }
+            }
+            return { kind: 'ok', value };
         },
     });
 }

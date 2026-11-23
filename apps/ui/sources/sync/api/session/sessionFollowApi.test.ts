@@ -110,6 +110,70 @@ describe('Follow exact Home Action transport', () => {
         }, 1)).toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'action_disabled' } });
         expect(env.request.mock.calls.filter(([url, init]) => url.includes('/follow') && init?.method !== 'GET')).toHaveLength(0);
     });
+    it('publishes settled personal Follow changes to mounted Session chrome by Session key', async () => {
+        const env = await setup();
+        const { sessionFollowSet } = await import('./sessionFollowApi');
+        const { useSessionSelector } = await import('@/sync/store/hooks');
+        const { readSessionFollowHeaderPreset } = await import('@/components/sessions/follow/sessionFollowHeaderPreset');
+        const { useShallow } = await import('zustand/react/shallow');
+        const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+        const serverId = env.active.id;
+        const address = { serverId, sessionId: 'source' };
+        const fixture = (id: string) => {
+            const session = createSessionFixture({ id, serverId, encryptionMode: 'plain' });
+            return { ...session, viewer: createSessionOwnerViewerFixture(session) };
+        };
+        const shellSession = fixture('source');
+        env.storage.getState().applySessions([shellSession, fixture('other')]);
+        env.request.mockImplementation(async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json({ v: 1, rows: [] });
+            expect(init?.method).toBe('PUT');
+            const sessionId = path.split('/').at(-2);
+            return Response.json({ changed: true, follow: { sessionId, following: true,
+                notificationLevel: 'none', includeInVoice: false, policy: { preset: 'quiet' } },
+                voiceInitialSnapshotPending: false });
+        });
+
+        let headerRenders = 0;
+        let infoRenders = 0;
+        const header = await renderHook(() => {
+            headerRenders++;
+            return useSessionSelector(address.sessionId, serverId, session => session && readSessionFollowHeaderPreset(session));
+        });
+        const info = await renderHook(() => {
+            infoRenders++;
+            const [viewer] = useSessionSelector(address.sessionId, serverId, useShallow(session => {
+                const current = session ?? shellSession;
+                return [current.viewer, current.lastViewedSessionSeq] as const;
+            }));
+            return readSessionFollowHeaderPreset({ ...shellSession, viewer });
+        });
+        let sourcePublications = 0;
+        const unsubscribe = env.storage.subscribe(() => sourcePublications++, { sessions: [address.sessionId] });
+        try {
+            expect([header.getCurrent(), info.getCurrent()]).toEqual(['important', 'important']);
+            const saveQuiet = async (sessionId: string) => {
+                await act(async () => {
+                    expect(await sessionFollowSet({ serverId, sessionId }, { policy: { preset: 'quiet' } }))
+                        .toMatchObject({ kind: 'ok', value: { follow: { policy: { preset: 'quiet' } } } });
+                });
+            };
+            await saveQuiet('source');
+            expect([header.getCurrent(), info.getCurrent()]).toEqual(['quiet', 'quiet']);
+            expect(sourcePublications).toBe(1);
+            const rendersAfterSave = [headerRenders, infoRenders];
+            await saveQuiet('other');
+            expect(readSessionFollowHeaderPreset(env.storage.getState().sessions.other)).toBe('quiet');
+            expect([headerRenders, infoRenders]).toEqual(rendersAfterSave);
+            expect(sourcePublications).toBe(1);
+        } finally {
+            unsubscribe();
+            await header.unmount();
+            await info.unmount();
+        }
+    });
+
     it('evaluates one source through fresh exact-Home reads without a Session corpus query', async () => {
         const homes = createHomeGovernanceHarness();
         await homes.reset();
