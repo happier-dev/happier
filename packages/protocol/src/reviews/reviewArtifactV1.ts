@@ -149,7 +149,7 @@ export interface ReviewArtifactTransportV1 {
 }
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
   sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; workflowRunId?: string; comparisonId?: string;
-  comparisonCapture?: ReviewRoundComparisonCaptureV1;
+  comparisonCapture?: ReviewRoundComparisonCaptureV1; sourceSessionId?: string;
   reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   outcome: Exclude<ReviewRoundStateV1, 'running'>; finishedAt: number; runs: readonly ReviewRunReferenceV1[];
@@ -223,7 +223,7 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         return name ? [[id, name]] : [];
       }));
       const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;
-      const sourceSessionId = resolveReviewSourceSessionIdV1(input.comparisonCapture);
+      const sourceSessionId = resolveReviewSourceSessionIdV1(input.comparisonCapture) ?? input.sourceSessionId;
       const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
         workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
         state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null,

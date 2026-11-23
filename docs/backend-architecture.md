@@ -562,7 +562,10 @@ erDiagram
   includes `workflowRunId`, the Workflow run that created the Review. Each round
   also records `sourceSessionId`, the Session whose changes it reviews, and
   `sourceSessionSeq`, that Session's message seq read by the server when the
-  round started; `listUnreviewedSessionChangedFilesV1` decides which Session
+  round started. Session-scoped Review admission retains that source even when
+  a habit or trigger launches detached reviewers without a comparison capture;
+  an explicit comparison Session remains the source when present.
+  `listUnreviewedSessionChangedFilesV1` decides which Session
   changes no completed round covered. The existing
   Artifact mutation calls `writeReviewRoundState` in the content transaction:
   one start and one whole-round settlement, including reviews with no findings.

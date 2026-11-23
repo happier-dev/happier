@@ -290,6 +290,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         let reviewInput = data as ReviewStartInput;
+        // Workflow reviewers execute detached, but the admitted Session still owns the reviewed changes.
+        const sourceSessionId = reviewInput.sessionId ?? sessionId ?? undefined;
         // Plugin-mediated starts retain the creating Workflow in host context;
         // their immediate Action caller remains the plugin for authorization.
         const creatingWorkflowRunId = ctx.actionCaller?.kind === 'workflowRun'
@@ -415,6 +417,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             workflowRunId: creatingWorkflowRunId ?? composedRunId,
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
+            ...(sourceSessionId ? { sourceSessionId } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
             reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, undefined,
               reviewer => sessionNames.get(sessionKey(reviewer.session))),
@@ -595,6 +598,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(creatingWorkflowRunId ? { workflowRunId: creatingWorkflowRunId } : {}),
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),
+          ...(sourceSessionId ? { sourceSessionId } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
           reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, (_selection, id) => selectedReviewEngineItems.get(id)?.label),
           startedAt: Date.now(), signal: ctx.signal });

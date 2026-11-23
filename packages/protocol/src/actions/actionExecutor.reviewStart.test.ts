@@ -242,7 +242,7 @@ describe('createActionExecutor (review.start)', () => {
       expect.objectContaining({ state: 'cancelled', finishedAt: expect.any(Number), runs: [] }),
     ]);
   });
-  it.each(['direct', 'workflow', 'plugin'] as const)('links a composed Review to its creating run through %s admission', async caller => {
+  it.each(['direct', 'workflow', 'plugin', 'detached workflow'] as const)('links a composed Review to its creating run and source Session through %s admission', async caller => {
     const records = createInMemoryReviewRecordPortV1();
     const starts = vi.spyOn(records, 'start');
     let childRunId: unknown;
@@ -252,10 +252,12 @@ describe('createActionExecutor (review.start)', () => {
         return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       },
     } as ActionExecutorDeps);
-    await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.',
+    await executor.execute('review.start', { ...(caller === 'detached workflow' ? { target: { kind: 'detached' } } : { sessionId: 's1' }),
+      scope: 'repository', instructions: 'Review.',
       reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] }, {
       surface: caller === 'plugin' ? 'plugin' : 'ui',
-      ...(caller === 'workflow' ? { actionCaller: { kind: 'workflowRun' as const, runId: 'visible-run' } } : {}),
+      defaultSessionId: 'reviewer-session',
+      ...(caller === 'workflow' || caller === 'detached workflow' ? { actionCaller: { kind: 'workflowRun' as const, runId: 'visible-run' } } : {}),
       ...(caller === 'plugin' ? { executionRunWorkflowRunId: 'visible-run',
         actionCaller: { kind: 'plugin' as const, pluginId: 'happier.triage', occurrenceId: 'triage-occurrence' } } : {}),
     });
@@ -264,6 +266,7 @@ describe('createActionExecutor (review.start)', () => {
     const review = records.readMetadata(admission.reviewId);
     expect(review?.workflowRunId).toBe(caller === 'direct' ? childRunId : 'visible-run');
     expect(review?.sourceKind).toBe(caller === 'direct' ? 'direct' : 'workflow');
+    expect(review?.sourceSessionId).toBe(caller === 'detached workflow' ? undefined : 's1');
     if (caller !== 'direct') expect(childRunId).not.toBe('visible-run');
   });
   it('admits an ordered mixed engine roster once through the canonical Workflow start', async () => {
