@@ -365,7 +365,9 @@ describe('personal usage Action execution', () => {
     { scenario: 'outside-period link', merge: { mergedAtMs: 99 }, measured: false },
     { scenario: 'in-period link', merge: { mergedAtMs: 150 }, measured: false },
     { scenario: 'read-empty', merge: null, measured: true },
-  ])('uses the admitted Work read for exact merged counts: $scenario', async ({ merge, measured }) => {
+    { scenario: 'failed refresh after a complete positive read', merge: { mergedAtMs: 150 }, measured: false, refreshFailed: true },
+    { scenario: 'failed refresh after a complete empty read', merge: null, measured: false, refreshFailed: true },
+  ])('uses the admitted Work read for exact merged counts: $scenario', async ({ merge, measured, refreshFailed }) => {
     const workQuery = normalizeUsageQuery({ ...query, period: { startMs: 100, endMs: 200 }, includeWorkEvidence: true });
     const contributions = ['read', 'sibling'].map(sessionId => ({
       id: sessionId, sessionId, turnId: 'turn', observedAtMs: 150, agentId: 'codex', modelId: null,
@@ -382,23 +384,31 @@ describe('personal usage Action execution', () => {
         state: 'merged', ...merge,
       },
     }];
-    const batch = resolveUsagePageAggregation({ queries: [workQuery],
-      accounting: [{ query: workQuery, status: 'available', value: { ...accounting, contributions } }],
-      work: [{ query: workQuery, status: measured ? 'available' : 'partial', evidence,
-        pullRequestReadSessions: measured ? ['read', 'sibling'] : ['read'],
-        ...(measured ? {} : { unreadSessions: { failed: 1 } }) }],
+    const accountingReads = [{ query: workQuery, status: 'available' as const, value: { ...accounting, contributions } }];
+    const complete = measured || refreshFailed;
+    const initial = resolveUsagePageAggregation({ queries: [workQuery], accounting: accountingReads,
+      work: [{ query: workQuery, status: complete ? 'available' : 'partial', asOfMs: 200, evidence,
+        pullRequestReadSessions: complete ? ['read', 'sibling'] : ['read'],
+        ...(complete ? {} : { unreadSessions: { failed: 1 } }) }],
     }, bundledUsageModelPriceCatalog);
+    if (refreshFailed) expect(initial.results[0]?.workSummary?.mergedPrCount).toBe(evidence.length);
+    const batch = refreshFailed ? resolveUsagePageAggregation({ queries: [workQuery], accounting: accountingReads, previous: initial,
+      work: [{ query: workQuery, status: 'error', errorCode: 'work_evidence_failed', unreadSessions: { failed: 2 } }],
+    }, bundledUsageModelPriceCatalog) : initial;
     const slice = batch.results[0]!;
     const executor = createActionExecutor({ usageActions: { query: async () => batch } } as ActionExecutorDeps);
     const result = await executor.execute('usage.query', { queries: [workQuery] }, { surface: 'cli' });
     expect(result).toMatchObject({ ok: true, result: batch });
-    expect(slice.workSummary?.pullRequestsRead).toBe(measured ? true : undefined);
-    expect(slice.work?.outcomes).toHaveLength(measured ? 0 : 1);
-    expect(slice.mergedOutcomes?.outcomes).toHaveLength(measured ? 0 : 1);
+    if (refreshFailed) expect(slice.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 200,
+      errorCode: 'work_evidence_failed', unreadSessions: { failed: 2 } });
+    expect(slice.work?.outcomes).toHaveLength(evidence.length);
+    if (measured || evidence.length) expect(slice.mergedOutcomes?.outcomes).toHaveLength(evidence.length);
+    else expect.soft(slice.mergedOutcomes).toBeUndefined();
+    expect.soft(slice.workSummary?.pullRequestsRead).toBe(measured ? true : undefined);
     expect.soft(slice.mergedOutcomes?.mergedInPeriodCount).toBe(measured ? 0 : undefined);
     expect.soft(slice.workSummary?.mergedPrCount).toBe(measured ? 0 : undefined);
     expect.soft(slice.workSummary?.mergedSessionCount).toBe(measured ? 0 : undefined);
-    if (!measured) {
+    if (!measured && slice.mergedOutcomes) {
       const forged = createActionExecutor({ usageActions: { query: async () => ({ ...batch, results: [
         { ...slice, mergedOutcomes: { ...slice.mergedOutcomes!, mergedInPeriodCount: merge?.mergedAtMs === 150 ? 1 : 0 } },
       ] }) } } as ActionExecutorDeps);

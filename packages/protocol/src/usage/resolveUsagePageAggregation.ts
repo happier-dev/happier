@@ -870,14 +870,16 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       && workSnapshot.branchEvidence === undefined && canRetainUsageReadFailure(workSnapshot.errorCode)
       && (prior?.workSummary !== undefined || prior?.mergedOutcomes !== undefined
         || prior?.publicProfileEvidence?.facts.mergedPrs !== undefined
-        || prior?.work !== undefined && (priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
-    const retainWork = workSnapshot?.status === 'pending' || failedWork;
+        || prior?.work !== undefined && (priorWorkSource?.status === 'available'
+          || priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
+    const pendingWork = workSnapshot?.status === 'pending';
+    const retainWork = pendingWork || failedWork;
     const workAsOfMs = failedWork ? priorWorkSource?.asOfMs : workSnapshot?.asOfMs;
-    const unreadWorkSessions = workSnapshot?.status === 'pending' ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
+    const unreadWorkSessions = pendingWork ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
     // A reread has not replaced observed Work facts. Keep their currentness
     // until its answer changes them, including a completed retained failure.
     const workSource: UsageQuerySourceState = priorWorkSource?.errorCode === 'work_evidence_failed'
-      && (workSnapshot?.status === 'pending' || failedWork && priorWorkSource.status === 'stale'
+      && (pendingWork || failedWork && priorWorkSource.status === 'stale'
         && workSnapshot.errorCode === priorWorkSource.errorCode
         && workSnapshot.updateRequired === priorWorkSource.updateRequired
         && sameStrictJsonValue(unreadWorkSessions ?? null, priorWorkSource.unreadSessions ?? null)) ? priorWorkSource
@@ -1026,7 +1028,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const readSessions = workSnapshot?.pullRequestReadSessions;
     const workFacts = projectAdmittedUsageInputs(admitted?.work, {
       accounting: accountingValue, evidence: workEvidence, branchEvidence, readSessions,
-      readable: readableWork, retaining: retainWork,
+      readable: readableWork, retaining: retainWork, pending: pendingWork,
       priorAccounting: retainWork ? prior?.accounting : undefined,
       priorSummary: retainWork ? prior?.workSummary : undefined,
       retained: retainedWork === admitted?.work.value.work && admitted?.work.inputs.retaining ? admitted.work.inputs.retained : retainedWork,
@@ -1037,18 +1039,20 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : branchEvidence ?? [],
       });
       const admittedTurns = readableWork && query.includeWorkEvidence ? readUsageWorkSessionTurns(accountingValue) : undefined;
-      const sameRetainedWork = retainWork && prior !== undefined
+      const samePendingWorkPopulation = pendingWork && prior !== undefined
         && (accountingValue === prior.accounting || hasSameUsageQueryWorkEvidenceMembership({
           query, contributions: accountingValue?.contributions, previousContributions: prior.accounting?.contributions,
           sessionMembership: readUsageAccountingSessionMembership(accountingValue),
           previousSessionMembership: readUsageAccountingSessionMembership(prior.accounting),
         }));
+      // A failed replacement can preserve linked rows and their as-of time. Its
+      // earlier coverage cannot establish the count for this completed read.
       const pullRequestsRead = readableWork ? hasUsagePullRequestRead(admittedTurns, readSessions)
-        : sameRetainedWork && prior?.workSummary?.pullRequestsRead === true;
+        : samePendingWorkPopulation && prior?.workSummary?.pullRequestsRead === true;
       const summary = work && (readableWork || retainWork) ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, work)
         : admittedTurns ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence: workEvidence ?? [] }).outcomes,
           pullRequestsRead)
-        : sameRetainedWork && pullRequestsRead ? prior?.workSummary : undefined;
+        : samePendingWorkPopulation && pullRequestsRead ? prior?.workSummary : undefined;
       const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue && !retainWork
         && (workEvidence !== undefined || readSessions !== undefined)
         ? projectUsagePublicWorkLenses(accountingValue, workEvidence ?? [], readSessions) : [];
@@ -1064,8 +1068,9 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead });
       return pullRequestsRead || evidence.linkedMergedCount > 0 ? evidence : undefined;
     });
-    const retainedProfile = prior?.publicProfileEvidence && (retainedDetail || retainWork && canRetainDetail)
-      ? retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainWork && canRetainDetail) : undefined;
+    const retainProfileWork = pendingWork && canRetainDetail;
+    const retainedProfile = prior?.publicProfileEvidence && (retainedDetail || retainProfileWork)
+      ? retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainProfileWork) : undefined;
     const publicProfileEvidence = profileLenses.length ? {
       ...retainedProfile, facts: { ...retainedProfile?.facts, ...(workSummary?.mergedPrCount === undefined ? {} : { mergedPrs: workSummary.mergedPrCount }) },
       fieldCoverage: retainedProfile?.fieldCoverage ?? {},

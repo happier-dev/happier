@@ -1727,11 +1727,12 @@ describe('resolveUsagePageAggregation', () => {
     const observedEmpty = read(cold, nowMs + 30_000, 'available');
     expect(observedEmpty.results[0]?.mergedOutcomes).toMatchObject({ linkedMergedCount: 0 });
     expect(observedEmpty.results[0]?.workSummary?.mergedPrCount).toBe(0);
+    expect(observedEmpty.results[0]?.publicProfileEvidence?.facts.mergedPrs).toBe(0);
     const failedReplacement = read(observedEmpty, nowMs + 60_000, 'error');
     expect(failedReplacement.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
-    expect(failedReplacement.results[0]?.mergedOutcomes).toMatchObject({
-      period: resolveUsageQueryPeriod(query, nowMs + 60_000), linkedMergedCount: 0,
-    });
+    expect(failedReplacement.results[0]?.mergedOutcomes).toBeUndefined();
+    expect(failedReplacement.results[0]?.workSummary?.mergedPrCount).toBeUndefined();
+    expect(failedReplacement.results[0]?.publicProfileEvidence?.facts.mergedPrs).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(failedReplacement).success).toBe(true);
   });
 

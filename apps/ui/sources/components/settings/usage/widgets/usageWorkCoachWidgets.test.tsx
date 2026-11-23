@@ -51,6 +51,7 @@ import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
 import { UsageChartInteractions } from '../usageChartInteractions';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
+import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageCoachWidget } from './UsageCoachWidget';
 import { storage } from '@/sync/domains/state/storage';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -1449,6 +1450,38 @@ describe('Work and Coach widget bodies', () => {
     await ledger.update(<UsageProjectLedgerWidget {...props} slice={failed} id="usage_project_ledger" testID="ledger" />);
     expect(ledger.getTextContent()).not.toContain(t('usage.board.work.noneLinked'));
     expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnavailableTitle'));
+  });
+
+  it('shows prior linked Work rows with an unknown merged figure after a failed refresh', async () => {
+    const witness = evidence('s1', 't1', 2493);
+    const accounting = [{ query, status: 'available' as const, value: slice.accounting! }];
+    const initial = resolveUsagePageAggregation({ queries: [query], accounting,
+      work: [{ query, status: 'available', asOfMs: 900, pullRequestReadSessions: ['s1', 's2'],
+        evidence: [{ ...witness, pullRequest: { ...witness.pullRequest, mergedAtMs: 500 } }] }],
+    }, bundledUsageModelPriceCatalog);
+    const pending = resolveUsagePageAggregation({ queries: [query], accounting, previous: initial,
+      work: [{ query, status: 'pending' }],
+    }, bundledUsageModelPriceCatalog);
+    const failed = resolveUsagePageAggregation({ queries: [query], accounting, previous: initial, projectionPrevious: pending,
+      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', unreadSessions: { failed: 2 } }],
+    }, bundledUsageModelPriceCatalog);
+    const renderWork = (result: typeof initial) => <>
+      <UsagePeriodSummaryWidget {...props} slice={result.results[0]!} id="usage_period_summary" testID="overview" />
+      <UsageOutcomesWidget {...props} slice={result.results[0]!} id="usage_outcomes" testID="outcomes" />
+    </>;
+    const screen = await renderScreen(renderWork(initial));
+    const mergedFigure = () => screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.mergedPrs'))?.props;
+    const mergedFunnelStep = () => screen.findByType(OutcomeFunnel).props.steps.find((step: React.ComponentProps<typeof OutcomeFunnel>['steps'][number]) => step.id === 'merged');
+    expect(mergedFigure()).toMatchObject({ value: 1, caption: t('usage.board.page.linkedByEvidence') });
+    expect(mergedFunnelStep()?.value).toBe(1);
+    await screen.update(renderWork(pending));
+    expect(mergedFigure()?.value).toBe(1);
+    await screen.update(renderWork(failed));
+    expect(screen.getTextContent()).toContain(witness.pullRequest.title);
+    expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 900,
+      errorCode: 'work_evidence_failed', unreadSessions: { failed: 2 } });
+    expect.soft(mergedFigure()).toMatchObject({ value: '—', caption: t('usage.board.page.notMeasuredYet') });
+    expect.soft(mergedFunnelStep()?.value).toBeNull();
   });
 
   it('keeps the admitted merge week and Values when a sibling Session read fails', async () => {
