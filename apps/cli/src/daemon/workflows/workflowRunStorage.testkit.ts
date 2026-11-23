@@ -1,3 +1,4 @@
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -23,10 +24,6 @@ import { SessionManagedCreationV1Schema } from '@happier-dev/protocol/sessions/c
  * pages, and keyset paging — because those are what daemon reconstruction has
  * to survive.
  */
-
-const TERMINAL_RUN_STATES = [
-  'succeeded', 'failed', 'cancelled', 'expired', 'dispatch_failed', 'skipped', 'missed', 'outcome_uncertain',
-] as const satisfies readonly WorkflowRunStateV1[];
 
 /** Mirrors the server's indexed actionable-invocation attention predicate. */
 const ATTENTION_LIFECYCLES = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1;
@@ -427,7 +424,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
             : operation.lifecycle === 'completed' || operation.lifecycle === 'needs_attention'
               || (operation.expectedLifecycle === 'outcome_uncertain' && operation.lifecycle === 'outcome_uncertain')
               || ((operation.lifecycle === 'failed' || operation.lifecycle === 'cancelled')
-                && TERMINAL_RUN_STATES.some(candidate => candidate === state)));
+                && isTerminalAutomationRunStateV3(state)));
         if (TERMINAL_INVOCATION_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle)
           && !(row.index.lifecycle === 'outcome_uncertain' && resolvesObservedTerminal)) {
           throw storageError('currentness_conflict');
@@ -487,7 +484,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
       case 'cancel': {
         if (kind === 'cancel') {
           if (typeof operation.expectedRevision !== 'number' || operation.expectedRevision > revision
-            || TERMINAL_RUN_STATES.some(candidate => candidate === state)) throw storageError('currentness_conflict');
+            || isTerminalAutomationRunStateV3(state)) throw storageError('currentness_conflict');
           const immediate = state === 'paused' || state === 'waiting_for_review'
             || (rows.size === 0 && (state === 'queued' || state === 'claimed' || state === 'pause_requested'));
           requestControl(immediate ? 'cancelled' : 'cancel_requested');
@@ -515,7 +512,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         if (conditions.includes('attention') && requiresAttention()) {
           return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
         }
-        if (TERMINAL_RUN_STATES.some((candidate) => candidate === state)) {
+        if (isTerminalAutomationRunStateV3(state)) {
           return { ...(conditions.includes('terminal') ? { observation: 'terminal', matchedCondition: 'terminal' }
             : { observation: 'not_matched_terminal' }), run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
         }

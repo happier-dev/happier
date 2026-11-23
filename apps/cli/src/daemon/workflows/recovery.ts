@@ -1,3 +1,4 @@
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -31,17 +32,12 @@ import { hasRetainedWorkflowActionOperation, LOST_ACTION_OPERATION_CODE } from '
 import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import { WORKFLOW_RECOVERABLE_INVOCATION_LIFECYCLES_V1 as RECOVERABLE_INVOCATION_LIFECYCLES } from '@happier-dev/protocol/workflows';
 
-const TERMINAL_RUN_STATES = new Set([
-  'succeeded', 'failed', 'cancelled', 'expired', 'dispatch_failed', 'skipped',
-  'missed', 'outcome_uncertain',
-]);
-
 const TERMINAL_INVOCATION_LIFECYCLES = new Set<WorkflowInvocationLifecycleV1>([
   'completed', 'failed', 'cancelled', 'skipped', 'superseded', 'outcome_uncertain',
 ]);
 
 function hasActiveWorkflowRunCustody(run: WorkflowRunSummaryV1): boolean {
-  return !TERMINAL_RUN_STATES.has(run.state) && run.workflowCustodyState === 'pending';
+  return !isTerminalAutomationRunStateV3(run.state) && run.workflowCustodyState === 'pending';
 }
 
 type Storage = Readonly<{
@@ -210,7 +206,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
           continue;
         }
         if (!error.terminal
-          || !TERMINAL_RUN_STATES.has(loaded.run.state) && loaded.store.rootIndex?.lifecycle !== 'cancelled') throw error;
+          || !isTerminalAutomationRunStateV3(loaded.run.state) && loaded.store.rootIndex?.lifecycle !== 'cancelled') throw error;
         // Terminal refusal ends only publication custody, never the accepted
         // result or execution fact. Unknown/lost acknowledgements still throw.
         logger.warn('[workflowRecovery] Terminal Discussion publication refused; retiring publication custody', {
@@ -339,7 +335,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     if (currentLifecycle === 'waiting_for_review' || currentLifecycle === 'superseded') return null;
     // This retires custody only. It cannot resolve an interrupted Run's input
     // outcome or make a new attempt eligible from unknown historical effects.
-    if (observed.kind === 'stopped' && !TERMINAL_RUN_STATES.has(params.run.state)) return null;
+    if (observed.kind === 'stopped' && !isTerminalAutomationRunStateV3(params.run.state)) return null;
     const prior = progress.previousAttemptRecordId ? await readInvocation(progress.previousAttemptRecordId) : undefined;
     const generation = prior?.progress.review?.decision?.kind === 'generate';
     const step = observed.kind === 'completed' || generation ? (await resolveFrozenLeaf(invocation).catch(() => undefined))?.leaf : undefined;
@@ -349,7 +345,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const lostActionOperation = observation.kind === 'outcome_uncertain'
       && observation.code === LOST_ACTION_OPERATION_CODE && hasRetainedWorkflowActionOperation(progress);
     const setupConsent = observation.kind === 'unresolved' && observation.setupConsentOutput
-      && progress.execution?.kind === 'action' && !TERMINAL_RUN_STATES.has(params.run.state)
+      && progress.execution?.kind === 'action' && !isTerminalAutomationRunStateV3(params.run.state)
       && currentLifecycle !== 'cancel_requested' && currentLifecycle !== 'outcome_uncertain'
       ? readWorkflowProjectSetupConsentHold(progress.execution.actionId, observation.setupConsentOutput) : null;
     if (params.expectedRevision !== undefined && observed.kind === 'completed' && observation.kind === 'unresolved') {
@@ -370,13 +366,13 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const stoppedWithUncertainEffects = observed.kind === 'stopped' || (resolvingUncertain
       && (observation.kind === 'failed' || observation.kind === 'cancelled'));
     const reviewRequired = classifyWorkflowReviewEntryV1({
-      mayEnterReview: !TERMINAL_RUN_STATES.has(params.run.state) && currentLifecycle !== 'cancel_requested',
+      mayEnterReview: !isTerminalAutomationRunStateV3(params.run.state) && currentLifecycle !== 'cancel_requested',
       pauseForReview: Boolean(step && 'pauseForReview' in step && step.pauseForReview),
       isGeneration: generation,
       inputCompleted: observed.kind === 'completed',
       observation,
     }) === 'waiting_for_review';
-    const lifecycle: WorkflowInvocationLifecycleV1 = setupConsent ? 'needs_attention' : reviewRequired ? 'waiting_for_review' : stoppedWithUncertainEffects && !TERMINAL_RUN_STATES.has(params.run.state)
+    const lifecycle: WorkflowInvocationLifecycleV1 = setupConsent ? 'needs_attention' : reviewRequired ? 'waiting_for_review' : stoppedWithUncertainEffects && !isTerminalAutomationRunStateV3(params.run.state)
       ? 'needs_attention'
       : observation.kind === 'unresolved' ? 'needs_attention' : observation.kind;
     const nextProgress: WorkflowProgressEnvelopeV1 = {
@@ -569,7 +565,7 @@ async function recoverInvocationCustody(params: Readonly<{
       }
       if ((currentLifecycle === 'pending' || currentLifecycle === 'waiting_for_capacity')
         && !(params.run.state === 'interrupted' && progress.blockKind === 'step')) {
-        if (!TERMINAL_RUN_STATES.has(params.run.state)) {
+        if (!isTerminalAutomationRunStateV3(params.run.state)) {
           allResolved = false;
           continue;
         }
@@ -595,7 +591,7 @@ async function recoverInvocationCustody(params: Readonly<{
         // An interrupted root is an orchestration hold, not native input custody.
         // A proven publication refusal may settle it only after every child resolves.
         if (params.run.state === 'interrupted' && progress.blockKind === 'root' && currentLifecycle === 'needs_attention') continue;
-        if (TERMINAL_RUN_STATES.has(params.run.state)
+        if (isTerminalAutomationRunStateV3(params.run.state)
           && currentLifecycle !== 'cancel_requested' && currentLifecycle !== 'outcome_uncertain') {
           // A terminal interpreter cannot resume this structural frame. Its
           // native children retain their exact approval/execution outcomes; only
@@ -630,7 +626,7 @@ async function recoverInvocationCustody(params: Readonly<{
         run: params.run, index: exactIndex,
         progress,
         ...(progress.blockKind === 'action' ? { frozenActionContract: await resolveFrozenActionContract(invocation) } : {}),
-        terminalParent: TERMINAL_RUN_STATES.has(params.run.state),
+        terminalParent: isTerminalAutomationRunStateV3(params.run.state),
         cancellationRequested: currentLifecycle === 'cancel_requested',
         parentAttempt: params.parentAttempt, trigger: params.trigger,
         ...(params.signal ? { signal: params.signal } : {}),
@@ -663,7 +659,7 @@ async function recoverInvocationCustody(params: Readonly<{
     if (transition) { reconciled.push(transition); publicationFailed = true; }
     else allResolved = false;
   }
-  if (allResolved && !params.signal?.aborted && !cancellationRequested && !TERMINAL_RUN_STATES.has(params.run.state)) {
+  if (allResolved && !params.signal?.aborted && !cancellationRequested && !isTerminalAutomationRunStateV3(params.run.state)) {
     // An earlier pass may have settled the cancelled root before its child
     // reached terminal. That durable root fact is no longer in the active index.
     const body = record(await params.storage.execute({ operation: 'get', runId: params.run.id },
@@ -711,7 +707,7 @@ async function settleRecoveredRun(params: Readonly<{
   ));
   const current = body ? WorkflowRunSummaryV1Schema.safeParse(body.run) : null;
   if (!current?.success || current.data.workflowCustodyState === 'settled') return;
-  if ((!TERMINAL_RUN_STATES.has(current.data.state) && !params.cancellationRequested
+  if ((!isTerminalAutomationRunStateV3(current.data.state) && !params.cancellationRequested
       && !(params.publicationFailed && current.data.state === 'interrupted'))
     || typeof body?.checkpointEnvelope !== 'string'
     || !parseWorkflowStoredContentEnvelopeV1(body.checkpointEnvelope)) return;
@@ -833,7 +829,7 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
       },
     });
     if (reconciledCustody
-      && (TERMINAL_RUN_STATES.has(run.state) || reconciledCustody.cancellationRequested || reconciledCustody.publicationFailed)) {
+      && (isTerminalAutomationRunStateV3(run.state) || reconciledCustody.cancellationRequested || reconciledCustody.publicationFailed)) {
       await settleRecoveredRun({
         runId: run.id,
         parentAttempt: candidate.parentAttempt,
