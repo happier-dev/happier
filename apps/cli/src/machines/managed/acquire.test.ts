@@ -47,6 +47,7 @@ import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -1211,7 +1212,10 @@ it('exposes the remote workspace acquire receipt and SSH trust question before a
     vi.stubEnv('HAPPIER_HOME_DIR', root);
     reloadConfiguration();
     onTestFinished(async () => { vi.unstubAllEnvs(); reloadConfiguration(); await filesystem.rm(root, { recursive: true, force: true }); });
-    vi.mocked(childProcesses.spawnSync).mockReturnValueOnce({ pid: 1, status: 0, signal: null,
+    // An earlier test restores its own spy, so the module mock cannot be assumed here.
+    const keyscan = vi.spyOn(childProcesses, 'spawnSync');
+    onTestFinished(() => keyscan.mockRestore());
+    keyscan.mockReturnValueOnce({ pid: 1, status: 0, signal: null,
         stdout: 'fixture.example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\n',
         stderr: '', output: [] });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -1603,6 +1607,8 @@ describe('opaque managed preset admission', () => {
         const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner' });
         let work: Promise<JsonValue | null> | undefined;
         const executor = createActionExecutor({ runActionOperation: operations.runActionOperation,
+            // Admitted external executions settle Action checks first (de9ddf3cb6e); this Account has none.
+            actionAutomations: createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [] }), settle: async () => [] }),
             workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
             prepareHostReviewedChildren: async request => {
                 if (request.actionId !== 'workflow.run.start') return null;
@@ -2761,7 +2767,10 @@ describe('opaque managed preset admission', () => {
                     if (ingress === 'api-token') {
                         // Exercise the actual approval owner too: Home's signed
                         // delegation bypasses requester Ask, ordinary PATs do not.
-                        const executor = createActionExecutor({ managedMachineAction: async ({ input: actionInput, context: actionContext }) => {
+                        const executor = createActionExecutor({
+                            actionAutomations: createActionAutomationPortV1({ accountId: principal.accountId,
+                                seed: async () => ({ v: 1, rows: [] }), settle: async () => [] }),
+                            managedMachineAction: async ({ input: actionInput, context: actionContext }) => {
                             acquisitionWork = acquisition.execute('machines.managed.acquire', actionInput, { requestId,
                                 context: actionContext, signal: actionContext.signal });
                             try { return await acquisitionWork; }
