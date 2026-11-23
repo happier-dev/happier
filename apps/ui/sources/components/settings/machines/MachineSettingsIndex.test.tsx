@@ -39,6 +39,7 @@ const routerReplaceSpy = vi.fn();
 const desktopState = vi.hoisted(() => ({ value: false }));
 const routeState = vi.hoisted(() => ({ pathname: '/settings/machines' }));
 type InventorySeed = {
+    currentAccount?: boolean;
     managedByServerId?: Readonly<Record<string, readonly ManagedMachineV1[]>>;
     managedInventory?: {
       entries: Record<
@@ -194,7 +195,8 @@ async function setMachines(
   selectedGroups = groups;
   for (const [index, group] of groups.entries()) {
     const profileId = await home.addHome({ name: group.serverName, serverUrl: `https://${group.serverId}.example`,
-      serverIdentityId: group.serverId, accountId: group.status === 'signedOut' ? null : 'account-a', active: index === 0 });
+      serverIdentityId: group.serverId, accountId: group.status === 'signedOut' ? null : 'account-a', active: index === 0,
+      currentAccount: overrides.currentAccount });
     homeProfiles.set(group.serverId, profileId);
     const error = overrides.managedInventory?.entries[group.serverId];
     home.answer(profileId, 'POST /v1/machines/managed/actions/list', error
@@ -1406,17 +1408,14 @@ describe('Presets in the Machines collection', () => {
   it('keeps admitted machine, pool and preset controls mounted and selected while a later name hydrates', async () => {
     const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
     const named = machine('machine-a1', 'Studio', 'studio.local');
-    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [{ ...named, metadata: null, availability: undefined }] }]);
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [{ ...named, metadata: null, availability: undefined }] }],
+      { currentAccount: true });
     routeState.pathname = '/settings/machines/machine-a1';
     poolFeatureState.value = 'enabled';
     await primeFeatures();
     const profileId = homeProfiles.get('srv_a')!;
-    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture({
-      id: 'build', homeId: 'srv_a', revision: 1, owner: { kind: 'account', accountId: 'account-a' },
-      controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
-      name: 'Build recipe',
-      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
-    })] } });
+    await home.setActionPolicy(profileId, 'machines.presets.list', 'ui', 'allowed');
+    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'count', count: 1 } });
     home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [{
       pool: { id: '00000000-0000-4000-8000-000000000001',
         name: { kind: 'available', label: { content: { t: 'plain', v: 'Development' }, recipientEnvelope: null } }, description: null,
@@ -1431,6 +1430,7 @@ describe('Presets in the Machines collection', () => {
     expect(read(ids[0]!)).toBeUndefined();
     await act(async () => storage.getState().applyMachines([named], false, { sourceServerId: 'srv_a' }));
     await waitForHomeGovernance(() => { for (const id of ids) expect(read(id), id).toBeDefined(); });
+    await waitForHomeGovernance(() => expect(read('settings.machines.presets')?.props.detail).toBe('1'));
     const admitted = ids.map(id => read(id));
     expect(read(ids[0]!)?.props.selected).toBe(true);
 
