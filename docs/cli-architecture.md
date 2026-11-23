@@ -7484,6 +7484,8 @@ an installed preference, or uses the existing at-login default for a new termina
 `--keep-disabled` still preserves a disabled service during repair rather than activating it.
 `daemon status --json` reports `service.autostart` from platform enablement and triggers, or `null`
 when the service is absent or the manager cannot be queried.
+When the platform has yet to report installation after service takeover, `service.installed` can use
+the expected service label from a daemon publication whose control listener answers authenticated `/ping`.
 Windows user tasks use the invoking user's SID in both the principal and the logon trigger, with
 `InteractiveToken` and `LeastPrivilege`; registration needs no password or all-users logon trigger.
 On-demand tasks register no trigger and omit missed-start catch-up. The existing task namespace,

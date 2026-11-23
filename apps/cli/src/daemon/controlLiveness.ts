@@ -69,7 +69,7 @@ export async function probeDaemonAuthenticatedControl(input: Readonly<{
 }
 
 export type DaemonPublicationPresenceInspection = Readonly<
-  | { status: 'running'; hiddenPid: boolean; machineControlReady?: boolean }
+  | { status: 'running'; hiddenPid: boolean; controlVerified: boolean; machineControlReady?: boolean }
   | { status: 'not_running' | 'unverified' }
 >;
 
@@ -86,7 +86,7 @@ export async function inspectDaemonPublicationPresence(input: Readonly<{
     ? await probeDaemonAuthenticatedControl({ ...input, controlToken: input.controlToken })
     : 'control_not_running';
   if (liveness === 'running') {
-    return { status: 'running', hiddenPid: !pidPresent, machineControlReady: input.machineControlReady };
+    return { status: 'running', hiddenPid: !pidPresent, controlVerified: true, machineControlReady: input.machineControlReady };
   }
   // An unrelated HTTP responder is not a busy daemon, even if the recycled PID
   // now names another Happier daemon. A refused listener remains distinct.
@@ -103,6 +103,7 @@ export async function inspectDaemonPublicationPresence(input: Readonly<{
     return {
       status: 'running',
       hiddenPid: false,
+      controlVerified: false,
       machineControlReady: input.machineControlReady === false ? false : undefined,
     };
   }

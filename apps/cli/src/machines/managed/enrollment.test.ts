@@ -13,6 +13,8 @@ import { ApiClient } from '@/api/api';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { encodePlainMachineStoredContent, decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachineUpdateMetadataRequestSchema } from '@happier-dev/protocol/machines/metadataUpdate';
+import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import { SessionControlEnvelopeErrorSchema, SessionControlEnvelopeSuccessSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -172,12 +174,29 @@ describe('runManagedMachineEnrollment', () => {
               success: true, homeServerIdentityId: target.homeServerIdentityId, machineId: 'collector-machine',
               encryptionType: 'tokenOnly', pairingAuthentication: 'v3', remoteProfileId: 'app-home' }), stderr: '' };
           }
-          if (invocation.includes('auth status') || invocation.includes('daemon status')) {
-            const status = { authenticated, server: { activeServerId: 'app-home' }, accountId: authenticated ? 'requester-account' : undefined,
-              credentialState: authenticated ? 'valid' : 'missing', machineRegistrationState: authenticated ? 'server-confirmed' : 'unconfirmed',
-              machineId: authenticated ? 'collector-machine' : undefined, daemon: { running, healthy: running }, service: { installed: false },
-              auth: { needsAuth: !authenticated, machineId: 'collector-machine' }, services: [] };
-            return { status: 0, stderr: '', stdout: JSON.stringify({ ...status, v: 1, ok: true, kind: 'auth_status', data: status }) };
+          if (invocation.includes('auth status')) {
+            const reply = authenticated
+              ? SessionControlEnvelopeSuccessSchema.parse({ v: 1, ok: true, kind: 'auth_status', data: {
+                serverId: 'app-home', authenticated: true, accountId: 'requester-account', credentialState: 'valid',
+                encryption: { type: 'none' }, machineRegistered: true, machineRegistrationState: 'server-confirmed',
+                accountLabel: null, machineId: 'collector-machine', host: 'collector',
+                happyHomeDir: originalMetadata.happyHomeDir, daemonRunning: running,
+              } })
+              : SessionControlEnvelopeErrorSchema.parse({ v: 1, ok: false, kind: 'auth_status',
+                error: { code: 'not_authenticated', credentialState: 'missing' } });
+            return { status: reply.ok ? 0 : 1, stderr: '', stdout: JSON.stringify(reply) };
+          }
+          if (invocation.includes('daemon status')) {
+            const reply = DoctorSnapshotDaemonStatusSchema.parse({
+              server: { activeServerId: 'app-home', serverUrl: target.applicationUrl, localServerUrl: null,
+                publicServerUrl: target.canonicalAuthUrl, webappUrl: target.webappUrl, comparableKey: null },
+              daemon: { running, healthy: running, pid: running ? 42 : null, httpPort: running ? 53288 : null },
+              service: { installed: false, running: false, autostart: null },
+              auth: { authenticated, credentialState: authenticated ? 'valid' : 'missing', machineRegistered: authenticated,
+                machineRegistrationState: authenticated ? 'server-confirmed' : 'no-local-id', needsAuth: !authenticated,
+                machineId: authenticated ? 'collector-machine' : null, accountId: authenticated ? 'requester-account' : null },
+            });
+            return { status: 0, stderr: '', stdout: JSON.stringify(reply) };
           }
           return { status: 0, stdout: '', stderr: '' };
         },

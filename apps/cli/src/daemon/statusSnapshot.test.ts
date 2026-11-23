@@ -139,6 +139,14 @@ describe('readDaemonStatusSnapshot', () => {
     });
 
     it('treats a matching running background-service owner as installed even when the filesystem probe lags', async () => {
+        readDaemonStateMock.mockResolvedValueOnce({
+            pid: process.pid,
+            httpPort: 53288,
+            startupSource: 'background-service',
+            serviceLabel: 'com.happier.cli.daemon.default',
+            controlToken: 'current-control-token',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }))));
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
 
         const snapshot = await readDaemonStatusSnapshot();
@@ -152,7 +160,7 @@ describe('readDaemonStatusSnapshot', () => {
         });
     });
 
-    it('treats an EPERM signal probe as a live daemon owner', async () => {
+    it('reports process presence when the signal probe returns EPERM', async () => {
         const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
             if (pid === process.pid && signal === 0) {
                 throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
@@ -166,7 +174,7 @@ describe('readDaemonStatusSnapshot', () => {
             const snapshot = await readDaemonStatusSnapshot();
 
             expect(snapshot.daemon.running).toBe(true);
-            expect(snapshot.service.running).toBe(true);
+            expect(snapshot.service).toMatchObject({ installed: false, running: false });
         } finally {
             killSpy.mockRestore();
         }
@@ -216,6 +224,7 @@ describe('readDaemonStatusSnapshot', () => {
 
         expect(snapshot.daemon.running).toBe(true);
         expect(snapshot.daemon.healthy).toBeNull();
+        expect(snapshot.service).toMatchObject({ installed: false, running: false });
     });
 
     it('reports a daemon that completed machine-control registration as healthy', async () => {

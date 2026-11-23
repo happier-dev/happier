@@ -35,13 +35,6 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
 
   const pid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
   const daemonRunning = pid != null && isPidPresent(pid);
-  // A ready publication must still belong to the listener that wrote it.
-  // Preserve the PID-based observation for callers that need local process presence.
-  let daemonHealthy: boolean | null = daemonRunning ? daemonState?.machineControlReady ?? null : false;
-  if (daemonHealthy === true && daemonState) {
-    const presence = await inspectPublishedDaemonPresence(daemonState).catch(() => null);
-    daemonHealthy = presence?.status === 'running' ? presence.machineControlReady ?? null : null;
-  }
   const machineId = readiness.machineId;
   const accountId = (() => {
     const token = readiness.credentials?.token ?? '';
@@ -55,14 +48,16 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     ? daemonState.serviceLabel
     : null;
   const daemonServiceManaged = resolveDaemonStartupSourceServiceManagedState(daemonState?.startupSource, daemonServiceLabel);
-  // Treat the current relay as service-installed when the running daemon is already owned
-  // by the expected background-service label, even if the filesystem probe lags after takeover.
-  const serviceInstalled = serviceSnapshot.installed || (
-    daemonRunning
-    && daemonServiceManaged === true
-    && daemonServiceLabel != null
-    && daemonServiceLabel === serviceSnapshot.label
-  );
+  // An authenticated publication can confirm takeover while the platform probe lags.
+  const needsServiceProof = !serviceSnapshot.installed && daemonServiceManaged === true
+    && daemonServiceLabel != null && daemonServiceLabel === serviceSnapshot.label;
+  const publishedPresence = daemonRunning && daemonState?.controlToken && (daemonState.machineControlReady === true || needsServiceProof)
+    ? await inspectPublishedDaemonPresence(daemonState).catch(() => null) : null;
+  const currentPublication = publishedPresence?.status === 'running' && publishedPresence.controlVerified
+    ? publishedPresence : null;
+  let daemonHealthy: boolean | null = daemonRunning ? daemonState?.machineControlReady ?? null : false;
+  if (daemonHealthy === true) daemonHealthy = currentPublication?.machineControlReady ?? null;
+  const serviceInstalled = serviceSnapshot.installed || (needsServiceProof && currentPublication !== null);
 
   return {
     server: {
