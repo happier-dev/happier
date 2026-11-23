@@ -1285,7 +1285,7 @@ export async function createSpawnedSession(
         });
         const settled = spawnResponse;
         if (settled.type === 'error') {
-          throw createCodedError(settled.errorMessage, settled.errorCode, {
+          throw createCodedError(settled.errorMessage, readSpawnFailureCode(settled, settled.errorCode), {
             sessionId: existing.id, spawnResponse,
             ...(settled.agentId ? { agentId: settled.agentId } : {}),
             ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),

@@ -8,34 +8,47 @@ import { mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import tweetnacl from 'tweetnacl';
+import { io } from 'socket.io-client';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, deriveSessionCreationTagV1,
   ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { createSharedGatewayRegistryTestkit } from '@/plugins/runtime/sharedGatewayRegistry.testkit';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { projectAgentProviderBrokerApplications } from '@/providers/broker/applicationProjection';
-import { openSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
-import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
+import type { DaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { openDaemonSessionTeamCredentialProviderBinding } from '@/daemon/providers/sessionTeamCredentialProviderBindingComposition';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { ApiClient } from '@/api/api';
-import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { registerMachineAgentInstallJobRpcHandlers } from '@/api/machine/rpcHandlers.agentInstallJobs';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerMap } from '@/api/rpc/types';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
+import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
+import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
-import { readSessionTeamCredentialResourceCatalog, readSessionTeamCredentialProviderModels } from '@/session/services/sessionTeamCredentialLaunch';
+import { registerPrivateSpawnSessionRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { readSessionTeamCredentialResourceCatalog } from '@/session/services/sessionTeamCredentialLaunch';
 import { createNativeSessionClientTestPort } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
 import { SessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
@@ -45,18 +58,20 @@ import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createSpawnHappyCliEnvScope, withTempHappyCliEntrypoint } from '@/testkit/process/spawnHappyCliHarness';
 import { logger } from '@/ui/logger';
-import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, ProviderBrokerOpenResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerOpenResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import { buildMachineResumeRequest } from '@/session/services/requestInactiveSessionResume';
-import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { PRIVATE_SPAWN_SESSION_RPC_METHODS, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import { buildPluginHostSessionRuntimeOptions, buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { createOnChildExited } from '../sessions/onChildExited';
+import { createStopSession } from '../sessions/stopSession';
 import { SessionAttachPayloadV2Schema } from '@/agent/runtime/sessionAttachPayload';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 // This composition now consumes the real UI authoring hook. Reuse its
@@ -82,7 +97,6 @@ import { createSessionStartupReadinessHandler } from './sessionStartupReadiness'
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '../agentRuntime/refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { activatePendingInactiveSession } from '../sessions/activatePendingInactiveSession';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -91,10 +105,7 @@ import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const sessionChanges = createSessionLiveWorkProducer({
-  readSessions: () => [],
-  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
-});
+vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
 // Only process creation is replaced. Production daemon preparation creates
 // the bootstrap/attach files; the admitted external Agent runs in this worker.
@@ -145,8 +156,10 @@ const { registerSessionListingRoutes }: typeof import('../../../../server/source
 const { registerSessionLookupByTagsRoute }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionLookupByTagsRoute') = await import(server + 'app/api/routes/session/registerSessionLookupByTagsRoute');
 const { sessionPendingRoutes }: typeof import('../../../../server/sources/app/api/routes/session/pendingRoutes') = await import(server + 'app/api/routes/session/pendingRoutes');
 const { registerSessionArchiveRoutes }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionArchiveRoutes') = await import(server + 'app/api/routes/session/registerSessionArchiveRoutes');
+const { registerSessionMessageRoutes }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionMessageRoutes') = await import(server + 'app/api/routes/session/registerSessionMessageRoutes');
 const { registerSessionTurnMutationRoute }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionTurnMutationRoute') = await import(server + 'app/api/routes/session/registerSessionTurnMutationRoute');
 const { accessKeysRoutes }: typeof import('../../../../server/sources/app/api/routes/accessKeys/accessKeysRoutes') = await import(server + 'app/api/routes/accessKeys/accessKeysRoutes');
+const { machinesRoutes }: typeof import('../../../../server/sources/app/api/routes/machines/machinesRoutes') = await import(server + 'app/api/routes/machines/machinesRoutes');
 const { db }: typeof import('../../../../server/sources/storage/db') = await import(server + 'storage/db');
 const { registerTeamRoutes }: typeof import('../../../../server/sources/app/teams/registerTeamRoutes') = await import(server + 'app/teams/registerTeamRoutes');
 const { resolveServerFeaturesForGating }: typeof import('../../../../server/sources/app/features/catalog/serverFeatureGate') = await import(server + 'app/features/catalog/serverFeatureGate');
@@ -196,7 +209,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     const answersObserved: string[] = [];
     const completedIngresses: string[] = [];
     const brokerRefusals: unknown[] = [];
+    let freshHomeAuthority: Extract<ReturnType<typeof ProviderBrokerOpenResponseV1Schema.parse>, { ok: true }>['authority'] | undefined;
     const homeRequestPaths: string[] = [];
+    const machineRpcMethods: string[] = [];
     const prelaunchExecutionMachineIds: unknown[] = [];
     let prelaunchProjectionActive = false;
     let readLaunchPhases: () => unknown = () => [];
@@ -205,7 +220,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     let readReadinessFailures: () => unknown = () => [];
     const readinessErrors: unknown[] = [];
     onTestFailed(() => { console.error('Team Pool deciding failure', { phase, runnerFailure, answersObserved, completedIngresses,
-      brokerRefusals, homeRequestPaths, launchPhases: readLaunchPhases(), launchMessages: readLaunchMessages(),
+      brokerRefusals, homeRequestPaths, machineRpcMethods, launchPhases: readLaunchPhases(), launchMessages: readLaunchMessages(),
       readinessFailures: readReadinessFailures(), readinessErrors, os: os.observed }); });
     const surface = brokerOnly ? 'broker-catalog' : 'shared';
     const launchEnv = createSpawnHappyCliEnvScope();
@@ -227,7 +242,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       // Trigger Node's own loader failure, not a manufactured launch-error DTO.
       // Production stderr capture must carry its cause to the strict Action sink.
       contents: "process.stdin.once('data', async () => { await import('startcanary-h48-missing-package'); }); process.stdin.resume();\n" });
-    if (pendingRestart) os.entrypoint = writeExecutableShimSync({ dir: join(directory, 'child', 'src'), fileName: 'index.mjs',
+    else os.entrypoint = writeExecutableShimSync({ dir: join(directory, 'child', 'src'), fileName: 'index.mjs',
       // Real readiness resolves the owned runner's entrypoint and process identity.
       contents: "process.stdin.once('data', () => process.exit(1)); process.stdin.resume();\n" });
     // The native CLI is an OS boundary: install the same version-only shim
@@ -309,15 +324,15 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'owner' } });
       const broker = await db.machine.create({ data: { id: `broker-${surface}`, accountId: custodian.id, metadata: '{}', kind: 'persistent', active: true,
         operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] }, irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) } }, operationProtocolCapabilitiesRevision: 1 } });
-      if (pendingRestart) await getOrCreateServerIdentityId();
+      const homeIdentityId = await getOrCreateServerIdentityId();
       const workerAccountId = pendingRestart ? custodian.id : recipient.id;
+      const workerInstallationId = crypto.randomUUID();
       const workerCapabilities = { irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) },
-        ...(pendingRestart ? { sessionInputAdmission: { protocolVersions: [1, 2] } } : {}) };
-      await db.machine.create({ data: { id: worker.machineId, accountId: workerAccountId,
-        ...(pendingRestart ? { installationId: crypto.randomUUID(),
-          metadata: encodePlainMachineStoredContent({ host: 'guest', platform: process.platform, happyCliVersion: 'test',
-            homeDir: directory, happyHomeDir: worker.happyHomeDir }),
-          dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } : { metadata: '{}' }),
+        sessionInputAdmission: { protocolVersions: [1, 2] } };
+      await db.machine.create({ data: { id: worker.machineId, accountId: workerAccountId, installationId: workerInstallationId,
+        metadata: encodePlainMachineStoredContent({ host: 'worker', platform: process.platform, happyCliVersion: 'test',
+          homeDir: directory, happyHomeDir: worker.happyHomeDir }),
+        dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
         kind: 'persistent', active: true, operationProtocolCapabilities: workerCapabilities, operationProtocolCapabilitiesRevision: 1 } });
       if (pendingRestart) expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
         actorAccountId: custodian.id, machineId: worker.machineId,
@@ -347,10 +362,28 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         settings: AccountSettingsSchema.parse({}), providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog: empty } };
       setActiveAccountSettingsSnapshot(recipientSnapshot);
       const unavailable = async (): Promise<never> => { throw new Error('Unexpected private source mutation'); };
+      const sourceAgentId = readAgentRoutingIdForContributionIdentity(
+        indexAgentRoutingIdsByContributionIdentity([...sourceLease.registry.contributes.agentDefinitionsById.values()]),
+        { pluginId: service.pluginId, localId: 'codex' },
+      );
+      if (!sourceAgentId) throw new Error('Expected the source Agent declaration');
       const sourceRuntime = createRuntimeProviderModelManagementServices({ machineId: broker.id, happyHomeDir: source.happyHomeDir,
         featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => recipientSnapshot,
         acquireRuntimeLease: async () => ({ ...sourceLease, release: async () => {} }), modelSettingsMutation: unavailable,
-        resolveManagedPurposeBindingIntentSelection: source.purposeBindingOwner.resolveBindingIntentSelection });
+        resolveManagedPurposeBindingIntentSelection: source.purposeBindingOwner.resolveBindingIntentSelection,
+        // The subscribed source Agent is a process boundary. Keep the real
+        // Team catalog projection, including the selected Pool member's probe.
+        async invokeConnectedAccountNativeModels(request, signal) {
+          signal.throwIfAborted();
+          expect(request).toMatchObject({ id: `cli.${sourceAgentId}`, method: 'probeModels', params: {
+            connectedServices: { v: 2, bindingsByServiceId: {
+              [qualifiedConnectedAccountPreferenceServiceKey(service)]: { source: 'connected', profileId: sourceAccount.accountId },
+            } },
+          } });
+          return { ok: true, result: AgentModelsProbeObservationSchema.parse({ agentId: sourceAgentId, source: 'dynamic',
+            availableModels: [{ id: 'gpt-5.6-luna', name: 'gpt-5.6-luna' }], supportsFreeform: false }) };
+        },
+      });
       const project = (application: import('@happier-dev/protocol').ProviderBrokerApplicationBindingV1) => sourceRuntime.projectModels({
         machineId: broker.id, agentTargetKey: worker.agentTargetKey, connectedAccountTarget: target,
         sourceCatalog: true, application, refreshPolicy: 'current_only' });
@@ -365,6 +398,18 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         if (prelaunchProjectionActive && request.url.split('?')[0] === resourceCatalogPath
           && typeof input === 'object' && input !== null && 'application' in input) {
           prelaunchExecutionMachineIds.push('executionMachineId' in input ? input.executionMachineId : undefined);
+        }
+      });
+      app.addHook('onSend', async (request, _reply, payload) => {
+        if (request.url !== PROVIDER_BROKER_OPEN_HTTP_PATH_V1 || typeof payload !== 'string') return;
+        const result = ProviderBrokerOpenResponseV1Schema.safeParse(JSON.parse(payload));
+        if (!result.success) return;
+        const openRequest = ProviderBrokerOpenRequestV1Schema.parse(request.body);
+        const refresh = Boolean(openRequest.refreshAuthority);
+        if (result.data.ok) {
+          if (refresh) freshHomeAuthority = result.data.authority;
+        } else {
+          brokerRefusals.push({ reasonCode: result.data.reasonCode, refresh });
         }
       });
       let brokerOnline = true;
@@ -387,7 +432,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       registerSessionLookupByTagsRoute(app);
       sessionPendingRoutes(app);
       registerSessionArchiveRoutes(app);
+      registerSessionMessageRoutes(app);
       registerSessionTurnMutationRoute(app);
+      machinesRoutes(app);
       registerTeamRoutes(app);
       app.get('/v1/features', async () => resolveServerFeaturesForGating(process.env));
       app.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: recipient.id }));
@@ -400,6 +447,47 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       const address = app.server.address();
       if (!address || typeof address === 'string') throw new Error('Missing Home address');
       const origin = `http://127.0.0.1:${address.port}`;
+      // Directory preflight and readiness go to the selected Machine over
+      // its socket. Replace delivery, then invoke the real receiving owners.
+      const requesterRpc = new RpcHandlerManager({ scopePrefix: worker.machineId, localMachineId: worker.machineId,
+        encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+          machineId: worker.machineId, resolveCustodianAccountId: async () => workerAccountId,
+          resolveInstallationId: () => workerInstallationId, resolveHomeServerIdentityId: async () => homeIdentityId,
+          verifyMachineAdmission: async () => true,
+        }, 'authenticated_home_socket') });
+      registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: requesterRpc });
+      registerDaemonContributionRegistryProjectionHandler(requesterRpc, {
+        resolveRuntimeRegistry: async () => worker.lease.registry,
+        resolveInstalledPackages: async () => [],
+      });
+      registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager: requesterRpc });
+      registerCapabilitiesHandlers(requesterRpc, { filesystemEffectAdmission: createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: async () => homeIdentityId,
+        ...(pendingRestart ? { async executeNativeRpc({ method }) {
+          // The guest native worker is an OS process boundary. This fixture
+          // leaves optional readiness observation to the admitted launch.
+          expect(method).toBe(RPC_METHODS.CAPABILITIES_DETECT);
+          return { protocolVersion: 1, results: { [`cli.${worker.agentId}`]: {
+            ok: false, checkedAt: 1, error: { code: 'unknown-capability', message: 'Capability is not registered' },
+          } } };
+        } } : {}),
+      }) });
+      const machineRpcPrefix = `${worker.machineId}:`;
+      bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub({
+        async emitWithAck(event, packet) {
+          if (event !== SOCKET_RPC_EVENTS.CALL || !packet || typeof packet !== 'object'
+            || !('method' in packet) || !('params' in packet)
+            || typeof packet.method !== 'string' || !packet.method.startsWith(machineRpcPrefix)) {
+            throw new Error(`Unexpected Machine socket message (${event})`);
+          }
+          machineRpcMethods.push(packet.method.slice(machineRpcPrefix.length));
+          const result = await requesterRpc.handleRequest({ method: packet.method, params: packet.params,
+            callerAuthority: 'present_user', machineAdmission: { actorAccountId: recipient.id,
+              custodianAccountId: workerAccountId, machineId: worker.machineId, installationId: workerInstallationId,
+              role: pendingRestart ? 'use' : 'manage', encryptionMode: 'plain' } }, undefined, 'authenticated_home_socket');
+          return { ok: true, result };
+        },
+      }));
       await runWithServerHttpBaseUrl(origin, async () => {
         // Reuse the gateway testkit's persistent-credential boundary with
         // this journey's recipient, preserving real Account-currentness checks.
@@ -457,6 +545,10 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         phase = `${surface}:launch`;
         const requestStart = requests.length;
         const tracked = new Map<SessionTrackingKey, import('../types').TrackedSession>();
+        const sessionChanges = createSessionLiveWorkProducer({
+          readSessions: () => [...tracked.values()],
+          readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+        });
         const awaiters = new Map<SessionTrackingKey, (session: import('../types').TrackedSession) => void>();
         const resolvers = new Map<SessionTrackingKey, (result: import('@/session/shared/spawnSessionContract').SpawnSessionResult) => void>();
         const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
@@ -527,7 +619,12 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           // The accepted slot travels in protected attach, not fresh-create argv.
           const attach = SessionAttachPayloadV2Schema.parse(JSON.parse(await readFile(attachPath, 'utf8')));
           if (!attach.snapshot) throw new Error('Missing committed Session snapshot');
-          expect(attach.snapshot.acceptedTeamCredentialBinding).toMatchObject({
+          const acceptedTeamBinding = attach.snapshot.acceptedTeamCredentialBinding;
+          if (!acceptedTeamBinding || !('teamId' in acceptedTeamBinding) || !acceptedTeamBinding.teamId) {
+            throw new Error('Missing committed Team binding');
+          }
+          const { teamId: acceptedTeamId, deliveryMode } = acceptedTeamBinding;
+          expect(acceptedTeamBinding).toMatchObject({
             resourceId: resource.id, teamId: team.id, deliveryMode: 'brokered',
           });
           if (startupOutcome) {
@@ -558,8 +655,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             }) : attach.snapshot.metadata;
             // The daemon commits immutable birth intent; the host runner
             // publishes modelSelectionIntentV1 later during metadata startup.
-            expect(metadata.sessionCreationCorrespondenceV1?.recipe.modelSelection).toMatchObject({ v: 1,
-              ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: offered.descriptor.id } });
+            expect(metadata.sessionCreationCorrespondenceV1?.recipe.modelSelection).toMatchObject({ v: 2,
+              ref: { source: 'team_resource', teamId: team.id, resourceId: resource.id, expectedResourceRevision: resource.revision,
+                deliveryMode: 'brokered', agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id } });
             expect(attach.snapshot.acceptedTeamCredentialBinding).toMatchObject({ expectedResourceRevision: resource.revision });
           }
           // Replace socket delivery only: the real Home presence owner admits
@@ -574,12 +672,14 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             .toMatchObject({ status: 'registered' });
           // The resume regression ends at the real runner argument/launch
           // consumer above; the other journey owns native inference coverage.
-          if (pendingRestart && restartAttempt) {
+          const observeNativeOpen = pendingRestart ? restartAttempt : surface === 'cli' && !resumeOnly;
+          if (observeNativeOpen) {
             const response = await control.inject({ method: 'POST', url: '/session-started',
               headers: { 'x-happier-daemon-token': 'startup-token' },
               payload: { sessionId, metadata: createTestMetadata({ hostPid: os.pid, startedBy: 'daemon',
                 happyHomeDir: configuration.happyHomeDir, path: directory }) } });
-            expect(response.statusCode, response.body).toBe(200);
+            expect(response.statusCode, JSON.stringify({ body: response.json(),
+              readinessErrors: readinessErrors.map(error => String(error)) })).toBe(200);
           }
           if (!resumeOnly || pendingRestart && restartAttempt) {
           phase = `${surface}:native-plan`;
@@ -592,12 +692,18 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             modelSelection: launch.modelSelection, resume: launch.resume,
             backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
           }, { pluginRuntimeRegistryLease: worker.lease, prepareTeamCredentialProviderBinding: async input => {
-            let freshHomeAuthority: Extract<ReturnType<typeof ProviderBrokerOpenResponseV1Schema.parse>, { ok: true }>['authority'] | undefined;
+            freshHomeAuthority = undefined;
             let inferenceDialed = false;
-            const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
-              accountId: recipient.id, localMachineId: worker.machineId,
-              resolveTrustRoots: () => [{ keyId: 'broker-catalog', publicKey: Buffer.from(tweetnacl.sign.keyPair.fromSeed(routeSigningSeed).publicKey).toString('base64url') }],
-              runtime: { endpoint: { endpointId: 'a'.repeat(64) }, openHttpTunnel: async transport => {
+            const runtime: DaemonMachineIrohRuntime = {
+              available: true,
+              endpoint: { endpointId: 'a'.repeat(64) },
+              startAttemptAcceptor: unavailable,
+              stopActiveTunnels: unavailable,
+              stopAttemptAcceptor: unavailable,
+              openTunnel: unavailable,
+              openTransport: unavailable,
+              shutdown: unavailable,
+              async openHttpTunnel(transport) {
                 // Home admission must finish before native starts first-stream
                 // custody. Keep the signed handshake on the real launch path.
                 if (!inferenceDialed) {
@@ -608,27 +714,15 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 }
                 return { localPort: carrierAddress.port, localCapability: 'synthetic-carrier-capability',
                   remoteEndpointId: 'b'.repeat(64), observedPath: 'relay', close: async () => {} };
-              } },
-            });
-            const opened = await openSessionTeamCredentialProviderBinding({ ...input, machineId: worker.machineId,
-              agentId: worker.agentId, binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: input.resourceId,
-                expectedResourceRevision: input.expectedResourceRevision, deliveryMode: 'brokered', teamId: team.id },
-              lease: worker.lease, materializationBaseDir: join(directory, 'materialized'),
-              readCatalog: (signal, application) => readSessionTeamCredentialProviderModels({ homeDomainAction, lease: worker.lease,
-                agentId: worker.agentId, agentTargetKey: worker.agentTargetKey, teamId: team.id, resourceId: resource.id,
-                executionMachineId: worker.machineId,
-                deliveryMode: input.deliveryMode, signal, ...(application ? { application } : {}) }),
-              openBroker: async (request, signal) => {
-                const result = await openTeamCredentialProviderBroker({ token: credentials.token,
-                  serverBaseUrl: origin, request, signal });
-                if (request.refreshAuthority && result.ok) freshHomeAuthority = result.authority;
-                if (!result.ok) brokerRefusals.push({ reasonCode: result.reasonCode, refresh: Boolean(request.refreshAuthority) });
-                return result;
               },
-              openTunnel,
+            };
+            return await openDaemonSessionTeamCredentialProviderBinding({ ...input, agentId: worker.agentId,
+              teamId: acceptedTeamId, deliveryMode }, {
+              machineId: worker.machineId, accountId: recipient.id, serverId: configuration.activeServerId,
+              credentials, serverHttpBaseUrl: origin, happyHomeDir: worker.happyHomeDir,
+              controller: pluginReloadController, runtime, openTeamDirect: unavailable,
+              resolveTrustRoots: () => [{ keyId: 'broker-catalog', publicKey: Buffer.from(tweetnacl.sign.keyPair.fromSeed(routeSigningSeed).publicKey).toString('base64url') }],
             });
-            if (!opened) throw new Error('Accepted Team binding was not opened');
-            return opened;
           } });
           const session = createNativeSessionClientTestPort(sessionId);
           phase = `${surface}:native-runtime`;
@@ -666,7 +760,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 deliveryMode: 'brokered', modelId: offered.descriptor.id, sourceLabel: 'Shared source' });
             } finally { publisher.dispose(); }
           }
-          if (pendingRestart) {
+          if (observeNativeOpen) {
             const current = trackedForPid(os.pid);
             const retained = worker.lease.registry.agentRuntimesByAgentId.get(worker.agentId)?.sessionRunnerFactoryBinding;
             if (!current || !retained || current.processStartTimeMs === undefined || !current.processCommandHash) {
@@ -674,7 +768,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             }
             expect(await recordTrackedRunnerAgentSessionOpenAttestation({ tracked: current, retainedAgent: retained,
               runner: { pid: os.pid, processStartTimeMs: current.processStartTimeMs, processCommandHash: current.processCommandHash },
-              request: { kind: 'create', sessionId, cwd: directory }, providerSessionId: null })).not.toBeNull();
+              request: { kind: 'create', sessionId, cwd: directory }, providerSessionId: null,
+              onRecorded: () => sessionChanges.notifySessionChanged(sessionId) })).not.toBeNull();
           }
           const operations = (runtime as Readonly<{ operations: Readonly<{
             sendTurnPrompt(text: string, input: Readonly<{ turnId: string; localId: string; userMessageSeq: number }>): Promise<void>;
@@ -700,7 +795,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           phase = `${surface}:webhook`;
           // The real waiter projects the Home-created settlement already held
           // by daemon custody; a handwritten success would discard that receipt.
-          if (!pendingRestart || !restartAttempt) {
+          if (!observeNativeOpen) {
             const completed = trackedForPid(os.pid);
             const acceptWebhook = awaiters.get(keyForPid(os.pid));
             if (!completed || !acceptWebhook) throw new Error('Daemon webhook custody is unavailable');
@@ -738,24 +833,46 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           resolvers.get(keyForPid(os.pid))?.({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: String(error) });
         }); };
         os.runner = runControlledRunner;
+        let lastDaemonRefusal: { errorCode: string; reason?: string } | undefined;
         const spawnSession = async (options: Parameters<typeof executeSpawnSessionRequest>[0]['options']) => {
           expect(options.machineId ?? worker.machineId).toBe(worker.machineId);
           prelaunchProjectionActive = true;
           // The control runtime supplies its local placement after RPC normalization.
-          try { return await executeSpawnSessionRequest({ options: { ...options, machineId: worker.machineId }, credentials, api,
-            deviceLocalSecretStorage,
-            activatePurposeBindings: worker.gateway!.purposeBindingOwner.activatePurposeBindings,
-            activateSessionPurposeBindings: worker.gateway!.purposeBindingOwner.activateSessionPurposeBindings,
-            connectedServicesMaterializationBaseDir: join(directory, 'connected-services'), connectedServiceRefreshCoordinator: null,
-            connectedServiceQuotasCoordinator: null, connectedServiceRuntimeRegistry: { registerTarget() {} },
-            trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
-            spawnResourceCleanupByKey, sessionAttachCleanupByKey,
-            resolveCanonicalTrackedSessionId: trackingKey => tracked.get(trackingKey)?.happySessionId ?? '',
-            onChildExited: (...args) => { const task = onChildExited(...args); exitTasks.push(task); return task; },
-            processEnv: { ...process.env, RUN_NATIVE_API_KEY: '', HAPPIER_HOME_DIR: worker.happyHomeDir }, resolveProvidersFeatureEnabled: () => true });
+          try {
+            const result = await executeSpawnSessionRequest({
+              options: { ...options, machineId: worker.machineId }, credentials, api, deviceLocalSecretStorage,
+              activatePurposeBindings: worker.gateway!.purposeBindingOwner.activatePurposeBindings,
+              activateSessionPurposeBindings: worker.gateway!.purposeBindingOwner.activateSessionPurposeBindings,
+              connectedServicesMaterializationBaseDir: join(directory, 'connected-services'), connectedServiceRefreshCoordinator: null,
+              connectedServiceQuotasCoordinator: null, connectedServiceRuntimeRegistry: { registerTarget() {} },
+              trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
+              spawnResourceCleanupByKey, sessionAttachCleanupByKey,
+              resolveCanonicalTrackedSessionId: trackingKey => tracked.get(trackingKey)?.happySessionId ?? '',
+              onChildExited: (...args) => {
+                const task = onChildExited(...args).finally(() => sessionChanges.notifySessionChanged(sessionId));
+                exitTasks.push(task);
+                return task;
+              },
+              processEnv: { ...process.env, RUN_NATIVE_API_KEY: '', HAPPIER_HOME_DIR: worker.happyHomeDir },
+              resolveProvidersFeatureEnabled: () => true,
+            });
+            if (result.type === 'error') lastDaemonRefusal = { errorCode: result.errorCode,
+              reason: result.errorDetail?.kind === 'launch_error' ? result.errorDetail.code : result.errorDetail?.kind };
+            return result;
           } finally { prelaunchProjectionActive = false; }
         };
-        const handler = createSpawnNewSessionLifecycleActionHandler({ serverId: configuration.activeServerId, spawnSession });
+        const handler = createSpawnNewSessionLifecycleActionHandler({ serverId: configuration.activeServerId, spawnSession,
+          stopSession: createStopSession({ trackedSessionsByKey: tracked }),
+          awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({
+            ...input,
+            getTrackedSessions: () => [...tracked.values()],
+            subscribeChanges: listener => sessionChanges.subscribe(listener, input.sessionId),
+            readStartupFailure: async () => {
+              const session = await fetchSessionByIdCompat({ reason: 'session-control', token: credentials.token, sessionId: input.sessionId });
+              return session?.latestTurnStatus === 'failed' ? session.lastRuntimeIssue ?? null : null;
+            },
+          }),
+        });
         try {
           // Observe the logging boundary without replacing launch logic; a
           // cleanup refusal must not hide the original preparation diagnostic.
@@ -876,8 +993,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             try {
               const refused = await start();
               expect(await db.session.findMany({ where: { accountId: recipient.id }, select: { id: true } })).toEqual([]);
-              expect(refused, JSON.stringify(refused)).toMatchObject({ ok: true,
-                result: { type: 'error', code: 'agent_cli_missing' } });
+              expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'agent_cli_not_ready',
+                details: { type: 'error', code: 'agent_cli_not_ready', agentId: worker.agentId, retryable: false } });
               expect(runner).toBeUndefined();
             } finally {
               await rename(uninstalledCli, nativeCli);
@@ -891,9 +1008,10 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             os.refuseStart = true;
             try {
               for (const attempt of [1, 2]) {
+                lastDaemonRefusal = undefined;
                 const refused = await start();
-                expect(refused, JSON.stringify({ attempt, refused })).toMatchObject({ ok: true,
-                  result: { type: 'error', code: 'spawn_failed', launchError: { code: 'SPAWN_FAILED' } } });
+                expect(refused, JSON.stringify({ attempt, refused, lastDaemonRefusal })).toMatchObject({ ok: false, errorCode: 'spawn_failed',
+                  details: { type: 'error', code: 'spawn_failed', launchError: { code: 'EACCES' } } });
                 const rows = await db.session.findMany({ where: { accountId: recipient.id },
                   select: { id: true, active: true, runtimeActivityRevision: true } });
                 expect(rows).toEqual([{ id: expect.any(String), active: false, runtimeActivityRevision: 0n }]);
@@ -919,10 +1037,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             const processesBefore = os.observed.length;
             try {
               const refused = await start();
-              expect(refused).toMatchObject({ ok: true });
-              if (!refused.ok) throw new Error('Team refusal did not reach the public spawn result');
-              expect(SessionSpawnNewActionResultV1Schema.parse(refused.result)).toMatchObject({
-                type: 'error', code: 'spawn_failed', launchError: { code: 'resource_unavailable' },
+              expect(refused, JSON.stringify(refused)).toMatchObject({
+                ok: false, errorCode: 'spawn_failed',
+                details: { type: 'error', code: 'spawn_failed', launchError: { code: 'resource_unavailable' } },
               });
               expect(requests).toHaveLength(nativeBefore);
               expect(os.observed).toHaveLength(processesBefore);
@@ -940,17 +1057,17 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           await expect(runner, JSON.stringify({ result, preparationFailures: startupDiagnostics.mock.calls.filter(([message]) =>
             message === '[DAEMON RUN] Session spawn failed after startup preparation') })).resolves.toBeUndefined();
           if (startupOutcome) {
-            if (!result.ok) throw new Error('Spawn Action did not return its typed result');
-            const publicSpawnResult = SessionSpawnNewActionResultV1Schema.parse(result.result);
             if (startupOutcome === 'acknowledged') {
-              expect(publicSpawnResult).toMatchObject({ type: 'success', sessionId });
+              expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
               expect(trackedForPid(os.pid)?.agentRuntimeDaemonServiceCapabilityHash).toEqual(expect.any(String));
             } else {
-              expect(publicSpawnResult).toMatchObject({
-                type: 'error', code: 'spawn_failed', launchError: { code: 'CHILD_EXITED_BEFORE_WEBHOOK',
-                  childExit: { code: 1, signal: null,
-                    cause: { kind: 'module_not_found', specifierBasename: 'startcanary-h48-missing-package' },
-                    stderrHead: expect.stringContaining('ERR_MODULE_NOT_FOUND'),
+              expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'spawn_failed',
+                details: {
+                  type: 'error', code: 'spawn_failed', launchError: { code: 'CHILD_EXITED_BEFORE_WEBHOOK',
+                    childExit: { code: 1, signal: null,
+                      cause: { kind: 'module_not_found', specifierBasename: 'startcanary-h48-missing-package' },
+                      stderrHead: expect.stringContaining('ERR_MODULE_NOT_FOUND'),
+                    },
                   },
                 },
               });
@@ -1049,21 +1166,28 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 pendingActivationRequestedAt: accepted.pendingActivationRequestedAt,
               });
               expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { id: retained.id } })).toEqual(retained);
-              const resumeHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: configuration.activeServerId,
-                spawnSession });
+              const resumeHandlers: RpcHandlerMap = new Map();
+              registerPrivateSpawnSessionRpcHandlers({
+                rpcHandlerManager: { registerHandler: (method, handler) => { resumeHandlers.set(method, handler); } },
+                spawnLifecycleHandler: handler,
+              });
               const resumeDeps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
                 serverId: configuration.activeServerId, machineActionDirectTargetTransport: { machineId: worker.machineId,
                   invoke: async (method, request, options) => {
-                    if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error(`Unexpected resume RPC ${method}`);
+                    expect(method).toBe(PRIVATE_SPAWN_SESSION_RPC_METHODS.providerSafe);
+                    const resumeHandler = resumeHandlers.get(method);
+                    if (!resumeHandler) throw new Error(`Unregistered resume RPC ${method}`);
                     return await resumeHandler(request, options);
                   } } });
               const resume = () => createActionExecutor(resumeDeps).execute('session.open', {
                 sessionId, serverId: configuration.activeServerId, intent: 'resume',
               }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, signal: lifetime.signal });
               os.runner = runControlledRunner;
-              // Resume acknowledges runner readiness before native provider binding.
-              // The actual late broker failure remains a recoverable runner issue.
-              expect(await resume()).toMatchObject({ ok: true, result: { ok: true, status: 'opened', sessionId } });
+              // The public Resume waits for native open. The exact late broker
+              // refusal must remain visible without consuming the accepted input.
+              const offlineResume = await resume();
+              expect(offlineResume, JSON.stringify(offlineResume)).toMatchObject({ ok: false, errorCode: 'resume_failed',
+                details: { errorDetail: { kind: 'launch_error', code: 'broker_unavailable' } } });
               await expect(runner).resolves.toBeUndefined();
               await Promise.all(exitTasks);
               expect(startupFailures).toHaveLength(2);
@@ -1075,11 +1199,12 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 operationProtocolCapabilities: workerCapabilities, operationProtocolCapabilitiesRevision: { increment: 1 },
               } });
               os.runner = runControlledRunner;
-              expect(await resume()).toMatchObject({ ok: true, result: { ok: true, status: 'opened', sessionId } });
+              const recoveredResume = await resume();
+              expect(recoveredResume, JSON.stringify(recoveredResume)).toMatchObject({ ok: true, result: { ok: true, status: 'opened', sessionId } });
               expect(runner).toBeDefined();
               await expect(runner).resolves.toBeUndefined();
-              // Observe native-open independently; public Resume's acknowledgment
-              // does not promise that the provider conversation has opened yet.
+              // Verify the successful Action came from the replacement runner's
+              // own process-correlated native-open attestation.
               expect(await awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), sessionId, timeoutMs: null, signal: lifetime.signal,
                 getTrackedSessions: () => [...tracked.values()] })).toMatchObject({ status: 'opened' });
               expect(startupFailures).toHaveLength(2);

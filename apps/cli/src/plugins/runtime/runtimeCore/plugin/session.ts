@@ -37,10 +37,9 @@ import {
     getAgentResumeConfig,
 } from '@happier-dev/agents';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildUnsupportedSessionPendingInputInterruptAndRunResult } from '@happier-dev/protocol/sessions/control/pendingInputInterruptAndRunV1';
 import { buildUnsupportedSessionTerminalComposerClearResult } from '@happier-dev/protocol/sessions/control/terminalComposerClearV1';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { isSessionModelRefSourceBound, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelSelectionResolutionError, SessionModelSelectionV1Schema, resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
@@ -766,10 +765,9 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
     if (!hasMetadataIntent && launchSelection?.v !== 2) return launchSelection;
 
     const backendTarget = params.sessionInput.bootstrap.target
-        ? readBackendTargetRefV2(params.sessionInput.bootstrap.target)
-        : resolveBackendTargetFromSessionMetadata(params.metadata);
+        ?? resolveBackendTargetFromSessionMetadata(params.metadata);
     const targetKey = backendTarget
-        ? buildBackendTargetKeyV2(backendTarget)
+        ? resolveBackendTargetKeyV2(backendTarget)
         : params.sessionInput.runtimePreferences.modelSelection?.ref.agentTargetKey ?? null;
     if (!targetKey) {
         throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
@@ -879,7 +877,7 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                         });
                         if (!cached) return seed;
                         const agentTargetKey = opts.backendTarget
-                            ? buildBackendTargetKeyV2(readBackendTargetRefV2(opts.backendTarget))
+                            ? resolveBackendTargetKeyV2(opts.backendTarget)
                             : buildBackendTargetKeyV2({
                                 kind: 'backend',
                                 backendId: params.backend.id,
