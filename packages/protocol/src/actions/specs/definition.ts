@@ -27,6 +27,7 @@ import { SessionSurfaceItemV1Schema, type SessionSurfaceItemDestinationV1 } from
 import { readSessionVisualCapabilitiesV1 } from '../../sessions/board/visualPolicy.js';
 import type { UiSurfaceNetworkPolicyV1 } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import type { TeamCredentialApprovalSource, TeamCredentialSourceSelection } from './teamCredentialApproval.js';
+import type { TeamSetupBatchInputV1 } from '../../teams/setupBatchV1.js';
 import type { TeamMemberApprovalPresentation } from './teamMemberApproval.js';
 
 export type SessionVisualCopyApprovalSummaryInput = Readonly<{
@@ -40,6 +41,17 @@ export type ActionApprovalScopeProjectionV1 = (
   input: unknown,
   context: Readonly<{ serverId?: string | null }>,
 ) => Readonly<{ scope?: 'machine' | 'environment'; subjects: readonly AutomationSubjectV1[] }>;
+
+export type GovernanceApprovalSummary =
+  | Readonly<{ kind: 'teamArchive' | 'nativeCredentialDelivery' | 'machinePresetPrepare' }>
+  | Readonly<{ kind: 'teamPolicy'; signIn: 'inherit' | 'inheritMayExpand' | null; clearTeamDefaults: boolean; clearGroupDefaults: boolean }>
+  | Readonly<{ kind: 'teamSetup'; setup: TeamSetupBatchInputV1 }>;
+
+/** Keep the legacy summary recognizable to a pending card that already carries it. */
+export function formatGovernanceApprovalSummary(context: ApprovalPresentationContext | undefined,
+  summary: GovernanceApprovalSummary, legacy: () => string | null): string | null {
+  return context?.formatGovernanceSummary?.(summary, legacy) ?? legacy();
+}
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
@@ -58,6 +70,8 @@ export type ApprovalPresentationContext = Readonly<{
   /** Channels' readable destination for this exact reply; display only, never executable routing. */
   discussionReplyDestination?: Readonly<{ discussionId: string; messageId: string;
     connectionName: string | null; conversationName: string | null }>;
+  /** Localized pending governance copy selected from the admitted operands. */
+  formatGovernanceSummary?: (summary: GovernanceApprovalSummary, legacy: () => string | null) => string;
   /** Localized presentation of the copy's already materialized source policy. */
   formatSessionVisualCopySummary?: (input: SessionVisualCopyApprovalSummaryInput) => string;
 }>;

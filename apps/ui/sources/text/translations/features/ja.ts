@@ -2652,6 +2652,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { ja: {
+        governance: {
+            teamArchive: "保留中の招待は完全に取り消されます。Team を復元しても招待は復元されません。",
+            teamPolicyInherit: "Home のサインインポリシーを使用します。",
+            teamPolicyInheritMayExpand: "Home のサインインポリシーを使用します。利用できる方法が増える場合があります。",
+            teamPolicyClearTeam: "Team メンバーの既定値とグループの上書き設定をすべて解除します。",
+            teamPolicyClearGroup: "グループメンバーの既定値を解除します。",
+            machinePresetPrepare: "このプリセット用の準備済みイメージを作成します。ビルドと保存に料金がかかる場合があります。",
+            setupApply: "マシン設定を適用",
+            setupAttach: "接続",
+            setupWorktree: "ワークツリーを作成",
+            setupClone: "クローン",
+            setupSync: "同期",
+            setupWorkspace: "ワークスペース",
+            setupConnectedAccount: "接続済みアカウントを使用",
+            nativeCredentialDelivery: "ネイティブ配信では、選んだキーがプロビジョニングトークンとは別に、ベンダーの制御プレーンへ渡る場合があります。キーの管理者とベンダーへの信頼が必要です。設定済みのリクエストは、Happier のリクエストごとの認可、本文とモデルのポリシー、リクエスト数・トークン数・費用の上限を経由しません。ベンダーの照合条件はキーの置換を絞り込みます。モデルの JSON は検査せず、条件外のリクエストも拒否しません。予算とキーの制限はゲートウェイまたはベンダーで設定してください。適用範囲はここでは確認できません。コントローラーがオフラインでも設定済みのルールが動き続けることがあり、変更や削除は保証されません。使用を停止するには、提供元のキーをローテーションするか取り消してください。すでに開示されたキーは回収できません。利用者の記録は観測に基づき、本人確認や費用の按分には使えません。同じ OS ユーザーを共有するメンバーは互いのプレースホルダーを読み取って再利用できます。",
+        },
         requestedByAgent: 'セッションのエージェントが要求したアクション',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `対象セッション: ${sessionId}`,

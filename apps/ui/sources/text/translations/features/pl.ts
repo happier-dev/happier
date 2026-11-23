@@ -2706,6 +2706,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { pl: {
+        governance: {
+            teamArchive: "Oczekujące zaproszenia zostaną trwale unieważnione. Przywrócenie zespołu ich nie przywróci.",
+            teamPolicyInherit: "Użyj zasad logowania Home.",
+            teamPolicyInheritMayExpand: "Użyj zasad logowania Home. Mogą dopuścić więcej metod logowania.",
+            teamPolicyClearTeam: "Wyczyść ustawienia domyślne członków zespołu i wszystkie wyjątki grup.",
+            teamPolicyClearGroup: "Wyczyść ustawienia domyślne członków grupy.",
+            machinePresetPrepare: "Utwórz przygotowany obraz dla tego ustawienia. Kompilacja i przechowywanie mogą kosztować.",
+            setupApply: "Zastosuj konfigurację komputera",
+            setupAttach: "Dołącz",
+            setupWorktree: "Utwórz drzewo robocze",
+            setupClone: "Klonuj",
+            setupSync: "Synchronizuj",
+            setupWorkspace: "Obszar roboczy",
+            setupConnectedAccount: "Użyj połączonego konta",
+            nativeCredentialDelivery: "Dostarczanie natywne może ujawnić wybrany klucz warstwie sterującej dostawcy niezależnie od tokenu aprowizacji. Nadal ufasz opiekunowi klucza i dostawcy. Zainstalowane żądania omijają autoryzację poszczególnych żądań, reguły treści i modeli oraz limity żądań, tokenów i kosztów Happier. Reguły dostawcy ograniczają podstawianie kluczy. Nie sprawdzają JSON modelu i nie blokują niedopasowanych żądań. Ustaw budżety i ograniczenia kluczy w bramie lub u dostawcy. Tutaj nie można sprawdzić ich zakresu. Zainstalowane reguły mogą działać po odłączeniu kontrolera, gdy modyfikacja lub usunięcie nie są gwarantowane. Zmień lub unieważnij klucz źródłowy, aby zatrzymać użycie. Ujawnionych kluczy nie można odzyskać. Przypisanie opiera się na obserwacjach i nie uwierzytelnia członków ani nie rozlicza ich kosztów. Osoby korzystające z tego samego konta systemowego mogą odczytywać i ponownie używać swoich znaczników zastępczych.",
+        },
         requestedByAgent: 'Działanie żądane przez agenta sesji',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Sesja docelowa: ${sessionId}`,

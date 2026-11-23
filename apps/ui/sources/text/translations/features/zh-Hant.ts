@@ -2598,6 +2598,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { 'zh-Hant': {
+        governance: {
+            teamArchive: "待處理的邀請將永久撤銷。還原團隊不會還原這些邀請。",
+            teamPolicyInherit: "使用 Home 的登入政策。",
+            teamPolicyInheritMayExpand: "使用 Home 的登入政策。這可能允許更多登入方式。",
+            teamPolicyClearTeam: "清除團隊成員的預設值和所有群組覆寫設定。",
+            teamPolicyClearGroup: "清除群組成員的預設值。",
+            machinePresetPrepare: "為此預設建立預備映像。建置和儲存可能產生費用。",
+            setupApply: "套用電腦設定",
+            setupAttach: "附加",
+            setupWorktree: "建立工作樹",
+            setupClone: "複製",
+            setupSync: "同步",
+            setupWorkspace: "工作區",
+            setupConnectedAccount: "使用已連結的帳戶",
+            nativeCredentialDelivery: "原生交付可能會將選取的憑證金鑰揭露給供應商的控制平面，與佈建權杖分開。你仍需信任金鑰保管方與供應商。已安裝的請求會略過 Happier 的逐請求授權、本文和模型政策，以及請求、權杖或費用限制。供應商的比對規則只會限制金鑰替換。它們不會檢查模型 JSON，也不會拒絕未符合的請求。請在閘道或供應商處設定預算和金鑰限制。這裡無法驗證其涵蓋範圍。控制器離線時，已安裝的規則可能繼續運作，無法保證變更或移除。請輪替或撤銷上游金鑰以停止使用。已揭露的金鑰無法收回。歸因基於觀察，不能用於驗證成員身分或分攤成本。共用作業系統帳戶的成員可以讀取並重複使用彼此的預留位置。",
+        },
         requestedByAgent: '工作階段代理程式要求的動作',
         homeTarget: ({ serverId }) => `Home：${serverId}`,
         sessionTarget: ({ sessionId }) => `目標工作階段：${sessionId}`,

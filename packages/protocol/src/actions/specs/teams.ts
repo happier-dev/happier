@@ -105,6 +105,7 @@ import {
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDisclosureApprovalSummary } from './teamCredentialApproval.js';
+import { formatGovernanceApprovalSummary, type ApprovalPresentationContext } from './definition.js';
 import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Schema,
   TeamMembershipHistoryPreparationResultV1Schema } from '../../teams/membershipHistoryPreparationV1.js';
 
@@ -248,7 +249,8 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
     ...(isTeamCredentialDirectConfirmationActionIdV1(input.id)
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     ...(isTeamCredentialNativeDisclosureActionIdV1(input.id) ? {
-      approvalPresentation: { summary: (value: unknown) => teamCredentialNativeDisclosureApprovalSummary(input.id, value) },
+      approvalPresentation: { summary: (value: unknown, context?: ApprovalPresentationContext) =>
+        teamCredentialNativeDisclosureApprovalSummary(input.id, value, context) },
       approvalPolicy: {
       uiConfirmation: 'direct' as const,
       uiConfirmationForInput: (value: unknown) => teamCredentialMutationRequiresUiConfirmation(input.id, value),
@@ -378,9 +380,10 @@ function createTeamActionSpecs(): TeamActionSpecs {
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
     inputSchema: TeamSetupBatchInputV1Schema, outputSchema: TeamSetupBatchResultV1Schema,
     approval: { flow: 'blocking', result: 'required' }, approvalPolicy: { uiConfirmation: 'policy', requesterAppReview: true },
-    approvalPresentation: { summary: value => {
-      const { machineId, homeId, machine, repositories } = TeamSetupBatchInputV1Schema.parse(value);
-      return [
+    approvalPresentation: { summary: (value, context) => {
+      const setup = TeamSetupBatchInputV1Schema.parse(value);
+      const { machineId, homeId, machine, repositories } = setup;
+      return formatGovernanceApprovalSummary(context, { kind: 'teamSetup', setup }, () => [
         `Machine ${machineId} on Home ${homeId}`,
         ...(machine ? machine.targets.flatMap(target => [
           `Apply ${target.preset?.id ?? 'Machine setup'} (revision ${target.preset?.revision ?? target.desiredRevision})`,
@@ -404,7 +407,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
           const ref = input.ref ?? (input.source.kind === 'source' ? input.source.defaultRef : undefined);
           return `${checkout.kind} ${source}${ref ? ` @ ${ref}` : ''}${authentication}${destination}`;
         }),
-      ].join('\n');
+      ].join('\n'));
     } },
     bindings: { mcpToolName: 'teams_setup_run' },
   } as const satisfies PreNormalizedActionSpec,
@@ -639,17 +642,20 @@ function createTeamActionSpecs(): TeamActionSpecs {
         }
         return undefined;
       },
-      summary: input => {
+      summary: (input, context) => {
         const change = readRecord(input);
         const groupChange = readRecord(change?.managedGroupDefaults);
-        const homeSignInSummary = change?.previousAuthenticationPolicy === null
-          ? 'Use the Home’s sign-in policy'
-          : 'Use the Home’s sign-in policy (may allow more sign-in methods)';
-        return [
-          change?.authenticationPolicy === null ? homeSignInSummary : null,
-          change?.managedDefaults === null ? 'Clear Team member defaults and all Group overrides' : null,
-          groupChange?.defaults === null ? 'Clear Group member defaults' : null,
-        ].filter(Boolean).join('. ') || null;
+        const signIn = change.authenticationPolicy === null
+          ? change.previousAuthenticationPolicy === null ? 'inherit' : 'inheritMayExpand' : null;
+        const clearTeamDefaults = change.managedDefaults === null;
+        const clearGroupDefaults = groupChange.defaults === null;
+        if (!signIn && !clearTeamDefaults && !clearGroupDefaults) return null;
+        return formatGovernanceApprovalSummary(context, { kind: 'teamPolicy', signIn, clearTeamDefaults, clearGroupDefaults }, () => [
+          signIn === 'inherit' ? 'Use the Home’s sign-in policy'
+            : signIn === 'inheritMayExpand' ? 'Use the Home’s sign-in policy (may allow more sign-in methods)' : null,
+          clearTeamDefaults ? 'Clear Team member defaults and all Group overrides' : null,
+          clearGroupDefaults ? 'Clear Group member defaults' : null,
+        ].filter(Boolean).join('. '));
       },
     },
     title: 'Set Team policy',
@@ -674,7 +680,8 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/archive',
     inputSchema: TeamRefInputV1Schema,
     outputSchema: TeamSummaryV1Schema,
-    approvalPresentation: { summary: () => TEAM_ARCHIVE_INPUT_HINTS.description, inputHints: TEAM_ARCHIVE_INPUT_HINTS },
+    approvalPresentation: { summary: (_value, context) =>
+      formatGovernanceApprovalSummary(context, { kind: 'teamArchive' }, () => TEAM_ARCHIVE_INPUT_HINTS.description), inputHints: TEAM_ARCHIVE_INPUT_HINTS },
     inputHints: TEAM_ARCHIVE_INPUT_HINTS,
   }),
   homeDomainActionRow({

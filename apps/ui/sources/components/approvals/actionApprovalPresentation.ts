@@ -5,6 +5,7 @@ import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugin
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
+import { formatPendingGovernanceSummary } from './governanceApprovalSummary';
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { describeApprovalActionFields, readTeamMemberApprovalPresentation, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
@@ -53,7 +54,7 @@ export function readIncomingDiscussionApprovalSource(input: Readonly<{ actionId?
     return parsed.success && 'externalSource' in parsed.data.content ? parsed.data.content.externalSource ?? null : null;
 }
 
-export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown;
+export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown; status?: ApprovalRequest['status'];
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
@@ -71,12 +72,12 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
             && 'widgetLibraryName' in preview && typeof preview.widgetLibraryName === 'string' && preview.widgetLibraryName.trim()) return storedSummary;
         const spec = getActionSpec(actionId.data);
         if (readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length) return presentActionApproval({ actionId: actionId.data,
-            actionArgs: request?.actionArgs, preview }).summary;
+            actionArgs: request?.actionArgs, preview, status: request?.status }).summary;
         const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
             || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
             ? spec.approvalPresentation?.summary?.(request?.actionArgs) ?? null : null;
         return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
-            authoredSummary: summary || storedSummary, subject }).summary;
+            authoredSummary: summary || storedSummary, subject, status: request?.status }).summary;
     }
     return storedSummary;
 }
@@ -231,10 +232,17 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const spawnCredentialSuffix = spec.id === SESSION_SPAWN_NEW_ACTION_ID_V1
         ? appendTeamCredentialSourceSummary('', teamCredentialSources) : '';
     let canonicalCopySummary: string | null = null;
+    let canonicalGovernanceSummary: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
         teamCredentialSources: spawnCredentialSuffix ? [] : teamCredentialSources,
         ...(teamMember ? { teamMemberPresentation: teamMember } : {}),
+        ...(input.status === undefined || input.status === 'open' || input.kind === 'confirmation' ? {
+            formatGovernanceSummary: (review, legacy) => {
+                canonicalGovernanceSummary = legacy()?.trim() ?? null;
+                return formatPendingGovernanceSummary(review);
+            },
+        } : {}),
         formatSessionVisualCopySummary: summary => {
             canonicalCopySummary = summary.source;
             return t('actionPresentation.sessionVisualCopySummary', summary);
@@ -250,7 +258,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     // even when a receiver carries it as its summary. The person reads `approvalPresentation.summary` and facts.
     const agentInstructions = authoredSummary === spec.description?.trim() || authoredSummary === spec.inputHints?.description?.trim();
     const distinctAuthoredSummary = authoredSummary && !agentInstructions && authoredSummary !== summarySource
-        && authoredSummary !== canonicalCopySummary ? authoredSummary : null;
+        && authoredSummary !== canonicalCopySummary && authoredSummary !== canonicalGovernanceSummary
+        && authoredSummary !== (canonicalGovernanceSummary ? `${canonicalGovernanceSummary}.` : null) ? authoredSummary : null;
     const summary = distinctAuthoredSummary ? distinctAuthoredSummary
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`

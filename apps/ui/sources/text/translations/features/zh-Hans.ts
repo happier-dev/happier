@@ -2597,6 +2597,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { 'zh-Hans': {
+        governance: {
+            teamArchive: "待处理的邀请将被永久撤销。恢复团队不会恢复这些邀请。",
+            teamPolicyInherit: "使用 Home 的登录策略。",
+            teamPolicyInheritMayExpand: "使用 Home 的登录策略。这可能会允许更多登录方式。",
+            teamPolicyClearTeam: "清除团队成员默认值和所有群组覆盖项。",
+            teamPolicyClearGroup: "清除群组成员默认值。",
+            machinePresetPrepare: "为此预设构建预制映像。构建和存储可能产生费用。",
+            setupApply: "应用计算机设置",
+            setupAttach: "附加",
+            setupWorktree: "创建工作树",
+            setupClone: "克隆",
+            setupSync: "同步",
+            setupWorkspace: "工作区",
+            setupConnectedAccount: "使用已连接的账户",
+            nativeCredentialDelivery: "原生交付可能会将所选凭据密钥披露给供应商的控制平面，与预配令牌分开。你仍需信任密钥托管方和供应商。已安装的请求会绕过 Happier 的逐请求授权、正文和模型策略，以及请求、令牌或费用限制。供应商的匹配规则只限制密钥替换。它们不会检查模型 JSON，也不会拒绝不匹配的请求。请在网关或供应商处配置预算和密钥限制。这里无法验证覆盖范围。控制器离线时，已安装的规则可能继续生效，无法保证修改或移除。请轮换或撤销上游密钥以停止使用。已经披露的密钥无法收回。归因基于观察，不能验证成员身份或用于成本分摊。共用操作系统账户的成员可以读取和重复使用彼此的占位符。",
+        },
         requestedByAgent: '会话代理请求的操作',
         homeTarget: ({ serverId }) => `Home：${serverId}`,
         sessionTarget: ({ sessionId }) => `目标会话：${sessionId}`,

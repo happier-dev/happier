@@ -2589,6 +2589,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { es: {
+        governance: {
+            teamArchive: "Las invitaciones pendientes se revocan de forma permanente. Restaurar el equipo no las recupera.",
+            teamPolicyInherit: "Usar la política de inicio de sesión del Home.",
+            teamPolicyInheritMayExpand: "Usar la política de inicio de sesión del Home. Puede permitir más métodos de acceso.",
+            teamPolicyClearTeam: "Borrar los valores predeterminados de los miembros del equipo y todas las excepciones de los grupos.",
+            teamPolicyClearGroup: "Borrar los valores predeterminados de los miembros del grupo.",
+            machinePresetPrepare: "Crear una imagen preparada para este ajuste. La compilación y el almacenamiento pueden generar cargos.",
+            setupApply: "Aplicar la configuración de la máquina",
+            setupAttach: "Adjuntar",
+            setupWorktree: "Crear árbol de trabajo",
+            setupClone: "Clonar",
+            setupSync: "Sincronizar",
+            setupWorkspace: "Espacio de trabajo",
+            setupConnectedAccount: "Usar una cuenta conectada",
+            nativeCredentialDelivery: "La entrega nativa puede revelar la clave seleccionada al plano de control del proveedor, por separado del token de aprovisionamiento. El custodio y el proveedor siguen siendo de confianza. Las solicitudes instaladas eluden la autorización por solicitud de Happier, las políticas de contenido y modelos y los límites de solicitudes, tokens o costes. Los filtros del proveedor limitan la sustitución de claves. No examinan el JSON del modelo ni bloquean las solicitudes sin coincidencias. Configure los presupuestos y las restricciones de claves en la pasarela o en el proveedor. Su cobertura no puede comprobarse aquí. Las reglas pueden seguir activas sin conexión con el controlador, cuando no se pueden garantizar cambios ni eliminaciones. Rote o revoque la clave original para detener el uso. Las claves ya reveladas no se pueden recuperar. La atribución se basa en observaciones y no autentica a los miembros ni permite imputarles costes. Los miembros que comparten una cuenta del sistema pueden leer y reutilizar los marcadores de los demás.",
+        },
         requestedByAgent: 'Acción solicitada por el agente de la sesión',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Sesión de destino: ${sessionId}`,

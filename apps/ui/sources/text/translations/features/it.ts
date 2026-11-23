@@ -2701,6 +2701,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { it: {
+        governance: {
+            teamArchive: "Gli inviti in sospeso vengono revocati in modo permanente. Il ripristino del team non li riattiva.",
+            teamPolicyInherit: "Usa i criteri di accesso dell’Home.",
+            teamPolicyInheritMayExpand: "Usa i criteri di accesso dell’Home. Potrebbero consentire altri metodi di accesso.",
+            teamPolicyClearTeam: "Cancella i valori predefiniti per i membri del team e tutte le eccezioni dei gruppi.",
+            teamPolicyClearGroup: "Cancella i valori predefiniti per i membri del gruppo.",
+            machinePresetPrepare: "Crea un’immagine per questo preset. La creazione e l’archiviazione possono comportare costi.",
+            setupApply: "Applica la configurazione della macchina",
+            setupAttach: "Collega",
+            setupWorktree: "Crea un albero di lavoro",
+            setupClone: "Clona",
+            setupSync: "Sincronizza",
+            setupWorkspace: "Area di lavoro",
+            setupConnectedAccount: "Usa un account connesso",
+            nativeCredentialDelivery: "La consegna nativa può esporre la chiave selezionata al piano di controllo del fornitore separatamente dal token di provisioning. Il custode e il fornitore restano attendibili. Le richieste installate aggirano l’autorizzazione per richiesta di Happier, i criteri su contenuto e modelli e i limiti di richieste, token o costi. I filtri del fornitore limitano la sostituzione delle chiavi. Non controllano il JSON del modello e non bloccano le richieste senza corrispondenza. Imposta budget e restrizioni delle chiavi presso il gateway o il fornitore. La copertura non è verificabile qui. Le regole installate possono funzionare con il controller offline, quando le modifiche e la rimozione non sono garantite. Ruota o revoca la chiave originale per interromperne l’uso. Le chiavi già esposte non possono essere recuperate. L’attribuzione si basa su osservazioni e non autentica i membri né consente di addebitare loro dei costi. I membri che condividono un account di sistema possono leggere e riusare i segnaposto degli altri.",
+        },
         requestedByAgent: 'Azione richiesta dall’agente della sessione',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Sessione di destinazione: ${sessionId}`,

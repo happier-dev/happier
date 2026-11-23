@@ -1,3 +1,4 @@
+import { formatGovernanceApprovalSummary } from './definition.js';
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { MACHINE_PRESET_INPUT_FIELDS, MACHINE_POOL_INPUT_FIELDS } from './machineInputHints.js';
 import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScope.js';
@@ -218,7 +219,8 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Prepare Machine preset',
     description: 'Build a prepared image for this preset on the selected machine. Provider build and artifact storage charges may apply.',
-    approvalPresentation: { summary: () => 'Build a prepared image for this preset. Provider build and artifact storage charges may apply.' },
+    approvalPresentation: { summary: (_input, context) => formatGovernanceApprovalSummary(context,
+      { kind: 'machinePresetPrepare' }, () => 'Build a prepared image for this preset. Provider build and artifact storage charges may apply.') },
     safety: 'danger', sideEffectClass: 'danger', placements: [],
     bindings: { mcpToolName: 'machines_presets_prepare', voiceClientToolName: 'machines_presets_prepare',
       rpcMethod: MACHINE_PRESET_PREPARE_ACTION_ID_V1 },
@@ -228,7 +230,7 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     inputSchema: MachinePresetActionInputSchemasV1[MACHINE_PRESET_PREPARE_ACTION_ID_V1],
     outputSchema: MachinePresetActionOutputSchemasV1[MACHINE_PRESET_PREPARE_ACTION_ID_V1],
     operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
-  },
+  } satisfies PreNormalizedActionSpec,
   ...(MACHINE_PRESET_HTTP_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     const verb = id.slice('machines.presets.'.length);
     const read = id === 'machines.presets.list' || id === 'machines.presets.get';

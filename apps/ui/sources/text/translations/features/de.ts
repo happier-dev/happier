@@ -2707,6 +2707,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { de: {
+        governance: {
+            teamArchive: "Ausstehende Einladungen werden dauerhaft widerrufen. Beim Wiederherstellen des Teams bleiben sie widerrufen.",
+            teamPolicyInherit: "Die Anmelderichtlinie des Home verwenden.",
+            teamPolicyInheritMayExpand: "Die Anmelderichtlinie des Home verwenden. Dadurch können mehr Anmeldemethoden erlaubt sein.",
+            teamPolicyClearTeam: "Die Vorgaben für Teammitglieder und alle Gruppenabweichungen zurücksetzen.",
+            teamPolicyClearGroup: "Die Vorgaben für Gruppenmitglieder zurücksetzen.",
+            machinePresetPrepare: "Ein vorbereitetes Image für diese Vorlage erstellen. Für Build und Speicherung können Kosten anfallen.",
+            setupApply: "Computer-Einrichtung anwenden",
+            setupAttach: "Anhängen",
+            setupWorktree: "Arbeitsbaum erstellen",
+            setupClone: "Klonen",
+            setupSync: "Synchronisieren",
+            setupWorkspace: "Arbeitsbereich",
+            setupConnectedAccount: "Verbundenes Konto verwenden",
+            nativeCredentialDelivery: "Die native Bereitstellung kann den gewählten Schlüssel getrennt vom Bereitstellungstoken an die Steuerungsebene des Anbieters weitergeben. Schlüsselverwahrer und Anbieter bleiben vertrauenswürdig. Installierte Anfragen umgehen die anfragebezogene Autorisierung, Inhalts- und Modellregeln sowie Anfrage-, Token- und Kostenlimits von Happier. Anbietermuster begrenzen den Schlüsselersatz. Sie prüfen kein Modell-JSON und blockieren keine Anfragen ohne Treffer. Legen Sie Budgets und Schlüsselbeschränkungen am Gateway oder beim Anbieter fest. Die Abdeckung lässt sich hier nicht prüfen. Installierte Regeln können weiterlaufen, wenn der Controller offline ist und Änderungen oder Entfernung nicht sichergestellt sind. Rotieren oder widerrufen Sie den ursprünglichen Schlüssel, um die Nutzung zu stoppen. Bereits offengelegte Schlüssel lassen sich nicht zurückrufen. Die Zuordnung basiert auf Beobachtung und dient weder der Authentifizierung von Mitgliedern noch der Kostenverrechnung. Mitglieder mit demselben Betriebssystemkonto können die Platzhalter der anderen lesen und wiederverwenden.",
+        },
         requestedByAgent: 'Vom Session-Agent angeforderte Aktion',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Ziel-Session: ${sessionId}`,

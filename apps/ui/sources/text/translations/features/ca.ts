@@ -2694,6 +2694,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { ca: {
+        governance: {
+            teamArchive: "Les invitacions pendents es revoquen permanentment. Restaurar l’equip no les recupera.",
+            teamPolicyInherit: "Utilitza la política d’inici de sessió del Home.",
+            teamPolicyInheritMayExpand: "Utilitza la política d’inici de sessió del Home. Pot permetre més mètodes d’accés.",
+            teamPolicyClearTeam: "Esborra els valors predeterminats dels membres de l’equip i totes les excepcions dels grups.",
+            teamPolicyClearGroup: "Esborra els valors predeterminats dels membres del grup.",
+            machinePresetPrepare: "Crea una imatge preparada per a aquesta configuració. La compilació i l’emmagatzematge poden generar càrrecs.",
+            setupApply: "Aplica la configuració de la màquina",
+            setupAttach: "Adjunta",
+            setupWorktree: "Crea un arbre de treball",
+            setupClone: "Clona",
+            setupSync: "Sincronitza",
+            setupWorkspace: "Espai de treball",
+            setupConnectedAccount: "Utilitza un compte connectat",
+            nativeCredentialDelivery: "El lliurament natiu pot revelar la clau seleccionada al pla de control del proveïdor, separadament del testimoni de proveïment. El custodi i el proveïdor continuen sent de confiança. Les sol·licituds instal·lades eludeixen l’autorització per sol·licitud de Happier, les polítiques de contingut i de models i els límits de sol·licituds, testimonis o costos. Els filtres del proveïdor limiten la substitució de claus. No inspeccionen el JSON del model ni bloquegen les sol·licituds sense coincidència. Configura pressupostos i restriccions de claus a la passarel·la o al proveïdor. Aquí no se’n pot verificar la cobertura. Les regles poden continuar actives amb el controlador desconnectat, quan no es poden garantir canvis ni supressions. Rota o revoca la clau original per aturar-ne l’ús. Les claus ja revelades no es poden recuperar. L’atribució es basa en observacions i no autentica els membres ni serveix per imputar-los despeses. Els membres amb el mateix compte de sistema poden llegir i reutilitzar els substituts dels altres.",
+        },
         requestedByAgent: 'Acció sol·licitada per l’agent de la sessió',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Sessió de destinació: ${sessionId}`,

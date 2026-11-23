@@ -1,6 +1,22 @@
 
 
 export type ActionConfirmationTranslations = Readonly<{
+    governance: Readonly<{
+        teamArchive: string;
+        teamPolicyInherit: string;
+        teamPolicyInheritMayExpand: string;
+        teamPolicyClearTeam: string;
+        teamPolicyClearGroup: string;
+        machinePresetPrepare: string;
+        setupApply: string;
+        setupAttach: string;
+        setupWorktree: string;
+        setupClone: string;
+        setupSync: string;
+        setupWorkspace: string;
+        setupConnectedAccount: string;
+        nativeCredentialDelivery: string;
+    }>;
     requestedByAgent: string;
     homeTarget: (params: Readonly<{ serverId: string }>) => string;
     sessionTarget: (params: Readonly<{ sessionId: string }>) => string;
@@ -19,6 +35,22 @@ export type ActionConfirmationTranslations = Readonly<{
 
 
 export const actionConfirmationTranslationsEnglish = { en: {
+        governance: {
+            teamArchive: "Waiting invitations are permanently revoked. Restoring the Team does not restore them.",
+            teamPolicyInherit: "Use the Home’s sign-in policy.",
+            teamPolicyInheritMayExpand: "Use the Home’s sign-in policy. This may allow more sign-in methods.",
+            teamPolicyClearTeam: "Clear the Team member defaults and all Group overrides.",
+            teamPolicyClearGroup: "Clear the Group member defaults.",
+            machinePresetPrepare: "Build a prepared image for this preset. Provider build and artifact storage charges may apply.",
+            setupApply: "Apply Machine setup",
+            setupAttach: "Attach",
+            setupWorktree: "Create worktree",
+            setupClone: "Clone",
+            setupSync: "Sync",
+            setupWorkspace: "Workspace",
+            setupConnectedAccount: "Use a connected account",
+            nativeCredentialDelivery: "Native delivery may disclose the selected credential key to the vendor’s control plane, separate from the provisioning token. The source custodian and vendor remain trusted. Installed requests bypass Happier’s per-request authorization, body and model policy, and request, token or cost limits. Vendor matchers narrow key substitution. They do not inspect model JSON or deny unmatched requests. Configure budgets and key restrictions at the gateway or vendor. This review cannot verify that coverage. Installed rules may continue while the controller is offline, when changes and removal cannot be guaranteed. Rotate or revoke the upstream key to stop use independently. Previously disclosed keys cannot be recalled. Attribution is observational and does not authenticate member identity or support chargeback. Members sharing an OS user can read and reuse each other’s placeholders.",
+        },
         requestedByAgent: 'Action requested by the session Agent',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Target session: ${sessionId}`,

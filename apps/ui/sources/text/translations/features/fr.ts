@@ -2712,6 +2712,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { fr: {
+        governance: {
+            teamArchive: "Les invitations en attente sont révoquées définitivement. Restaurer la Team ne les rétablit pas.",
+            teamPolicyInherit: "Utiliser la politique de connexion du Home.",
+            teamPolicyInheritMayExpand: "Utiliser la politique de connexion du Home. Cela peut autoriser davantage de méthodes.",
+            teamPolicyClearTeam: "Effacer les paramètres par défaut des membres de la Team et toutes les dérogations des groupes.",
+            teamPolicyClearGroup: "Effacer les paramètres par défaut des membres du groupe.",
+            machinePresetPrepare: "Construire une image préparée pour ce préréglage. Des frais de construction et de stockage peuvent s’appliquer.",
+            setupApply: "Appliquer la configuration de la machine",
+            setupAttach: "Rattacher",
+            setupWorktree: "Créer un arbre de travail",
+            setupClone: "Cloner",
+            setupSync: "Synchroniser",
+            setupWorkspace: "Espace de travail",
+            setupConnectedAccount: "Utiliser un compte connecté",
+            nativeCredentialDelivery: "La livraison native peut transmettre la clé sélectionnée au plan de contrôle du fournisseur, séparément du jeton de provisionnement. Vous continuez à faire confiance au dépositaire et au fournisseur. Les requêtes installées contournent l’autorisation par requête de Happier, les règles sur le contenu et les modèles, ainsi que les limites de requêtes, de jetons ou de dépenses. Les règles du fournisseur limitent la substitution des clés. Elles n’inspectent pas le JSON du modèle et ne bloquent pas les requêtes sans correspondance. Configurez les budgets et les restrictions de clé auprès de la passerelle ou du fournisseur. Leur couverture ne peut pas être vérifiée ici. Les règles installées peuvent rester actives quand le contrôleur est hors ligne, sans garantie de modification ou de retrait. Renouvelez ou révoquez la clé en amont pour bloquer son utilisation. Une clé déjà transmise ne peut pas être rappelée. L’attribution est fondée sur l’observation et ne sert ni à authentifier les membres ni à leur imputer des frais. Les membres partageant le même compte système peuvent lire et réutiliser leurs valeurs de substitution.",
+        },
         requestedByAgent: 'Action demandée par l’agent de la session',
         homeTarget: ({ serverId }) => `Home : ${serverId}`,
         sessionTarget: ({ sessionId }) => `Session cible : ${sessionId}`,

@@ -2688,6 +2688,22 @@ const Domain_actionConfirmationTranslations = (() => {
 type ActionConfirmationTranslations = Shared_actionConfirmationTranslations.ActionConfirmationTranslations;
 
 const actionConfirmationTranslations = { pt: {
+        governance: {
+            teamArchive: "Os convites pendentes são revogados permanentemente. Restaurar a equipe não os recupera.",
+            teamPolicyInherit: "Usar a política de login do Home.",
+            teamPolicyInheritMayExpand: "Usar a política de login do Home. Isso pode permitir mais métodos de login.",
+            teamPolicyClearTeam: "Limpar os padrões dos membros da equipe e todas as substituições dos grupos.",
+            teamPolicyClearGroup: "Limpar os padrões dos membros do grupo.",
+            machinePresetPrepare: "Criar uma imagem preparada para esta predefinição. A compilação e o armazenamento podem gerar cobranças.",
+            setupApply: "Aplicar a configuração da máquina",
+            setupAttach: "Anexar",
+            setupWorktree: "Criar árvore de trabalho",
+            setupClone: "Clonar",
+            setupSync: "Sincronizar",
+            setupWorkspace: "Área de trabalho",
+            setupConnectedAccount: "Usar uma conta conectada",
+            nativeCredentialDelivery: "A entrega nativa pode revelar a chave selecionada ao plano de controle do fornecedor, separadamente do token de provisionamento. O custodiante e o fornecedor continuam sendo de confiança. As solicitações instaladas ignoram a autorização por solicitação do Happier, as políticas de conteúdo e modelo e os limites de solicitações, tokens ou custos. Os filtros do fornecedor limitam a substituição de chaves. Eles não inspecionam o JSON do modelo nem bloqueiam solicitações sem correspondência. Defina orçamentos e restrições de chave na camada de gateway ou no fornecedor. A cobertura não pode ser verificada aqui. As regras instaladas podem continuar com o controlador offline, quando alterações e remoções não são garantidas. Faça a rotação ou revogue a chave de origem para interromper seu uso. Uma chave já revelada não pode ser recuperada. A atribuição é observacional e não autentica membros nem serve para lhes cobrar custos. Membros que compartilham o mesmo usuário do sistema podem ler e reutilizar os marcadores uns dos outros.",
+        },
         requestedByAgent: 'Ação solicitada pelo agente da sessão',
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Sessão de destino: ${sessionId}`,
