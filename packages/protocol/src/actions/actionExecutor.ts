@@ -313,7 +313,7 @@ import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
 import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
 import { WidgetInstanceActionIdV1Schema, WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
-import { executeWidgetInstanceActionV1, admitWidgetInstanceConfigurationV1, admitWidgetInstanceSizeV1, isWidgetAdmissionUndecidableHereV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { executeWidgetInstanceActionV1, admitWidgetGroupConfigurationV1, admitWidgetInstanceConfigurationV1, admitWidgetInstanceSizeV1, isWidgetAdmissionUndecidableHereV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
 import { getWidgetSizeFootprintV1, WIDGET_SIZE_ORDER_V1 } from '../widgets/widgetPresentationV1.js';
 import { clientActionUnavailable } from './clientDispatchV1.js';
 import { readWidgetNetworkSafetyV1 } from './executor/widgetNetworkApproval.js';
@@ -5459,6 +5459,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           try {
             if (actionId === 'home.hub.layout.update') {
               const { intent } = (parsed.data as z.infer<typeof HomeHubLayoutUpdateInputSchema>);
+              if (intent.kind === 'group_inputs' || intent.kind === 'group_add'
+                || (intent.kind === 'group_create' && Object.keys(intent.context ?? {}).length > 0)) {
+                const scope = deps.widgetAccountScope?.();
+                if (!scope) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
+                const surface = { serverId: scope.serverId, accountId: scope.accountId, owner: { kind: 'home' as const } };
+                const admitted = await readWidgetActionSurfaceAdmissionV1(deps, surface, ctx, { readPlacement: true });
+                if (!admitted.ok) return admitted;
+                if (!admitted.read?.canEdit) return { ok: false, errorCode: 'widget_edit_denied', error: 'widget_edit_denied' };
+                const refusal = await admitWidgetGroupConfigurationV1(deps, admitted.read, intent, ctx);
+                if (refusal) return refusal;
+              }
               if (intent.kind === 'widget_add' || intent.kind === 'widget_size' || intent.kind === 'widget_inputs') {
                 const scope = deps.widgetAccountScope?.();
                 if (!scope) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };

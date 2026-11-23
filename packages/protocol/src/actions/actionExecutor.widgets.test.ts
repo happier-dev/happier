@@ -18,6 +18,8 @@ import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, cre
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { flattenWidgetLayoutWidgetsV1 } from '../widgets/widgetLayoutItemV1.js';
 import { WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
+import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
+import { readUsagePageWidgetFollowBindingsV1 } from '../widgets/usageWidgetPresetsV1.js';
 
 const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' } } as const;
 
@@ -238,6 +240,170 @@ describe('configured widget Actions', () => {
       items: [{ kind: 'widget', instance: { id: 'a' }, frameStyle: 'plain' }, { kind: 'widget', instance: { id: 'b' }, frameStyle: 'plain' }],
     } });
   });
+  it('only stores explicit group inputs and refuses a change that invalidates a following child', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'qa-copy' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    const layouts = createWidgetAreaLayoutArtifactPortV1(transport, { surface: baseArea, isCurrent: () => true });
+    await layouts.create({ layoutId: area.owner.layoutId, name: 'QA copy' });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: area, isCurrent: () => true });
+    const definition = { kind: 'builtin', id: 'usage_daily' } as const;
+    const child = {
+      v: 1, id: 'daily', displayName: 'Daily', definition,
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+    } as const satisfies WidgetInstanceV1;
+    await artifact.apply({ kind: 'add', instance: child });
+
+    const widgetInputs = createWidgetActionInputResolverV1({
+      readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
+      readContext: async () => ({ period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
+        sources: [[]], session: [null], costBasis: ['auto'] }),
+      readViewerValues: async () => ({ values: {} }),
+      validateValue: async () => ({ status: 'valid' }),
+    });
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface,
+      widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) },
+      widgetInputs,
+    });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const ref = { surface: area, instanceId: 'usage-group' };
+    expect(await executor.execute('widgets.group.create', { surface: area, groupId: ref.instanceId, instanceIds: [child.id] }, context))
+      .toMatchObject({ ok: true });
+    const bindings = { period: { kind: 'value', value: { relative: 'today' } } } as const;
+    const invalid = { period: { kind: 'value', value: { relative: 'qa-invalid-period' } } } as const;
+    const resolve = (groupBindings: typeof bindings | typeof invalid) => widgetInputs.resolve({
+      ref: { surface: area, instanceId: child.id }, instance: child, context, groupBindings, admission: 'configuration',
+    });
+    expect(await resolve(bindings)).toMatchObject({ status: 'ready', input: { period: { relative: 'today' } } });
+    expect(await resolve(invalid)).toMatchObject({ status: 'invalid' });
+    expect(await executor.execute('widgets.group.inputs.set', { ref, bindings }, context)).toMatchObject({ ok: true });
+    const readGroup = async () => {
+      const read = await executor.execute('widgets.item.list', { surface: area }, context);
+      const layout = WidgetInstanceActionOutputSchemasV1['widgets.item.list'].parse(read.ok ? read.result : null);
+      return layout.items?.[0];
+    };
+    const saved = await readGroup();
+    expect(saved).toMatchObject({ kind: 'group', children: [{ instance: child }] });
+    expect(saved?.kind === 'group' && saved.context).toEqual(bindings);
+
+    expect(await executor.execute('widgets.group.inputs.set', { ref, bindings: invalid }, context)).toMatchObject({
+      ok: false, errorCode: 'widget_inputs_invalid', details: { blockingChildId: child.id, status: 'invalid' },
+    });
+    expect(await readGroup()).toEqual(saved);
+  });
+
+  it.each(['group_inputs', 'group_create', 'group_add'] as const)('admits the same group inputs through Home and widget Actions (%s)', async kind => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const homeHubArtifacts = createHomeHubArtifactPortV1(boundary.forAccount(surface.accountId), { accountId: surface.accountId });
+    const definition = { kind: 'builtin', id: 'usage_daily' } as const;
+    const child: WidgetInstanceV1 = {
+      v: 1, id: 'home-daily', definition,
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+    };
+    const groupId = 'home-group';
+    if (kind !== 'group_add') await homeHubArtifacts.apply({ kind: 'widget_add', instance: child });
+    if (kind === 'group_inputs') await homeHubArtifacts.apply({ kind: 'group_create', groupId, instanceIds: [child.id] });
+    const widgetInputs = createWidgetActionInputResolverV1({
+      readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
+      readContext: async () => ({ period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
+        sources: [[]], session: [null], costBasis: ['auto'] }),
+      readViewerValues: async () => ({ values: {} }),
+      validateValue: async () => ({ status: 'valid' }),
+    });
+    const executor = createActionExecutor({ widgetAccountScope: () => surface, homeHubArtifacts, widgetInputs });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const groupBindings = (relative: string) => ({ period: { kind: 'value', value: { relative } } } as const);
+    const buildGroup = (bindings: ReturnType<typeof groupBindings>) => ({
+      kind: 'group', id: groupId, width: 'full', frameStyle: 'card', dividers: 'hairline', context: bindings,
+      children: [{ kind: 'widget', instance: child }],
+    });
+    const attempts = (bindings: ReturnType<typeof groupBindings>) => {
+      switch (kind) {
+        case 'group_inputs': return [
+          () => executor.execute('home.hub.layout.update', { intent: { kind, instanceId: groupId, bindings } }, context),
+          () => executor.execute('widgets.group.inputs.set', { ref: { surface, instanceId: groupId }, bindings }, context),
+        ];
+        case 'group_create': return [
+          () => executor.execute('home.hub.layout.update', { intent: { kind, groupId, instanceIds: [child.id], context: bindings } }, context),
+          () => executor.execute('widgets.group.create', { surface, groupId, instanceIds: [child.id], context: bindings }, context),
+        ];
+        case 'group_add': return [
+          () => executor.execute('home.hub.layout.update', { intent: { kind, group: buildGroup(bindings) } }, context),
+          () => executor.execute('widgets.group.add', { surface, group: buildGroup(bindings) }, context),
+        ];
+      }
+    };
+    const before = await homeHubArtifacts.read();
+    const persistedBefore = [...boundary.rows];
+    const [homeInvalid, widgetInvalid] = attempts(groupBindings('qa-invalid-period'));
+    const refused = {
+      ok: false, errorCode: 'widget_inputs_invalid', details: { blockingChildId: child.id, status: 'invalid' },
+    };
+    expect(await homeInvalid!()).toMatchObject(refused);
+    expect(await widgetInvalid!()).toMatchObject(refused);
+    expect([...boundary.rows]).toEqual(persistedBefore);
+    expect(await homeHubArtifacts.read()).toEqual(before);
+
+    const valid = groupBindings('today');
+    const [homeValid] = attempts(valid);
+    expect(await homeValid!()).toMatchObject({ ok: true, result: { layout: { items: expect.arrayContaining([
+      expect.objectContaining({ kind: 'group', id: groupId, context: valid, children: [expect.objectContaining({ instance: child })] }),
+    ]) } } });
+    expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'visibility', sectionId: 'reviews', hidden: true } }, context))
+      .toMatchObject({ ok: true });
+    const after = await homeHubArtifacts.read();
+    expect(after.hidden).toContain('reviews');
+    expect(after.items.find(item => item.kind === 'group' && item.id === groupId)).toMatchObject({ context: valid });
+  });
+
+  it('admits group overrides in a caller-supplied Undo layout before writing it', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'overview' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    const presets = [{ id: 'overview', name: 'Overview', items: [] }];
+    const layouts = createWidgetAreaLayoutArtifactPortV1(transport, { surface: baseArea, presets, isCurrent: () => true });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: area, presets, isCurrent: () => true });
+    const definition = { kind: 'builtin', id: 'usage_daily' } as const;
+    const child: WidgetInstanceV1 = {
+      v: 1, id: 'undo-daily', definition,
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+    };
+    await artifact.apply({ kind: 'add', instance: child });
+    await artifact.apply({ kind: 'group_create', groupId: 'undo-group', instanceIds: [child.id],
+      context: { period: { kind: 'value', value: { relative: 'today' } } } });
+    const reset = await artifact.resetPreset();
+    const undo = reset.undo!;
+    const widgetInputs = createWidgetActionInputResolverV1({
+      readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
+      readContext: async () => ({ period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
+        sources: [[]], session: [null], costBasis: ['auto'] }),
+      readViewerValues: async () => ({ values: {} }),
+      validateValue: async () => ({ status: 'valid' }),
+    });
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface, widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) }, widgetInputs,
+      widgetAreaLayouts: {
+        list: () => layouts.list(), create: args => layouts.create(args), rename: args => layouts.rename(args),
+        delete: args => layouts.delete(args), reorder: args => layouts.reorder(args),
+        reset: args => artifact.resetPreset(args.expectedRevision), undo: capture => artifact.undoReset(capture),
+      },
+    });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const previousLayout = { ...undo.previousLayout, items: undo.previousLayout.items.map(item => item.kind === 'group'
+      ? { ...item, context: { period: { kind: 'value', value: { relative: 'qa-invalid-period' } } } } : item) };
+    const persistedBefore = [...boundary.rows];
+    expect(await executor.execute('widgets.area.layout.undo', { capture: { ...undo, previousLayout } }, context)).toMatchObject({
+      ok: false, errorCode: 'widget_inputs_invalid', details: { blockingChildId: child.id, status: 'invalid' },
+    });
+    expect([...boundary.rows]).toEqual(persistedBefore);
+    expect(await executor.execute('widgets.area.layout.undo', { capture: undo }, context)).toMatchObject({
+      ok: true, result: { layout: undo.previousLayout },
+    });
+  });
+
   it('retains a WorkBoard private-input refusal on Add without reporting an unknown commit', async () => {
     const boundary = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: 'shared', name: 'Shared' })]);
     const row = boundary.rows.get('shared')!;
