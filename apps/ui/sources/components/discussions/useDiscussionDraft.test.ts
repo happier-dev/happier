@@ -5,12 +5,17 @@ import type { ComposerStructuredInputMention } from '@/components/sessions/agent
 
 import { renderHook } from '@/dev/testkit';
 import {
+    configureSessionDraftRepository,
+    createSessionDraftRepository,
     getSessionComposerDraftSnapshot,
     getSessionDraftSnapshot,
     resetSessionDraftRepositoryForTests,
     purgeSessionDraftPresentation,
     writeDiscussionSessionDraft,
+    type SessionDraftRepositoryTransport,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
+import type { SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import type { DiscussionDraftSubmission } from '@/sync/ops/discussions/discussionRepository';
 
 import { seedDiscussionDraft, useDiscussionDraft } from './useDiscussionDraft';
@@ -34,10 +39,49 @@ const existingAddress = {
 } as const;
 
 afterEach(() => {
+    configureSessionDraftRepository({ syncEnabled: false });
     resetSessionDraftRepositoryForTests();
 });
 
 describe('useDiscussionDraft', () => {
+    it('restores the exact encrypted Discussion draft and selected mention on a fresh client', async () => {
+        let record: SessionDraftRecordV2 | undefined;
+        const transport: SessionDraftRepositoryTransport = {
+            read: vi.fn(async address => record && address.kind === 'discussion' && address.discussionId === existingAddress.discussionId
+                ? { status: 'present' as const, record }
+                : { status: 'absent' as const }),
+            mutate: async ({ address, content }) => {
+                record = { address, content, createdAt: 1, updatedAt: 1, revision: 3 };
+                return { status: 'updated', record };
+            },
+            list: async () => { throw new Error('A foreground draft does not need the Account draft list'); },
+        };
+        const makeCipher = () => createSessionDraftCipher({ accountMode: 'e2ee',
+            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32).fill(42) },
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length) });
+        const local = new Map<string, string>();
+        const author = createSessionDraftRepository({ scope, transport, syncEnabled: true, cipher: makeCipher(),
+            storage: { getString: key => local.get(key), getAllKeys: () => [...local.keys()],
+                set: (key, value) => { local.set(key, value); }, delete: key => { local.delete(key); } },
+        });
+        const selected = mention('happier.session', 'session:session-alex', 'Alex', 6);
+        const text = `Ask:  ${selected.tokenText}`;
+        author.writeDiscussionSessionDraft({ scope, address: existingAddress, patch: { text, mentions: [selected] } });
+        expect(await author.flushSessionDraft({ scope, address: existingAddress })).toMatchObject({ status: 'clean' });
+        expect(record).toMatchObject({ content: { t: 'encrypted' } });
+
+        configureSessionDraftRepository({ scope, transport, syncEnabled: true, cipher: makeCipher() });
+        expect(getSessionDraftSnapshot(scope, existingAddress)).toBeNull();
+        const restored = await renderHook(() => useDiscussionDraft({ scope, address: existingAddress }));
+        try {
+            await act(async () => {});
+            expect(restored.getCurrent()).toMatchObject({ text, mentions: [selected] });
+            expect(vi.mocked(transport.read).mock.calls).toEqual([[existingAddress]]);
+        } finally {
+            await restored.unmount();
+        }
+    });
+
     it('carries edits made during creation into the confirmed discussion draft', async () => {
         const hook = await renderHook(() => useDiscussionDraft({ scope, address: newAddress }));
         act(() => { hook.getCurrent().setTitle('First conversation'); hook.getCurrent().setText('First question'); });

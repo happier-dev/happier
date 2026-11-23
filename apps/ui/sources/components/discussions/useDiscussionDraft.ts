@@ -10,6 +10,7 @@ import type { DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     captureSessionDraftCurrentness,
     clearSessionDraftCurrentnessLocal,
@@ -17,6 +18,7 @@ import {
     flushSessionDraftLocally,
     getSessionComposerDraftSnapshot,
     getSessionDraftSnapshot,
+    materializeExactSessionDraft,
     purgeSessionDraftPresentation,
     subscribeSessionDraft,
     writeDiscussionSessionDraft,
@@ -242,6 +244,10 @@ export function useDiscussionDraft(params: Readonly<{
         [address, scope],
     );
     const includeComposer = params.composer ?? true;
+    React.useEffect(() => {
+        if (!includeComposer || address.kind !== 'discussion') return;
+        fireAndForget(materializeExactSessionDraft(scope, address, undefined, 'held'), { tag: 'DiscussionDraft.restore' });
+    }, [address, includeComposer, scope]);
     // One retained view of what this hook reads; a write that changes none of it (a page's view of a
     // keystroke, a revision or timestamp) keeps the view and renders nothing.
     const readView = React.useMemo(() => {
