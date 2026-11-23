@@ -571,16 +571,17 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
-  it('spawns local Claude with the session model from metadata, replacing a stale --model arg', async () => {
+  it('spawns local Claude with the session model from metadata without storing it in the shared session args', async () => {
     const { session } = createLocalHarness({
       metadataSnapshot: {
         modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' },
       },
     });
-    session.claudeArgs = ['--model', 'claude-model-a', '--verbose'];
+    session.claudeArgs = ['--verbose'];
 
+    let spawnedArgs: string[] | undefined;
     mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
-      expect(opts.claudeArgs).toEqual(['--verbose', '--model', 'claude-model-b']);
+      spawnedArgs = opts.claudeArgs;
     });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
@@ -588,6 +589,28 @@ describe('claudeLocalLauncher', () => {
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ type: 'exit', code: 0 });
+    expect(spawnedArgs).toEqual(['--verbose', '--model', 'claude-model-b']);
+    // A later remote launch reuses session.claudeArgs, where any --model is a fixed override.
+    expect(session.claudeArgs).toEqual(['--verbose']);
+  });
+
+  it('keeps an explicit Claude Code --model passthrough instead of the session model', async () => {
+    const { session } = createLocalHarness({
+      metadataSnapshot: {
+        modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' },
+      },
+    });
+    session.claudeArgs = ['--model=claude-model-c'];
+
+    let spawnedArgs: string[] | undefined;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      spawnedArgs = opts.claudeArgs;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    await claudeLocalLauncher(session);
+
+    expect(spawnedArgs).toEqual(['--model=claude-model-c']);
   });
 
   it('preserves CLI bypass-permissions intent on the first local launch before metadata catches up', async () => {

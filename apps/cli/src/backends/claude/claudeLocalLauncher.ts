@@ -87,20 +87,17 @@ function upsertClaudePermissionModeArgs(
     return filtered.length > 0 ? filtered : undefined;
 }
 
-function upsertClaudeModelArgs(args: string[] | undefined, modelId: string): string[] {
-    const filtered: string[] = [];
+/**
+ * Launch args for one local Claude spawn, carrying the session model.
+ *
+ * Happier never puts the session model in the passthrough args, so a `--model` already there is an
+ * explicit Claude Code override and is kept, as the remote runtimes keep it.
+ */
+function withClaudeSessionModelArgs(args: string[] | undefined, modelId: string | null): string[] | undefined {
+    if (!modelId) return args;
     const input = args ?? [];
-    for (let i = 0; i < input.length; i++) {
-        const arg = input[i];
-        if (arg === '--model') {
-            i++;
-            continue;
-        }
-        if (arg.startsWith('--model=')) continue;
-        filtered.push(arg);
-    }
-    filtered.push('--model', modelId);
-    return filtered;
+    if (input.some((arg) => arg === '--model' || arg.startsWith('--model='))) return args;
+    return [...input, '--model', modelId];
 }
 
 export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number };
@@ -509,12 +506,13 @@ export async function claudeLocalLauncher(
                     permissionMode: session.lastPermissionMode,
                     agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
                 });
-                // Same for the model: the session model (seeded at startup, then changed from the app)
-                // lives in metadata, not in the launch args.
-                const resolvedModel = resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot });
-                if (resolvedModel) {
-                    session.claudeArgs = upsertClaudeModelArgs(session.claudeArgs, resolvedModel.modelId);
-                }
+                // The session model (seeded at startup, then changed from the app) lives in metadata.
+                // Add it to this spawn only: session.claudeArgs is reused by remote launches, where a
+                // `--model` would pin the model and ignore later changes from the app.
+                const localClaudeArgs = withClaudeSessionModelArgs(
+                    session.claudeArgs,
+                    resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId ?? null,
+                );
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
                 try {
@@ -531,7 +529,7 @@ export async function claudeLocalLauncher(
                         onThinkingChange: applyFd3ThinkingFallback,
                         onLifecycleGapDetected: (event) => emitClaudeUnifiedLifecycleGapDetected(unifiedTelemetry, event),
                         abort: processAbortController.signal,
-                        claudeArgs: session.claudeArgs,
+                        claudeArgs: localClaudeArgs,
                         happierSessionId: session.client.sessionId,
                         systemPromptText: session.defaultSystemPromptText,
                         envOverlay: {
