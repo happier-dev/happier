@@ -31,6 +31,12 @@ describe('built-in workflow input presentation', () => {
         expect(resolveWorkflowBuiltinInputPresentation('plugin:example/custom')).toBeUndefined();
         expect(resolveWorkflowBuiltinInputPresentation(null)).toBeUndefined();
     });
+
+    it('shows an authored text input even when its name matches the JSON replay binding', () => {
+        const inputs = [{ name: 'previousRoundContext', valueType: 'string' as const, required: false }];
+        expect(listWorkflowPersonInputs(inputs)).toEqual(inputs);
+    });
+
     it('never asks a person for an input the host binds, for any built-in', () => {
         const hostBound = ['triggerId', 'diffFingerprint', 'previousRoundContext'];
         for (const id of ['keep-going', 'review-and-converge', 'plan-with-a-panel', 'open-a-pull-request']) {
