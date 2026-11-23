@@ -29,6 +29,15 @@ export function isPluginAutomationActionSubjectV1(subject: PluginAutomationSubje
     && action.approvalScope.subjectKindId === subject.subjectKindId;
 }
 
+/** A trigger can observe a plugin subject only through the Event's qualified declaration. */
+export function isPluginAutomationEventSubjectV1(subject: PluginAutomationSubjectV1, event: Readonly<{
+  pluginId: string;
+  subjectProjections?: readonly PluginSubjectProjectionV1[];
+}>): boolean {
+  return event.pluginId === subject.pluginId
+    && event.subjectProjections?.some(projection => projection.subjectKindId === subject.subjectKindId) === true;
+}
+
 /** Kind lookup uses the same qualified catalog at picker discovery and identity admission. */
 export function readPluginAutomationSubjectKindV1(params: Readonly<{
   pluginId: string;

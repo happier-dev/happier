@@ -1,5 +1,5 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
-import { isPluginAutomationActionSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
+import { isPluginAutomationActionSubjectV1, isPluginAutomationEventSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -98,8 +98,9 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     for (const event of params.events) {
         const subjectKinds = readAutomationEventSubjectKindsV1(event.automation);
         if (!subjectKinds.includes(subject.kind)) continue;
-        if (subject.kind === 'plugin' && (event.eventRef.pluginId !== subject.pluginId
-            || !event.automation?.subjects?.some(kind => kind.subjectKindId === subject.subjectKindId))) continue;
+        if (subject.kind === 'plugin' && !isPluginAutomationEventSubjectV1(subject, {
+            pluginId: event.eventRef.pluginId, subjectProjections: event.automation?.subjects,
+        })) continue;
         const id = eventId(event.eventRef);
         const when = createWorkflowTriggerStartWhen(id);
         if (when?.kind !== 'pluginEvent') continue;

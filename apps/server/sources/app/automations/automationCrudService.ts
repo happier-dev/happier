@@ -44,7 +44,7 @@ import { isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/cryp
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, validateAutomationEventFilterAgainstPayloadSchemaV1, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/event';
 import { AutomationPullRequestTriggerSchema, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventEncryptedDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
-import { readPluginAutomationSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
+import { isPluginAutomationEventSubjectV1, readPluginAutomationSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { projectAutomationSubjectStructuralV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -577,8 +577,9 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         const admitted = readPluginAutomationSubjectV1({ ...subject,
             subjectKinds: (contribution.subjectKinds ?? []).map(definition => ({ pluginId: params.input.eventRef.pluginId, definition })),
         });
-        if (!admitted.ok || subject.pluginId !== params.input.eventRef.pluginId
-            || !contribution.automation.subjects?.some(projection => projection.subjectKindId === subject.subjectKindId)) {
+        if (!admitted.ok || !isPluginAutomationEventSubjectV1(admitted.subject, {
+            pluginId: params.input.eventRef.pluginId, subjectProjections: contribution.automation.subjects,
+        })) {
             throw new AutomationValidationError(admitted.ok ? 'subject_kind_unavailable' : admitted.code);
         }
     }

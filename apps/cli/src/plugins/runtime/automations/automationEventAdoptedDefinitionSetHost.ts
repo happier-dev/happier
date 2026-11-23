@@ -1,5 +1,5 @@
 import axios from '@/api/client/credentialAxios';
-import { readPluginAutomationSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
+import { isPluginAutomationEventSubjectV1, readPluginAutomationSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1, AutomationEventStoredDefinitionsReadHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '@happier-dev/protocol/automations/event';
@@ -144,9 +144,10 @@ async function projectStoredDefinition(params: Readonly<{
     const admitted = readPluginAutomationSubjectV1({ ...subject,
       subjectKinds: (subjectDeclaration.subjectKinds ?? []).map(definition => ({ pluginId: params.storedDefinition.eventRef.pluginId, definition })),
     });
-    if (!admitted.ok || subject.serverId !== subjectDeclaration.subjectServerId
-      || subject.pluginId !== params.storedDefinition.eventRef.pluginId
-      || !subjectDeclaration.subjectProjections?.some(projection => projection.subjectKindId === subject.subjectKindId)) return null;
+    if (!admitted.ok || admitted.subject.serverId !== subjectDeclaration.subjectServerId
+      || !isPluginAutomationEventSubjectV1(admitted.subject, {
+        pluginId: params.storedDefinition.eventRef.pluginId, subjectProjections: subjectDeclaration.subjectProjections,
+      })) return null;
   }
   let payloadValidator: PluginJsonSchemaValidator;
   try {
