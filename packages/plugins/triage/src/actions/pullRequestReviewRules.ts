@@ -1,15 +1,12 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { decodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import { SCM_OPERATION_ERROR_CODES, ScmFileAtRevisionResponseSchema } from '@happier-dev/plugin-sdk/scm';
 import {
     PULL_REQUEST_REVIEW_BASE_FILE_RULE_MEMBERS_V1,
-    PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1,
-    PullRequestReviewAuthorKindV1Schema,
-    PullRequestReviewResolvedRulesV1Schema,
-    PullRequestReviewSkipReasonV1Schema,
     type PullRequestReviewResolvedRulesV1,
     type PullRequestReviewSkipReasonV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { PullRequestReviewRuleOccurrenceV1, PullRequestReviewStepRulesV1 } from './entrySessionProtocol.js';
 
 /** The Account artifact shares these path and ref globs across browser and Node runtimes. */
 function compileGlob(pattern: string): RegExp {
@@ -34,25 +31,6 @@ function compileGlob(pattern: string): RegExp {
     }
     return new RegExp(`^${source}$`);
 }
-
-const nonempty = defineProtocolString({ minLength: 1 });
-const bool = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
-
-export { PullRequestReviewResolvedRulesV1Schema, PullRequestReviewSkipReasonV1Schema };
-export type { PullRequestReviewResolvedRulesV1 };
-
-export const PullRequestReviewRuleOccurrenceV1Schema = defineProtocolObject({
-    baseRef: nonempty.optional(),
-    author: defineProtocolObject({ kind: PullRequestReviewAuthorKindV1Schema }, { policy: 'additive-open/drop' }).optional(),
-    draft: bool.optional(),
-}, { policy: 'additive-open/drop' });
-export type PullRequestReviewRuleOccurrenceV1 = ReturnType<typeof PullRequestReviewRuleOccurrenceV1Schema.parse>;
-type Occurrence = PullRequestReviewRuleOccurrenceV1;
-
-// Project trigger filters use AutomationEventFilterV1. Only the review step's
-// own options are carried here, alongside the optional base-commit fallback.
-export const PullRequestReviewStepRulesV1Schema = defineProtocolObject(PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1, { policy: 'closed' });
-export type PullRequestReviewStepRulesV1 = ReturnType<typeof PullRequestReviewStepRulesV1Schema.parse>;
 
 const BaseFileRulesV1Schema = defineProtocolObject(PULL_REQUEST_REVIEW_BASE_FILE_RULE_MEMBERS_V1, { policy: 'closed' });
 type SkipReason = PullRequestReviewSkipReasonV1;

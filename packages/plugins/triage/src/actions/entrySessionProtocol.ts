@@ -23,7 +23,11 @@ import {
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+    PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+    PullRequestReviewAuthorKindV1Schema,
+    PullRequestReviewResolvedRulesV1Schema,
+    PullRequestReviewSkipReasonV1Schema,
     TriageAdmittedReviewV1Schema,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
@@ -40,7 +44,20 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
 import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
-import { PullRequestReviewResolvedRulesV1Schema, PullRequestReviewRuleOccurrenceV1Schema, PullRequestReviewSkipReasonV1Schema, PullRequestReviewStepRulesV1Schema } from './pullRequestReviewRules.js';
+
+const reviewOccurrenceText = defineProtocolString({ minLength: 1 });
+const reviewOccurrenceBoolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
+
+const PullRequestReviewRuleOccurrenceV1Schema = defineProtocolObject({
+    baseRef: reviewOccurrenceText.optional(),
+    author: defineProtocolObject({ kind: PullRequestReviewAuthorKindV1Schema }, { policy: 'additive-open/drop' }).optional(),
+    draft: reviewOccurrenceBoolean.optional(),
+}, { policy: 'additive-open/drop' });
+export type PullRequestReviewRuleOccurrenceV1 = ReturnType<typeof PullRequestReviewRuleOccurrenceV1Schema.parse>;
+
+// Trigger filters belong to AutomationEventFilterV1. This schema carries only the Review step's own options.
+const PullRequestReviewStepRulesV1Schema = defineProtocolObject(PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1, { policy: 'closed' });
+export type PullRequestReviewStepRulesV1 = ReturnType<typeof PullRequestReviewStepRulesV1Schema.parse>;
 
 export const TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 = 'entries/verify-existing-review-workspace-v1';
 /** Read-only proof, not another Session selection or creation entry point. */

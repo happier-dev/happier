@@ -11,7 +11,9 @@ import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDat
 import { observedReviewWorkspacePreparationFor, prepareEntryReviewWorkspace, preparedReviewWorkspaceFactsFor, type TriageReviewWorkspacePreparationDepsV1 } from '../sessions/entrySessionWorkspace.js';
 import type { TriageStartEntrySessionInputV1, TriageStartPullRequestReviewInputV1, TriageStartPullRequestReviewResultV1, TriagePreparePullRequestReviewInputV1, TriagePreparePullRequestReviewResultV1 } from './entrySessionProtocol.js';
 import { TriageReobserveEntryResultV1Schema, TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from './reobserveEntryProtocol.js';
-import { readPullRequestReviewRules, selectPullRequestReviewPaths, type PullRequestReviewResolvedRulesV1, type PullRequestReviewRuleOccurrenceV1 } from './pullRequestReviewRules.js';
+import { readPullRequestReviewRules, selectPullRequestReviewPaths } from './pullRequestReviewRules.js';
+import type { PullRequestReviewResolvedRulesV1 } from '@happier-dev/triage-protocol/v1';
+import type { PullRequestReviewRuleOccurrenceV1 } from './entrySessionProtocol.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { setReviewSkip } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';

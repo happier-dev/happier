@@ -18,7 +18,10 @@ describe('Triage views exclude handlers; executables retain only their activatio
       projectRoot, entryPath, artifactId: `triage-${id}`, requestedExports: [exportName],
       ...await sourcePluginUiBuildOptions({ repoRoot }),
     });
-    const modules = Object.keys(compiled.metafile.inputs).map(path => path.replaceAll('\\', '/'));
+    const modules = Array.from(new Set(Object.values(compiled.metafile.outputs).flatMap(output =>
+      Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0)
+        .map(([path]) => path.replaceAll('\\', '/')),
+    )));
     expect(compiled.exports).toContain(exportName);
     expect(compiled.bytes.byteLength).toBeGreaterThan(0);
     expect(modules.filter(path => path === 'src/definition.ts')).toEqual([]);
@@ -29,7 +32,10 @@ describe('Triage views exclude handlers; executables retain only their activatio
       expect(modules).toContain('src/accountDefinition.ts');
       expect(modules).not.toContain('src/ui/list/entryDragDrop.ts');
     }
-    const actionHandlers = modules.filter(path => /^src\/actions\/(?!.*Protocol\.ts$|dataContext\.ts$|taskWriteFailure\.ts$)/u.test(path)).sort();
+    // Source indexing, data context and failure projection support their callers without registering Actions.
+    const actionHandlers = modules.filter(path =>
+      /^src\/actions\/(?!.*Protocol\.ts$|accountDataSources\.ts$|dataContext\.ts$|taskWriteFailure\.ts$)/u.test(path),
+    ).sort();
     if (id === 'entity-drag-drop-native') {
       // Work Items reads and refreshes its linked rows through these two handlers.
       expect(actionHandlers).toEqual(['src/actions/listEntries.ts', 'src/actions/reobserveEntry.ts']);
