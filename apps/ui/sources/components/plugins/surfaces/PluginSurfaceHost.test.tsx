@@ -5776,6 +5776,8 @@ describe('PluginSurfacePlacementHost', () => {
             sessionId: 'session-1',
             expectedContributorOccurrenceId: 'acme.repos-test-occurrence',
             isCurrent: expect.any(Function),
+            onApprovalPending: expect.any(Function),
+            requestId: expect.any(String),
             signal: expect.any(AbortSignal),
             qualifiedActionId: 'acme.repos/open',
             input: { id: 'happier' },
