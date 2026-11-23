@@ -13,7 +13,7 @@ import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExternalActionApprovalDecisionEnvelopeAdmissionV1,
     projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
-    projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
+    projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1, projectExternalActionDeploymentLinkEnvelopeReplacementV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDiscussionEnvelopeIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -644,6 +644,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let discussionId: ExternalActionExecutionAuthorizationV1['binding']['discussionId'];
         let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
         let deploymentLinkEnvironmentId: string | undefined;
+        let deploymentLinkReplacement: ReturnType<typeof projectExternalActionDeploymentLinkEnvelopeReplacementV1>;
         let deploymentMetadataEnvironmentId: string | undefined;
         let deploymentMetadataReceiptId: string | undefined;
         try {
@@ -651,6 +652,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
+            deploymentLinkReplacement = projectExternalActionDeploymentLinkEnvelopeReplacementV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             approvalDecisionAdmission = projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
@@ -731,6 +733,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     : { environmentId: deploymentMetadataEnvironmentId },
                 deploymentNativeAdmission,
                 deploymentLinkEnvironmentId,
+                ...(deploymentLinkReplacement ? { deploymentLinkReplacement } : {}),
                 browserSessionId: request.envelope.v === 2 ? request.envelope.browserSessionId : undefined,
                 workspaceSyncAdmission: request.envelope.v === 2 ? request.envelope.workspaceSyncAdmission : undefined,
                 sessionSpawnInputKind: request.envelope.v === 1 ? 'public_api' as const : 'canonical_admission' as const,

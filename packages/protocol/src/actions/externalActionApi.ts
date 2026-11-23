@@ -35,7 +35,8 @@ import { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
 export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionIdV1, projectDeploymentPreparationAdmissionV1, deploymentPreparationOperationForActionV1,
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
-import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentTargetMachinesV1Schema } from '../deployments/deploymentEnvironmentCreateV1.js';
 import { ProjectSourceOwnerV1Schema, ProjectSourcesCreateActionInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
 import { PROJECT_SOURCE_CREATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
@@ -1017,6 +1018,8 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
   /** Exact non-content Link operand; Home derives its owner during issuance. */
   deploymentLinkEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+  /** Exact non-content replaced Link, its revision and replacement installations. */
+  deploymentLinkReplacement: z.optional(DeploymentLinkReplacementV1Schema),
   /** Exact non-content Environment operand for Home-authorized reads and binding preparation. */
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   /** Exact non-content receipt operand of a receipt read by its own id; Home binds that receipt's Environment during issuance. */
@@ -1088,6 +1091,30 @@ export function projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input
     return undefined;
   }
   return DeploymentIdentifierV1Schema.parse(input.envelope.deploymentLinkEnvironmentId);
+}
+/** A Link replacement's reviewed operand: the replaced Link, its exact revision and the replacement installations. */
+export const DeploymentLinkReplacementV1Schema = lazyZodSchema(() => z.strictObject({
+  replacesLinkId: DeploymentIdentifierV1Schema,
+  expectedTargetLinkRevision: DeploymentRevisionV1Schema,
+  machines: DeploymentTargetMachinesV1Schema,
+}));
+export type DeploymentLinkReplacementV1 = z.infer<typeof DeploymentLinkReplacementV1Schema>;
+/** The same non-content replacement operand is used by plain and encrypted request producers. */
+export function projectExternalActionDeploymentLinkReplacementV1(actionId: string, input: unknown): DeploymentLinkReplacementV1 | undefined {
+  if (actionId !== 'deployments.targets.link') return undefined;
+  const link = z.looseObject({ replacesLinkId: z.optional(z.unknown()), expectedTargetLinkRevision: z.optional(z.unknown()),
+    machines: z.optional(z.unknown()) }).parse(input);
+  return link.replacesLinkId === undefined ? undefined : DeploymentLinkReplacementV1Schema.parse({
+    replacesLinkId: link.replacesLinkId, expectedTargetLinkRevision: link.expectedTargetLinkRevision, machines: link.machines });
+}
+export function projectExternalActionDeploymentLinkEnvelopeReplacementV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): DeploymentLinkReplacementV1 | undefined {
+  if (input.envelope.v === 1) return projectExternalActionDeploymentLinkReplacementV1(input.actionId, input.envelope.input);
+  if (input.actionId !== 'deployments.targets.link' && input.envelope.deploymentLinkReplacement !== undefined) {
+    throw new TypeError('Unexpected Link replacement');
+  }
+  return input.envelope.deploymentLinkReplacement;
 }
 /** Projects only the root identifier needed to bind Home-owned Discussion preparation. */
 export function projectExternalActionDiscussionIdV1(actionId: string, input: unknown): string | undefined {
@@ -1378,6 +1405,8 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
     || actionId === 'deployments.prepare'
     || actionId === 'deployments.templates.instantiate'
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+    // A Run may replace a runtime Link (Move); Home admits only the replacement shape.
+    || actionId === 'deployments.targets.link'
     || isDeploymentDomainChildActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     || deploymentOperationForRootActionV1(actionId) !== undefined;
@@ -1492,7 +1521,9 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentChildRoot: z.optional(z.literal(true)),
     deploymentCandidatePublication: z.optional(DeploymentCandidatePublicationV1Schema),
     /** Home-derived preparation operands; a controller cannot select another readable owner. */
-    deploymentLinkAdmission: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema, owner: ProjectSourceOwnerV1Schema })),
+    deploymentLinkAdmission: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema, owner: ProjectSourceOwnerV1Schema,
+      /** The request's replacement operand; the Link write must carry exactly this. */
+      replacement: z.optional(DeploymentLinkReplacementV1Schema) })),
     deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
     projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),

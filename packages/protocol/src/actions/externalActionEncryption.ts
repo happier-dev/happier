@@ -37,6 +37,7 @@ import {
   projectExternalActionManagedAdmissionV1,
   projectExternalActionDiscussionIdV1,
   projectExternalActionDeploymentLinkEnvironmentIdV1,
+  projectExternalActionDeploymentLinkReplacementV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
   projectExternalActionDeploymentMetadataReceiptIdV1,
   projectExternalActionProjectSessionDefaultsAdmissionV1,
@@ -181,6 +182,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const workspaceSyncAdmission = projectWorkspaceSyncAdmissionInputV1(payload.actionId, payload.input);
   const deploymentReadAdmission = projectDeploymentReadAdmissionV1(payload.actionId, payload.input);
   const deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvironmentIdV1(payload.actionId, payload.input);
+  const deploymentLinkReplacement = projectExternalActionDeploymentLinkReplacementV1(payload.actionId, payload.input);
   const deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(payload.actionId, payload.input);
   const deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataReceiptIdV1(payload.actionId, payload.input);
   const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(payload.actionId, payload.input);
@@ -205,6 +207,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}),
     ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
     ...(deploymentLinkEnvironmentId === undefined ? {} : { deploymentLinkEnvironmentId }),
+    ...(deploymentLinkReplacement === undefined ? {} : { deploymentLinkReplacement }),
     ...(deploymentMetadataEnvironmentId === undefined ? {} : { deploymentMetadataEnvironmentId }),
     ...(deploymentMetadataReceiptId === undefined ? {} : { deploymentMetadataReceiptId }),
     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
@@ -295,7 +298,9 @@ export function openExternalActionRequestV2(params: Readonly<{
       envelope.deploymentReadAdmission)) return refused();
     phase = 'deployment_link_admission';
     if (projectExternalActionDeploymentLinkEnvironmentIdV1(decoded.data.actionId, decoded.data.input)
-      !== envelope.deploymentLinkEnvironmentId) return refused();
+      !== envelope.deploymentLinkEnvironmentId
+      || !sameStrictJsonValue(projectExternalActionDeploymentLinkReplacementV1(decoded.data.actionId, decoded.data.input),
+        envelope.deploymentLinkReplacement)) return refused();
     phase = 'deployment_metadata_admission';
     if (projectExternalActionDeploymentMetadataEnvironmentIdV1(decoded.data.actionId, decoded.data.input)
       !== envelope.deploymentMetadataEnvironmentId

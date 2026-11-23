@@ -5,6 +5,7 @@ import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
     DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+    DEPLOYMENT_TARGET_LINK_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1,
     isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
@@ -26,6 +27,7 @@ export type DeploymentWorkflowOriginInput = Readonly<{
     deploymentNativeAdmission?: DeploymentNativeAdmissionV1;
     deploymentCandidatePublication?: ExternalActionExecutionAuthorizationBindingV1['deploymentCandidatePublication'];
     deploymentPreparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
+    deploymentLinkAdmission?: Pick<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>, 'environmentId' | 'replacement'>;
     workflowActionOrigin?: ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin'];
 }>;
 
@@ -102,7 +104,11 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
         }, admission, { authenticationAuthority: 'account_automation', authenticationEvidence: input.authentication?.evidence });
     }
     const scope = input.deploymentCandidatePublication;
-    const environmentId = input.deploymentNativeAdmission?.environmentId ?? input.environmentId ?? scope?.environmentId;
+    // A Run's Link replaces the current runtime Link (Move); the Link write carries this exact operand.
+    const replacement = input.actionId === DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 ? input.deploymentLinkAdmission?.replacement : undefined;
+    if (input.actionId === DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 && !replacement) return false;
+    const environmentId = replacement ? input.deploymentLinkAdmission?.environmentId
+        : input.deploymentNativeAdmission?.environmentId ?? input.environmentId ?? scope?.environmentId;
     if (!environmentId || scope && scope.environmentId !== environmentId) return false;
     const environment = await loadDeploymentEnvironmentInTx(reader, input.accountId,
         input.serverIdentityId ?? await getOrCreateServerIdentityId(), environmentId, {
@@ -118,7 +124,8 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
     if (!teardown) {
         const link = await reader.deploymentTargetLink.findFirst({ where: { id: environment.row.runtimeTargetLinkId ?? '',
             environmentId, role: 'runtime', deletedAt: null, detachedAt: null }, select: { id: true } });
-        if (!link) return false;
+        // Admission names the current runtime Link; later calls of this job keep only Run currentness.
+        if (!link || phase === 'admission' && replacement && replacement.replacesLinkId !== link.id) return false;
     }
     if (phase === 'admission' && await admitDeploymentMachineInTx(reader, environment.admission.owner,
         input.target.machineId, 'controller', target.installationId)) return false;

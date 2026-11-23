@@ -87,25 +87,30 @@ it('binds native backup Workflow provenance to the assigned publisher and select
         deploymentNativeAdmission: native })).toBe(false);
 }, 120_000);
 
-it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
+it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
     const [publisher, receiver] = server.machines;
+    const moveLink = intent === 'move-link';
+    const controller = moveLink ? publisher : receiver;
     const project = await server.createDeploymentProject();
     const environment = await db.deploymentEnvironment.create({ data: {
         projectSourceId: project.projectSourceId, createdByAccountId: server.accountId,
         protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
-        controllerMachineId: receiver.id, buildMachineId: publisher.id, ...project.environmentContent,
+        controllerMachineId: controller.id, buildMachineId: publisher.id, ...project.environmentContent,
+        ...(moveLink ? { revision: 3 } : {}),
     } });
     const link = await db.deploymentTargetLink.create({ data: {
         environmentId: environment.id, createdByAccountId: server.accountId, role: 'runtime',
         sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'deployed', ...project.runtimeContent,
+        ...(moveLink ? { revision: 2 } : {}),
     } });
     await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
-    const actionId = intent === 'teardown' ? 'deployments.teardown' : 'deployments.deploy';
+    const actionId = moveLink ? 'deployments.targets.link' : intent === 'teardown' ? 'deployments.teardown' : 'deployments.deploy';
     const runId = randomUUID();
     const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
         definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
             document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
-        context: { source: { kind: 'inline' }, inputs: {}, machineId: publisher.id, executionTarget: { kind: 'session' },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: publisher.id,
+            executionTarget: { kind: moveLink ? 'detached_run' : 'session' },
             workspaceTarget: { project: { machineId: publisher.id, directory: '/repo', checkoutRootPath: '/repo' } },
             origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
     });
@@ -115,7 +120,7 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
     const secret = new Uint8Array(32).fill(7);
     const material = { type: 'dataKey' as const, machineKey: secret };
     const contentBinding = createSignedAccountContentBinding(tweetnacl.box.keyPair.fromSecretKey(secret).publicKey);
-    const mode = intent === 'e2ee' ? 'e2ee' : 'plain';
+    const mode = intent === 'e2ee' || moveLink ? 'e2ee' : 'plain';
     const machineContentBefore = mode === 'e2ee' ? await db.machine.findMany({
         where: { id: { in: server.machines.map(machine => machine.id) } },
         select: { id: true, metadata: true, daemonState: true, dataEncryptionKey: true },
@@ -153,15 +158,23 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
         });
         await server.claim(publisher.id);
         const requestId = `${runId}/${randomUUID()}/0`;
-        const target = { kind: 'machine' as const, machineId: receiver.id };
+        const target = { kind: 'machine' as const, machineId: controller.id };
         const input = actionId === 'deployments.deploy'
             ? { serverId: server.homeId, environmentId: environment.id, sha: 'a'.repeat(40), requestKey: randomUUID() }
-            : { serverId: server.homeId, environmentId: environment.id, expectedRevision: 1,
+            : actionId === 'deployments.targets.link' ? {
+                serverId: server.homeId, environmentId: environment.id, expectedRevision: environment.revision,
+                requestKey: `${randomUUID()}:link`, targetId: 'own-server', role: 'runtime', targetKind: 'ownServer',
+                replacesLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                machines: [{ machineId: receiver.id, installationId: receiver.installationId }],
+            } : { serverId: server.homeId, environmentId: environment.id, expectedRevision: 1,
                 targetLinkId: link.id, expectedTargetLinkRevision: 1, requestKey: randomUUID(), reason: 'manual',
                 ...await server.createDeploymentArtifact({ header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Teardown' }, body: '{}' }) };
-        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: {
+        const binding = {
             serverIdentityId: server.homeId, accountId: server.accountId, authentication: { kind: 'account', tokenEpoch: server.tokenEpoch },
-            actionId, requestId, target }, input, material, randomBytes: length => new Uint8Array(randomBytes(length)) })
+            actionId, requestId, target,
+        } as const;
+        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding, input, material, randomBytes: length => new Uint8Array(randomBytes(length)) })
             : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
         const workflowActionOrigin = { runId, requestId };
         const request = { v: 1, machineId: publisher.id, envelope, workflowActionOrigin,
@@ -170,7 +183,19 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
                 externalActionOrigin: { homeId: server.homeId, actionId, requestId,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin },
             } }) };
-        const response = await fetch(`${server.baseUrl}${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`, {
+        if (moveLink && envelope.v === 2) {
+            server.setReceiver(controller.id, async packet => {
+                expect(packet.executionAuthorization?.binding).toMatchObject({ actionId, machineId: controller.id,
+                    installationId: controller.installationId, workflowActionOrigin, deploymentLinkAdmission: { environmentId: environment.id,
+                        replacement: { replacesLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                            machines: [{ machineId: receiver.id, installationId: receiver.installationId }] } } });
+                return createExternalActionDaemonDispatchResponse(prepareExternalActionResponseV2({ binding, request: envelope,
+                    executedMachineId: controller.id, material, randomBytes: length => new Uint8Array(randomBytes(length)),
+                    execution: { ok: false, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' } }));
+            });
+        }
+        const path = moveLink ? `/v1/actions/${actionId}` : bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+        const response = await fetch(`${server.baseUrl}${path}`, {
             method: 'POST', headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
             body: JSON.stringify(request),
         });
@@ -180,6 +205,11 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
             refusalCode = failure.success ? 'code' in failure.data ? failure.data.code : failure.data.error : 'unrecognized_http_error';
         }
         expect(response.status, refusalCode).toBe(200);
+        if (moveLink && envelope.v === 2) {
+            expect(openExternalActionResponseV2({ envelope: await response.json(), binding, request: envelope, material }))
+                .toMatchObject({ ok: false, errorCode: 'deployment_executor_unavailable' });
+            return;
+        }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(await response.json());
         expect(authorization.binding).toMatchObject({ machineId: receiver.id, installationId: receiver.installationId,
             workflowActionOrigin, accountEncryptionMode: mode });

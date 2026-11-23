@@ -324,6 +324,35 @@ it.each(['plain', 'e2ee'] as const)('requires a signed exact receipt on Observe 
   expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentObservationReceiptId: 'another-receipt' }, selected)).toBe(false);
 });
 
+it.each(['plain', 'e2ee'] as const)('binds a Link replacement to its exact replaced Link and installations (%s)', mode => {
+  const actionId = 'deployments.targets.link';
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const requestId = 'link-root';
+  const replacement = { replacesLinkId: 'source-link', expectedTargetLinkRevision: 2,
+    machines: [{ machineId: 'destination', installationId: 'destination-installation' }] };
+  const input = { serverId: 'srv_binding', environmentId: 'environment', expectedRevision: 3, requestKey: 'link-key',
+    targetId: 'own-server', role: 'runtime', targetKind: 'ownServer', ...replacement };
+  const authentication = { kind: 'account', tokenEpoch: 1 } as const;
+  const envelope = mode === 'plain' ? { v: 1, requestId, target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: input.serverId, accountId: 'actor', actionId, requestId, target, authentication },
+      input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
+      randomBytes: size => new Uint8Array(size).fill(2) });
+  const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication, serverIdentityId: input.serverId,
+    machineId: target.machineId, installationId: 'installation', actionId, requestId, target,
+    deploymentLinkAdmission: { environmentId: input.environmentId, owner: { kind: 'account', accountId: 'actor' }, replacement },
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const selected = { actionId, machineId: target.machineId, envelope };
+  const admission = binding.deploymentLinkAdmission!;
+  expect(isExternalActionAuthorizationBoundToEnvelope(binding, selected)).toBe(true);
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding,
+    deploymentLinkAdmission: { ...admission, replacement: undefined } }, selected)).toBe(false);
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentLinkAdmission: { ...admission,
+    replacement: { ...replacement, machines: [{ machineId: 'other', installationId: 'other-installation' }] } } }, selected)).toBe(false);
+});
+
 it.each(['plain', 'e2ee'] as const)('leaves an ordinary qualified Action outside deployment read admission (%s)', mode => {
   const actionId = 'action.invoke';
   const target = { kind: 'machine', machineId: 'receiver' } as const;

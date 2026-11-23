@@ -26,7 +26,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
-    projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
+    projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1, projectExternalActionDeploymentLinkEnvelopeReplacementV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
@@ -160,6 +160,9 @@ async function readInstalledWorkflowRequestPrincipal(actionId: string,
             ...(workflowAdmission ? { admittedMachineRole: workflowAdmission.binding.admittedMachineRole } : {}),
             deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
             deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
+            ...(actionId === 'deployments.targets.link' ? { deploymentLinkAdmission: {
+                environmentId: projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId, envelope: body.envelope }) ?? '',
+                replacement: projectExternalActionDeploymentLinkEnvelopeReplacementV1({ actionId, envelope: body.envelope }) } } : {}),
             publisherMachineId: body.machineId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
             ...(body.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: body.envelope.idempotencyKey }),
             actionId, requestId: body.envelope.requestId!, workflowActionOrigin: origin,
@@ -739,6 +742,7 @@ export function registerExternalActionRoutes(
             let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
             let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
             let deploymentLinkEnvironmentId: string | undefined;
+            let deploymentLinkReplacement: ReturnType<typeof projectExternalActionDeploymentLinkEnvelopeReplacementV1>;
             let deploymentMetadataEnvironmentId: string | undefined;
             let deploymentMetadataReceiptId: string | undefined;
             try {
@@ -746,6 +750,7 @@ export function registerExternalActionRoutes(
                 deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
+                deploymentLinkReplacement = projectExternalActionDeploymentLinkEnvelopeReplacementV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: actionId.data, envelope: body.data.envelope });
                 pendingResetStartAdmission = projectExternalActionPendingResetStartEnvelopeAdmissionV1({
                     actionId: actionId.data, envelope: body.data.envelope, target });
@@ -928,6 +933,7 @@ export function registerExternalActionRoutes(
                     deploymentNativeAdmission,
                     deploymentReview: body.data.deploymentReview,
                     deploymentLinkEnvironmentId,
+                    ...(deploymentLinkReplacement ? { deploymentLinkReplacement } : {}),
                     workspaceSyncAdmission: body.data.envelope.v === 2 ? body.data.envelope.workspaceSyncAdmission : undefined,
                     sessionSpawnInputKind: body.data.envelope.v === 1 ? 'public_api' : 'canonical_admission',
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });

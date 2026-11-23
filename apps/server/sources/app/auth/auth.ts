@@ -411,6 +411,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     workflowAdmission?: WorkflowExternalActionAdmission;
     managedCreationAdmission?: import('./externalActionManagedAdmission').ManagedCreationChildAdmission;
     deploymentLinkEnvironmentId?: string;
+    deploymentLinkReplacement?: import('@happier-dev/protocol/actions/externalActionApi').DeploymentLinkReplacementV1;
     workspaceSyncAdmission?: WorkspaceSyncAdmissionInputV1;
     deploymentNativeAdmission?: ReturnType<typeof projectDeploymentNativeAdmissionV1>;
     deploymentReview?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationRequestV1['deploymentReview'];
@@ -909,12 +910,17 @@ class AuthModule {
         if (input.deploymentDatabaseEditor !== undefined) throw refuse('deployment_database_editor_supplied');
         if (input.deploymentTelemetryRead !== undefined) throw refuse('deployment_telemetry_read_supplied');
         let linkEnvironmentId: string | undefined;
+        let linkReplacement: import('@happier-dev/protocol/actions/externalActionApi').DeploymentLinkReplacementV1 | undefined;
         if (supplied.actionId === 'deployments.targets.link') {
-            const { projectExternalActionDeploymentLinkEnvironmentIdV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
+            const { projectExternalActionDeploymentLinkEnvironmentIdV1, projectExternalActionDeploymentLinkReplacementV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
             linkEnvironmentId = context.input === undefined ? context.deploymentLinkEnvironmentId
                 : projectExternalActionDeploymentLinkEnvironmentIdV1(supplied.actionId, context.input);
             if (!linkEnvironmentId || context.deploymentLinkEnvironmentId !== undefined
                 && context.deploymentLinkEnvironmentId !== linkEnvironmentId) throw refuse('deployment_link_environment');
+            linkReplacement = context.input === undefined ? context.deploymentLinkReplacement
+                : projectExternalActionDeploymentLinkReplacementV1(supplied.actionId, context.input);
+            if (context.input !== undefined && context.deploymentLinkReplacement !== undefined
+                && !sameStrictJsonValue(context.deploymentLinkReplacement, linkReplacement)) throw refuse('deployment_link_replacement');
         }
         // Link, preparation, registry and read admission have one owner, which a
         // person-presented relay of this root runs again.
@@ -930,7 +936,8 @@ class AuthModule {
             failureCause: bindingAdmission.placement?.failureCause });
         if (bindingAdmission.deploymentLinkAdmission || bindingAdmission.deploymentDatabaseEditor || bindingAdmission.deploymentTelemetryRead) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
-                ...(bindingAdmission.deploymentLinkAdmission ? { deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission } : {}),
+                ...(bindingAdmission.deploymentLinkAdmission ? { deploymentLinkAdmission: { ...bindingAdmission.deploymentLinkAdmission,
+                    ...(linkReplacement ? { replacement: linkReplacement } : {}) } } : {}),
                 ...(bindingAdmission.deploymentDatabaseEditor ? { deploymentDatabaseEditor: bindingAdmission.deploymentDatabaseEditor } : {}),
                 ...(bindingAdmission.deploymentTelemetryRead ? { deploymentTelemetryRead: bindingAdmission.deploymentTelemetryRead } : {}) });
         }

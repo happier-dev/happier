@@ -35,6 +35,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionPresetPreparationEnvelopeAdmissionV1,
   projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
+  projectExternalActionDeploymentLinkEnvelopeReplacementV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
@@ -148,7 +149,8 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && sameStrictJsonValue(binding.deploymentPreparationAdmission, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.presetPreparationAdmission, projectExternalActionPresetPreparationEnvelopeAdmissionV1(input))
       && (binding.deploymentLinkAdmission === undefined
-        || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input))
+        || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input)
+          && sameStrictJsonValue(binding.deploymentLinkAdmission.replacement, projectExternalActionDeploymentLinkEnvelopeReplacementV1(input)))
       && (nativeAdmission !== undefined && (binding.actionId === 'deployments.environments.update' || 'kind' in nativeAdmission)
         ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
         : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'

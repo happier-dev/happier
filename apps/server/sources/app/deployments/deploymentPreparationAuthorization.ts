@@ -12,6 +12,7 @@ import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/
 import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentPreparationOperationForActionV1, type ExternalActionExecutionAuthorizationBindingV1,
     type DeploymentPreparationAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionDeploymentLinkReplacementV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -949,8 +950,11 @@ export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: 
     // The existing transport owner recognizes and validates the Link POST once.
     if (effectActionId === binding.actionId && isHttpOperation(binding.actionId)) {
         const body = proof.body;
-        return admission !== undefined && body !== null && typeof body === 'object'
-            && 'environmentId' in body && body.environmentId === admission.environmentId;
+        if (admission === undefined || body === null || typeof body !== 'object'
+            || !('environmentId' in body) || body.environmentId !== admission.environmentId) return false;
+        try {
+            return sameStrictJsonValue(projectExternalActionDeploymentLinkReplacementV1(binding.actionId, body), admission.replacement);
+        } catch { return false; }
     }
     return null;
 }
