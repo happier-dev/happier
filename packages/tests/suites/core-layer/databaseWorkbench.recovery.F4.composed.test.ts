@@ -190,28 +190,28 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         await execute('docker', ['exec', container, 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'happier', '-d', 'app', '-c',
             `CREATE TABLE dbw_recovery_sentinel (marker text NOT NULL, absent text, empty_text text NOT NULL, exact_integer bigint NOT NULL);
              INSERT INTO dbw_recovery_sentinel VALUES ('${marker}', NULL, 'before-control', 9007199254740993);`]);
-        const currentRead = await owner.execute('deployments.environments.get', { serverId: fixture.serverId, environmentId });
-        if (!currentRead.ok) throw new Error(`R6 control Environment read refused (${currentRead.errorCode})`);
-        const current = DeploymentEnvironmentGetResultV1Schema.parse(currentRead.result);
-        if (!current.ok) throw new Error(`R6 control Environment read failed (${current.error})`);
-        // The public binding Action provisions the selected service's read role
-        // and seals its Machine grants before publishing the Environment edit.
-        fixture.takeRequestObservations();
-        const readRoleRef = await createPasswordSecret('R6 database read password');
-        const role = await owner.executeReviewed('deployments.bindings.set', { serverId: fixture.serverId,
-            environmentId, expectedRevision: current.environment.revision,
-            set: [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
-                source: { kind: 'secret', ref: readRoleRef.ref, resourceRevision: readRoleRef.revision } }], remove: [],
-        }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
-            presentUserConfirmation: { actionId: 'deployments.bindings.set' } });
-        if (!role.ok) throw new Error(`R6 read-role setup refused (${JSON.stringify({
-            errorCode: role.errorCode, error: role.error, failureCause: role.failureCause,
-            failedHttpRequests: failedHttpRequests(),
-        })})`);
-        const configuredRole = DeploymentBindingsSetResultV1Schema.parse(role.result);
-        if (!configuredRole.ok) throw new Error(`R6 read-role setup failed (${JSON.stringify({
-            error: configuredRole.error, failedHttpRequests: failedHttpRequests(),
-        })})`);
+        // The public binding Action provisions each selected service's read
+        // role and seals the Machine grants before publishing the edit.
+        async function configureReadRole(id: string, name: string) {
+            const current = await readEnvironment(id);
+            fixture.takeRequestObservations();
+            const readRoleRef = await createPasswordSecret(name);
+            const role = await account.executeReviewed('deployments.bindings.set', { serverId: fixture.serverId,
+                environmentId: id, expectedRevision: current.environment.revision,
+                set: [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+                    source: { kind: 'secret', ref: readRoleRef.ref, resourceRevision: readRoleRef.revision } }], remove: [],
+            }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+                presentUserConfirmation: { actionId: 'deployments.bindings.set' } });
+            if (!role.ok) throw new Error(`R6 read-role setup refused (${JSON.stringify({
+                errorCode: role.errorCode, error: role.error, failureCause: role.failureCause,
+                failedHttpRequests: failedHttpRequests(),
+            })})`);
+            const configuredRole = DeploymentBindingsSetResultV1Schema.parse(role.result);
+            if (!configuredRole.ok) throw new Error(`R6 read-role setup failed (${JSON.stringify({
+                error: configuredRole.error, failedHttpRequests: failedHttpRequests(),
+            })})`);
+        }
+        await configureReadRole(environmentId, 'R6 source database read password');
         const writeRoleRead = await account.execute('deployments.environments.get', { serverId: fixture.serverId, environmentId });
         if (!writeRoleRead.ok) throw new Error(`R6 write-role Environment read refused (${writeRoleRead.errorCode})`);
         const writeRoleBasis = DeploymentEnvironmentGetResultV1Schema.parse(writeRoleRead.result);
@@ -249,7 +249,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         // traverse the real Action, Home and daemon before recovery assertions.
         const sourceDatabase = { kind: 'deployment_service' as const,
             environment: { serverId: fixture.serverId,
-                projectSourceId: current.environment.projectSourceId, environmentId },
+                projectSourceId: editorBasis.environment.projectSourceId, environmentId },
             deploymentId: receipt.deploymentId, targetLinkId, serviceId: 'database', database: 'app' };
         const semanticInput = DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read',
                 target: sourceDatabase,
@@ -313,7 +313,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         }
         async function configureRepository(id: string) {
             const before = await readEnvironment(id);
-            const result = await account.execute('deployments.backups.configure', { serverId: fixture.serverId,
+            const result = await account.executeReviewed('deployments.backups.configure', { serverId: fixture.serverId,
                 environmentId: id, expectedRevision: before.environment.revision, intent: 'initializeAndSave',
                 configuration: { configRevision: 1,
                     destinationRef,
@@ -339,7 +339,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             machineId: machine.target.machineId, installationId: installation.installationId,
             expectedRevision: sourceCurrent.environment.revision, configRevision: sourceBackup.configuration.configRevision,
         });
-        const backedUp = await account.execute('deployments.backups.run', backupTarget,
+        const backedUp = await account.executeReviewed('deployments.backups.run', backupTarget,
             { presentUserConfirmation: { actionId: 'deployments.backups.run' } });
         if (!backedUp.ok) throw new Error(`R6 native backup refused (${backedUp.errorCode})`);
         const captured = DeploymentBackupRunResultV1Schema.parse(backedUp.result);
@@ -362,7 +362,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
                 project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });
             if (!started.ok) throw new Error(`R6 Workflow start refused (${started.errorCode})`);
             const run = WorkflowRunStartResultV1Schema.parse(started.result).run;
-            const waited = await account.execute('workflow.run.wait', { runId: run.id, conditions: ['terminal', 'attention'] });
+            const waited = await account.execute('workflow.run.wait', { runId: run.id, conditions: expectedState === 'failed' ? ['terminal'] : ['terminal', 'attention'] });
             if (!waited.ok) throw new Error(`R6 Workflow wait refused (${waited.errorCode})`);
             const settled = WorkflowRunWaitResultV1Schema.parse(waited.result);
             expect(settled).toMatchObject({ observation: 'terminal', run: { state: expectedState } });
@@ -384,7 +384,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         // a no-op restore cannot satisfy the recovery assertion.
         const drill = await createEnvironment('R6 isolated recovery drill');
         expect(drill.environmentId).not.toBe(environmentId);
-        const drillDeploy = await account.execute('deployments.deploy', { serverId: fixture.serverId, ...drill },
+        const drillDeploy = await account.executeReviewed('deployments.deploy', { serverId: fixture.serverId, ...drill },
             { presentUserConfirmation: { actionId: 'deployments.deploy' } });
         if (!drillDeploy.ok) throw new Error(`R6 drill native deploy refused (${drillDeploy.errorCode})`);
         const drillReceipt = DeploymentReceiptResultV1Schema.parse(drillDeploy.result);
@@ -392,6 +392,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         if (!('deploymentId' in drillReceipt)) throw new Error('R6 drill native deployment has not settled');
         const drillDeploymentId = drillReceipt.deploymentId;
         expect(drillReceipt.state).toBe('succeeded');
+        await configureReadRole(drill.environmentId, 'R6 drill database read password');
         await configureRepository(drill.environmentId);
         const drillCurrent = await readEnvironment(drill.environmentId);
         // Deliberate standing consent is persisted through the Account settings
@@ -436,8 +437,11 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         for (const blockId of ['verify', 'prepareRestore', 'confirmRestore', 'cleanupServices', 'stopService']) {
             expect(resultFor(blockId), `R6 ${blockId} must settle`).toMatchObject({ index: { lifecycle: 'completed' } });
         }
+        const restoredWithoutAmcheck = { kind: 'restored', verified: false,
+            nextAction: 'installAmcheckAndRunIntegrityCheck',
+            integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } };
         expect(DeploymentBackupRestoreResultV1Schema.parse(resultFor('confirmRestore')?.progress.result))
-            .toMatchObject({ kind: 'restored', verified: true });
+            .toMatchObject(restoredWithoutAmcheck);
         const restoredData = { ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [
             { type: 'text', value: marker }, { type: 'null' }, { type: 'text', value: '' },
             { type: 'integer', value: '9007199254740993' }], }], completeness: { complete: true } }] };
@@ -470,7 +474,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         // and must remain usable when the optional workbench is disabled.
         const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1,
             machineId: machine.target.machineId, scope: 'machine' };
-        expect(await account.execute('plugins.disable', lifecycleInput,
+        expect(await account.executeReviewed('plugins.disable', lifecycleInput,
             { presentUserConfirmation: { actionId: 'plugins.disable' } }))
             .toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
         expect(await account.execute('action.invoke', {
@@ -489,7 +493,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         if (disabledSizeResult.ok && disabledSizeResult.size.size.status === 'available') {
             expect(disabledSizeResult.size.size.bytes).toBeGreaterThan(0);
         }
-        const disabledBackup = await account.execute('deployments.backups.run', backupTarget,
+        const disabledBackup = await account.executeReviewed('deployments.backups.run', backupTarget,
             { presentUserConfirmation: { actionId: 'deployments.backups.run' } });
         if (!disabledBackup.ok) throw new Error(`R6 disabled-workbench native backup refused (${disabledBackup.errorCode})`);
         const disabledCapture = DeploymentBackupRunResultV1Schema.parse(disabledBackup.result);
@@ -511,9 +515,9 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
                 `F12 disabled-workbench ${blockId} must settle`).toMatchObject({ index: { lifecycle: 'completed' } });
         }
         expect(disabledDrill.details.find(row => row.progress.invocationPath.blockId === 'confirmRestore')?.progress.result)
-            .toMatchObject({ kind: 'restored', verified: true, evidence: { dataCheck: restoredData } });
+            .toMatchObject({ ...restoredWithoutAmcheck, evidence: { dataCheck: restoredData } });
         await assertDrillStopped();
-        expect(await account.execute('plugins.enable', lifecycleInput,
+        expect(await account.executeReviewed('plugins.enable', lifecycleInput,
             { presentUserConfirmation: { actionId: 'plugins.enable' } }))
             .toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
         const reenabledRead = await account.execute('action.invoke', {
