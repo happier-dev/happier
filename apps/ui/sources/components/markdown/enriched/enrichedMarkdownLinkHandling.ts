@@ -270,9 +270,10 @@ export function sanitizeEnrichedMarkdownLinkTargets(markdown: string): string {
     return normalizeMarkdownAutolinks(normalizeExplicitMarkdownLinks(value));
 }
 
-export async function openMarkdownLinkUrl(raw: string): Promise<boolean> {
+export async function openMarkdownLinkUrl(raw: string, onLinkPress?: (url: string) => boolean | void): Promise<boolean> {
     const normalized = normalizeMarkdownLinkUrl(raw);
     if (!normalized) return false;
+    if (onLinkPress?.(normalized) === true) return true;
     if (!isExternallyOpenableMarkdownLink(normalized)) return false;
     return openExternalUrl(normalized);
 }

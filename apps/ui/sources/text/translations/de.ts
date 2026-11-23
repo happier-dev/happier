@@ -2638,6 +2638,11 @@ export const de: TranslationStructure = {
                 confirmCta: 'Reset nutzen',
             },
         },
+        requestErrors: {
+            unreachable: 'Verbindung zum Happier-Server nicht möglich. Prüfe dein Netzwerk oder deine VPN-Verbindung und versuche es erneut.',
+            timeout: 'Der Happier-Server hat nicht rechtzeitig geantwortet.',
+            serverHttp: ({ status }: { status: string }) => `Der Happier-Server hat einen Fehler gemeldet (${status}). Versuche es gleich noch einmal.`,
+        },
         oauthPaste: {
             invalidConfig: 'Ungültige Konfiguration des verbundenen Dienstes.',
             connectWebGroupTitle: 'Verbinden (Web)',
@@ -2680,7 +2685,11 @@ export const de: TranslationStructure = {
             },
             errors: {
                 missingState: 'In der Redirect-URL fehlt der OAuth-State.',
-                stateMismatch: 'OAuth-State stimmt nicht überein.',
+                stateMismatch: 'Diese Autorisierungsantwort passt nicht zum aktuellen Versuch. Starte eine neue Autorisierung.',
+                rejected: ({ reason }: { reason: string }) => `Der Anbieter hat die Autorisierung abgelehnt: ${reason}`,
+                rejectedGeneric: 'Der Anbieter hat die Autorisierung abgelehnt.',
+                exchangeOutcomeUnknown: "Wir konnten nicht bestätigen, ob die Anmeldung abgeschlossen wurde. Prüfe deine verbundenen Konten und starte die Anmeldung bei Bedarf mit einem neuen Code.",
+                responseKept: "Die Anfrage wurde nicht gesendet. Prüfe deine Verbindung und drücke dann auf Weiter, um die eingefügte Antwort zu verwenden.",
             },
         },
         oauthEmbedded: {
@@ -5712,6 +5721,7 @@ export const de: TranslationStructure = {
 	            waitingForRuntimeActivityNotice: 'Wartet, bis die Runtime-Aktivität fertig ist',
 	            runtimeActivityUnknownNotice: 'Wartet auf den Status der Runtime-Aktivität',
 	            waitingForRuntimeNotice: 'Wartet, bis die Runtime sich wieder verbindet',
+	            steerUnavailableWaitingForTurnNotice: 'Kann diesem Durchgang gerade nicht beitreten · wird danach gesendet',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Ein Entwurf im Terminal blockiert die Zustellung',
 	                runtimeConfigBlocked: 'Die Runtime-Einstellungen blockieren die Zustellung',
@@ -6215,7 +6225,7 @@ export const de: TranslationStructure = {
 
     sessionDrafts: {
         sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen', startedOpen: "Sitzung gestartet · Öffnen",
-        status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
+        status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', starting: 'Wird gestartet', startFailed: 'Start fehlgeschlagen' },
         error: { title: 'Entwurfsfehler', storageDescription: 'Dieser Entwurf konnte auf diesem Gerät nicht gespeichert werden. Kopier deinen Text an einen sicheren Ort, bevor du gehst; beim nächsten Bearbeiten wird erneut gespeichert.', encryptionDescription: "Dieses Gerät konnte den Entwurf nicht synchronisieren.", showDetailsHint: 'Zeigt, warum dieser Entwurf einen Fehler hat' },
         new: { action: 'Neuer Entwurf' }, delete: { action: 'Entwurf löschen', confirmTitle: 'Entwurf löschen?', confirmDescription: 'Dieser Entwurf wird von deinen Geräten entfernt.' },
         conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Textinhalt', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
@@ -8133,13 +8143,17 @@ settingsSession: {
                   manualSubtitle: 'Nachrichten bleiben immer eingereiht, bis du die Session fortsetzt.',
               },
               title: 'Nachrichten senden',
-              footer: 'Steuert, was passiert, wenn du eine Nachricht sendest, während der Agent läuft.',
-              queueInAgentTitle: 'Im Agent einreihen (aktuell)',
-              queueInAgentSubtitle: 'Sofort ins Transkript schreiben; der Agent verarbeitet sie, sobald er bereit ist.',
-              interruptTitle: 'Unterbrechen & senden',
-              interruptSubtitle: 'Den aktuellen Turn abbrechen und sofort senden.',
-              pendingTitle: 'Offen, bis bereit',
-              pendingSubtitle: 'Nachrichten in einer Warteschlange halten; der Agent holt sie, sobald er bereit ist.',
+              footer: 'Lege fest, was passiert, wenn du eine Nachricht sendest, während der Agent arbeitet.',
+              busySend: {
+                addToTurnTitle: 'Zum laufenden Durchgang hinzufügen',
+                addToTurnSubtitle: 'Der Agent liest sie sofort und arbeitet weiter, wie beim Tippen in seinem eigenen Terminal. Kann er sie gerade nicht annehmen, wartet die Nachricht in „Ausstehend“, bis der Durchgang endet.',
+                waitForTurnTitle: 'Warten, bis der Durchgang endet',
+                waitForTurnSubtitle: 'Die Nachricht bleibt in „Ausstehend“, wo du sie bearbeiten oder umsortieren kannst, und wird nach dem Durchgang gesendet.',
+                interruptTitle: 'Durchgang stoppen und senden',
+                interruptSubtitle: 'Stoppt, was der Agent gerade tut, und sendet die Nachricht sofort.',
+              },
+              inactiveSessionsTitle: 'Inaktive Sitzungen',
+              inactiveSessionsFooter: 'Gilt, wenn du an eine Sitzung sendest, deren Agent beendet ist oder deren Maschine offline ist.',
               pendingDrainModeTitle: 'Verarbeitung der Warteschlange',
               pendingDrainModeFooter: 'Lege fest, ob der Agent pro Bereitschaftspunkt eine Nachricht nimmt oder die ganze Warteschlange auf einmal.',
               pendingDrainMode: {
@@ -8155,14 +8169,6 @@ settingsSession: {
                   afterForegroundReadySubtitle: 'Eingereihte Nachrichten senden, sobald der Agent den nächsten Turn annehmen kann.',
                   afterRuntimeIdleTitle: 'Wenn die Runtime ruht',
                   afterRuntimeIdleSubtitle: 'Eingereihte Nachrichten warten lassen, solange beobachtete Hintergrundaktivität noch läuft.',
-              },
-              busySteerPolicyTitle: 'Wenn der Agent beschäftigt ist (steuerbar)',
-              busySteerPolicyFooter: 'Wenn der Agent Steuern während des Turns unterstützt, lege fest, ob Nachrichten sofort steuern oder erst in die Warteschlange gehen.',
-              busySteerPolicy: {
-                  steerImmediatelyTitle: 'Sofort steuern',
-                  steerImmediatelySubtitle: 'Sofort senden und den aktuellen Turn steuern (ohne Unterbrechung).',
-                  queueForReviewTitle: 'In die Warteschlange',
-                  queueForReviewSubtitle: 'Nachrichten erst in die Warteschlange legen; später mit „Jetzt steuern“ senden.',
               },
               nonSteerablePromptTitle: 'Wenn eine Nachricht den aktiven Turn nicht steuern kann',
               nonSteerablePromptFooter: 'Änderungen am Berechtigungsmodus sowie /clear und /compact greifen nicht mitten im Turn. Lege fest, was Happier mit so einer Nachricht macht, während der Agent beschäftigt ist.',

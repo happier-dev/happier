@@ -10,6 +10,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { assertConnectedServiceOperationSupported } from '@/sync/api/account/connectedServiceOperationSupport';
+import { isConnectedServicePreDispatchFailure } from '@/sync/api/account/connectedServiceNetworkError';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -24,6 +25,7 @@ import {
 
 import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters';
 import { resolveConnectedServiceOauthPasteCopy } from './oauth/resolveConnectedServiceOauthPasteCopy';
+import { ConnectedServiceOauthRejectedError } from './oauth/connectedServiceOauthErrors';
 import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
 import { storeConnectedServiceCredentialWithIdentityConfirmation } from './storeConnectedServiceCredentialWithIdentityConfirmation';
 import { runConnectedServiceCredentialStoredEffects } from './runConnectedServiceCredentialStoredEffects';
@@ -94,18 +96,22 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     const pastedUrl = redirectUrlInput.trim();
     if (!pastedUrl) return;
     let exchangeAttempted = false;
+    let exchangeResponded = false;
     setBusy(true);
     try {
       await assertConnectedServiceOperationSupported(serviceId);
       const parsed = parseOauthCallbackUrl({ url: pastedUrl, redirectUri, allowRawAuthorizationCode: adapter.allowRawAuthorizationCode });
-      if (parsed.error) throw new Error(`OAuth error: ${parsed.error}`);
+      if (parsed.error) throw new ConnectedServiceOauthRejectedError(parsed.error);
       const code = parsed.code ?? '';
       // Raw manual codes return no state. The opted-in provider verifies this
       // exact attempt's PKCE; structured callback responses still return state.
       const returnedState = parsed.rawAuthorizationCode ? state : parsed.state ?? '';
       if (!code) throw new Error('Missing code');
-      if (!returnedState) throw new Error(copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
-      if (returnedState !== state) throw new Error(t('connectedServices.oauthPaste.errors.stateMismatch'));
+      if (!returnedState) {
+        await Modal.alert(t('common.error'), copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
+        return;
+      }
+      if (returnedState !== state) throw new Error('connect_oauth_state_mismatch');
 
       const credentials = ensureCredentials();
       exchangeAttempted = true;
@@ -118,6 +124,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         state: returnedState,
         now: Date.now(),
       });
+      exchangeResponded = true;
 
       const stored = await storeConnectedServiceCredentialWithIdentityConfirmation(
         credentials,
@@ -132,7 +139,9 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       );
       props.onDone();
     } catch (e: unknown) {
-      if (exchangeAttempted) {
+      // A one-use code can be resubmitted only when the transport attests it was never sent.
+      const keepResponse = exchangeAttempted && !exchangeResponded && isConnectedServicePreDispatchFailure(e);
+      if (exchangeAttempted && !keepResponse) {
         // The provider may have consumed this one-use code before the failure.
         setRedirectUrlInput('');
         setState('');
@@ -145,10 +154,11 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       const message = resolveConnectedServiceOauthErrorMessage(
         e,
         t('connectedServices.oauthPaste.alerts.failedToConnect'),
+        exchangeResponded ? 'save' : exchangeAttempted ? 'exchange' : undefined,
       );
       await Modal.alert(
         t('common.error'),
-        message,
+        keepResponse ? `${message}\n\n${t('connectedServices.oauthPaste.errors.responseKept')}` : message,
       );
     } finally {
       setBusy(false);

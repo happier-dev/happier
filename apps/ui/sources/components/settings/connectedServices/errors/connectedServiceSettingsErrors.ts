@@ -4,6 +4,8 @@ import {
   readConnectedServiceApiErrorFields,
 } from '@/sync/api/account/connectedServiceApiError';
 
+import { resolveConnectedServiceNetworkErrorMessage } from './connectedServiceNetworkErrorMessage';
+
 function isRawConnectedServiceMessage(message: string): boolean {
   return message.startsWith('connect_')
     || message.startsWith('Failed connected-service group request:');
@@ -55,6 +57,8 @@ export function resolveConnectedServiceRuntimeCooldownOverridePrompt(error: unkn
 }
 
 export function resolveConnectedServiceSettingsErrorMessage(error: unknown): string {
+  const networkMessage = resolveConnectedServiceNetworkErrorMessage(error);
+  if (networkMessage) return networkMessage;
   const fields = readConnectedServiceApiErrorFields(error);
   if (fields) {
     const reset = formatResetTime(fields.resetAtMs);

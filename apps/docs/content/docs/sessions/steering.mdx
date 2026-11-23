@@ -22,17 +22,13 @@ The main session composer's **Stop run** control follows the active agent's turn
 
 ## Busy-session send policy
 
-In the app, open:
+In the app, open **Settings → Session → Message sending** and choose what happens when you send while the agent is working:
 
-1. **Settings**
-2. **Session**
-3. **Message sending**
-4. **When the agent is busy (steer-capable)**
+- **Add it to the current turn**: steer the active turn. If the session cannot steer right now, the message waits in Pending until the turn ends.
+- **Wait until the turn ends**: keep the message in Pending; it is sent after the turn.
+- **Stop the turn and send**: interrupt the current turn, then send.
 
-You can choose:
-
-- **Steer immediately**: send immediately and steer the active turn.
-- **Server pending**: store message in pending queue first.
+See [Pending queue](/sessions/pending-queue#message-sending-settings) for details.
 
 ## Execution-run delivery modes
 

@@ -95,7 +95,7 @@ describe('createClaudeRawMessageTurnDiffBridge', () => {
     );
   });
 
-  it('drops Claude local-command and system lifecycle records from visible transcript content', () => {
+  it('drops Claude internal context, local-command and lifecycle records from visible transcript content', () => {
     const sendMessage = vi.fn();
     const bridge = createClaudeRawMessageTurnDiffBridge({
       getSessionId: () => 'happy-session-id',
@@ -103,6 +103,12 @@ describe('createClaudeRawMessageTurnDiffBridge', () => {
     });
 
     const hiddenMessages = [
+      {
+        type: 'user',
+        uuid: 'skill-context',
+        isMeta: true,
+        message: { content: [{ type: 'text', text: 'Internal skill context' }] },
+      },
       {
         type: 'system',
         uuid: 'compact-boundary-1',

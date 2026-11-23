@@ -23,6 +23,7 @@ let exchanges: HttpExchange[];
 let storedRecords: unknown[];
 let returnedService: string;
 let exchangeFailure: boolean;
+let networkDown: boolean;
 
 describe('Connected Service OAuth paste HTTP composition', () => {
   beforeEach(async () => {
@@ -31,6 +32,7 @@ describe('Connected Service OAuth paste HTTP composition', () => {
     storedRecords = [];
     returnedService = 'antigravity';
     exchangeFailure = false;
+    networkDown = false;
     const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     resetServerFeaturesClientForTests();
     const features = createRootLayoutFeaturesResponse({ capabilities: { connectedServices: {
@@ -45,6 +47,7 @@ describe('Connected Service OAuth paste HTTP composition', () => {
       if (path.endsWith('/oauth/exchange')) {
         const request = JSON.parse(String(init?.body)) as HttpExchange;
         exchanges.push(request);
+        if (networkDown) throw new TypeError('Failed to fetch');
         if (exchangeFailure) return json({ error: 'connect_oauth_invalid_grant' }, 400);
         const bundle = sealBoxBundle({
           plaintext: new TextEncoder().encode(JSON.stringify({ serviceId: returnedService, accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh', providerEmail: 'selected@example.test', providerAccountId: 'selected-google-account', raw: { project_id: 'selected-project', client_secret: 'discard-me' } })),
@@ -121,6 +124,23 @@ describe('Connected Service OAuth paste HTTP composition', () => {
     expect(screen.findByTestId('connectedServices.oauthPaste.validateRedirectButton')?.props.disabled).toBe(true);
     expect(exchanges).toHaveLength(1);
     expect(storedRecords).toEqual([]);
+  });
+
+  it('requires a fresh callback when the exchange may have reached the server', async () => {
+    networkDown = true;
+    const { url, screen } = await paste('antigravity', () => 'one-use-code');
+    await act(async () => { await flushHookEffects({ cycles: 2, turns: 2 }); });
+    expect(alerts).toHaveBeenCalledWith('common.error', 'connectedServices.oauthPaste.errors.exchangeOutcomeUnknown');
+    const authorization = screen.tree.find((node) => typeof node.props.children === 'string' && node.props.children.startsWith('https://accounts.google.com/o/oauth2/') && node.props.selectable === true);
+    expect(new URL(authorization.props.children).searchParams.get('state')).not.toBe(url.searchParams.get('state'));
+    expect(screen.findByTestId('connectedServices.oauthPaste.redirectUrlInput')?.props.value).toBe('');
+    expect(exchanges).toHaveLength(1);
+    expect(storedRecords).toEqual([]);
+  });
+
+  it('explains a stale authorization response instead of a bare state mismatch', async () => {
+    await paste('antigravity', (_state, callback) => `${callback}?code=synthetic-code&state=foreign-state`);
+    expect(alerts).toHaveBeenCalledWith('common.error', 'connectedServices.oauthPaste.errors.stateMismatch');
   });
 
   it('retains the returned state when AGY supplies a matching callback URL', async () => {

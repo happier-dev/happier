@@ -179,12 +179,8 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
     sessionId: string;
     reason: string;
   }>) => void) | undefined;
-  /**
-   * Returns true only when a trusted transcript row proves that Happier's exact accepted prompt
-   * reached the primary Claude session. The bridge then re-reports the original SessionStart so
-   * the canonical session metadata owner can re-check the now-materialized transcript path.
-   */
-  proveAcceptedMainTranscript?: ((value: unknown) => boolean) | undefined;
+  /** Observes live primary transcript rows that can settle an exact pending prompt. */
+  onMainTranscriptForPromptAcceptance?: ((value: unknown) => void) | undefined;
   /**
    * Publishes the scanner's ONE sidechain importer for as long as that scanner is alive, and `null`
    * once it is gone. The bridge builds the scanner lazily (after the SessionStart subscription and
@@ -238,7 +234,6 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
     data: SessionHookData;
     sessionInfo: ClaudeUnifiedSessionStartInfo;
   }> | null = null;
-  let acceptedMainTranscriptProvenForSessionId: string | null = null;
 
   const recordSessionStartBaselines = (
     sessionInfo: ClaudeUnifiedSessionStartInfo,
@@ -257,14 +252,6 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
     sessionStartReceivedAtMs: number | null,
   ) => {
     if (disposed) return;
-    const previousSessionInfo = activeTrustedSessionBinding?.sessionInfo;
-    if (
-      !previousSessionInfo
-      || previousSessionInfo.sessionId !== sessionInfo.sessionId
-      || previousSessionInfo.transcriptPath !== sessionInfo.transcriptPath
-    ) {
-      acceptedMainTranscriptProvenForSessionId = null;
-    }
     activeTrustedSessionBinding = { data, sessionInfo };
     if (sessionStartReceivedAtMs !== null) {
       recordSessionStartBaselines(sessionInfo, sessionStartReceivedAtMs);
@@ -289,7 +276,6 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
 
   const applyLaterHookTranscriptPath = (
     transcriptInfo: NonNullable<ReturnType<typeof readLaterHookTranscriptInfo>>,
-    data: SessionHookData,
   ) => {
     if (disposed) return;
     const activeSessionStart = activeTrustedSessionBinding;
@@ -303,7 +289,11 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
       ...activeSessionStart.sessionInfo,
       transcriptPath: transcriptInfo.transcriptPath,
     };
-    applySessionBinding(updatedSessionInfo, data, null);
+    // A later hook can locate the transcript but only the admitted SessionStart owns the ID.
+    applySessionBinding(updatedSessionInfo, {
+      ...activeSessionStart.data,
+      transcript_path: transcriptInfo.transcriptPath,
+    }, null);
   };
 
   const observeTrustedRawTranscriptValue = (
@@ -311,26 +301,15 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
     observation: Readonly<{ historicalReplay: boolean }>,
   ): void => {
     opts.onRawTranscriptValue?.(value, observation);
-    if (observation.historicalReplay) return;
-    const activeSessionStart = activeTrustedSessionBinding;
-    if (!opts.proveAcceptedMainTranscript) return;
+    if (observation.historicalReplay || !opts.onMainTranscriptForPromptAcceptance) return;
     // The scanner serializes trusted raw observations behind preceding visible-message commits,
     // including a known resume whose adopted provider emits no new SessionStart. A real
     // SessionStart takes precedence over that initial requested identity.
-    const trustedSessionId = activeSessionStart?.sessionInfo.sessionId ?? knownResumeSessionId;
+    const trustedSessionId = activeTrustedSessionBinding?.sessionInfo.sessionId ?? knownResumeSessionId;
     const sessionId = readTranscriptString(value as RawJSONLines, 'sessionId');
     if (!sessionId) return;
     if (trustedSessionId ? sessionId !== trustedSessionId : !promotedDiscoveredMainSessionIds.has(sessionId)) return;
-    if (!opts.proveAcceptedMainTranscript(value)) return;
-
-    // Acceptance proof is per exact Pending prompt and must keep observing every authenticated
-    // primary-session raw row. Only the metadata re-report is one-shot for a Claude session.
-    if (acceptedMainTranscriptProvenForSessionId === sessionId) return;
-
-    acceptedMainTranscriptProvenForSessionId = sessionId;
-    if (activeSessionStart) {
-      opts.onSessionFound?.(sessionId, activeSessionStart.data);
-    }
+    opts.onMainTranscriptForPromptAcceptance(value);
   };
 
   const observeLiveProviderTaskJsonlValue = (
@@ -395,7 +374,7 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
           }
           if (!sessionInfo) {
             const transcriptInfo = readLaterHookTranscriptInfo(data);
-            if (transcriptInfo) applyLaterHookTranscriptPath(transcriptInfo, data);
+            if (transcriptInfo) applyLaterHookTranscriptPath(transcriptInfo);
             return;
           }
           logger.debug('[unified]: Claude SessionStart hook received', {
@@ -481,9 +460,16 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
             opts.onTranscriptMessage?.(message);
           }
         },
-        onRawJsonlValue: opts.onRawTranscriptValue || opts.proveAcceptedMainTranscript
+        onRawJsonlValue: opts.onRawTranscriptValue || opts.onMainTranscriptForPromptAcceptance
           ? observeTrustedRawTranscriptValue
           : undefined,
+        onMainTranscriptMaterialized: opts.onSessionFound ? ({ sessionId, transcriptPath }) => {
+          const binding = activeTrustedSessionBinding;
+          if (binding?.sessionInfo.sessionId !== sessionId) return;
+          opts.onSessionFound?.(sessionId, binding.sessionInfo.transcriptPath === transcriptPath
+            ? binding.data
+            : { ...binding.data, transcript_path: transcriptPath });
+        } : undefined,
         onLiveJsonlValue: opts.onLiveProviderTaskJsonlValue
           ? observeLiveProviderTaskJsonlValue
           : undefined,
@@ -530,7 +516,6 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
       pendingSessionBindings.length = 0;
       promotedDiscoveredMainSessionIds.clear();
       activeTrustedSessionBinding = null;
-      acceptedMainTranscriptProvenForSessionId = null;
       if (scanner) opts.onSubagentFileCollectorChanged?.(null);
       await scanner?.cleanup();
       scanner = null;

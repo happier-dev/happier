@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createTtsChunker, resolveStreamingTtsChunkChars, splitSpeechSentences } from './TtsChunker';
+import { batchSpeechForSynthesis, createTtsChunker, resolveStreamingTtsChunkChars } from './TtsChunker';
 
 describe('TtsChunker', () => {
     it('emits chunks near punctuation boundaries', () => {
@@ -55,41 +55,35 @@ describe('TtsChunker', () => {
         }
     });
 
-    it('splits text into sentences for sequential synthesis', () => {
-        expect(splitSpeechSentences('First one. Second, e.g. this file.ts! Third?', 200)).toEqual([
-            'First one.',
-            'Second, e.g. this file.ts!',
-            'Third?',
-        ]);
-        expect(splitSpeechSentences('[First sentence. Second sentence.', 200)).toEqual([
+    it('uses the first sentence of a long read even when speech contains literal brackets', () => {
+        const tail = 'The rest of this very long transcript needs a second request.';
+        expect(batchSpeechForSynthesis(`[First sentence. ${tail}`, { grouping: { maxChars: 70, mode: 'early-start' } })).toEqual([
             '[First sentence.',
-            'Second sentence.',
-        ]);
-        expect(splitSpeechSentences('[First sentence. Second sentence.](url)', 200)).toEqual([
-            '[First sentence.',
-            'Second sentence.](url)',
+            tail,
         ]);
     });
 
     it('bounds a single very long sentence by maxChars', () => {
         const long = 'word '.repeat(100).trim();
-        const parts = splitSpeechSentences(long, 50);
+        const parts = batchSpeechForSynthesis(long, { grouping: { maxChars: 50, mode: 'early-start' } });
         expect(parts.length).toBeGreaterThan(1);
         for (const part of parts) expect(part.length).toBeLessThanOrEqual(50);
         expect(parts.join(' ')).toBe(long);
     });
 
     it('treats full-width terminators as sentence ends without trailing whitespace', () => {
-        expect(splitSpeechSentences('今日は晴れです。明日は雨です！本当？', 200)).toEqual([
+        expect(batchSpeechForSynthesis(
+            '今日は晴れです。明日は雨です！本当に雨が降るので長い傘を必ず持ってきてください。',
+            { grouping: { maxChars: 32, mode: 'early-start' } },
+        )).toEqual([
             '今日は晴れです。',
-            '明日は雨です！',
-            '本当？',
+            '明日は雨です！本当に雨が降るので長い傘を必ず持ってきてください。',
         ]);
     });
 
     it('never splits a surrogate pair on a hard cut', () => {
         const emoji = '😀'.repeat(40);
-        const parts = splitSpeechSentences(emoji, 33);
+        const parts = batchSpeechForSynthesis(emoji, { grouping: { maxChars: 33, mode: 'early-start' } });
         expect(parts.join('')).toBe(emoji);
         for (const part of parts) {
             expect(part).not.toMatch(/[\uD800-\uDBFF]$/);

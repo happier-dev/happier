@@ -18,7 +18,7 @@ function createSessionStub() {
     sendAgentMessageCommitted: async (provider: unknown, body: unknown, opts: Record<string, unknown>) => {
       durableCalls.push({ provider, body, ...opts });
     },
-    sendAgentMessage: (provider: unknown, body: unknown, opts: Record<string, unknown>) => {
+    sendAgentMessage: (provider: unknown, body: unknown, opts?: Record<string, unknown>) => {
       bestEffortCalls.push({ provider, body, ...opts });
     },
   };
@@ -27,6 +27,123 @@ function createSessionStub() {
 }
 
 describe('createOpenCodeTranscriptStreamBridge', () => {
+  it('keeps root and child reasoning independent when only the child reaches a tool boundary', async () => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const root = { streamKey: 'root-1', remoteSessionId: 'ses_root', messageId: 'msg_root', sidechainId: null };
+    const child = { streamKey: 'child-1', remoteSessionId: 'ses_child', messageId: 'msg_child', sidechainId: 'task-1' };
+    bridge.enableDurableCommitsForStream(root);
+    bridge.appendThinkingDelta({ ...root, deltaText: 'Root A' });
+    bridge.appendThinkingDelta({ ...child, deltaText: 'Child' });
+    await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: (args) => args.sidechainId === 'task-1' });
+    const next = { ...root, streamKey: 'root-2', messageId: 'msg_root_2' };
+    bridge.appendThinkingDelta({ ...next, deltaText: 'Root B' });
+    bridge.enableDurableCommitsForStream(next);
+    await bridge.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
+    const lastById = new Map(durableCalls.map((row) => [row.localId, row]));
+    expect(Array.from(lastById.values()).map((row) => row.body)).toEqual([
+      { type: 'thinking', text: 'Root A\n\nRoot B' },
+      { type: 'thinking', text: 'Child', sidechainId: 'task-1' },
+    ]);
+    expect(Array.from(lastById.values())[0]?.meta).toMatchObject({
+      happierStreamSegmentV1: { segmentState: 'interrupted' },
+    });
+  });
+
+  it('keeps unresolved reasoning at its original boundary and honors late suppression', async () => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const first = { streamKey: 'before', remoteSessionId: 'ses_root', messageId: 'before', sidechainId: null };
+    const delayed = { ...first, streamKey: 'delayed', messageId: 'delayed' };
+    const hidden = { ...first, streamKey: 'summary', messageId: 'summary' };
+    const next = { ...first, streamKey: 'after', messageId: 'after' };
+
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'Confirmed before tool' });
+    bridge.appendThinkingDelta({ ...delayed, deltaText: 'Delayed before tool' });
+    bridge.appendThinkingDelta({ ...hidden, deltaText: 'Internal summary' });
+    await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: (args) => args.sidechainId === null });
+
+    expect(durableCalls.at(-1)?.body).toEqual({ type: 'thinking', text: 'Confirmed before tool' });
+    bridge.discardStream(hidden);
+    bridge.enableDurableCommitsForStream(delayed);
+    bridge.enableDurableCommitsForStream(next);
+    bridge.appendThinkingDelta({ ...next, deltaText: 'After tool' });
+    bridge.appendAssistantDelta({ ...next, deltaText: 'Reply' });
+    await bridge.flushAll({ reason: 'turn-end' });
+
+    const transcript = Array.from(new Map(durableCalls.map((row) => [row.localId, row.body])).values());
+    expect(transcript).toEqual([
+      { type: 'thinking', text: 'Confirmed before tool' },
+      { type: 'thinking', text: 'Delayed before tool' },
+      { type: 'thinking', text: 'After tool' },
+      { type: 'message', message: 'Reply' },
+    ]);
+  });
+
+  it('joins consecutive reasoning messages and preserves corrections, projection admission and boundaries', async () => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const first = { streamKey: 'turn:msg:1', remoteSessionId: 'ses_1', messageId: 'msg_1', sidechainId: null };
+    const second = { ...first, streamKey: 'turn:msg:2', messageId: 'msg_2' };
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'First thought.' });
+    bridge.appendThinkingDelta({ ...second, deltaText: 'Second thought.' });
+    bridge.enableDurableCommitsForStream(second);
+    bridge.overrideThinkingText({ ...second, text: 'Corrected thought.' });
+    const hidden = { ...first, streamKey: 'turn:msg:hidden', messageId: 'hidden' };
+    bridge.appendThinkingDelta({ ...hidden, deltaText: 'Not assistant content' });
+    bridge.discardStream(hidden);
+    await bridge.flushAll({ reason: 'turn-end' });
+
+    const thoughts = durableCalls.filter((row) => (row.body as ACPMessageData).type === 'thinking');
+    expect(new Set(thoughts.map((row) => row.localId)).size).toBe(1);
+    expect(thoughts.at(-1)?.body).toMatchObject({ text: 'First thought.\n\nCorrected thought.' });
+
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'Next turn.' });
+    await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: (args) => args.sidechainId === null });
+    bridge.appendThinkingDelta({ ...first, deltaText: 'After tool.' });
+    bridge.appendAssistantDelta({ ...first, deltaText: 'Reply' });
+    bridge.appendThinkingDelta({ ...first, deltaText: 'After reply.' });
+    await bridge.flushAll({ reason: 'turn-end' });
+    const completed = durableCalls.filter((row) =>
+      (row.body as ACPMessageData).type === 'thinking'
+      && (row.meta as Record<string, unknown>)?.happierStreamSegmentV1
+      && ((row.meta as Record<string, unknown>).happierStreamSegmentV1 as { segmentState: string }).segmentState === 'complete',
+    );
+    expect(completed.map((row) => (row.body as { text: string }).text)).toEqual([
+      'First thought.\n\nCorrected thought.', 'Next turn.', 'After tool.', 'After reply.',
+    ]);
+    expect(new Set(completed.map((row) => row.localId)).size).toBe(4);
+  });
+
+  it.each(['reply', 'tool'] as const)('keeps a late correction out of the next run after a %s', async (boundary) => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const first = { streamKey: 'before', remoteSessionId: 'ses_1', messageId: 'before', sidechainId: null };
+    const next = { ...first, streamKey: 'after', messageId: 'after' };
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'Original thought' });
+
+    if (boundary === 'tool') {
+      await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: () => true });
+    } else {
+      bridge.appendAssistantDelta({ ...first, deltaText: 'Reply' });
+    }
+    bridge.enableDurableCommitsForStream(next);
+    bridge.appendThinkingDelta({ ...next, deltaText: 'Next thought' });
+    bridge.overrideThinkingText({ ...first, text: 'Corrected thought' });
+    await bridge.flushAll({ reason: 'turn-end' });
+
+    const thoughts = durableCalls.filter((row) => (row.body as ACPMessageData).type === 'thinking');
+    const transcript = Array.from(new Map(thoughts.map((row) => [row.localId, row.body])).values());
+    expect(transcript).toEqual([
+      { type: 'thinking', text: boundary === 'tool' ? 'Original thought' : 'Corrected thought' },
+      { type: 'thinking', text: 'Next thought' },
+    ]);
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

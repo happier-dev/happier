@@ -532,51 +532,6 @@ describe('createHappierMcpServer', () => {
     );
   });
 
-  it('treats session-agent metadata refresh after change_title as best-effort', async () => {
-    const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
-    const updateMetadata = vi.fn(() => {
-      throw new Error('local metadata sync failed');
-    });
-    const captured: { deps?: any } = {};
-
-    vi.doMock('@/session/actions/createCliActionExecutorHarness', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/session/actions/createCliActionExecutorHarness')>();
-      return {
-        ...actual,
-        createCliActionExecutorHarness: () => ({ executor: { execute } }),
-      };
-    });
-
-    vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/mcp/server/registerHappierMcpBuiltInTools')>();
-      return {
-        ...actual,
-        registerHappierMcpBuiltInTools: (_server: any, params: any) => {
-          captured.deps = params.deps;
-          return { toolNames: [] };
-        },
-      };
-    });
-
-    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
-    createHappierMcpServer(
-      {
-        sessionId: 'sess_change_title_refresh_1',
-        rpcHandlerManager: { invokeLocal: async () => ({}) },
-        sendClaudeSessionMessage: () => {},
-        updateMetadata,
-      } as any,
-      { credentials: null },
-    );
-
-    expect(captured.deps).toBeDefined();
-    await expect(captured.deps.changeTitle('sess_change_title_refresh_1', 'New title')).resolves.toEqual({
-      success: true,
-      title: 'New title',
-    });
-    expect(updateMetadata).toHaveBeenCalledTimes(1);
-  });
-
   it('routes execution_run_start through the action executor (so approvals/enablement apply)', async () => {
     const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
     const captured: { deps?: any } = {};

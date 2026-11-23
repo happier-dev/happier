@@ -2724,6 +2724,11 @@ export const ru: TranslationStructure = {
         confirmCta: "Применить сброс",
       },
     },
+    requestErrors: {
+      unreachable: "Не удаётся подключиться к серверу Happier. Проверьте сеть или VPN-подключение и повторите попытку.",
+      timeout: "Сервер Happier не ответил вовремя.",
+      serverHttp: ({ status }: { status: string }) => `Сервер Happier вернул ошибку (${status}). Повторите попытку через минуту.`,
+    },
     oauthPaste: {
       invalidConfig: "Неверная конфигурация подключённого сервиса.",
       connectWebGroupTitle: "Подключить (web)",
@@ -2767,7 +2772,11 @@ export const ru: TranslationStructure = {
       },
       errors: {
         missingState: "Отсутствует состояние OAuth в URL редиректа.",
-        stateMismatch: "Состояние OAuth не совпадает.",
+        stateMismatch: "Этот ответ авторизации не соответствует текущей попытке. Начните новую авторизацию.",
+        rejected: ({ reason }: { reason: string }) => `Провайдер отклонил авторизацию: ${reason}`,
+        rejectedGeneric: "Провайдер отклонил авторизацию.",
+        exchangeOutcomeUnknown: "Не удалось подтвердить завершение входа. Проверьте подключённые аккаунты и при необходимости войдите снова с новым кодом.",
+        responseKept: "Запрос не был отправлен. Проверьте подключение и нажмите «Продолжить», чтобы использовать уже вставленный ответ.",
       },
     },
     oauthEmbedded: {
@@ -5519,7 +5528,7 @@ export const ru: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой', startedOpen: "Сессия запущена · Открыть",
-    status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', startInterrupted: 'Запуск прерван' },
+    status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', starting: 'Запуск', startFailed: 'Не удалось запустить' },
     error: { title: 'Ошибка черновика', storageDescription: 'Не удалось сохранить этот черновик на этом устройстве. Скопируйте текст в надёжное место, прежде чем уйти; сохранение повторится при следующем изменении.', encryptionDescription: "Не удалось синхронизировать черновик на этом устройстве.", showDetailsHint: 'Показывает, почему в черновике ошибка' },
     new: { action: 'Новый черновик' }, delete: { action: 'Удалить черновик', confirmTitle: 'Удалить черновик?', confirmDescription: 'Этот черновик будет удалён с ваших устройств.' },
     conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
@@ -6624,6 +6633,7 @@ export const ru: TranslationStructure = {
 	          waitingForRuntimeActivityNotice: 'Ожидание завершения активности среды выполнения',
 	          runtimeActivityUnknownNotice: 'Ожидание состояния активности среды выполнения',
 	          waitingForRuntimeNotice: 'Ожидание повторного подключения среды выполнения',
+	          steerUnavailableWaitingForTurnNotice: 'Сейчас не может войти в этот ход · отправится после него',
 	          nonSteerableNotice: "Текущий ход не может принять уточнение после этого изменения режима. Сообщение выполнится следующим, либо используйте Отправить сейчас, чтобы прервать.",
 	          steerBlockedTerminalDraftNotice: 'Ожидание: черновик в поле ввода терминала блокирует доставку. Очистите его в терминале или прервите ход.',
 	          clearTerminalComposer: {
@@ -8552,16 +8562,17 @@ settingsSession: {
         manualSubtitle: "Всегда оставлять сообщения в очереди до ручного возобновления сессии.",
       },
       title: "Отправка сообщений",
-      footer:
-        "Определяет, что происходит при отправке сообщения, пока агент работает.",
-        queueInAgentTitle: "В очередь агента (текущий)",
-        queueInAgentSubtitle:
-          "Записать в стенограмму сразу; агент обработает, когда будет готов.",
-        interruptTitle: "Прервать и отправить",
-        interruptSubtitle: "Прервать текущий ход, затем отправить немедленно.",
-        pendingTitle: "Ожидание готовности",
-        pendingSubtitle:
-          "Сообщения ожидают в очереди; агент забирает, когда готов.",
+      footer: 'Выберите, что происходит, когда вы отправляете сообщение во время работы агента.',
+      busySend: {
+        addToTurnTitle: 'Добавить в текущий ход',
+        addToTurnSubtitle: 'Агент сразу читает сообщение и продолжает работу, как при вводе в его собственном терминале. Если он не может принять его посреди хода, сообщение ждёт в «Ожидающих» до конца хода.',
+        waitForTurnTitle: 'Дождаться конца хода',
+        waitForTurnSubtitle: 'Сообщение остаётся в «Ожидающих», где его можно изменить или переставить, и отправляется после хода.',
+        interruptTitle: 'Остановить ход и отправить',
+        interruptSubtitle: 'Останавливает работу агента и сразу отправляет сообщение.',
+      },
+      inactiveSessionsTitle: 'Неактивные сеансы',
+      inactiveSessionsFooter: 'Применяется при отправке в сеанс, агент которого остановлен или машина не в сети.',
         pendingDrainModeTitle: "Обработка очереди ожидания",
         pendingDrainModeFooter:
           "Выберите, забирает ли агент одно сообщение при каждой готовности или обрабатывает всю очередь ожидания сразу.",
@@ -8583,17 +8594,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "Когда runtime неактивен",
           afterRuntimeIdleSubtitle:
             "Держать ожидающие сообщения в очереди, пока продолжается отслеживаемая активность runtime.",
-        },
-        busySteerPolicyTitle: "Когда агент занят (с поддержкой управления)",
-        busySteerPolicyFooter:
-          "Если агент поддерживает управление на лету, выберите, отправлять ли сообщения сразу или сначала в «Ожидание».",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "Управлять сразу",
-          steerImmediatelySubtitle:
-            "Отправить сразу и направить текущий ход (без прерывания).",
-          queueForReviewTitle: "В очередь «Ожидание»",
-          queueForReviewSubtitle:
-            "Сначала поместить в «Ожидание»; отправить позже через «Направить сейчас».",
         },
         nonSteerablePromptTitle: 'Когда сообщение нельзя направить в активный ход',
         nonSteerablePromptFooter: 'Смена режима разрешений и /clear или /compact не применяются в середине хода. Выберите, что Happier делает с такими сообщениями, пока агент занят.',

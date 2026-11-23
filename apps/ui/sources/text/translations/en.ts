@@ -2639,6 +2639,11 @@ export const en = {
                 confirmCta: 'Use reset',
             },
         },
+        requestErrors: {
+            unreachable: 'Cannot connect to the Happier server. Check your network or VPN connection and try again.',
+            timeout: 'The Happier server did not respond in time.',
+            serverHttp: ({ status }: { status: string }) => `The Happier server returned an error (${status}). Try again in a moment.`,
+        },
         oauthPaste: {
             invalidConfig: 'Invalid connected service configuration.',
             connectWebGroupTitle: 'Connect (web)',
@@ -2681,7 +2686,11 @@ export const en = {
             },
             errors: {
                 missingState: 'Missing OAuth state in redirect URL.',
-                stateMismatch: 'OAuth state mismatch.',
+                stateMismatch: 'This authorization response does not match the current attempt. Start a new authorization.',
+                rejected: ({ reason }: { reason: string }) => `The provider rejected the authorization: ${reason}`,
+                rejectedGeneric: 'The provider rejected the authorization.',
+                exchangeOutcomeUnknown: "Happier couldn’t confirm whether sign-in completed. Check your connected accounts. If you need to sign in again, start with a new code.",
+                responseKept: "The request wasn’t sent. Check your connection, then press Continue to use the response you already pasted.",
             },
         },
         oauthEmbedded: {
@@ -5733,6 +5742,7 @@ export const en = {
 	            waitingForRuntimeActivityNotice: 'Waiting for runtime activity to finish',
 	            runtimeActivityUnknownNotice: 'Waiting for runtime activity status',
 	            waitingForRuntimeNotice: 'Waiting for the runtime to reconnect',
+	            steerUnavailableWaitingForTurnNotice: 'Can’t join this turn right now · sends when it finishes',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Terminal draft is blocking delivery',
 	                runtimeConfigBlocked: 'Runtime settings are blocking delivery',
@@ -6236,7 +6246,7 @@ export const en = {
 
     sessionDrafts: {
         sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another', startedOpen: "Session started · Open",
-        status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
+        status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', starting: 'Starting', startFailed: 'Couldn’t start' },
         error: { title: 'Draft error', storageDescription: 'This draft couldn\'t be saved on this device. Copy your text somewhere safe before leaving; saving is retried on your next edit.', encryptionDescription: "This device couldn’t sync the draft.", showDetailsHint: 'Shows why this draft has an error' },
         new: { action: 'New draft' },
         delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
@@ -8165,13 +8175,17 @@ settingsSession: {
                   manualSubtitle: 'Always keep messages queued until you resume the session.',
               },
               title: 'Message sending',
-              footer: 'Controls what happens when you send a message while the agent is running.',
-              queueInAgentTitle: 'Queue in agent (current)',
-              queueInAgentSubtitle: 'Write to transcript immediately; agent processes when ready.',
-              interruptTitle: 'Interrupt & send',
-              interruptSubtitle: 'Abort current turn, then send immediately.',
-              pendingTitle: 'Pending until ready',
-              pendingSubtitle: 'Keep messages in a pending queue; agent pulls when ready.',
+              footer: 'Choose what happens when you send a message while the agent is working.',
+              busySend: {
+                addToTurnTitle: 'Add it to the current turn',
+                addToTurnSubtitle: 'The agent reads it right away and keeps working, like typing in its own terminal. If it can’t take the message mid-turn, the message waits in Pending until the turn ends.',
+                waitForTurnTitle: 'Wait until the turn ends',
+                waitForTurnSubtitle: 'Keep the message in Pending, where you can edit or reorder it, and send it when the turn finishes.',
+                interruptTitle: 'Stop the turn and send',
+                interruptSubtitle: 'Stop what the agent is doing and send the message right away.',
+              },
+              inactiveSessionsTitle: 'Inactive sessions',
+              inactiveSessionsFooter: 'Applies when you send to a session whose agent has stopped or whose machine is offline.',
               pendingDrainModeTitle: 'Pending queue processing',
               pendingDrainModeFooter: 'Choose whether the agent takes one queued message per ready boundary or batches the whole pending queue.',
               pendingDrainMode: {
@@ -8187,14 +8201,6 @@ settingsSession: {
                   afterForegroundReadySubtitle: 'Send queued messages as soon as the agent can accept the next turn.',
                   afterRuntimeIdleTitle: 'After runtime is idle',
                   afterRuntimeIdleSubtitle: 'Keep queued messages waiting while tracked background runtime activity is still active.',
-              },
-              busySteerPolicyTitle: 'When the agent is busy (steer-capable)',
-              busySteerPolicyFooter: 'If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.',
-              busySteerPolicy: {
-                  steerImmediatelyTitle: 'Steer immediately',
-                  steerImmediatelySubtitle: 'Send right away and steer the current turn (no interrupt).',
-                  queueForReviewTitle: 'Queue in Pending',
-                  queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
               },
               nonSteerablePromptTitle: 'When a message can\'t steer the active turn',
               nonSteerablePromptFooter: 'Permission-mode changes and /clear or /compact can\'t apply mid-turn. Choose what Happier does with such a message while the agent is busy.',

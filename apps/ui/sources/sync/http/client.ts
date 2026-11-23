@@ -67,11 +67,13 @@ type ServerFetchOptions = Readonly<{
     recoveryRead?: 'paged' | 'unbounded' | false;
     includeAuth?: boolean;
     /**
-     * When `none`, perform a single direct `runtimeFetch` attempt and skip reachability gating and
-     * endpoint supervision. This is used by higher-level sync loops that implement their own
+     * When `none`, perform a single direct `runtimeFetch` attempt without endpoint supervision.
+     * Reachability gating is skipped by default. This is used by higher-level sync loops that implement their own
      * orchestration/backoff and must not get stuck behind nested connectivity supervisors.
      */
     retry?: 'default' | 'none';
+    /** One-use writes can wait for reachability before their single dispatch. */
+    waitForReachability?: boolean;
     /**
      * Per-request upper bound (ms) after which the request is aborted with a retryable
      * `ServerFetchWriteTimeoutError`. Requests are unbounded when omitted; the operation
@@ -434,7 +436,7 @@ export async function serverFetch<T>(
     try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                if (isActiveOrigin && retryMode !== 'none') {
+                if (isActiveOrigin && (retryMode !== 'none' || options.waitForReachability)) {
                     const tokenForReachability =
                         usedToken
                         ?? peekServerReachabilityToken(snapshot.serverUrl)

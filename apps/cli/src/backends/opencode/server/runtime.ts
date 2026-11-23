@@ -132,7 +132,7 @@ type RequiredMcpServerReadinessOutcome = Readonly<
 >;
 
 type OpenCodeToolObservationProvenance = Readonly<
-  | { source: 'provider-live-subscription' }
+  | { source: 'provider-live-subscription'; inputComplete?: boolean }
   | { source: 'control-plane-history' }
 >;
 
@@ -471,7 +471,7 @@ export function createOpenCodeServerRuntime(params: {
   const partTypeByPartKey = new Map<string, string>();
   const suppressedLivePartKeys = new Set<string>();
   const liveMessageProjectionByKey = new Map<string, 'assistant' | 'user' | 'suppressed'>();
-  const toolCallSentByCallId = new Set<string>();
+  const toolCallForwardingByCallKey = new Map<string, Promise<void>>();
   const toolResultSentByCallId = new Set<string>();
   const observedToolPartByCallKey = new Map<string, NonNullable<ReturnType<typeof parseOpenCodeToolPart>>>();
 
@@ -1360,7 +1360,7 @@ export function createOpenCodeServerRuntime(params: {
     clearForegroundEntries(partTypeByPartKey);
     clearForegroundEntries(suppressedLivePartKeys);
     clearForegroundEntries(liveMessageProjectionByKey);
-    clearForegroundEntries(toolCallSentByCallId);
+    clearForegroundEntries(toolCallForwardingByCallKey);
     clearForegroundEntries(toolResultSentByCallId);
     if (turnControlAbort) {
       try {
@@ -3035,28 +3035,29 @@ export function createOpenCodeServerRuntime(params: {
     const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
     const isBashLike = part.tool === 'bash' || part.tool === 'Bash' || part.tool === 'execute' || part.tool === 'Terminal';
     const commandHint = isBashLike ? extractBashCommandHint(rawInput) : '';
-    const shouldEmitToolCallNow =
-      !toolCallSentByCallId.has(callKey) &&
-      (hasMeaningfulInput || Boolean(commandHint) || isTerminalStatus);
-
-    if (shouldEmitToolCallNow) {
-      try {
-        await flushStreamWritersForSidechainBoundary(sidechainId);
-      } catch (error) {
-        logger.debug('[OpenCodeServer] tool-call boundary transcript flush failed (non-fatal)', {
-          error,
-          sessionId: part.sessionID,
-          messageId: messageID,
-          callId,
+    let callForwarding = toolCallForwardingByCallKey.get(callKey);
+    if (!callForwarding && (provenance.inputComplete || hasMeaningfulInput || commandHint || isTerminalStatus)) {
+      // SSE handlers can overlap. Register the call before awaiting the stream flush so
+      // further observations share its publication and a terminal result follows it.
+      callForwarding = flushStreamWritersForSidechainBoundary(sidechainId)
+        .catch((error) => {
+          logger.debug('[OpenCodeServer] tool-call boundary transcript flush failed (non-fatal)', {
+            error,
+            sessionId: part.sessionID,
+            messageId: messageID,
+            callId,
+          });
+        })
+        .then(() => {
+          params.session.sendAgentMessage(
+            provider,
+            { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
+            { meta },
+          );
         });
-      }
-      toolCallSentByCallId.add(callKey);
-      params.session.sendAgentMessage(
-        provider,
-        { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
-        { meta },
-      );
+      toolCallForwardingByCallKey.set(callKey, callForwarding);
     }
+    if (callForwarding) await callForwarding;
 
     const isBackgroundLaunch = (toolLower === 'task' || toolLower === 'subagent') && status === 'completed'
       && (asRecord(part.state.metadata)?.background === true || asRecord(part.state.metadata)?.status === 'running')
@@ -3151,6 +3152,25 @@ export function createOpenCodeServerRuntime(params: {
     return work.finally(() => {
       pendingWorkForObservedTurn.delete(work);
     });
+  };
+
+  const forwardLiveToolPart = (
+    part: NonNullable<ReturnType<typeof parseOpenCodeToolPart>>,
+    sidechainId: string | null,
+    inputComplete = false,
+  ): Promise<void> => {
+    const observedEpoch = turnChangeCollectorEpoch;
+    const work = sendToolFromPart(part, sidechainId, observedEpoch, { source: 'provider-live-subscription', inputComplete })
+      .catch((error) => {
+        logger.infoFile('[OpenCodeServer] opencode_live_tool_forwarding_failed');
+        logger.debug('[OpenCodeServer] live tool forwarding failed', error);
+      });
+    void trackPendingTurnToolForwardingWork(work).finally(() => {
+      if (observedEpoch === turnChangeCollectorEpoch && idleSignalSeen && turnPromptActive) {
+        void maybeResolveTurnOnIdleSignal();
+      }
+    });
+    return work;
   };
 
   const handleQuestionAsked = async (req: OpenCodeQuestionRequest) => {
@@ -3518,31 +3538,31 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     if (type.startsWith('session.next.tool.')) {
-      // Released V2 subagent calls use native tool frames, not V1 message.part frames.
-      // Feed their state into the same ToolPart owner before the foreground-only guard.
+      const phase = type.slice('session.next.tool.'.length);
+      const terminalStatus = phase === 'success' ? 'completed' : phase === 'failed' ? 'error' : phase;
+      const terminal = isTerminalOpenCodeToolPartStatus(terminalStatus);
+      // Released V2 sends the name on input.started. Later frames carry only the call ID.
       const nativeCallId = normalizeString(rec.id);
       const existing = nativeCallId ? observedToolPartByCallKey.get(buildOpenCodeToolCallKey(eventSessionId, nativeCallId)) : null;
       const nativeToolName = normalizeString(rec.name) || existing?.tool || '';
-      if (nativeCallId && nativeToolName && (nativeChildSidechainId || nativeToolName === 'subagent' || nativeToolName === 'task')) {
-        const status = type.endsWith('.success') ? 'completed' : type.endsWith('.failed') ? 'error' : 'running';
+      if (nativeCallId && nativeToolName) {
         const content = Array.isArray(rec.content) ? rec.content : [];
         const output = content.map((entry) => asRecord(entry)).filter((entry) => entry?.type === 'text')
           .map((entry) => typeof entry?.text === 'string' ? entry.text : '').join('\n');
         const part = parseOpenCodeToolPart({
           type: 'tool', sessionID: eventSessionId, messageID: rec.assistantMessageID,
           callID: nativeCallId, tool: nativeToolName,
-          state: { status, input: rec.input ?? existing?.state.input ?? {},
+          state: { status: terminal ? terminalStatus : 'running', input: rec.input ?? existing?.state.input ?? {},
             metadata: rec.metadata ?? existing?.state.metadata,
             output, ...(rec.error ? { error: extractOpenCodeErrorText(rec.error) } : {}) },
         });
         if (part) {
-          const work = sendToolFromPart(part, nativeChildSidechainId ?? null, turnChangeCollectorEpoch, { source: 'provider-live-subscription' });
-          void trackPendingTurnToolForwardingWork(work).catch((error) => {
-            logger.infoFile('[OpenCodeServer] opencode_native_subagent_tool_forwarding_failed');
-            logger.debug('[OpenCodeServer] native subagent tool forwarding failed', error);
-          });
+          void forwardLiveToolPart(part, nativeChildSidechainId ?? null, phase === 'called' && asRecord(rec.input) !== null);
+          return true;
         }
       }
+      // Older or incomplete frames can still establish foreground activity by call ID.
+      // Their missing tool identity prevents transcript publication.
       if (nativeChildSidechainId || !turnPromptActive) return true;
       const callId = normalizeString(rec.callID)
         || normalizeString(rec.callId)
@@ -3550,14 +3570,6 @@ export function createOpenCodeServerRuntime(params: {
         || normalizeString(rec.toolCallId)
         || normalizeString(rec.id);
       if (callId) {
-        const terminal = (
-          type === 'session.next.tool.success'
-          || type === 'session.next.tool.completed'
-          || type === 'session.next.tool.failed'
-          || type === 'session.next.tool.cancelled'
-          || type === 'session.next.tool.canceled'
-          || type === 'session.next.tool.aborted'
-        );
         foregroundToolTracker.observeSessionNextTool({
           sessionId: eventSessionId,
           callId,
@@ -3781,21 +3793,7 @@ export function createOpenCodeServerRuntime(params: {
           idleSignalSeen = false;
           idleSignalSeenViaControlPlane = false;
         }
-        const observedTurnChangeCollectorEpoch = turnChangeCollectorEpoch;
-        const toolWork = sendToolFromPart(
-          maybeTool,
-          sidechainId,
-          observedTurnChangeCollectorEpoch,
-          { source: 'provider-live-subscription' },
-        ).catch((error) => {
-          logger.debug('[OpenCodeServer] tool handler failed (non-fatal)', error);
-        });
-        void trackPendingTurnToolForwardingWork(toolWork).finally(() => {
-          if (observedTurnChangeCollectorEpoch === turnChangeCollectorEpoch && idleSignalSeen && turnPromptActive) {
-            void maybeResolveTurnOnIdleSignal();
-          }
-        });
-        return toolWork;
+        return forwardLiveToolPart(maybeTool, sidechainId);
       }
       const messageID = normalizeString(part.messageID);
       if (projection.kind === 'ignored_internal' || (sessionID === sessionId && compactionInProgress && !sidechainId)) {

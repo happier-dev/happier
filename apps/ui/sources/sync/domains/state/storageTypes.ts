@@ -241,6 +241,7 @@ const MetadataObjectSchema = z.object({
     sessionLogPath: z.string().optional(), // Session-specific CLI log file path
     terminal: createSessionTerminalMetadataSchema(z).optional(),
     flavor: z.string().nullish(), // Session flavor/variant identifier
+    directTranscriptPendingV1: z.literal(true).optional().catch(undefined),
     // Published by happy-cli so the app can seed permission state even before there are messages.
     permissionMode: createSessionPermissionModeSchema(z).optional(),
     permissionModeUpdatedAt: z.number().optional(),

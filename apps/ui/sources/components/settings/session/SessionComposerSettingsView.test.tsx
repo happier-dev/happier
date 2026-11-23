@@ -6,6 +6,16 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 const setNewSessionDraftEntryMode = vi.fn();
 const setSessionInactiveResumePolicy = vi.fn();
 const setSessionUsageGaugeLabels = vi.fn();
+const applySettings = vi.fn();
+const storedSendSettings: Record<string, unknown> = {
+    sessionMessageSendMode: 'agent_queue',
+    sessionBusySteerSendPolicy: 'steer_immediately',
+};
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplySettings: () => applySettings,
+    useApplyLocalSettings: () => vi.fn(),
+}));
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -21,8 +31,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
                 return ['online_only', setSessionInactiveResumePolicy];
             }
             const defaults: Record<string, unknown> = {
-                sessionMessageSendMode: 'agent_queue',
-                sessionBusySteerSendPolicy: 'steer_immediately',
+                ...storedSendSettings,
                 sessionNonSteerableSendPrompt: 'ask',
                 sessionPendingQueueDrainMode: 'one_at_a_time',
                 sessionPendingQueueDeliveryTiming: 'after_foreground_ready',
@@ -108,5 +117,47 @@ describe('SessionComposerSettingsView', () => {
 
         menu?.props.onSelect('when_available');
         expect(setSessionInactiveResumePolicy).toHaveBeenCalledWith('when_available');
+    });
+
+    it('offers one busy-send choice that maps every stored combination and writes both keys together', async () => {
+        const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
+        const checkedBusySendRows = async () => {
+            const screen = await renderSettingsView(React.createElement(SessionComposerSettingsView));
+            return {
+                screen,
+                checked: ['add_to_turn', 'wait_for_turn', 'interrupt']
+                    .filter((id) => screen.findRow(`settings-busy-send-${id}`)?.props.rightElement),
+            };
+        };
+
+        // Legacy "Queue in agent" + steer and the default "Pending until ready" + steer behave identically.
+        for (const mode of ['agent_queue', 'server_pending']) {
+            storedSendSettings.sessionMessageSendMode = mode;
+            storedSendSettings.sessionBusySteerSendPolicy = 'steer_immediately';
+            expect((await checkedBusySendRows()).checked).toEqual(['add_to_turn']);
+            storedSendSettings.sessionBusySteerSendPolicy = 'server_pending';
+            expect((await checkedBusySendRows()).checked).toEqual(['wait_for_turn']);
+        }
+        storedSendSettings.sessionMessageSendMode = 'interrupt';
+        const { screen, checked } = await checkedBusySendRows();
+        expect(checked).toEqual(['interrupt']);
+
+        // The separate steer-capable group is gone: one setting controls mid-turn sends.
+        expect(screen.findRowByTitle('Steer immediately')).toBeNull();
+
+        applySettings.mockClear();
+        screen.findRow('settings-busy-send-add_to_turn')?.props.onPress();
+        expect(applySettings).toHaveBeenLastCalledWith({
+            sessionMessageSendMode: 'server_pending',
+            sessionBusySteerSendPolicy: 'steer_immediately',
+        });
+        screen.findRow('settings-busy-send-wait_for_turn')?.props.onPress();
+        expect(applySettings).toHaveBeenLastCalledWith({
+            sessionMessageSendMode: 'server_pending',
+            sessionBusySteerSendPolicy: 'server_pending',
+        });
+        screen.findRow('settings-busy-send-interrupt')?.props.onPress();
+        expect(applySettings).toHaveBeenLastCalledWith({ sessionMessageSendMode: 'interrupt' });
+        expect(applySettings).toHaveBeenCalledTimes(3);
     });
 });

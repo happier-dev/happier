@@ -41,7 +41,7 @@ import {
     resolvePendingQueueMessagePresentation,
     resolvePendingQueueScrollMaxHeightPx,
 } from './pendingQueueContentClipping';
-import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
+import { canClearLiveTerminalComposerDraft, useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { usePendingInputInterruptAndRunAction } from './usePendingInputInterruptAndRunAction';
 import {
     resolvePendingDeliveryLabelKeyForSession,
@@ -154,6 +154,9 @@ function getPendingQueuedReasonNotice(visualState: PendingMessageVisualState, mi
     }
     if (reason === 'waiting_for_runtime') {
         return t('session.pendingMessages.waitingForRuntimeNotice');
+    }
+    if (reason === 'steer_unavailable_waiting_for_turn') {
+        return t('session.pendingMessages.steerUnavailableWaitingForTurnNotice');
     }
     return t('session.pendingMessages.waitingForTurnNotice', { minutes });
 }
@@ -269,12 +272,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         visualState.kind === 'blocked'
         && visualState.deliveryBlockedReason === 'terminal_composer_draft'
     );
-    const terminalComposerClearSupported =
-        session?.agentState?.capabilities?.terminalComposerClearSupported !== false;
     const showNonSteerableNotice = Boolean(
         pendingCount > 0
         && terminalDraftBlocksPendingDelivery
     );
+    const showTerminalComposerClearAction = showNonSteerableNotice && canClearLiveTerminalComposerDraft(session);
 
     const maxHeightSetting = useSetting('transcriptPendingQueueMaxHeightPx');
     const maxHeightPx =
@@ -1283,12 +1285,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         typeof scrollContentHeightPx === 'number' && Number.isFinite(scrollContentHeightPx) && scrollContentHeightPx > 0
             ? Math.max(1, Math.min(Math.trunc(scrollContentHeightPx), maxHeight))
             : undefined;
-    const showTerminalComposerClearAction = Boolean(
-        pendingCount > 0
-        && terminalComposerClearSupported
-        && terminalDraftBlocksPendingDelivery
-    );
-
     return (
         <View testID="pendingMessages.block" style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
             <View style={[styles.messageContent, { maxWidth: contentMaxWidth }]}>

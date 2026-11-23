@@ -3405,7 +3405,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
                                 <AgentInputStatusBadge
                                     key={key}
-                                    anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
+                                    anchorRef={renderPopover && key === activeStatusBadgeKey ? statusBadgeAnchorRef : undefined}
                                     onPress={renderPopover
                                         ? () => {
                                             setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);

@@ -295,6 +295,21 @@ describe('apiConnectedServicesV2', () => {
     expect(exchangeRequests).toBe(1);
   });
 
+  it('reports a 502 exchange with its status without waiting for a stalled error body', async () => {
+    mockServerConfig();
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      if (new URL(String(input)).pathname.endsWith('/oauth/exchange')) {
+        return new Response(new ReadableStream({ start: () => {} }), { status: 502 });
+      }
+      return Response.json({ ok: true });
+    }));
+    const { exchangeConnectedServiceOauthViaProxy } = await import('./apiConnectedServicesV2');
+    await expect(exchangeConnectedServiceOauthViaProxy(credentials, {
+      serviceId: 'gemini', publicKey: 'synthetic-key', code: 'one-use-code',
+      verifier: 'synthetic-verifier', redirectUri: 'http://localhost:54545/oauth2callback',
+    })).rejects.toMatchObject({ code: 'connect_oauth_exchange_failed', status: 502 });
+  }, 5000);
+
   it('starts OpenAI Codex device auth via the v2 endpoint', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {

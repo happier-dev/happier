@@ -5,6 +5,7 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
+import { hasUncommittedLocalOutboundProjection } from '@/sync/store/domains/pending';
 import {
     completeMachineSpawnAttemptCustody,
     machineBash,
@@ -44,6 +45,12 @@ import { executeSessionComposerResolution } from '@/sync/domains/input/slashComm
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import {
+    resolveCreatedSessionTargetFolder,
+    type NewSessionTargetFolderV1,
+} from '@/sync/domains/session/folders/newSessionTargetFolder';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
+import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization/setSessionFolderAssignment';
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
@@ -51,6 +58,24 @@ import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions'
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
+}
+
+async function assignCreatedSessionToFolder(params: Readonly<{
+    sessionId: string;
+    serverId: string;
+    folderId: string;
+}>): Promise<void> {
+    const resolved = await resolveSessionOrganizationMutationScope(params.serverId);
+    if (!resolved.ok) {
+        throw new Error(`Missing ${resolved.reason} for session folder assignment`);
+    }
+    await setSessionFolderAssignment({
+        credentials: resolved.scope.credentials,
+        serverId: resolved.scope.serverId,
+        serverUrl: resolved.scope.serverUrl,
+        sessionId: params.sessionId,
+        folderId: params.folderId,
+    });
 }
 
 import {
@@ -226,6 +251,11 @@ export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
     /** Opens a fresh draft in this surface; the launch already admitted keeps running. */
     onStartAnother?: () => void;
+    /**
+     * 'New session in folder': file the created session into this folder when the launch really
+     * started in the folder's workspace scope.
+     */
+    targetFolder?: NewSessionTargetFolderV1 | null;
 
     selectedMachineId: string | null;
     selectedPath: string;
@@ -336,6 +366,12 @@ export function useCreateNewSession(params: Readonly<{
     launchUserAttemptIdForCurrentIntentRef.current = launchUserAttemptIdForCurrentIntent;
     const createInFlightRef = React.useRef(false);
     const handledTerminalReentryRevisionRef = React.useRef<string | null>(null);
+    // Setup retries re-enter the created-session branch; the folder write must run once per
+    // session/folder unless the previous attempt failed.
+    const folderAssignmentAttemptRef = React.useRef<string | null>(null);
+    // Directory a spawn actually used, kept per created session: a setup retry reuses the created
+    // session without materializing the checkout again, so the folder scope must survive it.
+    const createdSessionSpawnDirectoryRef = React.useRef(new Map<string, string>());
     // Keep the latest params available synchronously so event handlers can't observe
     // a stale snapshot in the window between rerender and effect flush.
     latestParamsRef.current = params;
@@ -387,11 +423,12 @@ export function useCreateNewSession(params: Readonly<{
         current.setIsCreating(true);
         // This launch owns everything it needs from here, so it outlives the screen. Only navigation
         // below asks whether the screen is still there.
-        if (resolveNewSessionAfterSend({
+        const afterSend = resolveNewSessionAfterSend({
             configured: current.settings.newSessionAfterSendV1,
             requested: opts?.afterSend,
             automationEnabled: current.authoringDraft?.automation?.enabled === true,
-        }) === 'startAnother') {
+        });
+        if (afterSend === 'startAnother') {
             current.onStartAnother?.();
         }
 
@@ -846,6 +883,10 @@ export function useCreateNewSession(params: Readonly<{
             let handedFirstTurnToDaemon = false;
 
             let actualPath = effectiveSelectedPath;
+            // A checkout (worktree) can move the launch away from the selected path; folder
+            // assignment must compare the directory the session really starts in. It stays null
+            // while resuming an existing attempt, where only the session metadata is trustworthy.
+            let spawnDirectoryForFolderAssignment: string | null = null;
             let result: Awaited<ReturnType<typeof machineSpawnNewSession>>;
             let operationCustody: MachineSpawnAttemptCustody | undefined;
             let shouldPreserveLaunchAttemptForSpawnRetry = false;
@@ -872,6 +913,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 actualPath = checkoutResult.path;
                 const sessionPath = checkoutResult.sessionPath.trim() || trimmedEffectiveSelectedPath;
+                spawnDirectoryForFolderAssignment = sessionPath;
                 rollbackActualPath = actualPath;
 
                 const spawnOptions = {
@@ -1014,6 +1056,47 @@ export function useCreateNewSession(params: Readonly<{
                 let postSpawnReplacementHref: string | null = null;
                 const createdSessionId = result.sessionId;
                 const shouldRunBuiltInPostSpawnFollowUp = !retryableLaunchAttempt?.phaseErrors.uploading_attachments;
+
+                // 'New session in folder' names the folder the session belongs to. File it there
+                // once the session exists; the session is already created, so a failed assignment
+                // is reported and the launch proceeds with the session at the workspace root.
+                if (spawnDirectoryForFolderAssignment) {
+                    createdSessionSpawnDirectoryRef.current.set(createdSessionId, spawnDirectoryForFolderAssignment);
+                }
+                const recordedSpawnDirectory = createdSessionSpawnDirectoryRef.current.get(createdSessionId) ?? null;
+                const createdSession = storage.getState().sessions[createdSessionId] ?? null;
+                const createdSessionDirectory = typeof createdSession?.metadata?.path === 'string'
+                    && createdSession.metadata.path.trim().length > 0
+                    ? createdSession.metadata.path
+                    : recordedSpawnDirectory;
+                const createdSessionTargetFolder = resolveCreatedSessionTargetFolder({
+                    targetFolder: current.targetFolder,
+                    serverId: resolvedTargetServerId,
+                    machineId: current.selectedMachineId,
+                    directory: createdSessionDirectory,
+                });
+                if (createdSessionTargetFolder) {
+                    const assignmentKey = `${createdSessionId}:${createdSessionTargetFolder.folderId}`;
+                    if (folderAssignmentAttemptRef.current !== assignmentKey) {
+                        folderAssignmentAttemptRef.current = assignmentKey;
+                        fireAndForget(assignCreatedSessionToFolder({
+                            sessionId: createdSessionId,
+                            serverId: resolvedTargetServerId,
+                            folderId: createdSessionTargetFolder.folderId,
+                        }).then(() => {
+                            createdSessionSpawnDirectoryRef.current.delete(createdSessionId);
+                        }), {
+                            tag: 'new-session-folder-assignment',
+                            onError: (error) => {
+                                // A later setup retry may try the write again.
+                                if (folderAssignmentAttemptRef.current === assignmentKey) {
+                                    folderAssignmentAttemptRef.current = null;
+                                }
+                                captureExceptionIfEnabled(error);
+                            },
+                        });
+                    }
+                }
 
                 const runAfterCreatedFollowUp = async (): Promise<void> => {
                     if (!opts?.afterCreated) {
@@ -1297,6 +1380,15 @@ export function useCreateNewSession(params: Readonly<{
                         }),
                         deliveryStatus: 'accepted',
                     });
+                    if (
+                        (afterSend === 'startAnother' || !isLaunchScopeStillActive())
+                        && hasUncommittedLocalOutboundProjection(storage.getState(), createdSessionId)
+                    ) {
+                        fireAndForget(sync.refreshSessionMessages(createdSessionId), {
+                            tag: 'new-session-background-transcript-reconciliation',
+                            onError: captureExceptionIfEnabled,
+                        });
+                    }
                 }
 
                 const sessionRoute = buildScopedSessionRouteHref({
@@ -1569,8 +1661,11 @@ export function useCreateNewSession(params: Readonly<{
         const reentry = params.persistedOperationReentry;
         const operation = reentry?.operation;
         if (!reentry || !operation) return;
-        if (operation.state === 'accepted' || operation.state === 'running') return;
-        if (operation.state === 'succeeded') return;
+        // Only a terminal launch that did not succeed reconciles custody here.
+        const terminalOutcome = operation.state === 'failed' || operation.state === 'cancelled'
+            ? operation.state
+            : null;
+        if (!terminalOutcome) return;
         const revisionKey = `${operation.operationId}:${operation.revision}`;
         if (handledTerminalReentryRevisionRef.current === revisionKey) return;
         if (createInFlightRef.current) return;
@@ -1588,7 +1683,7 @@ export function useCreateNewSession(params: Readonly<{
             machineId: reentry.custody.machineId,
             userAttemptId: reentry.custody.userAttemptId,
             requestId: operation.requestId ?? '',
-            outcome: { kind: operation.state },
+            outcome: { kind: terminalOutcome },
         }).finally(() => {
             latestParamsRef.current.setIsCreating(false);
             workflowClaim.release();

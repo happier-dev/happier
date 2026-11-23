@@ -44,6 +44,22 @@ describe('buildClaudeSubprocessEnv', () => {
     expect(baseEnv.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts');
   });
 
+  it('preserves the runner’s session bus address while filtering unrelated inherited variables', () => {
+    const baseEnv = {
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      PLAYWRIGHT_BROWSERS_PATH: '/ambient/cache',
+    };
+
+    expect(buildClaudeSubprocessEnv({ baseEnv })).toEqual({
+      DBUS_SESSION_BUS_ADDRESS: baseEnv.DBUS_SESSION_BUS_ADDRESS,
+      XDG_RUNTIME_DIR: baseEnv.XDG_RUNTIME_DIR,
+    });
+    expect(buildClaudeSubprocessEnv({
+      baseEnv: { ...baseEnv, HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["PLAYWRIGHT_BROWSERS_PATH"]' },
+    })).toEqual(baseEnv);
+  });
+
   it('preserves only Claude\'s exact external sandbox assertion from the runner environment', () => {
     expect(buildClaudeSubprocessEnv({
       baseEnv: {

@@ -7,6 +7,12 @@ export type RunnerTerminationReason =
 
 export type RunnerTerminationEvent = RunnerTerminationReason;
 
+export type RunnerTerminationSignal = 'SIGTERM' | 'SIGINT' | 'SIGHUP';
+
+export function runnerTerminationSignals(platform = process.platform): readonly RunnerTerminationSignal[] {
+  return platform === 'win32' ? ['SIGTERM', 'SIGINT'] : ['SIGTERM', 'SIGINT', 'SIGHUP'];
+}
+
 export type RunnerTerminationOutcome = Readonly<{
   /**
    * Process exit code for the runner.

@@ -184,19 +184,30 @@ describe('UpdatesPopoverButton', () => {
         const pending = new Promise<void>((resolve) => { release = resolve; });
         function Screen() { return <UpdatesContent model={useUpdatesContentModel()} presentation="screen" />; }
         const screen = await renderScreen(<Screen />);
-        rpc.detect.mockImplementationOnce(async () => {
-            await pending;
-            return { supported: true, response: { protocolVersion: 1, results: { 'tool.systemTasks': { ok: true, checkedAt: Date.now(), data: { kinds: ['cli.update.v1'] } } } } };
+        const detect = rpc.detect.getMockImplementation()!;
+        rpc.detect.mockImplementation(async (machineId, request, ...args) => {
+            if (machineId === 'check-busy'
+                && typeof request === 'object' && request !== null
+                && 'bypassCache' in request && request.bypassCache === true) {
+                await pending;
+            }
+            return detect(machineId, request, ...args);
         });
         try {
             await act(async () => { screen.findByTestId('updates.checkNow')?.props.onPress(); });
-            const hasSpinner = screen.findAllByTestId('updates.checkNow.spinner').length > 0;
-            const busy = screen.findByTestId('updates.checkNow')?.props.accessibilityState?.busy;
+            await vi.waitFor(() => expect(rpc.detect).toHaveBeenCalledWith(
+                'check-busy', expect.objectContaining({ bypassCache: true }), expect.anything(),
+            ));
+            expect(screen.findAllByTestId('updates.checkNow.spinner').length).toBeGreaterThan(0);
+            expect(screen.findByTestId('updates.checkNow')?.props.accessibilityState?.busy).toBe(true);
             await act(async () => { release(); });
-            expect(hasSpinner).toBe(true);
-            expect(busy).toBe(true);
             expect(screen.findAllByTestId('updates.checkNow.spinner')).toHaveLength(0);
-        } finally { release(); machinesState.value = []; await screen.unmount(); }
+        } finally {
+            release();
+            rpc.detect.mockImplementation(detect);
+            machinesState.value = [];
+            await screen.unmount();
+        }
     });
 
     it('the row\'s session-impact note is part of its accessible name', async () => {

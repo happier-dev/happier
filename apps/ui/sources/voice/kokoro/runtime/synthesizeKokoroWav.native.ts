@@ -2,7 +2,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { resolveKokoroNativeModelPackId } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { resolveKokoroSherpaSidForVoiceIdWithSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { resolveKokoroNativeVoice } from '@/voice/kokoro/voices/resolveKokoroVoice';
-import { resolveStreamingTtsChunkChars, splitSpeechSentences } from '@/voice/output/TtsChunker';
+import { batchSpeechForSynthesis, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { fileUriToNativePath } from '@/voice/modelPacks/nativePath';
@@ -299,7 +299,9 @@ export function streamKokoroWavSentences(
 ): AsyncIterable<{ wavBytes: ArrayBuffer; sentenceText: string }> {
   return {
     async *[Symbol.asyncIterator]() {
-      const sentences = splitSpeechSentences(opts.text, resolveStreamingTtsChunkChars(undefined));
+      const sentences = batchSpeechForSynthesis(opts.text, {
+        grouping: { maxChars: resolveStreamingTtsChunkChars(undefined), mode: 'sentence' },
+      });
       if (sentences.length === 0) return;
       const prepared = await prepareNativeSynthesis(opts, overrides);
       for (const sentenceText of sentences) {

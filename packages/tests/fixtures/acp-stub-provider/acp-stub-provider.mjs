@@ -18,6 +18,7 @@
 
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -108,10 +109,12 @@ class AcpStubAgent {
   }
 
   async initialize(_params) {
+    const mcpCapabilities = process.env.HAPPIER_E2E_ACP_STUB_MCP_CAPABILITIES;
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
+        ...(mcpCapabilities ? { mcpCapabilities: JSON.parse(mcpCapabilities) } : {}),
       },
     };
   }
@@ -120,7 +123,13 @@ class AcpStubAgent {
     return {};
   }
 
-  async newSession(_params) {
+  recordSessionMcpServers(method, params) {
+    const path = process.env.HAPPIER_E2E_ACP_STUB_SESSION_MCP_TRACE;
+    if (path) appendFileSync(path, JSON.stringify({ method, mcpServers: params.mcpServers }) + '\n');
+  }
+
+  async newSession(params) {
+    this.recordSessionMcpServers('session/new', params);
     const sessionId = randomUUID();
     this.sessions.set(sessionId, {
       inFlight: false,
@@ -133,6 +142,7 @@ class AcpStubAgent {
   }
 
   async loadSession(params) {
+    this.recordSessionMcpServers('session/load', params);
     const sessionId = typeof params?.sessionId === 'string' ? params.sessionId : '';
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, {

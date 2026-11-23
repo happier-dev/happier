@@ -4,7 +4,7 @@ import { configuration } from '@/configuration';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
 import { createClaudeTaskNotificationToolResultProjector } from '../../taskNotifications/claudeTaskLifecycleEnvelope';
-import { isClaudeInternalTranscriptMessage } from '../../utils/isClaudeInternalTranscriptMessage';
+import { isClaudeHiddenTranscriptMessage } from '../../utils/isClaudeInternalTranscriptMessage';
 import type { JsonlFollowerMetricEvent } from '@/agent/localControl/jsonlFollowMetrics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 
@@ -514,7 +514,7 @@ export class ClaudeRemoteSubagentFileCollector {
     if (projection) {
       if (!projection.message) return;
       parsed = projection.message;
-    } else if (isClaudeInternalTranscriptMessage(parsed)) return;
+    } else if (isClaudeHiddenTranscriptMessage(parsed)) return;
 
     markRecordAsSidechain(parsed, params.sidechainId);
 

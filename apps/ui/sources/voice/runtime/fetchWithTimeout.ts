@@ -9,12 +9,26 @@ export function resolveVoiceNetworkTimeoutMs(raw: unknown, fallbackMs: number): 
   return Math.max(1_000, Math.min(60_000, n));
 }
 
-export async function fetchWithTimeout(
+export function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   timeoutMs: number,
   timeoutErrorCode: string,
-): Promise<Response> {
+): Promise<Response>;
+export function fetchWithTimeout<T>(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+  timeoutErrorCode: string,
+  readResponse: (response: Response) => Promise<T>,
+): Promise<T>;
+export async function fetchWithTimeout<T>(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+  timeoutErrorCode: string,
+  readResponse?: (response: Response) => Promise<T>,
+): Promise<Response | T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   // A caller signal (for example a playback stop) cancels the request; it is reported as an
@@ -24,10 +38,12 @@ export async function fetchWithTimeout(
   if (callerSignal?.aborted) controller.abort();
   callerSignal?.addEventListener('abort', onCallerAbort);
   try {
-    return await runtimeFetch(input, {
+    const response = await runtimeFetch(input, {
       ...(init ?? {}),
       signal: controller.signal,
     });
+    // A body reader keeps timeout and caller cancellation attached until consumption ends.
+    return readResponse ? await readResponse(response) : response;
   } catch (error) {
     if (callerSignal?.aborted) {
       throw error;

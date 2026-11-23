@@ -32,7 +32,11 @@ title only while the Happier Session has no non-empty `summary.text` or legacy
 that instruction. `resolveCodingPromptSessionTitleInstructionModeV1` owns this
 decision for base prompts, shell-bridge guidance and Pi's extension prompt;
 the runtime passes the Session's existing metadata into prompt composition.
-Ongoing title guidance and explicit rename tools retain their existing policy.
+The session-agent MCP title writer enforces the same decision against current
+metadata, including on conflict retries. This covers `change_title` and
+`session.title.set` through `action_execute` even when the Agent skips permission
+callbacks, so replayed naming instructions cannot overwrite an existing title.
+Ongoing title updates and user-driven renames retain their existing policy.
 The shared `hasSessionTitleInMetadata` reader also governs ACP native-title
 initialization, so a provider title cannot replace a legacy `name` title either.
 

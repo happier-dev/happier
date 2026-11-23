@@ -11,8 +11,15 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 import { useComposerKeepsFocusAfterSend } from '@/components/sessions/agentInput/hooks/useComposerKeepsFocusAfterSend';
 import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import { normalizeComposerBannerCollapseRecord } from '@/components/sessions/composerBanners/composerBannerCollapse';
-import type { BusySteerSendPolicy, MessageSendMode, NonSteerableSendPromptSetting } from '@/sync/domains/session/control/submitMode';
+import {
+    getSessionBusySendBehaviorSettings,
+    resolveSessionBusySendBehavior,
+    SESSION_BUSY_SEND_BEHAVIORS,
+    type NonSteerableSendPromptSetting,
+    type SessionBusySendBehavior,
+} from '@/sync/domains/session/control/submitMode';
 import {
     SESSION_INACTIVE_RESUME_POLICY_VALUES,
     type SessionInactiveResumePolicy,
@@ -25,8 +32,9 @@ type PendingQueueDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle
 export const SessionComposerSettingsView = React.memo(function SessionComposerSettingsView() {
     const { theme } = useUnistyles();
     const popoverBoundaryRef = React.useRef<any>(null);
-    const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
-    const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
+    const [messageSendMode] = useSettingMutable('sessionMessageSendMode');
+    const [busySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
+    const applySettings = useApplySettings();
     const [nonSteerableSendPrompt, setNonSteerableSendPrompt] = useSettingMutable('sessionNonSteerableSendPrompt');
     const [pendingQueueDrainMode, setPendingQueueDrainMode] = useSettingMutable('sessionPendingQueueDrainMode');
     const [pendingQueueDeliveryTiming, setPendingQueueDeliveryTiming] = useSettingMutable('sessionPendingQueueDeliveryTiming');
@@ -72,23 +80,21 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
             iconName: 'globe',
         },
     ] as const;
-    const sendOptions: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
-        {
-            key: 'agent_queue',
-            title: t('settingsSession.messageSending.queueInAgentTitle'),
-            subtitle: t('settingsSession.messageSending.queueInAgentSubtitle'),
+    const busySendBehavior = resolveSessionBusySendBehavior({ messageSendMode, busySteerSendPolicy });
+    const busySendBehaviorCopy: Record<SessionBusySendBehavior, { title: string; subtitle: string }> = {
+        add_to_turn: {
+            title: t('settingsSession.messageSending.busySend.addToTurnTitle'),
+            subtitle: t('settingsSession.messageSending.busySend.addToTurnSubtitle'),
         },
-        {
-            key: 'interrupt',
-            title: t('settingsSession.messageSending.interruptTitle'),
-            subtitle: t('settingsSession.messageSending.interruptSubtitle'),
+        wait_for_turn: {
+            title: t('settingsSession.messageSending.busySend.waitForTurnTitle'),
+            subtitle: t('settingsSession.messageSending.busySend.waitForTurnSubtitle'),
         },
-        {
-            key: 'server_pending',
-            title: t('settingsSession.messageSending.pendingTitle'),
-            subtitle: t('settingsSession.messageSending.pendingSubtitle'),
+        interrupt: {
+            title: t('settingsSession.messageSending.busySend.interruptTitle'),
+            subtitle: t('settingsSession.messageSending.busySend.interruptSubtitle'),
         },
-    ];
+    };
     const inactiveResumePolicyOptions = SESSION_INACTIVE_RESUME_POLICY_VALUES.map((policy) => {
         switch (policy) {
             case 'when_available':
@@ -111,18 +117,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 };
         }
     });
-    const busySteerOptions: Array<{ key: BusySteerSendPolicy; title: string; subtitle: string }> = [
-        {
-            key: 'steer_immediately',
-            title: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelyTitle'),
-            subtitle: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelySubtitle'),
-        },
-        {
-            key: 'server_pending',
-            title: t('settingsSession.messageSending.busySteerPolicy.queueForReviewTitle'),
-            subtitle: t('settingsSession.messageSending.busySteerPolicy.queueForReviewSubtitle'),
-        },
-    ];
     const nonSteerablePromptOptions: Array<{ key: NonSteerableSendPromptSetting; title: string; subtitle: string }> = [
         {
             key: 'ask',
@@ -164,8 +158,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
             subtitle: t('settingsSession.messageSending.pendingDeliveryTiming.afterRuntimeIdleSubtitle'),
         },
     ];
-    const pendingQueueMayBeUsed = messageSendMode === 'server_pending' || busySteerSendPolicy === 'server_pending';
-
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             <ItemGroup
@@ -288,17 +280,21 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
             </ItemGroup>
 
             <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
-                {sendOptions.map((option) => (
+                {SESSION_BUSY_SEND_BEHAVIORS.map((behavior) => (
                     <Item
-                        key={option.key}
-                        title={option.title}
-                        subtitle={option.subtitle}
+                        key={behavior}
+                        testID={`settings-busy-send-${behavior}`}
+                        title={busySendBehaviorCopy[behavior].title}
+                        subtitle={busySendBehaviorCopy[behavior].subtitle}
                         icon={<Icon name="paper-plane-tilt" size={29} color={theme.colors.accent.blue} />}
-                        rightElement={messageSendMode === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
-                        onPress={() => setMessageSendMode(option.key)}
+                        rightElement={busySendBehavior === behavior ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
+                        onPress={() => applySettings(getSessionBusySendBehaviorSettings(behavior))}
                         showChevron={false}
                     />
                 ))}
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.messageSending.inactiveSessionsTitle')} footer={t('settingsSession.messageSending.inactiveSessionsFooter')}>
                 <DropdownMenu
                     open={openInactiveResumePolicyMenu}
                     onOpenChange={setOpenInactiveResumePolicyMenu}
@@ -330,22 +326,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 />
             </ItemGroup>
 
-            {messageSendMode === 'agent_queue' || messageSendMode === 'server_pending' ? (
-                <ItemGroup title={t('settingsSession.messageSending.busySteerPolicyTitle')} footer={t('settingsSession.messageSending.busySteerPolicyFooter')}>
-                    {busySteerOptions.map((option) => (
-                        <Item
-                            key={option.key}
-                            title={option.title}
-                            subtitle={option.subtitle}
-                            icon={<Icon name="git-branch" size={29} color={theme.colors.accent.blue} />}
-                            rightElement={busySteerSendPolicy === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
-                            onPress={() => setBusySteerSendPolicy(option.key)}
-                            showChevron={false}
-                        />
-                    ))}
-                </ItemGroup>
-            ) : null}
-
             <ItemGroup title={t('settingsSession.messageSending.nonSteerablePromptTitle')} footer={t('settingsSession.messageSending.nonSteerablePromptFooter')}>
                 {nonSteerablePromptOptions.map((option) => (
                     <Item
@@ -360,36 +340,32 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 ))}
             </ItemGroup>
 
-            {pendingQueueMayBeUsed ? (
-                <>
-                    <ItemGroup title={t('settingsSession.messageSending.pendingDrainModeTitle')} footer={t('settingsSession.messageSending.pendingDrainModeFooter')}>
-                        {pendingQueueDrainModeOptions.map((option) => (
-                            <Item
-                                key={option.key}
-                                title={option.title}
-                                subtitle={option.subtitle}
-                                icon={<Icon name="stack-simple" size={29} color={theme.colors.accent.blue} />}
-                                rightElement={pendingQueueDrainMode === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
-                                onPress={() => setPendingQueueDrainMode(option.key)}
-                                showChevron={false}
-                            />
-                        ))}
-                    </ItemGroup>
-                    <ItemGroup title={t('settingsSession.messageSending.pendingDeliveryTimingTitle')} footer={t('settingsSession.messageSending.pendingDeliveryTimingFooter')}>
-                        {pendingQueueDeliveryTimingOptions.map((option) => (
-                            <Item
-                                key={option.key}
-                                title={option.title}
-                                subtitle={option.subtitle}
-                                icon={<Icon name="timer" size={29} color={theme.colors.accent.blue} />}
-                                rightElement={pendingQueueDeliveryTiming === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
-                                onPress={() => setPendingQueueDeliveryTiming(option.key)}
-                                showChevron={false}
-                            />
-                        ))}
-                    </ItemGroup>
-                </>
-            ) : null}
+                <ItemGroup title={t('settingsSession.messageSending.pendingDrainModeTitle')} footer={t('settingsSession.messageSending.pendingDrainModeFooter')}>
+                    {pendingQueueDrainModeOptions.map((option) => (
+                        <Item
+                            key={option.key}
+                            title={option.title}
+                            subtitle={option.subtitle}
+                            icon={<Icon name="stack-simple" size={29} color={theme.colors.accent.blue} />}
+                            rightElement={pendingQueueDrainMode === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
+                            onPress={() => setPendingQueueDrainMode(option.key)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
+                <ItemGroup title={t('settingsSession.messageSending.pendingDeliveryTimingTitle')} footer={t('settingsSession.messageSending.pendingDeliveryTimingFooter')}>
+                    {pendingQueueDeliveryTimingOptions.map((option) => (
+                        <Item
+                            key={option.key}
+                            title={option.title}
+                            subtitle={option.subtitle}
+                            icon={<Icon name="timer" size={29} color={theme.colors.accent.blue} />}
+                            rightElement={pendingQueueDeliveryTiming === option.key ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
+                            onPress={() => setPendingQueueDeliveryTiming(option.key)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
 
             <ItemGroup title={t('settingsSession.input.title')} footer={t('settingsSession.input.footer')}>
                 <Item

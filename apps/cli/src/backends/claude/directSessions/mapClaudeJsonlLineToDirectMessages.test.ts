@@ -29,8 +29,17 @@ describe('mapClaudeJsonlLineToDirectMessages', () => {
     expect(item?.raw).toEqual({ role: 'user', content: { type: 'text', text: 'First paragraph\nSecond paragraph' } });
   });
 
+  it.each([{ isMeta: true }, { isSynthetic: true }])('withholds generated text from direct history (%j)', provenance => {
+    expect(mapClaudeJsonlLineToDirectMessages({
+      fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
+      lineValue: {
+        type: 'user', uuid: 'internal-prompt', ...provenance,
+        message: { content: [{ type: 'text', text: 'Internal skill context' }] },
+      },
+    })).toEqual([]);
+  });
+
   it.each([
-    { isMeta: true, message: { content: [{ type: 'text', text: 'Internal prompt' }] } },
     { isSidechain: true, message: { content: [{ type: 'text', text: 'Subagent prompt' }] } },
     { message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Result' }, { type: 'text', text: 'Context' }] } },
     { message: { content: [{ type: 'image', source: { type: 'base64', data: 'image' } }, { type: 'text', text: 'Caption' }] } },

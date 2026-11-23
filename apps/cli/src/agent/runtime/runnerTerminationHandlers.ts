@@ -2,6 +2,7 @@ import type { EventEmitter } from 'node:events';
 
 import {
   computeRunnerTerminationOutcome,
+  runnerTerminationSignals,
   type RunnerTerminationEvent,
   type RunnerTerminationOutcome,
 } from './runnerTerminationOutcome';
@@ -127,8 +128,9 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
       });
   };
 
-  const onSigterm = () => terminate({ kind: 'signal', signal: 'SIGTERM' });
-  const onSigint = () => terminate({ kind: 'signal', signal: 'SIGINT' });
+  const signalHandlers = runnerTerminationSignals().map((signal) => ({
+    signal, onSignal: () => terminate({ kind: 'signal', signal }),
+  }));
   const onUnhandledRejection = (reason: unknown) => {
     const shouldTerminate = params.shouldTerminateOnUnhandledRejection;
     if (typeof shouldTerminate === 'function') {
@@ -144,8 +146,7 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
   };
   const onUncaughtException = (error: unknown) => terminate({ kind: 'uncaughtException', error });
 
-  params.process.on('SIGTERM', onSigterm);
-  params.process.on('SIGINT', onSigint);
+  for (const { signal, onSignal } of signalHandlers) params.process.on(signal, onSignal);
   params.process.on('unhandledRejection', onUnhandledRejection);
   params.process.on('uncaughtException', onUncaughtException);
 
@@ -153,8 +154,7 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
     requestTermination: terminate,
     whenTerminated,
     dispose: () => {
-      params.process.removeListener('SIGTERM', onSigterm);
-      params.process.removeListener('SIGINT', onSigint);
+      for (const { signal, onSignal } of signalHandlers) params.process.removeListener(signal, onSignal);
       params.process.removeListener('unhandledRejection', onUnhandledRejection);
       params.process.removeListener('uncaughtException', onUncaughtException);
     },

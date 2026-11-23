@@ -61,7 +61,7 @@ function organization(version: number, name: string): SessionOrganizationSnapsho
     } as unknown as SessionOrganizationSnapshot;
 }
 
-type ServerRequest = Readonly<{ pathname: string; method: string; sub: string }>;
+type ServerRequest = Readonly<{ pathname: string; searchParams: URLSearchParams; method: string; sub: string }>;
 
 function createHeldReply() {
     let release = () => {};
@@ -79,10 +79,10 @@ function installServer(
 ) {
     const requests: ServerRequest[] = [];
     vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async (input, init) => {
-        const { pathname } = getServerFetchUrl(input);
+        const { pathname, searchParams } = getServerFetchUrl(input);
         const payload = (new Headers(init?.headers).get('Authorization') ?? '').split('.')[1] ?? '';
         const sub = payload ? (JSON.parse(Buffer.from(payload, 'base64').toString()) as { sub: string }).sub : '';
-        const request = { pathname, method: init?.method ?? 'GET', sub };
+        const request = { pathname, searchParams, method: init?.method ?? 'GET', sub };
         requests.push(request);
         await hold?.(request);
         if (pathname === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false, includedActive: true });
@@ -367,18 +367,22 @@ describe('AuthContext Account change on one Home', () => {
 
     it.each(['importLegacySessionOrganization', 'setSessionTagLabels'] as const)('does not let %s apply A\'s snapshot after B signed in', async (operation) => {
         const held = createHeldReply();
-        let holding = false;
+        const isMutationSnapshot = ({ pathname, searchParams, sub }: ServerRequest) => {
+            if (sub !== 'account-a' || pathname !== '/v2/session-organization') return false;
+            // The background list refresh requests all folder assignments. Hold only the
+            // operation's own snapshot, so the test can observe B while that reply is pending.
+            if (searchParams.has('includeAllFolderAssignments')) return false;
+            return searchParams.get('includeFolders') === (operation === 'setSessionTagLabels' ? 'false' : 'true');
+        };
         const requests = installServer(
             { 'account-a': organization(50, 'a-private-folder'), 'account-b': organization(3, 'b-own-folder') },
-            ({ pathname, sub }) => (holding && sub === 'account-a' && pathname === '/v2/session-organization' ? held.released : null),
+            (request) => isMutationSnapshot(request) ? held.released : null,
         );
         const app = await bootApp();
         const ops = await import('@/sync/ops/sessionOrganization');
         try {
             await app.signIn('account-a');
             await vi.waitFor(() => expect(app.folderNames(app.homeId)).toEqual(['a-private-folder']), SETTLED);
-            await settle();
-            holding = true;
             const asA = { credentials: { token: tokenFor('account-a') }, serverId: app.homeId, serverUrl: HOME_ONE_URL };
             const requestsBefore = requests.length;
             const running = (operation === 'importLegacySessionOrganization'
@@ -388,9 +392,7 @@ describe('AuthContext Account change on one Home', () => {
                 })
                 : ops.setSessionTagLabels({ ...asA, sessionId: 'a-session', tags: ['a-new-tag'] })
             ).catch(() => undefined);
-            await vi.waitFor(() => expect(requests.slice(requestsBefore).some((request) => (
-                request.pathname === '/v2/session-organization' && request.sub === 'account-a'
-            ))).toBe(true), SETTLED);
+            await vi.waitFor(() => expect(requests.slice(requestsBefore).some(isMutationSnapshot)).toBe(true), SETTLED);
 
             await app.signOut();
             await app.signIn('account-b');
@@ -405,6 +407,7 @@ describe('AuthContext Account change on one Home', () => {
             // The operation stops with its Account rather than writing on from what B's store holds.
             expect(requests.slice(requestsAtRelease).filter((request) => request.method !== 'GET' && request.sub === 'account-a')).toEqual([]);
         } finally {
+            held.release();
             await app.signOut();
             await app.unmount();
         }

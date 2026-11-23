@@ -1,13 +1,11 @@
 import { STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv';
-import { HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import {
   HAPPIER_RUNTIME_CONTEXT_ENV_KEYS,
   resolveHappierRuntimeContextEnv,
   type HappierRuntimeServerContext,
 } from '@/utils/env/resolveHappierRuntimeContextEnv';
-import { shouldUseSystemdUserSessionResourceGovernor } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
 
 type ChildServerSelectionEnv = HappierRuntimeServerContext;
@@ -18,6 +16,8 @@ const DAEMON_ONLY_ENV_KEYS = [
   'HAPPIER_DAEMON_RUNTIME_ID',
   'HAPPIER_DAEMON_STARTUP_SOURCE',
   'HAPPIER_DAEMON_TAKEOVER',
+  // Old runner snapshots and terminal servers can outlive the daemon upgrade.
+  'HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP',
   // The desktop management marker a service definition hands its daemon.
   'HAPPIER_DAEMON_SERVICE_MANAGED_BY',
   'HAPPIER_DAEMON_SERVICE_BUNDLE_ID',
@@ -50,14 +50,6 @@ export function buildSpawnChildProcessEnv(params: {
     env.HAPPIER_LOG_LEVEL = 'debug';
   }
 
-  if (shouldUseSystemdUserSessionResourceGovernor({
-    platform: process.platform,
-    startupSource: String(params.processEnv.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim(),
-  })) {
-    env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY] = '1';
-  } else {
-    delete env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY];
-  }
   delete env.HAPPIER_STACK_PROCESS_KIND;
   Object.assign(env, stackProcessKindOverride);
   Object.assign(env, resolveHappierRuntimeContextEnv({ homeDir: params.homeDir }));

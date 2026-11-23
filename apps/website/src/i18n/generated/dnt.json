@@ -101,7 +101,7 @@
   "agents.AGENTS.opencode.faq.0.a": {
     "dnt": [
       "`opencode`",
-      "`opencode-ai`"
+      "`@opencode/cli`"
     ]
   },
   "agents.AGENTS.opencode.faq.1.a": {

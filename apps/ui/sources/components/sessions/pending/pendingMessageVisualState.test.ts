@@ -199,6 +199,23 @@ describe('getPendingMessageVisualState', () => {
         });
     });
 
+    it('says when a message that asked to join the turn falls back to waiting', () => {
+        const steerRow = pendingMessage({
+            source: 'server_pending',
+            deliveryStatus: 'accepted',
+            requestedAction: { v: 1, kind: 'steer_if_active' },
+        });
+        expect(getPendingMessageVisualState(steerRow, {
+            sessionRuntime: { isWorking: true, foregroundState: 'active_unsteerable' },
+        }).queuedBehindTurn?.reason).toBe('steer_unavailable_waiting_for_turn');
+
+        // A message the user chose to hold keeps the plain wait.
+        const enqueueRow = pendingMessage({ source: 'server_pending', deliveryStatus: 'accepted' });
+        expect(getPendingMessageVisualState(enqueueRow, {
+            sessionRuntime: { isWorking: true, foregroundState: 'active_unsteerable' },
+        }).queuedBehindTurn?.reason).toBe('waiting_for_foreground_turn');
+    });
+
     it('does not turn an absent epoch timestamp into a multi-year running duration', () => {
         const message = pendingMessage({ source: 'server_pending', deliveryStatus: 'accepted' });
 

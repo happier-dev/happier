@@ -2638,6 +2638,11 @@ export const fr: TranslationStructure = {
                 confirmCta: 'Utiliser',
             },
         },
+        requestErrors: {
+            unreachable: 'Impossible de se connecter au serveur Happier. Vérifiez votre réseau ou votre connexion VPN, puis réessayez.',
+            timeout: 'Le serveur Happier n’a pas répondu à temps.',
+            serverHttp: ({ status }: { status: string }) => `Le serveur Happier a renvoyé une erreur (${status}). Réessayez dans un instant.`,
+        },
         oauthPaste: {
             invalidConfig: 'Configuration de service connecté invalide.',
             connectWebGroupTitle: 'Connecter (web)',
@@ -2680,7 +2685,11 @@ export const fr: TranslationStructure = {
             },
             errors: {
                 missingState: 'State OAuth manquant dans l’URL de redirection.',
-                stateMismatch: 'State OAuth non concordant.',
+                stateMismatch: 'Cette réponse d’autorisation ne correspond pas à la tentative en cours. Lancez une nouvelle autorisation.',
+                rejected: ({ reason }: { reason: string }) => `Le fournisseur a refusé l’autorisation : ${reason}`,
+                rejectedGeneric: 'Le fournisseur a refusé l’autorisation.',
+                exchangeOutcomeUnknown: "Impossible de confirmer que la connexion a abouti. Vérifiez vos comptes connectés et, si nécessaire, reconnectez-vous avec un nouveau code.",
+                responseKept: "La demande n’a pas été envoyée. Vérifiez votre connexion, puis appuyez sur Continuer pour utiliser la réponse déjà collée.",
             },
         },
         oauthEmbedded: {
@@ -5699,6 +5708,7 @@ export const fr: TranslationStructure = {
 	            waitingForRuntimeActivityNotice: 'En attente de la fin de l’activité du runtime',
 	            runtimeActivityUnknownNotice: 'En attente du statut d’activité du runtime',
 	            waitingForRuntimeNotice: 'En attente de la reconnexion du runtime',
+	            steerUnavailableWaitingForTurnNotice: 'Ne peut pas rejoindre ce tour pour l’instant · partira à la fin',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Un brouillon du terminal bloque la livraison',
 	                runtimeConfigBlocked: 'Les réglages du runtime bloquent la livraison',
@@ -6202,7 +6212,7 @@ export const fr: TranslationStructure = {
 
     sessionDrafts: {
         sectionTitle: 'Brouillons', badge: 'Brouillon', untitled: 'Brouillon sans titre', continueEditing: 'Continuer la modification', startAnother: 'En commencer un autre', startedOpen: "Session démarrée · Ouvrir",
-        status: { offline: 'Hors ligne', syncing: 'Synchronisation', conflict: 'Conflit', machineUnavailable: 'Machine indisponible', attachmentNeedsAttention: 'Pièce jointe à vérifier', startInterrupted: 'Démarrage interrompu' },
+        status: { offline: 'Hors ligne', syncing: 'Synchronisation', conflict: 'Conflit', machineUnavailable: 'Machine indisponible', attachmentNeedsAttention: 'Pièce jointe à vérifier', starting: 'Démarrage', startFailed: 'Échec du démarrage' },
         error: { title: 'Erreur du brouillon', storageDescription: 'Ce brouillon n\'a pas pu être enregistré sur cet appareil. Copie ton texte en lieu sûr avant de partir ; l\'enregistrement sera retenté à ta prochaine modification.', encryptionDescription: "Cet appareil n’a pas pu synchroniser le brouillon.", showDetailsHint: 'Indique pourquoi ce brouillon est en erreur' },
         new: { action: 'Nouveau brouillon' }, delete: { action: 'Supprimer le brouillon', confirmTitle: 'Supprimer le brouillon ?', confirmDescription: 'Ce brouillon sera supprimé de vos appareils.' },
         conflict: { title: 'Conflit de brouillon', description: 'Ce champ a changé sur un autre appareil.', mine: 'Sur cet appareil', synced: 'Synchronisé', useSynced: 'Utiliser la version synchronisée', keepDevice: 'Garder cette version', copyMine: 'Copier ma version', copied: 'Copié', copyFailed: 'Copie impossible', field: { text: 'Texte', mentions: 'Références', attachments: 'Pièces jointes', recipient: 'Destinataire', agentContinuation: 'Suite de l’agent', executionRunDelivery: 'Livraison de l’exécution' } },
@@ -8120,13 +8130,17 @@ settingsSession: {
                   manualSubtitle: 'Toujours garder les messages en attente jusqu’à la reprise de la session.',
               },
               title: 'Envoi des messages',
-              footer: 'Contrôle ce qui se passe quand tu envoies un message pendant que l’agent tourne.',
-              queueInAgentTitle: 'Mettre en file dans l’agent (actuel)',
-              queueInAgentSubtitle: 'Écrit dans le transcript immédiatement ; l’agent traite quand il est prêt.',
-              interruptTitle: 'Interrompre et envoyer',
-              interruptSubtitle: 'Interrompt le tour en cours, puis envoie immédiatement.',
-              pendingTitle: 'En attente jusqu’à disponibilité',
-              pendingSubtitle: 'Garde les messages dans une file d’attente ; l’agent les récupère quand il est prêt.',
+              footer: 'Choisis ce qui se passe quand tu envoies un message pendant que l’agent travaille.',
+              busySend: {
+                addToTurnTitle: 'L’ajouter au tour en cours',
+                addToTurnSubtitle: 'L’agent le lit tout de suite et continue de travailler, comme si tu tapais dans son propre terminal. S’il ne peut pas le prendre en cours de tour, le message attend dans En attente jusqu’à la fin du tour.',
+                waitForTurnTitle: 'Attendre la fin du tour',
+                waitForTurnSubtitle: 'Garde le message dans En attente, où tu peux le modifier ou le réordonner, et l’envoie à la fin du tour.',
+                interruptTitle: 'Arrêter le tour et envoyer',
+                interruptSubtitle: 'Arrête ce que fait l’agent et envoie le message tout de suite.',
+              },
+              inactiveSessionsTitle: 'Sessions inactives',
+              inactiveSessionsFooter: 'S’applique quand tu envoies à une session dont l’agent est arrêté ou dont la machine est hors ligne.',
               pendingDrainModeTitle: 'Traitement de la file d’attente',
               pendingDrainModeFooter: 'Choisis si l’agent prend un seul message en file chaque fois qu’il est prêt ou s’il traite toute la file d’un coup.',
               pendingDrainMode: {
@@ -8142,14 +8156,6 @@ settingsSession: {
                   afterForegroundReadySubtitle: 'Envoie les messages en file dès que l’agent peut accepter le tour suivant.',
                   afterRuntimeIdleTitle: 'Après l’inactivité du runtime',
                   afterRuntimeIdleSubtitle: 'Garde les messages en file tant que l’activité de runtime en arrière-plan est encore active.',
-              },
-              busySteerPolicyTitle: 'Quand l’agent est occupé (steering possible)',
-              busySteerPolicyFooter: 'Si l’agent gère le steering en cours de tour, choisis si les messages le pilotent immédiatement ou passent d’abord en file d’attente.',
-              busySteerPolicy: {
-                  steerImmediatelyTitle: 'Piloter immédiatement',
-                  steerImmediatelySubtitle: 'Envoie tout de suite et pilote le tour en cours (sans interruption).',
-                  queueForReviewTitle: 'Mettre en file d’attente',
-                  queueForReviewSubtitle: 'Met d’abord les messages en file d’attente ; envoie-les ensuite avec « Piloter maintenant ».',
               },
               nonSteerablePromptTitle: 'Quand un message ne peut pas piloter le tour en cours',
               nonSteerablePromptFooter: 'Les changements de mode de permission ainsi que /clear ou /compact ne peuvent pas s’appliquer en cours de tour. Choisis ce que Happier fait de ce type de message quand l’agent est occupé.',

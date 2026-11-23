@@ -1444,6 +1444,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 confirmCta: '使用重設',
             },
         },
+        requestErrors: {
+            unreachable: '無法連線到 Happier 伺服器。請檢查網路或 VPN 連線後再試一次。',
+            timeout: 'Happier 伺服器未能及時回應。',
+            serverHttp: ({ status }: { status: string }) => `Happier 伺服器回傳了錯誤（${status}）。請稍後再試。`,
+        },
         oauthPaste: {
             invalidConfig: '已連線服務設定無效。',
             connectWebGroupTitle: '連線（網頁）',
@@ -1486,7 +1491,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             errors: {
                 missingState: '重新導向 URL 中缺少 OAuth state。',
-                stateMismatch: 'OAuth state 不相符。',
+                stateMismatch: '此授權回應與目前的嘗試不相符。請重新開始授權。',
+                rejected: ({ reason }: { reason: string }) => `提供者拒絕了授權：${reason}`,
+                rejectedGeneric: '提供者拒絕了授權。',
+                exchangeOutcomeUnknown: "無法確認登入是否已完成。請檢查已連結的帳戶，如需重新登入，請使用新的驗證碼。",
+                responseKept: "要求未傳送。請檢查網路連線，然後按「繼續」使用已貼上的回應。",
             },
         },
         oauthEmbedded: {
@@ -5302,6 +5311,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     minutes > 0
                         ? `等待目前工作完成 · 已執行 ${minutes} 分鐘`
                         : '等待目前工作完成',
+                steerUnavailableWaitingForTurnNotice: '暫時無法加入本輪 · 結束後傳送',
                 deliveryBlockedReasons: {
                     terminalComposerDraft: '終端機輸入框中的草稿阻擋了遞送',
                     runtimeConfigBlocked: '執行階段設定阻擋了遞送',
@@ -5611,7 +5621,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     sessionDrafts: {
         sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '繼續編輯', startAnother: '開始另一份', startedOpen: "工作階段已啟動 · 開啟",
-        status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', startInterrupted: '啟動中斷' },
+        status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', starting: '正在啟動', startFailed: '無法啟動' },
         error: { title: '草稿錯誤', storageDescription: '無法在此裝置上儲存此草稿。離開前請將文字複製到安全的位置；下次編輯時會重新嘗試儲存。', encryptionDescription: "此裝置無法同步草稿。", showDetailsHint: '顯示此草稿出錯的原因' },
         new: { action: '新增草稿' }, delete: { action: '刪除草稿', confirmTitle: '刪除草稿？', confirmDescription: '此草稿將從你的裝置移除。' },
         conflict: { title: '草稿衝突', description: '此欄位已在其他裝置上變更。', mine: '此裝置', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留裝置版本', copyMine: '複製我的版本', copied: '已複製', copyFailed: '無法複製', field: { text: '文字', mentions: '提及', attachments: '附件', recipient: '收件者', agentContinuation: '代理延續', executionRunDelivery: '執行傳送' } },
@@ -7288,13 +7298,17 @@ settingsSession: {
                 manualSubtitle: '始終將訊息保留在佇列中，直到你恢復工作階段。',
             },
             title: '訊息送出',
-            footer: '控制代理執行中送出訊息時的行為。',
-            queueInAgentTitle: '在代理中排隊（目前）',
-            queueInAgentSubtitle: '立即寫入逐字稿；代理準備好後再處理。',
-            interruptTitle: '中斷並送出',
-            interruptSubtitle: '中止目前回合，然後立即送出。',
-            pendingTitle: '等待就緒後送出',
-            pendingSubtitle: '將訊息保留在待處理佇列中；代理準備好後再拉取。',
+            footer: '選擇在代理工作時傳送訊息會發生什麼。',
+            busySend: {
+              addToTurnTitle: '加入目前輪次',
+              addToTurnSubtitle: '代理會立即讀取並繼續工作，就像在它自己的終端機裡輸入一樣。如果它無法在輪次中途接收，訊息會在待傳送中等到本輪結束。',
+              waitForTurnTitle: '等本輪結束',
+              waitForTurnSubtitle: '將訊息留在待傳送中，你可以編輯或調整順序，本輪結束後再傳送。',
+              interruptTitle: '停止本輪並傳送',
+              interruptSubtitle: '停止代理目前的工作並立即傳送訊息。',
+            },
+            inactiveSessionsTitle: '非使用中的工作階段',
+            inactiveSessionsFooter: '在傳送給代理已停止或機器離線的工作階段時適用。',
             pendingDrainModeTitle: '待處理佇列處理',
             pendingDrainModeFooter: '選擇代理每次就緒時只處理一則訊息，或一次處理整個待處理佇列。',
             pendingDrainMode: {
@@ -7310,14 +7324,6 @@ settingsSession: {
                 afterForegroundReadySubtitle: '代理可以接受下一回合時立即送出待處理訊息。',
                 afterRuntimeIdleTitle: '執行階段閒置後',
                 afterRuntimeIdleSubtitle: '當已追蹤的執行階段活動仍在進行時，繼續保留待處理訊息。',
-            },
-            busySteerPolicyTitle: '當代理忙碌時（支援導向）',
-            busySteerPolicyFooter: '若代理支援進行中的導向，請選擇訊息要立即導向，或先進入待處理。',
-            busySteerPolicy: {
-                steerImmediatelyTitle: '立即導向',
-                steerImmediatelySubtitle: '立刻送出並導向目前回合（不中斷）。',
-                queueForReviewTitle: '排入待處理',
-                queueForReviewSubtitle: '先把訊息放入待處理，之後再用「立即導向」送出。',
             },
             nonSteerablePromptTitle: '當訊息無法引導目前回合時',
             nonSteerablePromptFooter: '權限模式變更以及 /clear 或 /compact 無法在回合進行中套用。選擇代理程式忙碌時 Happier 如何處理此類訊息。',
