@@ -726,7 +726,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
                 managedMachineAdmission: capturedMachineAdmission,
                 input: request.envelope.v === 1 ? request.envelope.input
-                : deploymentMetadataReceiptId !== undefined ? { deploymentId: deploymentMetadataReceiptId }
+                : deploymentMetadataReceiptId !== undefined ? {
+                    deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId }
                 : deploymentMetadataEnvironmentId === undefined
                     ? presetPreparationAdmission ?? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                         ?? (request.actionId === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(request.envelope)?.input : undefined)

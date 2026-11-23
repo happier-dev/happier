@@ -925,7 +925,8 @@ export function registerExternalActionRoutes(
                     managedMachineAdmission: admission,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
-                        : deploymentMetadataReceiptId !== undefined ? { deploymentId: deploymentMetadataReceiptId }
+                        : deploymentMetadataReceiptId !== undefined ? {
+                            deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId }
                         : deploymentMetadataEnvironmentId === undefined
                             ? presetPreparationAdmission ?? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                                 ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)

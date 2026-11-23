@@ -582,6 +582,76 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it.each(['plain', 'e2ee'] as const)('mints a %s receipt Observe root bound to its Environment and exact receipt', async mode => {
+        const actionId = 'deployments.receipts.observe';
+        const fixture = await createFixture({ qualifiedPat: false });
+        const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
+        const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
+        if (mode === 'e2ee') {
+            const { sealSessionDataKeyBundleV0 } = await import('@happier-dev/protocol');
+            const { createSignedAccountContentBinding } = await import('@/testkit/accountEncryption');
+            await db.account.update({ where: { id: fixture.account.id }, data: {
+                encryptionMode: mode, ...createSignedAccountContentBinding(ownerPublicKey) } });
+            const machineKey = createMachineDataEncryptionKeyV1({ material, dataKeyPublicKey: ownerPublicKey, randomBytes: tweetnacl.randomBytes });
+            await db.machine.update({ where: { id: fixture.machine.id }, data: {
+                metadata: encodeBase64(await sealSessionDataKeyBundleV0(decodePlainMachineStoredContent(fixture.machine.metadata), machineKey.encryptionKey)),
+                dataEncryptionKey: new Uint8Array(machineKey.dataEncryptionKey) } });
+        }
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const source = await inTx(tx => createProjectSourceInTx(tx, fixture.account.id, {
+            serverId: homeId, requestKey: crypto.randomUUID(), name: 'Observe Project', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const { sealSessionDataKeyBundleV0, sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const contentKey = tweetnacl.randomBytes(32);
+        const seal = async (value: unknown) => decodeBase64(mode === 'plain' ? encodePlainArtifactStoredContent(value)
+            : encodeBase64(await sealSessionDataKeyBundleV0(value, contentKey)));
+        const artifact = await createArtifact({ actorUserId: fixture.account.id, artifactId: crypto.randomUUID(),
+            kind: 'v1:other:deployment-environment.v1', header: await seal({ kind: 'deployment-environment.v1', title: 'Observe' }),
+            body: await seal({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) }),
+            dataEncryptionKey: mode === 'plain' ? decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+                : sealEncryptedDataKeyEnvelopeV1({ recipientPublicKey: ownerPublicKey, dataKey: contentKey, randomBytes: tweetnacl.randomBytes }) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, fixture.account.id, {
+            serverId: homeId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: fixture.machine.id,
+            contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+        }));
+        if (!environment.ok) throw new Error(environment.error);
+        const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.environmentId,
+            createdByAccountId: fixture.account.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+            targetKind: 'ownServer', state: 'configured', contentArtifactId: artifact.artifact.id,
+            contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const receipt = await db.deployment.create({ data: { environmentId: environment.environmentId, targetLinkId: link.id,
+            operation: 'deploy', state: 'running', requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+            requestedByAccountId: fixture.account.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const { app } = await createApp(fixture.team.id, false);
+        try {
+            const input = { serverId: homeId, environmentId: environment.environmentId, deploymentId: receipt.id };
+            const sealed = (owner: typeof fixture, authentication: { kind: 'account'; tokenEpoch: number }) => mode === 'plain'
+                ? { ...owner.envelope, input }
+                : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding: { serverIdentityId: homeId, accountId: owner.account.id, authentication, actionId,
+                        requestId: owner.envelope.requestId, target: owner.envelope.target! },
+                    input, material, randomBytes: tweetnacl.randomBytes });
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                    envelope: sealed(fixture, { kind: 'account', tokenEpoch: fixture.account.tokenEpoch }) } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            expect(root.binding).toMatchObject({ environmentId: environment.environmentId,
+                deploymentObservationReceiptId: receipt.id, machineId: fixture.machine.id });
+            // Another person cannot observe this Environment's receipt from their own Machine.
+            const outsider = await createFixture({ qualifiedPat: false });
+            const outsiderToken = await auth.createToken(outsider.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const refused = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${outsiderToken}` }, payload: { v: 1, machineId: outsider.machine.id,
+                    envelope: { ...outsider.envelope, input } } });
+            expect(refused.statusCode, refused.body).not.toBe(200);
+        } finally { await app.close(); }
+    });
+
     it('binds native candidate publication to the minted root instead of Account ownership', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
