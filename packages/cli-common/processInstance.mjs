@@ -7,7 +7,8 @@ const PROCESS_INSTANCE_PROBE_TIMEOUT_MS = 5_000;
 
 function normalizePid(value) {
   const pid = Number(value);
-  return Number.isInteger(pid) && pid > 1 ? pid : null;
+  // Birth observations also apply to a daemon running as its namespace's init.
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
 function parseLinuxProcFields(statText) {

@@ -110,6 +110,20 @@ test('readProcessStartTimeMsSync produces the same Linux numeric witness as the 
   }), null);
 });
 
+test('Linux namespace PID 1 has a process birth witness for lock ownership', () => {
+  const fields = Array.from({ length: 30 }, (_, index) => String(index + 3));
+  fields[19] = '1234';
+  const boundary = {
+    platform: 'linux',
+    readFileSyncImpl: (path) => {
+      assert.equal(path, '/proc/1/stat');
+      return `1 (daemon) ${fields.join(' ')}`;
+    },
+  };
+  assert.equal(readProcessStartTimeMsSync(1, boundary), 12_340);
+  assert.equal(readProcessInstanceFingerprintSync(1, boundary), 'linux-proc:1234');
+});
+
 test('processInstanceFingerprintMatches preserves the predecessor pure comparison contract', () => {
   assert.equal(processInstanceFingerprintMatches('linux-proc:1', 'linux-proc:1'), true);
   assert.equal(processInstanceFingerprintMatches(' linux-proc:1 ', 'linux-proc:1'), true);
