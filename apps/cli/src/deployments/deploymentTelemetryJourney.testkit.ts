@@ -423,7 +423,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     }
                     expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
                         : { name, errorCode: result.errorCode, failureCause: result.failureCause,
-                            effectAttempted: result.effectAttempted, nativeDiagnostic, failedDockerCommands })).toBe(true);
+                            effectAttempted: result.effectAttempted, details: result.details, nativeDiagnostic, failedDockerCommands })).toBe(true);
                     if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
                     return result.result;
                 };
