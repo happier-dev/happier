@@ -648,9 +648,17 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     };
   }
 
+  // The admitted operand names its Machine through the one selector owner, as
+  // --machine-id does; Home's Machine admission then decides that Machine.
+  // Without either, the Account's current Machine is selected as before.
+  const operand = params.machineId === undefined
+    ? resolveExternalActionMachineTarget({ actionId: publicActionId.data, rawInput: params.input,
+      ...(params.context ? { context: params.context } : {}) })
+    : null;
+  const requestedMachineId = params.machineId ?? (operand?.kind === 'ready' ? operand.machineId : undefined);
   const target = await resolvePatMachineTarget({
     credentials: params.credentials,
-    ...(params.machineId !== undefined ? { requestedMachineId: params.machineId } : {}),
+    ...(requestedMachineId !== undefined ? { requestedMachineId } : {}),
     ...(signal ? { signal } : {}),
     serverApiUrl: params.serverApiUrl,
     allowConfiguredMachineTarget: params.allowConfiguredMachineTarget,

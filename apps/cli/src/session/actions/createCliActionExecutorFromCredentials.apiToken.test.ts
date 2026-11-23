@@ -1942,4 +1942,35 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
     expect(createCliActionExecutor).not.toHaveBeenCalled();
   });
+
+  // W18B2 6b: the token path selects the Machine once from the admitted operand
+  // (then --machine-id); Home's Machine admission decides and its refusal is shown.
+  it.each([
+    ['operand on the selected Machine', 'machine-own', undefined, 'machine-own'],
+    ['operand naming another Machine', 'machine-foreign', undefined, 'machine-foreign'],
+    ['--machine-id naming another Machine', 'machine-foreign', 'machine-foreign', 'machine-foreign'],
+  ] as const)('targets the admitted Machine for a token setup plan: %s', async (_case, operand, flag, expected) => {
+    if (!patActionEndpoint) throw new Error('Expected PAT Action test endpoint.');
+    // As the real owner: an explicit request is selected as given, otherwise the sole current Machine.
+    resolveCurrentAccountMachineTarget.mockImplementation(async ({ requestedMachineId }: { requestedMachineId?: string }) => ({
+      kind: 'selected', target: { machineId: requestedMachineId ?? 'machine-own', machineLabel: requestedMachineId ?? 'Own machine' } }));
+    const targets: unknown[] = [];
+    installPatActionTransportMock((_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { target?: { machineId?: string } };
+      targets.push(body.target);
+      // Home admits the token's own Machine and refuses another Account's Machine.
+      return body.target?.machineId === 'machine-own'
+        ? apiSuccess('machines.setup.plan', { desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [] })
+        : apiFailure('machines.setup.plan', 'target_not_local');
+    });
+    const executor = createCliActionExecutorFromCredentials({ credentials: {
+      token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token',
+    }, serverId: 'home', serverApiUrl: patActionEndpoint, ...(flag ? { machineId: flag } : {}) });
+    const result = await executor.execute('machines.setup.plan', { homeId: 'home', machineId: operand }, { surface: 'cli' });
+    expect(targets).toEqual([{ kind: 'machine', machineId: expected }]);
+    expect(result).toMatchObject(expected === 'machine-own'
+      ? { ok: true, result: { desiredRevision: 0 } }
+      : { ok: false, errorCode: 'target_not_local' });
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
+  });
 });
