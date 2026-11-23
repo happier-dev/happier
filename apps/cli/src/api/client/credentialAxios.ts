@@ -14,7 +14,7 @@ function carriesExecutionAuthorization(value: unknown): boolean {
 }
 
 function scopeRequest(client: AxiosInstance, config: AxiosRequestConfig | undefined) {
-  let signed: boolean | undefined;
+  let executionProof: 'header' | 'body' | false | undefined;
   let requestUrl: string | undefined;
   let method = config?.method ?? client.defaults.method ?? 'GET';
   let hasSecretBody = config?.data != null;
@@ -22,11 +22,12 @@ function scopeRequest(client: AxiosInstance, config: AxiosRequestConfig | undefi
   const transforms = config?.transformRequest ?? client.defaults.transformRequest;
   const frameAuthorization: AxiosRequestTransformer = function (data, headers) {
     const logicalMethod = (this.method ?? 'get').toLowerCase();
-    signed = carriesExecutionAuthorization(headers.get(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER));
+    executionProof = carriesExecutionAuthorization(headers.get(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER)) ? 'header' : false;
     if (!['get', 'post', 'put', 'patch', 'delete'].includes(logicalMethod)) return data;
     const frame = encodeExternalActionHttpBodyV1(Object.fromEntries(
       EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.map(header => [header, headers.get(header)])), data);
     if (frame === null) return data;
+    if (executionProof) executionProof = 'body';
     for (const header of EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1) headers.delete(header);
     if (logicalMethod === 'get') {
       // Signing has already bound the logical GET. POST carries its proofs through ordinary HTTP parsers.
@@ -59,13 +60,15 @@ function scopeRequest(client: AxiosInstance, config: AxiosRequestConfig | undefi
       requestUrl = next.url;
       method = next.method;
       hasSecretBody &&= !next.dropBody;
+      if (next.crossOrigin || (next.dropBody && executionProof === 'body')) executionProof = false;
     },
   };
   return {
     config: scopedConfig,
-    settle: (response: Promise<AxiosResponse<unknown>>) => settle(response, () => signed
-      ?? Object.entries(config?.headers ?? {}).some(([name, value]) =>
-        name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER && carriesExecutionAuthorization(value))),
+    settle: (response: Promise<AxiosResponse<unknown>>) => settle(response, () => executionProof === undefined
+      ? Object.entries(config?.headers ?? {}).some(([name, value]) =>
+        name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER && carriesExecutionAuthorization(value))
+      : executionProof !== false),
   };
 }
 

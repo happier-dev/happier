@@ -200,17 +200,21 @@ it('sends an accepted-input wake policy proof through the default parser without
 it.each([
   { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
   { status: 401, phase: 'effect_family', acceptStatus: false, unsigned: false },
+  { status: 401, phase: 'verification_purpose', acceptStatus: false, unsigned: false, configuredError: 'authentication_failed' },
   { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false },
   { status: 404, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
   { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: true },
 ] as const)('keeps the Home refusal phase and sends one request (%j)', async ({
-  status, phase, acceptStatus, unsigned,
+  status, phase, acceptStatus, unsigned, ...fixture
 }) => {
   let requests = 0;
   const server = createServer((_request, response) => {
     requests++;
     response.writeHead(status, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ error: status === 403 ? 'credential_scope_denied' : 'invalid_token', authorizationRefusal: phase }));
+      .end(JSON.stringify({
+        error: 'configuredError' in fixture ? fixture.configuredError : status === 403 ? 'credential_scope_denied' : 'invalid_token',
+        authorizationRefusal: phase,
+      }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -230,6 +234,45 @@ it.each([
       });
     }
     expect(requests).toBe(1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+it('keeps a redirected 401 unsigned after the redirect drops the Action proof', async () => {
+  const target = { kind: 'machine' as const, machineId: 'controller' };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-root', binding: {
+    accountId: 'account', custodianAccountId: 'account', serverIdentityId: 'home', installationId: 'controller-installation',
+    machineId: target.machineId, actionId: 'deployments.deploy', authentication: { kind: 'account', tokenEpoch: 1 },
+    accountEncryptionMode: 'plain', requestId: 'fixture-request', requestEnvelopeDigest: 'a'.repeat(43), target,
+  } });
+  const headers = createExternalActionAuthorizedRequestHeaders({
+    authorization, effectActionId: authorization.binding.actionId, target, installationId: authorization.binding.installationId,
+    privateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11)).secretKey, method: 'GET', path: '/resource',
+  });
+  const hops: { method?: string; carriedProof: boolean }[] = [];
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = Buffer.concat(chunks).toString('utf8');
+    const carriedProof = (body ? decodeExternalActionHttpBodyV1(JSON.parse(body))?.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]
+      : request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) === authorization.token;
+    hops.push({ method: request.method, carriedProof });
+    if (request.url === '/resource') {
+      response.writeHead(303, { location: '/signed-out' }).end();
+      return;
+    }
+    response.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'invalid_token' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
+    await expect(axios.get(`http://127.0.0.1:${address.port}/resource`, {
+      headers, validateStatus: () => true,
+    })).resolves.toMatchObject({ status: 401 });
+    expect(hops).toEqual([{ method: 'POST', carriedProof: true }, { method: 'GET', carriedProof: false }]);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

@@ -1052,7 +1052,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
 
   it.each(['matching', 'installation', 'envelope'] as const)('uses the exact fresh local Home mint as admission (%s)', async reply => {
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-      if (String(url).endsWith('/verify')) return { status: 403, data: { error: 'invalid_token' } };
+      if (String(url).endsWith('/verify')) return { status: 403, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       return { status: 200, data: { v: 1, token: 'fresh-local-proof', binding: {
         accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, custodianAccountId: 'alice',
@@ -1084,10 +1084,11 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     // Crossing the wire loses private local admission. The next receiver still
     // verifies Home, even when the carrier was minted successfully elsewhere.
     const received = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(prepared)));
-    expect(await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
+    await expect(executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
       authorization: received, target, serverId: args.serverId, serverIdentityId: args.serverIdentityId,
       serverHttpBaseUrl: args.serverHttpBaseUrl, installationId: args.installationId, privateKey: keys.secretKey,
-    })).toBeNull();
+    })).rejects.toMatchObject({ failure: { errorCode: 'action_forbidden',
+      error: 'action_forbidden (home_signed_authorization_rejected:verification_purpose)' } });
     expect(post).toHaveBeenCalledTimes(2);
   });
 

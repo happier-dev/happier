@@ -38,7 +38,10 @@ export class SignedHomeAuthorizationHttpError extends HttpStatusError {
 export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payload: unknown): SignedHomeAuthorizationHttpError {
     const parsed = ExternalActionHttpErrorSchema.safeParse(payload);
     const response = parsed.success ? parsed.data : undefined;
-    const phase = response && 'authorizationRefusal' in response ? response.authorizationRefusal : undefined;
+    const parsedPhase = ExternalActionAuthorizationRefusalPhaseSchema.safeParse(
+        payload && typeof payload === 'object' && 'authorizationRefusal' in payload ? payload.authorizationRefusal : undefined,
+    );
+    const phase = parsedPhase.success ? parsedPhase.data : undefined;
     const details = response && 'details' in response && response.details !== undefined
         ? response.details : phase ? readHomeAuthorizationRefusalDetails(phase) : undefined;
     const cause = response && 'failureCause' in response ? response.failureCause : undefined;

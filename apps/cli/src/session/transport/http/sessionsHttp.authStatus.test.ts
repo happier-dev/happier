@@ -5,6 +5,8 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/pro
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
+import { archiveSession } from './sessionsHttp';
+
 function createLegacyCredentials() {
   return {
     token: 'token-1',
@@ -46,7 +48,6 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     { status: 401, phase: 'verification_purpose' },
     { status: 403, phase: 'effect_family' },
   ] as const)('keeps a signed archive refusal definite and sends one request (%j)', async ({ status, phase }) => {
-    const { archiveSession } = await import('./sessionsHttp');
     const send = vi.spyOn(axios, 'post').mockResolvedValueOnce({
       status,
       data: { error: status === 401 ? 'invalid_token' : 'credential_scope_denied', authorizationRefusal: phase },
