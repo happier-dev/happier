@@ -1081,6 +1081,30 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each(['native Save', 'addressed Save'] as const)('uses draft Action admission for %s before persisting the document', async entry => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [WORKFLOW_AUTHORING_ACTION_ID.draftSave]: { enabled: false } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep the blocked edit' }));
+        if (entry === 'native Save') {
+            await saveDirectlyFromUi();
+            await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' }));
+        } else {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const execute = createFrontDoorActionExecute();
+            await act(async () => {
+                const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
+                expect(await execute(WORKFLOW_AUTHORING_ACTION_ID.draftSave, address, {
+                    surface: 'ui', serverId: address.scope.serverId, runtimeAccountId: address.scope.accountId,
+                })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            });
+        }
+        expect(boundary.updates).toHaveLength(0);
+        expect(readBodyProps()!.draftStore.get().name).toBe('Keep the blocked edit');
+    });
+
     it('presents the Account Action Machine Skip after native Save while agent Save retains its refusal without a dialog', async () => {
         const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [], [], {
             v: 1, rows: [{ automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1,

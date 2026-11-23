@@ -1149,7 +1149,12 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval(artifactId)).not.toHaveProperty('execution');
     });
 
-    it('publishes a denied deferred Override through the originating Machine', async () => {
+    it.each([
+        { surface: 'ui', decision: 'reject', status: 'rejected' },
+        { surface: 'voice', decision: 'reject', status: 'rejected' },
+        { surface: 'ui', decision: 'cancel', status: 'canceled' },
+        { surface: 'voice', decision: 'cancel', status: 'canceled' },
+    ] as const)('publishes a $status deferred Override from $surface through the originating Machine', async ({ surface, decision, status }) => {
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const artifactId = 'deferred-override-result';
         const machineId = 'requester-machine';
@@ -1189,13 +1194,18 @@ describe('createDefaultActionExecutor approvals', () => {
                 currentAccount: { accountId: 'account-a', serverId: homeId, serverIdentityId: 'srv_approval_home' } });
         };
 
-        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'reject' }, context());
-        expect(persistedApproval(artifactId)).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
-        expect(transcript.get('s1:approval-result:' + artifactId), JSON.stringify(result)).toMatchObject({
-            artifactId, status: 'rejected', execution: { ok: false, effectAttempted: false,
-                errorCode: 'action_interception_rejected', details: { message: 'command_failed' } },
-        });
-        expect(result).toMatchObject({ ok: true, result: { status: 'rejected', delivery: { status: 'accepted' } } });
+        const result = await executor.execute('approval.request.decide', { artifactId, decision }, { ...context(), surface });
+        expect(persistedApproval(artifactId)).toMatchObject({ status });
+        const delivered = transcript.get('s1:approval-result:' + artifactId);
+        expect(delivered, JSON.stringify(result)).toMatchObject({ artifactId, status });
+        if (decision === 'reject') {
+            expect(persistedApproval(artifactId)).toMatchObject({ decision: { kind: decision } });
+            expect(delivered).toMatchObject({ execution: { ok: false, effectAttempted: false,
+                errorCode: 'action_interception_rejected', details: { message: 'command_failed' } } });
+        } else {
+            expect(delivered).not.toHaveProperty('execution');
+        }
+        expect(result).toMatchObject({ ok: true, result: { status, delivery: { status: 'accepted' } } });
     });
 
     it('preserves the host input record when replaying a deferred result without Action discovery', async () => {

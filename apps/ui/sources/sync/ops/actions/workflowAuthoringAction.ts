@@ -5,7 +5,7 @@ import { WORKFLOW_AUTHORING_ACTION_SPECS, WorkflowConversationBindInputV1Schema,
 import { entityDragScopesEqualV1, type EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { bindWorkflowSessionConversation, type WorkflowSessionBindingContext } from '@/sync/domains/workflows/workflowAuthoringSessionBinding';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 
 type BindingRequest = Readonly<{ input: unknown; signal?: AbortSignal }>;
 type WorkflowConversationBindingOwner = Readonly<{
@@ -15,7 +15,7 @@ type WorkflowConversationBindingOwner = Readonly<{
 export type WorkflowMountedDraftActions = Readonly<{
     getSnapshot: () => WorkflowMountedDraftV1 | null;
     execute: (actionId: WorkflowAuthoringActionId, input: unknown, signal?: AbortSignal,
-        context?: WorkflowActionCallerContext) => Promise<WorkflowDraftMutationResultV1 | ActionApprovalRequestCreatedResult>;
+        context?: WorkflowActionCallerContext & Pick<WorkflowActionOperation, 'operationProgress'>) => Promise<WorkflowDraftMutationResultV1 | ActionApprovalRequestCreatedResult>;
 }>;
 type MountedWorkflowDraftOwner = (WorkflowConversationBindingOwner & Readonly<{
     kind: 'workflow'; actions?: WorkflowMountedDraftActions;
@@ -61,7 +61,7 @@ export function registerMountedWorkflowDraftOwner(owner: MountedWorkflowDraftOwn
 }
 export async function invokeWorkflowAuthoringAction(request: BindingRequest & Readonly<{
     actionId: WorkflowAuthoringActionId;
-    context: WorkflowActionCallerContext;
+    context: WorkflowActionCallerContext & Pick<WorkflowActionOperation, 'operationProgress'>;
 }>): Promise<WorkflowDraftGetResultV1 | ActionApprovalRequestCreatedResult> {
     const spec = WORKFLOW_AUTHORING_ACTION_SPECS.find(spec => spec.id === request.actionId);
     const parsed = spec?.inputSchema.safeParse(request.input);
@@ -115,5 +115,6 @@ export async function invokeWorkflowAuthoringAction(request: BindingRequest & Re
         requiredContributedActionDangerLevel: request.context.requiredContributedActionDangerLevel,
         expectedContributedActionOccurrenceId: request.context.expectedContributedActionOccurrenceId,
         signal: request.signal ?? request.context.signal,
+        operationProgress: request.context.operationProgress,
     }) : { status: 'unavailable' } as const;
 }

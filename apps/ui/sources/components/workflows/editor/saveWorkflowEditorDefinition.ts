@@ -1,8 +1,12 @@
 import { randomUUID } from '@/platform/randomUUID';
+import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
+import { WorkflowDraftMutationResultV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import { ActionApprovalRequestCreatedResultSchema, withActionAutomationNoticesV1, type ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { callWorkflowAction, type WorkflowActionCallerContext, type WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import { createWorkflowDefinition, updateWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowEditorSnapshotsEqual } from './useWorkflowEditorHistory';
@@ -13,6 +17,22 @@ export type PendingWorkflowDefinitionCreate = Readonly<{
     draft: WorkflowEditorDraft;
     description: string;
 }>;
+
+export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountScopeLifetime, draftId: string, operation?: WorkflowActionOperation) {
+    const notices: ActionAutomationNoticeV1[] = [];
+    const frontDoor = createFrontDoorActionExecute(undefined, {
+        onWorkflowDraftChildSettled: result => notices.push(...(result.automationNotices ?? [])),
+    });
+    // Both the draft and its children report through the existing notice owner.
+    const execute = Object.assign(async (...args: Parameters<typeof frontDoor>) =>
+        withActionAutomationNoticesV1(await frontDoor(...args), notices), frontDoor);
+    return await callWorkflowAction({ actionId: WORKFLOW_AUTHORING_ACTION_ID.draftSave,
+        input: { scope: accountLifetime.scope, draftId }, accountLifetime, execute, ...operation,
+        parseResult: value => {
+            const mutation = WorkflowDraftMutationResultV1Schema.safeParse(value);
+            return mutation.success ? mutation.data : ActionApprovalRequestCreatedResultSchema.parse(value);
+        } });
+}
 
 /** The editor and the in-place sentence retain the same create bytes until acknowledged. */
 export async function saveWorkflowEditorDefinition(params: Readonly<{

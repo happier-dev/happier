@@ -750,6 +750,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   function buildDefaultActionExecutor(opts?: Readonly<{
   /** Mounted draft destination; Action policy and draft settlement remain canonical. */
   sessionAuthoringPresentation?: import('@/components/sessions/new/newSessionSeedNavigation').SessionAuthoringPresentation;
+  /** Retain child Action notices in the native draft operation's result. */
+  onWorkflowDraftChildSettled?: (result: ActionExecuteResult) => void;
   /** One captured Voice editor intent; never serialized into Action input or approval. */
   voiceSettingsEdit?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceSettingsEdit'];
   /** Mounted History delivery; the consumer retains Account binding and delete-wins ownership. */
@@ -2655,8 +2657,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       context: { ...request.context,
         // Keep the admitted binding, but enter each child's ordinary captured
         // Account/approval lifecycle rather than the parent's lower-level graph.
-        ...(opts?.admittedClientActionId ? {
-          executeChildAction: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
+        ...(opts?.admittedClientActionId || opts?.onWorkflowDraftChildSettled ? {
+          executeChildAction: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
             const parent = opts.admittedClientActionParent;
             const caller = context?.actionCaller;
             // The Machine host admits a non-person caller's Workflow writes; only
@@ -2672,7 +2674,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             if (observationSetup && context?.authority !== 'present_user') {
               return Promise.resolve({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             }
-            return createDefaultActionExecutor(opts).execute(actionId, input, context);
+            const result = await createDefaultActionExecutor(opts).execute(actionId, input, context);
+            opts.onWorkflowDraftChildSettled?.(result);
+            return result;
           },
         } : {}),
       },
