@@ -614,18 +614,18 @@ async function cmdSet(args: string[], options: ServerSubcommandOptions): Promise
       })
     : await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
   if (!shouldUse) {
-    const active = await getActiveServerProfile();
+    const active = await getActiveServerProfile({ required: false });
     if (json) {
       await printJsonEnvelope({
         ok: true,
         kind: 'server_set',
-        data: { profile: summarizeProfile(created), active: summarizeProfile(active), used: false },
+        data: { profile: summarizeProfile(created), active: active ? summarizeProfile(active) : null, used: false },
       });
       return;
     }
     console.log(chalk.green(`✓ Saved relay profile: ${created.name} (${created.id})`));
     console.log(chalk.gray(`  ${created.serverUrl}`));
-    console.log(chalk.gray(`  Active relay is still: ${active.name} (${active.id})`));
+    if (active) console.log(chalk.gray(`  Active relay is still: ${active.name} (${active.id})`));
     return;
   }
   reloadConfiguration();

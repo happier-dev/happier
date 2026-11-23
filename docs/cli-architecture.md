@@ -7684,8 +7684,9 @@ unknown flags, so without that proof setup fails `cli_capability_missing` before
 whose profile was resolved is used as saved and never rewritten: the CLI's URL upsert only adopts
 identity-free profiles (a URL-only write would save a second profile beside an identity-bearing
 one), and an endpoint write would replace the Home's recorded canonical URL with the loopback URL
-the app reaches it on. `server set --no-use` runs only for a Home with no profile yet. In the
-UI, `buildLocalDaemonServiceSystemTaskSpec` scopes every daemon task to the app's active server
+the app reaches it on. `server set --no-use` runs only for a Home with no profile yet. Its JSON
+result includes the saved profile and `used: false`, with `active: null` when no profile is selected.
+In the UI, `buildLocalDaemonServiceSystemTaskSpec` scopes every daemon task to the app's active server
 (URL and identity) unless the caller names a Home (the Personal Home bootstrap names its own).
 The scope is also the one context rule for inherited selectors (0.2 R13 a): `scopeHappierJsonExecutor`
 drops `HAPPIER_ACTIVE_SERVER_ID`, `HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID`, `HAPPIER_SERVER_URL`,

@@ -56,9 +56,10 @@ export const ServerTestResultSchema = z.discriminatedUnion('ok', [
 ]);
 export type ServerTestResult = z.infer<typeof ServerTestResultSchema>;
 
-export const ServerSetResultSchema = z.looseObject({
-  active: ServerProfileSummarySchema,
-});
+export const ServerSetResultSchema = z.union([
+  z.looseObject({ active: ServerProfileSummarySchema }),
+  z.looseObject({ active: z.null(), profile: ServerProfileSummarySchema, used: z.literal(false) }),
+]);
 export type ServerSetResult = z.infer<typeof ServerSetResultSchema>;
 
 export const ServerListEnvelopeSchema = lazyZodSchema(() => z.extend(SessionControlEnvelopeSuccessSchema, {

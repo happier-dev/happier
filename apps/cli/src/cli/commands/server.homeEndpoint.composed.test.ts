@@ -3,6 +3,7 @@ import type { SpawnOptions } from 'child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ServerSetEnvelopeSchema } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
@@ -36,6 +37,47 @@ describe('Home endpoint publication → server set → daemon launch', () => {
   afterEach(() => {
     launches.length = 0;
     resetHomeConnectionDescriptorRevisionOwnerForTests();
+  });
+
+  it('saves the first desktop setup Home without requiring or selecting a terminal profile', async () => {
+    await withTempDir('happier-first-desktop-home-', async homeDir => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+        'HAPPIER_WEBAPP_URL']);
+      const previousExitCode = process.exitCode;
+      const output = captureConsoleLogAndMuteStdout();
+      const server = createServer((_request, response) => { response.writeHead(404).end(); });
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve); });
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing HTTP test address');
+        const origin = `http://127.0.0.1:${address.port}`;
+
+        await handleServerCommand(['set', '--server-url', origin, '--webapp-url', origin, '--no-use', '--json']);
+        const result: unknown = JSON.parse(output.logs.join('\n'));
+        expect(result).toMatchObject({ ok: true, kind: 'server_set', data: {
+          active: null, used: false, profile: { serverUrl: origin },
+        } });
+        const saved = ServerSetEnvelopeSchema.parse(result).data;
+        if (saved.active !== null) throw new Error('The command selected a terminal profile');
+        expect(await getServerProfile(saved.profile.id)).toMatchObject({ serverUrl: origin });
+        output.logs.length = 0;
+        await handleServerCommand(['current', '--json']);
+        expect(JSON.parse(output.logs.join('\n'))).toMatchObject({ ok: true, data: { active: null } });
+        expect(launches).toEqual([]);
+      } finally {
+        if (server.listening) {
+          server.closeAllConnections();
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+        output.restore();
+        process.exitCode = previousExitCode;
+        scope.restore();
+        reloadConfiguration();
+      }
+    });
   });
 
   it.each(['port-move', 'lost-continuity', 'other-home', 'conflicting-revision'] as const)(
