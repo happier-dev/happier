@@ -17451,6 +17451,8 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `Aggiungi a ${view}`,
             asOf: ({ time }: { time: string | number }) => `Alle ${time}`,
             sessionSubtitle: "Cosa ha usato questa sessione e quanto è costata.",
+            scopeReadRefused: "L’utilizzo non è disponibile per questo ambito.",
+            changeScope: "Cambia ambito",
             sessionRecipientSubtitle: "Utilizzo del tuo account in questa sessione.",
             machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'macchina', plural: 'macchine' })}`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agente', plural: 'agenti' })}`,

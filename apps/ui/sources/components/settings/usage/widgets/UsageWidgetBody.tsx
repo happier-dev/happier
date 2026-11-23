@@ -10,8 +10,8 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { t } from '@/text';
-import { UsageBodyReading, type UsageBodyProps, type UsageWidgetPresentationInputs } from './usageBodyKit';
-import { UsageExactHistoryDemandContext, useUsageRetryCommand } from './usageMountedControls';
+import { UsageBodyReadFailed, UsageBodyReading, type UsageBodyProps, type UsageWidgetPresentationInputs } from './usageBodyKit';
+import { UsageExactHistoryDemandContext } from './usageMountedControls';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
@@ -155,7 +155,6 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   const { model, query } = props;
   const slice = model.slice;
   const agentColor = useUsageAgentColor(slice);
-  const retry = useUsageRetryCommand(model.refresh, !!query && !slice && !!model.error && !model.pending);
   // Dim only facts that are being replaced: a previous period held while the new one arrives. A
   // re-read of the shown facts keeps them at full strength and says "Refreshing" in the frame's meta
   // slot; a source that is still outstanding is said by the body's own coverage line.
@@ -201,17 +200,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
     );
   if (!slice) {
     if (model.error && !model.pending)
-      return (
-        <SurfaceStateCard
-          testID={`${props.testID}.error`}
-          kind="error"
-          layout="inline"
-          title={t('usage.board.page.readFailedTitle')}
-          reason={t('usage.board.page.readFailedReason')}
-          diagnosticCode={model.error.code}
-          action={{ label: t('common.retry'), onPress: retry }}
-        />
-      );
+      return <UsageBodyReadFailed errorCode={model.error.code} testID={props.testID} onRetry={model.refresh} />;
     if (!model.requestedQuery && !model.pending)
       return (
         <SurfaceStateCard

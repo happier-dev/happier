@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -11,6 +11,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // The window's measured size and the device's pointer are the boundaries; the phone classification stays real.
@@ -33,6 +34,9 @@ vi.mock('expo-router', async () => {
     params: () => ({}),
   }).module;
 });
+vi.mock('@/utils/web/radixCjs', async () =>
+  (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock(),
+);
 vi.mock('socket.io-client', async (importOriginal) =>
   (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -78,6 +82,7 @@ const accounting: UsageAnalyticsQueryResponse = {
   breakdowns: {},
 };
 const visibleContentGeometry = {
+  scrollTo: () => {},
   measureInWindow: (
     done: (x: number, y: number, width: number, height: number) => void,
   ) => done(0, 0, viewport.width, 300),
@@ -85,10 +90,13 @@ const visibleContentGeometry = {
 
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let readFails = false;
+let refuseRead = false;
+let restorePopoverGlobals: (() => void) | undefined;
 
 beforeEach(() => {
   Object.assign(viewport, { width: 390, height: 844 });
   readFails = false;
+  refuseRead = false;
   vi.stubGlobal('navigator', {
     userAgent: 'Mozilla/5.0 (iPhone)',
     maxTouchPoints: 1,
@@ -97,6 +105,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   standardCleanup();
+  restorePopoverGlobals?.();
+  restorePopoverGlobals = undefined;
   vi.unstubAllGlobals();
   retireActiveServerAccountScopeLifetime();
   invalidateUsageQueryResources();
@@ -110,6 +120,7 @@ async function renderUsagePage(
   response = accounting,
   beforeRender?: (serverId: string) => Promise<void>,
   sessionId?: string,
+  sources?: string[],
 ) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
@@ -130,7 +141,9 @@ async function renderUsagePage(
         : request.path === '/v1/kv/bulk'
           ? Response.json({ values: [] })
           : request.path === '/v2/usage/query-batch'
-            ? undefined
+            ? refuseRead
+              ? Response.json({ v: 1, results: UsageAnalyticsQueryBatchRequestSchema.parse(request.body).queries.map(query => ({ query, error: 'not_found' })) })
+              : undefined
           : request.path === '/v2/usage/query'
             ? readFails
               ? Response.json({ error: 'unavailable' }, { status: 503 })
@@ -165,6 +178,7 @@ async function renderUsagePage(
                 metric: layoutId === 'costs' ? 'cost' : 'tokens',
                 costMode: 'auto',
                 focus: null,
+                scope: sources ? { period: { relative: '7days' }, agents: [], machines: [], projects: [], sources, session: null, costBasis: 'auto' } : undefined,
               }}
             />
           </CurrentUiContextProvider>
@@ -236,6 +250,62 @@ it('gives the phone read-failure notice the short form with Details and its Retr
   expect(line()!.props.reason).not.toBe(t('usage.board.charts.coveragePartialShort'));
   expect((line()!.props.actions as readonly { testID?: string }[]).map(action => action.testID))
     .toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+});
+
+it.each([
+  { width: 1440, refused: true },
+  { width: 390, refused: true },
+  { width: 1440, refused: false },
+  { width: 390, refused: false },
+])('preserves only actionable recovery for a Usage read at $width (refused: $refused)', async ({ width, refused }) => {
+  Object.assign(viewport, { width, height: 900 });
+  if (width === 1440) vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
+  refuseRead = refused;
+  readFails = !refused;
+  const screen = await renderUsagePage('costs', accounting, undefined, undefined, ['codex-native']);
+  const line = () => screen.findAllByType(SurfaceFreshnessLine).find(candidate =>
+    ['usage-page.header.failed', 'usage-page.header.scopeRefused'].includes(candidate.props.testID));
+  await waitForHomeGovernance(() => expect(line()).toBeDefined());
+  const actions = (line()?.props.actions ?? (line()?.props.action ? [line()!.props.action] : [])) as
+    readonly { testID?: string; onPress: () => void }[];
+  expect(actions.some(action => action.testID === 'usage-page.header.retry')).toBe(!refused);
+  if (!refused) return;
+
+  expect(line()?.props.tone).toBe('neutral');
+  expect(screen.getTextContent()).not.toContain('denied');
+  const chooser = width === 390 ? 'usage-filters.scope' : 'usage-filters.sources';
+  const otherChooser = width === 390 ? 'usage-filters.sources' : 'usage-filters.agents';
+  const expanded = (id: string) => {
+    const props = screen.findHostByTestId(id)?.props;
+    return props?.['aria-expanded'] ?? props?.accessibilityState?.expanded;
+  };
+  expect(expanded(chooser)).toBe(false);
+  const changeScope = actions.find(action => action.testID === 'usage-page.header.scopeRefused.changeScope');
+  expect(changeScope).toBeDefined();
+  restorePopoverGlobals = withPopoverWebGlobals();
+  await screen.pressByTestIdAsync('usage-page.header.scopeRefused.changeScope');
+  expect(expanded(chooser)).toBe(true);
+  expect(expanded(otherChooser)).not.toBe(true);
+});
+
+it('only shows the quiet refusal for a fixed shared Session', async () => {
+  refuseRead = true;
+  const sessionId = 'session-usage-scope-refused';
+  const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  const screen = await renderUsagePage('overview', accounting, async serverId => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applySessions([createSessionFixture({
+      id: sessionId, serverId, access: createSessionAccessFixture('view'),
+    })]);
+  }, sessionId);
+  await waitForHomeGovernance(() => expect(screen.findAllByType(SurfaceFreshnessLine).some(line =>
+    line.props.testID === 'usage-page.header.scopeRefused')).toBe(true));
+  expect(screen.findByTestId('usage-page.header.retry')).toBeNull();
+  expect(screen.findByTestId('usage-page.header.scopeRefused.changeScope')).toBeNull();
+  expect(screen.getTextContent()).not.toContain(t('usage.board.page.sessionRecipientSubtitle'));
+  expect(screen.getTextContent()).not.toContain('denied');
+  await screen.pressByTestIdAsync('usage-page.header.scopeRefused.technicalDetails.header');
+  expect(screen.getTextContent()).toContain('denied');
 });
 
 it.each(['view', 'owner'] as const)('qualifies the scope of the Session Usage page for %s access', async level => {

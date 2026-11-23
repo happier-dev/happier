@@ -43,7 +43,7 @@ import { formatUsageObservedAt, isUsageObservationFromEarlierDay } from '@/sync/
 import { t } from '@/text';
 import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
 import { createUsageAgentSeriesColor, readUsageChartAgentIds, UsageAgentColorProvider } from './usageAccent';
-import { USAGE_SCOPE_FILTER_ALL, useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
+import { USAGE_SCOPE_FILTER_ALL, useUsageWidgetPageFilters, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
 import { useUsageAppEnvironments } from './useUsageAppEnvironments';
 import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 import { UsageAppsNothingRecorded } from './UsageAppsNothingRecorded';
@@ -82,7 +82,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, usageSourceTitle } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -451,11 +451,21 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const metricPending = layoutLoading || visiblePendingMetric?.writing === true;
   const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
   const metricOptions = React.useMemo(() => usageTokensCostMetricOptions(), []);
+  const openScopeFilter = React.useRef<((field: UsageWidgetPageFilter['field']) => void) | null>(null);
+  const canChangeScope = facts.failure?.scopeRefusal?.canChangePageScope && !page.scope.session;
+  const scopeToChange = canChangeScope
+    ? admittedFilters.find(filter => filter.selected.length > 0) ?? admittedFilters.find(filter => filter.options.length > 1)
+    : undefined;
+  const changeScopeField = scopeToChange?.field;
+  const changeScope = React.useCallback(() => {
+    if (changeScopeField) openScopeFilter.current?.(changeScopeField);
+  }, [changeScopeField]);
   const filterBar = React.useMemo(() => <UsageFilterBar
     period={page.period}
     costBasis={page.scope.costBasis}
     coverageIncomplete={facts.coverageIncomplete}
     scopeFilters={admittedFilters}
+    openScopeFilter={openScopeFilter}
     onPeriodChange={selectPeriod}
     onCostBasisChange={selectCostBasis}
     costBasisOptions={costBasisOptions}
@@ -479,7 +489,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
         appsShown={appsShown}
-        homeUnavailable={homeUnavailable} phone={phone}
+        homeUnavailable={homeUnavailable} phone={phone} onChangeScope={changeScopeField ? changeScope : undefined}
         layouts={layoutsFact} {...(props.sessionId
           ? { sessionId: props.sessionId, serverId: props.authority?.scope.serverId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone chooses a
@@ -646,11 +656,12 @@ function UsagePageHeader(
     sessionId?: string;
     serverId?: string;
     phone?: boolean;
+    onChangeScope?: () => void;
     /** Your apps is shown: an empty period is the apps' own fact, and starting a session is not its next step. */
     appsShown?: boolean;
   }>,
 ) {
-  const { retry, history, layouts, phone } = props;
+  const { retry, history, layouts, phone, onChangeScope } = props;
   // A phone's header line cannot hold the partial or read-failure sentence: it says "Partial" and opens the sentence
   // on demand, never an ellipsis mid-word (USAGE-ACCEPT 1113 #16, 1118 #9). A failure keeps its Retry at the line end.
   // Which notice is open, by its identity: a new notice (Views Retry turning into the ownership refusal) opens closed.
@@ -658,7 +669,8 @@ function UsagePageHeader(
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const isRecipient = useSessionSelector(props.sessionId ?? '', props.serverId,
     session => session !== null && isSessionAccessRecipient(session.access, session.accessLevel));
-  const subtitle = isRecipient
+  const scopeRefusal = props.facts.failure?.scopeRefusal;
+  const subtitle = props.sessionId && scopeRefusal ? undefined : isRecipient
     ? t('usage.board.page.sessionRecipientSubtitle')
     : t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle');
   const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
@@ -676,6 +688,13 @@ function UsagePageHeader(
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
           <HomeReachabilityGate variant="line" presentation="inline" asOf={props.facts.observedAtMs}>{null}</HomeReachabilityGate>
+        </View>
+      </SurfaceFreshnessOnSheetProvider>
+    );
+    if (scopeRefusal && !layouts) return (
+      <SurfaceFreshnessOnSheetProvider>
+        <View style={styles.headerLine}>
+          <UsageScopeRefusalLine testID="usage-page.header.scopeRefused" code={scopeRefusal.code} onChangeScope={onChangeScope} />
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
@@ -717,7 +736,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
-  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, openNotice, olderReadAtMs, olderSource, counts]);
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, openNotice, olderReadAtMs, olderSource, counts, scopeRefusal, onChangeScope]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

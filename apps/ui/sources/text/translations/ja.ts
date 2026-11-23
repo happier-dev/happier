@@ -17357,6 +17357,8 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `${view} に追加`,
             asOf: ({ time }: { time: string | number }) => `${time} 時点`,
             sessionSubtitle: "このセッションの使用量とコスト。",
+            scopeReadRefused: "この範囲の使用量は表示できません。",
+            changeScope: "範囲を変更",
             sessionRecipientSubtitle: "このセッションでのあなたのアカウントの使用量。",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台のマシン`,
             agentsCount: ({ count }: { count: string | number }) => `${count} エージェント`,

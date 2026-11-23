@@ -17195,6 +17195,8 @@ settingsSession: {
       addTo: ({ view }: { view: string | number }) => `Dodaj do ${view}`,
       asOf: ({ time }: { time: string | number }) => `Stan na ${time}`,
       sessionSubtitle: "Zużycie i koszt tej sesji.",
+      scopeReadRefused: "Dane o użyciu w tym zakresie są niedostępne.",
+      changeScope: "Zmień zakres",
       sessionRecipientSubtitle: "Użycie na Twoim koncie w tej sesji.",
       machinesCount: ({ count }: { count: string | number }) => `Maszyny: ${count}`,
       agentsCount: ({ count }: { count: string | number }) => `Agenci: ${count}`,

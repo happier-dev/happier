@@ -16722,6 +16722,8 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `添加到 ${view}`,
             asOf: ({ time }: { time: string | number }) => `截至 ${time}`,
             sessionSubtitle: "此会话的用量和花费。",
+            scopeReadRefused: "无法查看此范围内的用量。",
+            changeScope: "更改范围",
             sessionRecipientSubtitle: "你的账号在此会话中的用量。",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台机器`,
             agentsCount: ({ count }: { count: string | number }) => `${count} 个代理`,

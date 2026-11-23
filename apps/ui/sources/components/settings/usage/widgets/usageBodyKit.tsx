@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import {
   readUsageAccountingReadAtMs,
   readUsageOldestAccountingObservation,
@@ -18,6 +19,7 @@ import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIden
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, USAGE_METER_METRICS, USAGE_SUMMARY_STAT_BASIS_PX, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -643,16 +645,20 @@ export function isUsageReadFailed(slice: UsageQueryResultSlice, sources: readonl
  * widget says the cause and offers Retry itself.
  */
 export function UsageBodyReadFailed(props: Readonly<{
-  slice: UsageQueryResultSlice;
-  sources: readonly string[];
   testID: string;
   onRetry: (callerContext?: ActionExecutorContext) => void;
-}>) {
+}> & (Readonly<{ slice: UsageQueryResultSlice; sources: readonly string[] }>
+  | Readonly<{ errorCode: string }>)) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
-  const gaps = readUsageCoverageGaps(props.slice, props.sources);
-  const failed = gaps.some(gap => gap.status === 'error');
-  const hidden = pageHasDetail && failed && usageCoverageLineMode(gaps, true) === 'hidden';
-  const retry = useUsageRetryCommand(props.onRetry, !hidden);
+  const resourceFailure = 'errorCode' in props;
+  const gaps = resourceFailure ? [] : readUsageCoverageGaps(props.slice, props.sources);
+  const failed = resourceFailure || gaps.some(gap => gap.status === 'error');
+  const hidden = pageHasDetail && failed && !resourceFailure && usageCoverageLineMode(gaps, true) === 'hidden';
+  const refusalCode = resourceFailure
+    ? usageScopeRefusalCode({ source: 'accounting', status: 'error', errorCode: props.errorCode })
+    : readUsageScopeRefusal(gaps)?.code;
+  const retry = useUsageRetryCommand(props.onRetry, !hidden && !refusalCode);
+  if (refusalCode) return hidden ? null : <UsageScopeRefusalLine testID={`${props.testID}.scopeRefused`} code={refusalCode} />;
   if (hidden)
     return (
       <SurfaceStateCard
@@ -666,11 +672,10 @@ export function UsageBodyReadFailed(props: Readonly<{
     );
   return (
     <SurfaceStateCard
-      testID={`${props.testID}.unavailable`}
+      testID={`${props.testID}.${resourceFailure ? 'error' : 'unavailable'}`}
       kind={failed ? 'error' : 'unavailable'}
       layout="inline"
-      size="line"
-      replacesContent={false}
+      {...(resourceFailure ? { diagnosticCode: props.errorCode } : { size: 'line' as const, replacesContent: false })}
       title={t('usage.board.page.readFailedTitle')}
       reason={t('usage.board.page.readFailedReason')}
       action={{ label: t('common.retry'), onPress: retry }}
@@ -857,8 +862,58 @@ export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boo
   return usagePageReadFamily(state.source) === 'quota' && state.errorCode === 'ownership_unproven';
 }
 
+function usageScopeRefusalCode(state: UsageCoverageStatus) {
+  if (!isUsageCoverageFailure(state)) return null;
+  switch (state.errorCode) {
+    case 'denied':
+    case 'permission_denied':
+    case 'unauthorized':
+    case 'forbidden':
+    case RPC_ERROR_CODES.FORBIDDEN:
+    case 'not_found':
+      return state.errorCode;
+    default:
+      return null;
+  }
+}
+
+function readUsageScopeRefusal(states: readonly UsageCoverageStatus[]) {
+  for (const state of states) {
+    const code = usageScopeRefusalCode(state);
+    if (code) return { code, canChangePageScope: usagePageReadFamily(state.source) !== 'quota' };
+  }
+  return null;
+}
+
+export function UsageScopeRefusalLine(props: Readonly<{
+  testID: string;
+  code: NonNullable<ReturnType<typeof usageScopeRefusalCode>>;
+  onChangeScope?: () => void;
+}>) {
+  return (
+    <>
+      <SurfaceFreshnessLine
+        testID={props.testID}
+        presentation="inline"
+        tone="neutral"
+        reason={t('usage.board.page.scopeReadRefused')}
+        {...(props.onChangeScope ? { action: {
+          label: t('usage.board.page.changeScope'),
+          onPress: props.onChangeScope,
+          testID: `${props.testID}.changeScope`,
+        } } : {})}
+      />
+      <TechnicalDetailsDisclosure
+        title={t('approvals.technicalDetails')}
+        testID={`${props.testID}.technicalDetails`}
+        lines={[{ key: 'code', label: t('approvals.failureTechnicalLabels.causeCode'), value: props.code }]}
+      />
+    </>
+  );
+}
+
 export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
-  return isUsageCoverageFailure(state) && !needsNewerServer(state) && !isUsageQuotaOwnershipUnproven(state);
+  return isUsageCoverageFailure(state) && !needsNewerServer(state) && !isUsageQuotaOwnershipUnproven(state) && !usageScopeRefusalCode(state);
 }
 
 /** One wording owner for the page's Sources chooser and the failed or pending line. */
@@ -868,7 +923,7 @@ export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: 
   const nameGaps = (list: readonly UsageQuerySourceState[]) => [...new Set(list.map(gap => gap.status === 'unsupported'
     ? `${usageSourceTitle(gap.source)} (${t('usage.board.sources.unsupported')})` : usageSourceTitle(gap.source)))].join(', ');
   const newer = gaps.filter(needsNewerServer);
-  const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap) && !isUsageQuotaOwnershipUnproven(gap));
+  const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap) && !isUsageQuotaOwnershipUnproven(gap) && !usageScopeRefusalCode(gap));
   const reasons = sources.includes('accounting')
     ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
   return [
@@ -928,6 +983,8 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
  */
 export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]) {
   const failures = readUsagePageFailures(slices);
+  const scopeRefusal = readUsageScopeRefusal(failures);
+  if (scopeRefusal) return { scopeRefusal, reason: t('usage.board.page.scopeReadRefused'), quiet: true, retryable: false, retainedQuotaAsOfMs: null };
   const retryable = failures.filter(canRetryUsageCoverageFailure);
   const ownershipUnproven = failures.some(isUsageQuotaOwnershipUnproven);
   if (!retryable.length && !ownershipUnproven) return null;
@@ -943,7 +1000,7 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
   const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
   // An ownership refusal is retried by an explicit reread (the owner's same-material recovery), so the notice offers the
   // page's one Retry for it too (acceptance 11-22 #20).
-  return { reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
+  return { scopeRefusal: null, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**
@@ -1034,9 +1091,11 @@ export function UsageCoverageLine(
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(gaps, pageHasDetail);
   const failed = mode === 'failed' || gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
-  const canRetry = gaps.some(canRetryUsageCoverageFailure) && !!props.onRetry;
+  const refusal = readUsageScopeRefusal(gaps);
+  const canRetry = !refusal && gaps.some(canRetryUsageCoverageFailure) && !!props.onRetry;
   const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && canRetry);
   if (mode === 'hidden') return null;
+  if (refusal) return <UsageScopeRefusalLine testID={props.testID} code={refusal.code} />;
   if (mode === 'failed') {
     // One short line: what failed, with its Retry; the detail is in Sources.
     const names = [...new Set(gaps.filter(isUsageCoverageFailure).map(gap => usageSourceTitle(gap.source)))].join(', ');

@@ -43,6 +43,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
     costBasis: UsageWidgetPageScope['costBasis'];
     coverageIncomplete: boolean;
     scopeFilters: readonly UsageWidgetPageFilter[];
+    openScopeFilter?: React.Ref<(field: UsageWidgetPageFilter['field']) => void>;
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The usage read that tells which cost bases exist has not answered yet. */
     costBasisPending: boolean;
@@ -73,7 +74,13 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   );
   const agentColor = useUsageAgentColor();
   // Coverage is said once, as a dot in Sources, while a source the page reads is incomplete.
-  const coverageIncomplete = props.coverageIncomplete;
+  const { coverageIncomplete } = props;
+  const linkScopeRecovery = props.openScopeFilter !== undefined;
+  const [openScopeFilter, setOpenScopeFilter] = React.useState<UsageWidgetPageFilter['field'] | null>(null);
+  React.useImperativeHandle(props.openScopeFilter, () => setOpenScopeFilter, []);
+  const onScopeFilterOpenChange = React.useCallback((field: UsageWidgetPageFilter['field'], open: boolean) => {
+    setOpenScopeFilter(current => open ? field : current === field ? null : current);
+  }, []);
   const filters = React.useMemo(
     (): SelectionListFilter[] =>
       props.scopeFilters.map((filter) => {
@@ -137,10 +144,14 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
             <UsageScopeSections sections={usageFilterSections(filter, choices, selectedIds, filter.select, resultHint)} onRequestClose={close} maxHeight={maxHeight}
               testID={`${props.testID}.${field}`} />
           ) } : {}),
+          ...(linkScopeRecovery ? {
+            open: openScopeFilter === field,
+            onOpenChange: (open: boolean) => onScopeFilterOpenChange(field, open),
+          } : {}),
           testID: `${props.testID}.${field}`,
         };
       }),
-    [props.scopeFilters, props.testID, coverageIncomplete, agentColor],
+    [props.scopeFilters, props.testID, coverageIncomplete, agentColor, linkScopeRecovery, openScopeFilter, onScopeFilterOpenChange],
   );
   // While the read that names the cost bases is outstanding the chip already shows the basis in force (its
   // only known choice), so the trailing edge keeps its width and nothing beside it moves when the rest arrive.
@@ -195,10 +206,14 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
               }))}
                 onRequestClose={close} maxHeight={maxHeight} testID={`${props.testID}.scope`} />
             ),
+            ...(linkScopeRecovery ? {
+              open: openScopeFilter !== null,
+              onOpenChange: (open: boolean) => onScopeFilterOpenChange(openScopeFilter ?? props.scopeFilters[0]!.field, open),
+            } : {}),
             testID: `${props.testID}.scope`,
           }
         : null,
-    [condensed, filters, props.scopeFilters, coverageIncomplete, props.testID],
+    [condensed, filters, props.scopeFilters, coverageIncomplete, props.testID, linkScopeRecovery, openScopeFilter, onScopeFilterOpenChange],
   );
   // A phone draws the six periods as one chooser (more than four short options are a select, not a segmented row), so the
   // period, Filters and the basis share one row (USAGE-ACCEPT 1121 #14, lab uframe-Rp). A wide screen keeps the segments.
