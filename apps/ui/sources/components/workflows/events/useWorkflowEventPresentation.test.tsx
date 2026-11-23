@@ -40,6 +40,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 let disposeExecutor: (() => void) | undefined;
 let reads: unknown[] = [];
 let workflowResponse: (actionId: string) => Promise<unknown>;
+let sessionRequest: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response | undefined>;
 let run = executionRun('Review the deployment changes');
 const source = { kind: 'execution_run', machineId: 'event-machine', runId: 'native-event-run' } as const;
 const fact = {
@@ -59,6 +60,7 @@ beforeAll(async () => { disposeExecutor = await installRealActionExecutorModuleL
 afterAll(() => disposeExecutor?.());
 beforeEach(async () => {
   reads = [];
+  sessionRequest = async () => undefined;
   workflowResponse = async actionId => { throw new Error(`Unexpected Workflow HTTP request: ${actionId}`); };
   run = executionRun('Review the deployment changes');
   // Only Home HTTP and the Machine Socket SDK are fixtures; lifetime, Action admission and header reads stay real.
@@ -88,7 +90,7 @@ beforeEach(async () => {
           ExecutionRunGetResponseSchema.parse({ run }), request.callId) };
       });
     },
-    request: async (url, init) => await relay.handle(new URL(String(url)), init) ?? await http.fetch(url, init),
+    request: async (url, init) => await sessionRequest(url, init) ?? await relay.handle(new URL(String(url)), init) ?? await http.fetch(url, init),
   });
   await (await import('@/sync/sync')).sync.refreshMachines();
 });
@@ -177,6 +179,49 @@ it("names a Session's turn by its Agent and carries the Agent's mark (lab events
   const hook = await renderHook(() => useWorkflowEventPresentation(turn, lifetime.scope));
   expect(hook.getCurrent()).toMatchObject({ agentId: 'claude',
     title: t('workflows.events.agentTurnStarted', { agent: resolveAgentCatalogTitle('claude') }) });
+});
+
+it('names unselected Events Sessions in one display batch and deduplicates repeated occurrences', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+  const { createCompactSessionListFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+  const { createWorkflowActivityProjection } = await import('@/sync/engine/workflows/workflowActivityProjection');
+  const { WorkflowEventsRows } = await import('./WorkflowEventsList');
+  const { SessionReadBatchRequestV1Schema } = await import('@happier-dev/protocol/sessions/read/sessionReadBatchV1');
+  const sessionIds = ['cold-event-session-a', 'cold-event-session-b'];
+  const sessions = sessionIds.map((id, index) => createPlainSessionWithDisplayRecordFixture({ id, metadata: {
+    path: '/repo', host: 'fixture', flavor: 'claude', summary: { text: `Inspected worktree ${index}`, updatedAt: 1 },
+  } }));
+  const batches: string[][] = [];
+  const exactReads: string[] = [];
+  const batchBoundary = createCompactSessionListFetchBoundary(async (url) => {
+    const row = sessions.find(session => new URL(String(url)).pathname === `/v2/sessions/${session.id}`);
+    return row ? Response.json({ session: row }) : undefined;
+  });
+  sessionRequest = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v2/sessions/read-batch') batches.push([...SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body))).sessionIds]);
+    if (sessionIds.some(id => path === `/v2/sessions/${id}`)) exactReads.push(path);
+    return path === '/v2/sessions/read-batch' || exactReads.includes(path) ? batchBoundary(url, init) : undefined;
+  };
+  const projection = createWorkflowActivityProjection();
+  const now = Date.now();
+  const keys = ['finished-0', 'finished-1', 'started-0'];
+  projection.apply(keys.map((key, index): WorkflowActivityFact => ({ key, kind: 'session', sessionId: sessionIds[index % 2]!,
+    event: 'parentTurnCompleted', turnId: `turn-${index}`, coverage: 'live', occurredAt: now - index, sourceRevision: index + 1 })));
+  await vi.waitFor(() => expect(projection.getKeys()).toHaveLength(3));
+  const screen = await renderScreen(<WorkflowEventsRows
+    feed={{ projection, keys, getKeys: projection.getKeys, getRow: projection.getRow, subscribeRow: projection.subscribeRow,
+      error: null, loadingMore: false, loadMoreError: null, async loadMore() {}, async readPage() { return null; }, async retry() {},
+      status: 'live', listeningSince: now, retained: null, historyError: null }}
+    scope={lifetime.scope} filter="all" selectedKey={null} onSelect={() => {}} surface="plane" active testID="test-events" />);
+  await vi.waitFor(() => {
+    expect(screen.getTextContent()).toContain('Inspected worktree 0');
+    expect(screen.getTextContent()).toContain('Inspected worktree 1');
+    expect(screen.getTextContent()).toContain(resolveAgentCatalogTitle('claude'));
+  });
+  expect(batches).toEqual([sessionIds]);
+  expect(exactReads).toEqual([]);
 });
 
 it('keeps one checked subject when moving between Session, Machine and Project rows', async () => {

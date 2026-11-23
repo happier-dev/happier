@@ -36,6 +36,12 @@ export function buildWorkflowEventFilterTabs(counts: Readonly<Record<WorkflowEve
   }));
 }
 
+export function readWorkflowEventSessionId(fact: WorkflowActivityFact | undefined): string | null {
+  if (fact?.kind === 'session') return fact.sessionId;
+  if (fact?.coverage !== 'retained_cause' || fact.evidence.source.kind !== 'execution_run') return null;
+  return fact.evidence.source.sessionId ?? null;
+}
+
 export function matchesWorkflowEventFilter(
   fact: WorkflowActivityFact,
   filter: WorkflowEventFilter,

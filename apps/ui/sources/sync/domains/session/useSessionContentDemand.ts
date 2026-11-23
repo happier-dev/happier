@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { isSessionContentUnsettled as isSessionRowContentUnsettled } from '@/sync/domains/session/encryptedContentAvailability';
+import { isSessionContentUnsettled as isSessionRowContentUnsettled, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { retainVisibleSessionListSurfaces, type SessionListContentDemand } from '@/sync/domains/session/sessionSurfaceVisibility';
@@ -12,11 +12,12 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
  * Whether a Session's content is still waiting for a decision: an encrypted row no decryption owner
  * has settled yet (neither readable nor blocked). A row this device has not listed is undecided too.
  */
-function isSessionContentUnsettled(address: SessionAddress): boolean {
+function isSessionContentUnsettled(address: SessionAddress, demand: SessionListContentDemand): boolean {
     const row = readSessionListRowForServerId(
         readRegisteredStorageState()?.sessionListRowsByServerId, address.serverId, address.sessionId,
     );
-    return row === null || isSessionRowContentUnsettled(row);
+    return row === null || isSessionRowContentUnsettled(row)
+        || (demand === 'list-display' && row.metadata === null && readSessionContentAvailability(row) === 'ready');
 }
 
 /**
@@ -60,7 +61,7 @@ export function useSessionContentDemand(
         if (demanded.length === 0) return;
         const entered = demanded.filter(address => !earlier.has(demandKey(address)));
         const release = retainVisibleSessionListSurfaces(demanded, contentDemand);
-        const toHydrate = hydrate === 'unsettled' && !resultTurnId ? entered.filter(isSessionContentUnsettled) : entered;
+        const toHydrate = hydrate === 'unsettled' && !resultTurnId ? entered.filter(address => isSessionContentUnsettled(address, contentDemand)) : entered;
         let current = true;
         const settled = () => { if (current) onSettled?.(); };
         if (toHydrate.length > 0) fireAndForget((resultTurnId

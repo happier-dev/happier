@@ -15,7 +15,8 @@ import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { useWorkflowActivityFeed } from '@/sync/domains/workflows/useWorkflowActivityFeed';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -29,6 +30,7 @@ import { t } from '@/text';
 import {
   matchesWorkflowEventFilter,
   buildWorkflowEventFilterTabs,
+  readWorkflowEventSessionId,
   type WorkflowEventFilter,
 } from './workflowEventFacts';
 import {
@@ -185,6 +187,23 @@ export const WorkflowEventsRows = React.memo(function WorkflowEventsRows(
           }),
     [feed.keys, feed.projection, filter],
   );
+  const lifetime = useActiveServerAccountScopeLifetime();
+  const serverId = props.scope?.serverId;
+  const sessionAddresses = React.useMemo(() => {
+    if (!serverId) return [];
+    const ids = new Set<string>();
+    for (const key of keys) {
+      const sessionId = readWorkflowEventSessionId(feed.projection.getRow(key));
+      if (sessionId !== null) ids.add(sessionId);
+    }
+    return [...ids].map(sessionId => ({ serverId, sessionId }));
+  }, [keys, feed.projection, serverId]);
+  useSessionContentDemand(sessionAddresses, {
+    tag: 'workflow-events-session-display',
+    hydrate: 'unsettled',
+    contentDemand: 'list-display',
+    active: props.active && areServerAccountScopesEqual(props.scope, lifetime?.scope),
+  });
   if (keys.length === 0) {
     // Listening with the retained page not read yet is still loading: "nothing yet" is said only once the
     // feed has its first page (DESIGN-ACCEPT-1 D9: a remounted feed read as empty while its page was in flight).
