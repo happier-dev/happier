@@ -394,7 +394,9 @@ describe('Database Insights surfaces', () => {
       expect(read?.input).toMatchObject({
         request: { group: 'statements', selection: { statementKey: 'q-slow' } },
       });
-      expect(await details.queryByText('99.2%')).toBeTruthy();
+      expect(await details.queryByRole('group', {
+        name: 'Read from memory: 99.2%, of the blocks it read',
+      })).toBeTruthy();
     } finally {
       await details.dispose();
     }
