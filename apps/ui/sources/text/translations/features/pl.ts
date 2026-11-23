@@ -17623,6 +17623,7 @@ const polish: TeamsTranslationRoot = {
                 memberNotEligible: 'Ta osoba nie mo\u017ce korzysta\u0107 z tego po\u015bwiadczenia.',
                 sessionPolicyIncompatible: 'Tego po\u015bwiadczenia nie mo\u017cna u\u017cy\u0107 w tej sesji zgodnie z jego zasadami udost\u0119pniania.',
                 brokerUnavailable: 'Maszyna pośrednicząca jest teraz nieosiągalna. Spróbuj ponownie, gdy wróci.',
+                brokerInitiatorUnavailable: 'Po\u0142\u0105czenie do obs\u0142ugi wsp\u00f3\u0142dzielonych po\u015bwiadcze\u0144 na maszynie, na kt\u00f3rej dzia\u0142a agent, nie jest jeszcze gotowe. Sprawd\u017a po\u0142\u0105czenie tej maszyny z tym Home i spr\u00f3buj ponownie.',
                 sourceOwnerRequired: 'Tylko osoba, która jest właścicielem tego źródła, może wprowadzić tę zmianę.',
                 nativeDeliveryUnavailable: 'Natywne dostarczanie poświadczeń jest niedostępne lub nie zostało zweryfikowane na tej maszynie. Wybierz inną maszynę lub współdzielone poświadczenie.',
                 sourceMissing: 'Te poświadczenia nie wskazują już istniejącego źródła.',

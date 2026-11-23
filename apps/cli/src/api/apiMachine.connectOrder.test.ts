@@ -55,6 +55,7 @@ vi.mock('node:child_process', async importOriginal => {
 const callOrder = vi.hoisted(() => [] as string[]);
 const ioMock = vi.hoisted(() => vi.fn());
 const probeReadinessMock = vi.hoisted(() => vi.fn(async () => ({ status: 'ready' as const })));
+const loggerInfoMock = vi.hoisted(() => vi.fn());
 const loggerWarnMock = vi.hoisted(() => vi.fn());
 const loggerDebugMock = vi.hoisted(() => vi.fn());
 
@@ -121,7 +122,7 @@ vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: loggerDebugMock,
-    info: () => undefined,
+    info: loggerInfoMock,
     infoFile: () => undefined,
     warn: loggerWarnMock,
     debugLargeJson: () => undefined,
@@ -396,6 +397,7 @@ describe('ApiMachineClient connect ordering', () => {
   afterEach(() => {
     callOrder.length = 0;
     probeReadinessMock.mockClear();
+    loggerInfoMock.mockClear();
     loggerWarnMock.mockClear();
     loggerDebugMock.mockClear();
     ioMock.mockReset();
@@ -823,6 +825,10 @@ describe('ApiMachineClient connect ordering', () => {
           },
         },
       ]));
+      await vi.waitFor(() => expect(loggerInfoMock).toHaveBeenCalledWith(
+        '[API MACHINE] Core machine-control RPC registration ready',
+        { advertisesOperationProtocolCapabilities: true },
+      ));
     } finally {
       await client.shutdown();
     }

@@ -424,6 +424,12 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   let restoredRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
   let model: TeamCredentialProviderModelCatalogEntryV1;
   let brokerOpens = 0;
+  const missingInitiatorEndpoint = {
+    phase: 'providers.team_credential.broker_admission',
+    errorClass: 'Error',
+    errorCode: 'initiator_endpoint_missing',
+    httpStatus: null,
+  } as const;
   let catalogReads = 0;
   let consentCatalogReads = 0;
   const consentCatalogReadStacks: string[] = [];
@@ -521,7 +527,9 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
               signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } } };
         },
         openTunnel: async request => {
-          if (metadata === 'tunnel start failed') throw new IrohNativeOperationError('transport-unavailable', 'Native tunnel start failed');
+          if (metadata === 'tunnel start failed' && brokerOpens === 1) {
+            throw new IrohNativeOperationError('transport-unavailable', 'Native tunnel start failed');
+          }
           if (nativeTunnelOpen) return await nativeTunnelOpen(request);
           const { refreshBrokerOpen } = request;
           refreshStream = refreshBrokerOpen;
@@ -650,7 +658,9 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
       if (path === PROVIDER_BROKER_OPEN_HTTP_PATH_V1) {
         expect(options?.headers?.Authorization).toBe(`Bearer ${h.requester.bootstrap.credentials.token}`);
         brokerOpens++;
-        if (metadata === 'admission refused') return { status: 200, data: { ok: false, reasonCode: 'broker_unavailable' } };
+        if (metadata === 'admission refused') return { status: 200, data: {
+          ok: false, reasonCode: 'broker_unavailable', failureCause: missingInitiatorEndpoint,
+        } };
         const request = ProviderBrokerOpenRequestV1Schema.parse(data);
         if (request.refreshAuthority) {
           const heldRefresh = holdNextRefresh;
@@ -804,14 +814,19 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal }))
       .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
     expect(brokerOpens).toBe(1);
+    await expect(openThroughRunner()).resolves.toMatchObject({ kind: 'provider_broker.binding', status: 'opened' });
+    expect(brokerOpens).toBe(2);
     return;
   }
   if (metadata === 'admission refused') {
     const refusal = await openThroughRunner().then(() => null, (error: unknown) => error);
     expect(refusal).toMatchObject({ code: 'broker_unavailable' });
-    expect(boundary.responseBody).toMatchObject({ ok: false, error: { code: 'broker_unavailable' } });
+    expect(boundary.responseBody).toMatchObject({ ok: false, error: {
+      code: 'broker_unavailable', failureCause: missingInitiatorEndpoint,
+    } });
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal }))
-      .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
+      .toMatchObject({ source: 'team_credential', code: 'broker_unavailable',
+        failureCause: { actionCause: missingInitiatorEndpoint } });
     expect(brokerOpens).toBe(1);
     const phases = bindingPhaseLog.mock.calls.flatMap(([label, value]) => label === '[CONNECTED ACCOUNT] Materialization phase'
       && value && typeof value === 'object' ? [value as Record<string, unknown>] : []);

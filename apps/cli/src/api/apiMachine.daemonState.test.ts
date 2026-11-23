@@ -205,6 +205,54 @@ describe('daemon state publication cost contract', () => {
     } finally { await client.shutdown(); }
   });
 
+  it('keeps the live Iroh endpoint when a preceding complete capability publication settles late', async () => {
+    const machine: Machine = { id: 'live-iroh', encryptionMode: 'plain', metadata: null, metadataVersion: 0,
+      daemonState: { status: 'running' }, daemonStateVersion: 0 };
+    const firstPublication = deferred<void>();
+    const releaseFirstPublication = deferred<void>();
+    const stateWritten = deferred<void>();
+    const endpoint = { endpointId: 'b'.repeat(64) };
+    let revision = 0;
+    let persistedEndpoint: string | undefined;
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event === 'machine-update-state') {
+        const request = MachineUpdateStateRequestSchema.parse(payload);
+        stateWritten.resolve();
+        return { result: 'success', version: request.expectedVersion + 1, daemonState: request.daemonState };
+      }
+      expect(event).toBe(MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1);
+      const { capabilities } = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.parse(payload);
+      if (!capabilities.irohMachineEndpoint) {
+        firstPublication.resolve();
+        await releaseFirstPublication.promise;
+      }
+      // The Home stores each completed capability publication as a replacement.
+      persistedEndpoint = capabilities.irohMachineEndpoint?.endpointId;
+      return { v: 1, result: 'success', revision: ++revision };
+    } });
+    const client = new ApiMachineClient(String(1), machine);
+    Reflect.set(client, 'socket', socket);
+    const reconcile = () => client.updateDaemonState(state => ({
+      ...state, status: 'running', peerMediation: { iroh: { endpoint } },
+    }));
+    try {
+      const refresh = client.refreshProviderBrokerIngressAdvertisement();
+      await firstPublication.promise;
+      const publishEndpoint = reconcile();
+      await stateWritten.promise;
+      // Run all runnable socket work before releasing the stalled Home transaction.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      releaseFirstPublication.resolve();
+      await Promise.all([refresh, publishEndpoint]);
+      await expect(reconcile()).resolves.toBe('unchanged');
+      expect(persistedEndpoint).toBe(endpoint.endpointId);
+      expect(revision).toBe(2);
+    } finally {
+      releaseFirstPublication.resolve();
+      await client.shutdown();
+    }
+  });
+
   it('joins concurrent equal changes and publishes only the latest pending state while retaining other fields', async () => {
     const first = deferred<void>();
     const boundary = createPublicationBoundary(async write => {

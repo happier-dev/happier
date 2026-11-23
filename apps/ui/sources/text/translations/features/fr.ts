@@ -17656,6 +17656,7 @@ const french: TeamsTranslationRoot = {
                 memberNotEligible: 'Cette personne ne peut pas utiliser cet identifiant.',
                 sessionPolicyIncompatible: 'Cet identifiant ne peut pas \u00eatre utilis\u00e9 dans cette session avec sa politique de partage.',
                 brokerUnavailable: 'La machine courtier est injoignable pour l’instant. Réessaie quand elle sera de retour.',
+                brokerInitiatorUnavailable: 'La connexion pour les identifiants partag\u00e9s n\u2019est pas pr\u00eate sur la machine qui ex\u00e9cute l\u2019agent. V\u00e9rifiez sa connexion \u00e0 ce Home, puis r\u00e9essayez.',
                 sourceOwnerRequired: 'Seule la personne qui possède cette source peut effectuer ce changement.',
                 nativeDeliveryUnavailable: 'La transmission native des identifiants est indisponible ou n’a pas pu être vérifiée sur cette machine. Choisissez une autre machine ou un autre identifiant partagé.',
                 sourceMissing: 'Cet identifiant ne désigne plus une source existante.',

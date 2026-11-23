@@ -17475,6 +17475,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 memberNotEligible: '\u6b64\u4eba\u65e0\u6cd5\u4f7f\u7528\u8be5\u51ed\u636e\u3002',
                 sessionPolicyIncompatible: '\u6309\u7167\u5171\u4eab\u7b56\u7565\uff0c\u8be5\u51ed\u636e\u4e0d\u80fd\u5728\u6b64\u4f1a\u8bdd\u4e2d\u4f7f\u7528\u3002',
                 brokerUnavailable: '中转机器当前无法连接。等它恢复后重试。',
+                brokerInitiatorUnavailable: '\u8fd0\u884c\u4ee3\u7406\u7684\u673a\u5668\u5c1a\u672a\u51c6\u5907\u597d\u4f7f\u7528\u5171\u4eab\u51ed\u636e\u7684\u8fde\u63a5\u3002\u8bf7\u68c0\u67e5\u8fd9\u53f0\u673a\u5668\u5230\u6b64 Home \u7684\u8fde\u63a5\uff0c\u7136\u540e\u91cd\u8bd5\u3002',
                 sourceOwnerRequired: '只有拥有该来源的人才能做这项更改。',
                 nativeDeliveryUnavailable: '此机器上的原生凭据传递不可用或无法验证。请选择其他机器或共享凭据。',
                 sourceMissing: '此凭据指向的来源已不存在。',

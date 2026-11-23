@@ -26,14 +26,13 @@ function createMachine(): Machine {
 }
 
 function createCapabilityPublicationClient(): ApiMachineClient {
-  // Exercise the real publication owner without unrelated Session RPC constructor
-  // registration (currently blocked by unclassified transcript.unfollow).
-  return Object.assign(Object.create(ApiMachineClient.prototype), {
-    machine: createMachine(),
-    lifecycleDependencies: {},
-    currentIrohMachineEndpoint: null,
-    activeTransportGeneration: 1,
-  });
+  const client = new ApiMachineClient('publication-fixture', createMachine());
+  Reflect.set(client, 'activeTransportGeneration', 1);
+  return client;
+}
+
+function readyHomeFeatures(raw: unknown) {
+  return { status: 'ready' as const, features: FeaturesResponseSchema.parse(raw) };
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
@@ -294,20 +293,17 @@ describe('ApiMachineClient operation protocol capability publication', () => {
 
   it('withdraws the broker application capability until the composition reports a live handler', async () => {
     const client = new ApiMachineClient('token', createMachine(), undefined, {
-      resolveServerFeaturesSnapshot: async () => ({
-        status: 'ready',
+      resolveServerFeaturesSnapshot: async () => readyHomeFeatures({
         features: {
-          features: {
-            teams: {
+          teams: {
+            enabled: true,
+            credentialResources: {
               enabled: true,
-              credentialResources: {
-                enabled: true,
-                externalApi: { enabled: false },
-              },
+              externalApi: { enabled: false },
             },
           },
         },
-      } as never),
+      }),
     });
     const readProjection = async () => await (
       client as unknown as {
@@ -325,18 +321,19 @@ describe('ApiMachineClient operation protocol capability publication', () => {
   });
 
   it.each([
-    ['old Home without the feature projection', { status: 'ready', features: { capabilities: {} } }],
+    ['old Home without the feature projection', { features: {}, capabilities: {} }],
     ['malformed feature projection', {
-      status: 'ready',
-      features: { features: { teams: { enabled: true, credentialResources: { enabled: 'yes' } } } },
+      features: { teams: { enabled: true, credentialResources: { enabled: 'yes' } } },
     }],
     ['explicitly disabled feature', {
-      status: 'ready',
-      features: { features: { teams: { enabled: true, credentialResources: { enabled: false } } } },
+      features: { teams: { enabled: true, credentialResources: { enabled: false } } },
     }],
   ])('does not advertise broker ingress to an %s', async (_label, snapshot) => {
     const client = new ApiMachineClient('token', createMachine(), undefined, {
-      resolveServerFeaturesSnapshot: async () => snapshot as never,
+      resolveServerFeaturesSnapshot: async () => {
+        const parsed = FeaturesResponseSchema.safeParse(snapshot);
+        return parsed.success ? { status: 'ready', features: parsed.data } : undefined;
+      },
     });
     await client.setProviderBrokerIngressLive(true);
 
@@ -350,44 +347,40 @@ describe('ApiMachineClient operation protocol capability publication', () => {
   it('re-publishes the live handler capability across Home feature snapshot transitions', async () => {
     let enabled = false;
     const client = new ApiMachineClient('token', createMachine(), undefined, {
-      resolveServerFeaturesSnapshot: async () => ({
-        status: 'ready',
+      resolveServerFeaturesSnapshot: async () => readyHomeFeatures({
         features: {
-          features: {
-            teams: {
-              enabled: true,
-              credentialResources: {
-                enabled,
-                externalApi: { enabled: false },
-              },
+          teams: {
+            enabled: true,
+            credentialResources: {
+              enabled,
+              externalApi: { enabled: false },
             },
           },
         },
-      } as never),
+      }),
     });
-    const publish = vi.fn(async () => 1);
-    const internal = client as unknown as {
-      socket: { connected: boolean } | null;
-      publishOperationProtocolCapabilitiesOnSocket(
-        socket: unknown,
-        capabilities: Record<string, unknown>,
-      ): Promise<number>;
-    };
-    internal.socket = { connected: true };
-    internal.publishOperationProtocolCapabilitiesOnSocket = publish;
+    const socket = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async () => ({ v: 1, result: 'success', revision: 1 }),
+    });
+    Reflect.set(client, 'socket', socket);
+    const expectCapabilities = (capabilities: Record<string, unknown>) =>
+      expect(socket.emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+        machineId: 'machine-1', capabilities,
+      });
 
     await client.setProviderBrokerIngressLive(true);
-    expect(publish).toHaveBeenLastCalledWith(expect.anything(), {});
+    expectCapabilities({});
 
     enabled = true;
     await client.refreshProviderBrokerIngressAdvertisement();
-    expect(publish).toHaveBeenLastCalledWith(expect.anything(), {
+    expectCapabilities({
       providerBrokerIngress: { protocolVersions: [1] },
     });
 
     enabled = false;
     await client.refreshProviderBrokerIngressAdvertisement();
-    expect(publish).toHaveBeenLastCalledWith(expect.anything(), {});
+    expectCapabilities({});
   });
 
   it('includes placement and private authoring-origin admission only when the server advertises cumulative V4 support', async () => {
@@ -396,19 +389,17 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       createMachine(),
       undefined,
       {
-        resolveServerFeaturesSnapshot: async () => ({
-          status: 'ready',
-          features: {
-            capabilities: {
-              accountStoredContentCompatibility: {
-                v: 1,
-                minimumProtocolVersion: 2,
-                currentProtocolVersion,
-                declarationTransport: 'http-header-and-socket-auth-v1',
-              },
+        resolveServerFeaturesSnapshot: async () => readyHomeFeatures({
+          features: {},
+          capabilities: {
+            accountStoredContentCompatibility: {
+              v: 1,
+              minimumProtocolVersion: 2,
+              currentProtocolVersion,
+              declarationTransport: 'http-header-and-socket-auth-v1',
             },
           },
-        } as never),
+        }),
       },
     );
     const readProjection = async (client: ApiMachineClient) => await (
@@ -437,10 +428,10 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       {
         resolveServerFeaturesSnapshot: async () => pendingInputProtocolVersion === null
           ? undefined
-          : ({
-              status: 'ready',
-              features: { capabilities: { session: { pendingInput: { protocolVersion: pendingInputProtocolVersion } } } },
-            } as never),
+          : readyHomeFeatures({
+              features: {},
+              capabilities: { session: { pendingInput: { protocolVersion: pendingInputProtocolVersion } } },
+            }),
       },
     );
     const readProjection = async (client: ApiMachineClient) => await (
@@ -526,20 +517,18 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       } } },
     };
     const client = new ApiMachineClient('token', createMachine(), undefined, {
-      resolveServerFeaturesSnapshot: async () => ({
-        status: 'ready',
-        features: {
-          capabilities: {
-            session: { pendingInput: { protocolVersion: 3 } },
-            accountStoredContentCompatibility: {
-              v: 1,
-              minimumProtocolVersion: 2,
-              currentProtocolVersion: 4,
-              declarationTransport: 'http-header-and-socket-auth-v1',
-            },
+      resolveServerFeaturesSnapshot: async () => readyHomeFeatures({
+        features: {},
+        capabilities: {
+          session: { pendingInput: { protocolVersion: 3 } },
+          accountStoredContentCompatibility: {
+            v: 1,
+            minimumProtocolVersion: 2,
+            currentProtocolVersion: 4,
+            declarationTransport: 'http-header-and-socket-auth-v1',
           },
         },
-      } as never),
+      }),
     });
     (client as unknown as { sessionSpawnV1OutcomeRequired: boolean })
       .sessionSpawnV1OutcomeRequired = true;

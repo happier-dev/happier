@@ -253,6 +253,28 @@ describe('closed startup-failure recovery copy', () => {
         }
     });
 
+    it('directs the person to the Session Machine when Home reports a missing initiator endpoint', async () => {
+        const code = 'broker_unavailable';
+        const failureCause = { phase: 'authentication' as const, failureReason: 'unknown' as const, actionCause: {
+            phase: 'providers.team_credential.broker_admission',
+            errorClass: 'Error' as const,
+            errorCode: 'initiator_endpoint_missing',
+            httpStatus: null,
+        } };
+        for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await useLanguage(language);
+            const composer = resolveSessionSpawnNewResultFailureMessage({
+                type: 'error', code: 'spawn_failed', retryable: true,
+                launchError: { kind: 'launch_error', code, message: 'private broker diagnostic', failureCause },
+            });
+            const retained = presentSessionRuntimeIssue(issue({ code, failureCause })).message;
+            expect(retained).toBe(t('teams.credentials.errors.brokerInitiatorUnavailable'));
+            expect(retained).not.toContain(t('teams.credentials.recovery.ownerHandoff'));
+            expect(composer).toContain(retained!);
+            expect(composer).not.toContain('private broker diagnostic');
+        }
+    });
+
     it.each(['daemon_draining', 'daemon_shutting_down'])('presents the %s launch refusal without private upstream prose', async code => {
         await useLanguage('en');
         const message = resolveSessionSpawnNewResultFailureMessage({

@@ -17414,6 +17414,7 @@ const german: TeamsTranslationRoot = {
                 memberNotEligible: 'Diese Person kann diese Zugangsdaten nicht verwenden.',
                 sessionPolicyIncompatible: 'Diese Zugangsdaten k\u00f6nnen in dieser Sitzung unter ihrer Freigaberichtlinie nicht verwendet werden.',
                 brokerUnavailable: 'Der Broker-Rechner ist gerade nicht erreichbar. Versuche es erneut, sobald er zurück ist.',
+                brokerInitiatorUnavailable: 'Die Verbindung f\u00fcr geteilte Zugangsdaten ist auf der Maschine, auf der der Agent l\u00e4uft, noch nicht bereit. Pr\u00fcfe ihre Verbindung zu diesem Home und versuche es erneut.',
                 sourceOwnerRequired: 'Nur wer diese Quelle besitzt, kann diese Änderung vornehmen.',
                 nativeDeliveryUnavailable: 'Die native Bereitstellung von Zugangsdaten ist auf diesem Rechner nicht verfügbar oder konnte nicht geprüft werden. Wähle einen anderen Rechner oder geteilte Zugangsdaten.',
                 sourceMissing: 'Diese Zugangsdaten zeigen auf keine vorhandene Quelle mehr.',

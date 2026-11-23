@@ -17599,6 +17599,7 @@ const italian: TeamsTranslationRoot = {
                 memberNotEligible: 'Questa persona non pu\u00f2 usare questa credenziale.',
                 sessionPolicyIncompatible: 'Questa credenziale non pu\u00f2 essere usata in questa sessione con la sua politica di condivisione.',
                 brokerUnavailable: 'La macchina broker non è raggiungibile in questo momento. Riprova quando torna.',
+                brokerInitiatorUnavailable: 'La connessione per le credenziali condivise non \u00e8 ancora pronta sulla macchina che esegue l\u2019agente. Controlla la sua connessione a questo Home e riprova.',
                 sourceOwnerRequired: 'Solo chi possiede questa fonte può fare questa modifica.',
                 nativeDeliveryUnavailable: 'La consegna nativa delle credenziali non è disponibile o non è stata verificata su questa macchina. Scegli un’altra macchina o credenziale condivisa.',
                 sourceMissing: 'Questa credenziale non punta più a una fonte esistente.',

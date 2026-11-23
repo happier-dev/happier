@@ -17613,6 +17613,7 @@ const catalan: TeamsTranslationRoot = {
                 memberNotEligible: 'Aquesta persona no pot fer servir aquesta credencial.',
                 sessionPolicyIncompatible: 'Aquesta credencial no es pot fer servir en aquesta sessi\u00f3 amb la seva pol\u00edtica de compartici\u00f3.',
                 brokerUnavailable: 'La màquina intermediària no és accessible ara mateix. Torna-ho a provar quan torni.',
+                brokerInitiatorUnavailable: 'La connexi\u00f3 per a les credencials compartides encara no est\u00e0 a punt a la m\u00e0quina que executa l\u2019agent. Comprova la connexi\u00f3 de la m\u00e0quina amb aquest Home i torna-ho a provar.',
                 sourceOwnerRequired: 'Només qui posseeix aquesta font pot fer aquest canvi.',
                 nativeDeliveryUnavailable: 'El lliurament natiu de credencials no està disponible o no s’ha pogut verificar en aquesta màquina. Tria una altra màquina o credencial compartida.',
                 sourceMissing: 'Aquesta credencial ja no apunta a cap font existent.',

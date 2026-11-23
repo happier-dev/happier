@@ -17535,6 +17535,7 @@ const japanese: TeamsTranslationRoot = {
                 memberNotEligible: '\u3053\u306e\u4eba\u306f\u3053\u306e\u8a8d\u8a3c\u60c5\u5831\u3092\u4f7f\u7528\u3067\u304d\u307e\u305b\u3093\u3002',
                 sessionPolicyIncompatible: '\u3053\u306e\u8a8d\u8a3c\u60c5\u5831\u306f\u3001\u5171\u6709\u30dd\u30ea\u30b7\u30fc\u4e0a\u3053\u306e\u30bb\u30c3\u30b7\u30e7\u30f3\u3067\u306f\u4f7f\u7528\u3067\u304d\u307e\u305b\u3093\u3002',
                 brokerUnavailable: '仲介マシンにいま接続できません。復帰してから再試行してください。',
+                brokerInitiatorUnavailable: '\u30a8\u30fc\u30b8\u30a7\u30f3\u30c8\u3092\u5b9f\u884c\u3057\u3066\u3044\u308b\u30de\u30b7\u30f3\u3067\u3001\u5171\u6709\u8a8d\u8a3c\u60c5\u5831\u3092\u4f7f\u3046\u305f\u3081\u306e\u63a5\u7d9a\u306e\u6e96\u5099\u304c\u3067\u304d\u3066\u3044\u307e\u305b\u3093\u3002\u3053\u306e Home \u3078\u306e\u63a5\u7d9a\u3092\u78ba\u8a8d\u3057\u3066\u304b\u3089\u3001\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002',
                 sourceOwnerRequired: 'この変更ができるのは、ソースを所有している人だけです。',
                 nativeDeliveryUnavailable: 'このマシンではネイティブな認証情報配信を利用できないか、確認できませんでした。別のマシンまたは共有認証情報を選んでください。',
                 sourceMissing: 'この資格情報が指すソースはもう存在しません。',

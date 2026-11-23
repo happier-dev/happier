@@ -17475,6 +17475,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 memberNotEligible: '\u6b64\u4eba\u7121\u6cd5\u4f7f\u7528\u6b64\u6191\u8b49\u3002',
                 sessionPolicyIncompatible: '\u4f9d\u5171\u7528\u653f\u7b56\uff0c\u6b64\u6191\u8b49\u7121\u6cd5\u5728\u6b64\u5de5\u4f5c\u968e\u6bb5\u4e2d\u4f7f\u7528\u3002',
                 brokerUnavailable: '中介機器目前無法連線。等它恢復後再試。',
+                brokerInitiatorUnavailable: '\u57f7\u884c\u4ee3\u7406\u7a0b\u5f0f\u7684\u6a5f\u5668\u5c1a\u672a\u6e96\u5099\u597d\u4f7f\u7528\u5171\u7528\u6191\u8b49\u7684\u9023\u7dda\u3002\u8acb\u6aa2\u67e5\u9019\u53f0\u6a5f\u5668\u8207\u6b64 Home \u7684\u9023\u7dda\uff0c\u518d\u8a66\u4e00\u6b21\u3002',
                 sourceOwnerRequired: '只有擁有該來源的人才能做這項變更。',
                 nativeDeliveryUnavailable: '此機器上的原生憑證傳遞無法使用或無法驗證。請選擇其他機器或共用憑證。',
                 sourceMissing: '此憑證指向的來源已不存在。',

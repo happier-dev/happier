@@ -275,10 +275,10 @@ async function createBrokerFixture(
             brokerMachineId: broker.id,
             memberGrants: { create: { teamMembershipId: requesterMembership.id, deliveryMode: 'brokered' } },
         } }),
-        createSession: async () => {
+        createSession: async (suffix = '') => {
             const session = await db.session.create({ data: {
-                id: `session-${label}-${requester.id}`,
-                tag: `broker-${label}-${requester.id}`,
+                id: `session-${label}-${requester.id}${suffix}`,
+                tag: `broker-${label}-${requester.id}${suffix}`,
                 accountId: requester.id,
                 metadata: '{}',
                 active: true,
@@ -783,10 +783,31 @@ describe('Team credential Provider broker admission', () => {
             sink.mockClear();
 
             await db.machine.update({ where: { id: fixture.worker.id }, data: { operationProtocolCapabilities: {} } });
-            await expect(open()).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+            const missingEndpoint = {
+                ok: false,
+                reasonCode: 'broker_unavailable',
+                failureCause: {
+                    phase: 'providers.team_credential.broker_admission', errorClass: 'Error',
+                    errorCode: 'initiator_endpoint_missing', httpStatus: null,
+                },
+            };
+            await expect(open()).resolves.toEqual(missingEndpoint);
             expectRecord('initiator_endpoint_missing');
             sink.mockImplementationOnce(() => { throw new Error('diagnostic sink unavailable'); });
-            await expect(open()).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+            await expect(open()).resolves.toEqual(missingEndpoint);
+
+            // A later Session can open the same model once the Machine publishes
+            // its endpoint. The failed admission must not become a shared result.
+            await db.machine.update({ where: { id: fixture.worker.id }, data: {
+                operationProtocolCapabilities: fixture.worker.operationProtocolCapabilities ?? {},
+                operationProtocolCapabilitiesRevision: 2,
+            } });
+            const laterSession = await fixture.createSession('-later');
+            await fixture.selectForSession(laterSession.id, resource, TEST_AUTHENTICATION);
+            await expect(open({ sessionId: laterSession.id })).resolves.toMatchObject({
+                ok: true,
+                authority: { payload: { consumer: { kind: 'session', sessionId: laterSession.id } } },
+            });
         } finally {
             sink.mockRestore();
         }
@@ -2098,7 +2119,9 @@ describe('Team credential Provider broker admission', () => {
         await db.machine.update({ where: { id: worker.id }, data: { revokedAt: new Date(1) } });
         await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: true });
         await expect(tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun))
-            .resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+            .resolves.toMatchObject({ ok: false, reasonCode: 'broker_unavailable',
+                failureCause: { errorCode: 'initiator_endpoint_missing' },
+            });
         await db.machine.update({ where: { id: worker.id }, data: { revokedAt: null } });
         // Raw drift does not perform withdrawal: the real membership writer's
         // revision invalidation is covered by the suspension cases below.

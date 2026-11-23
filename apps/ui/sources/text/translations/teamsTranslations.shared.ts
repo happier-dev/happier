@@ -1123,6 +1123,7 @@ export const english = {
                 memberNotEligible: 'This person cannot use this credential.',
                 sessionPolicyIncompatible: 'This credential cannot be used in this session under its sharing policy.',
                 brokerUnavailable: 'The broker machine is not reachable right now. Try again once it is back.',
+                brokerInitiatorUnavailable: 'The connection for shared credentials isn\u2019t ready on the machine running the agent. Check its connection to this Home, then retry.',
                 sourceOwnerRequired: 'Only the person who owns this source can make this change.',
                 nativeDeliveryUnavailable: 'Native credential delivery is unavailable on this Machine. Choose an eligible API key or another Machine.',
                 sourceMissing: 'This credential no longer points at a source that exists.',

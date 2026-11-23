@@ -1053,6 +1053,8 @@ export class ApiMachineClient {
     private sessionPendingResetStartInstalled = false;
     private externalActionExecutionAuthorizationV1OutcomeRequired = false;
     private currentIrohMachineEndpoint: IrohEndpointDescriptorV1 | null = null;
+    private readonly operationProtocolCapabilitiesPublications =
+        new WeakMap<Socket<ServerToDaemonEvents, DaemonToServerEvents>, Promise<void>>();
     private localServicePreviewNativeAccessLive = false;
     private projectFiniteExecutionLive = false;
     private pendingPersistedIrohEndpointWithdrawal = false;
@@ -1529,20 +1531,18 @@ export class ApiMachineClient {
                     || socket.connected !== true
                 ) return false;
             }
-            const capabilities = await timeWebLatencyPhase('machine.startup.resolveCapabilities',
-                () => this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication());
-            if (
-                capabilities !== null
-                && this.advertisedOperationProtocolCapabilitiesGeneration !== transportGeneration
-            ) {
+            await this.withOperationProtocolCapabilitiesPublication(socket, async publish => {
+                if (this.advertisedOperationProtocolCapabilitiesGeneration === transportGeneration) return;
+                const capabilities = await timeWebLatencyPhase('machine.startup.resolveCapabilities',
+                    () => this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication());
+                if (capabilities === null) return;
                 // A rejected publication leaves the server's projection unknown, so it is
                 // deliberately not recorded as advertised and is allowed to reject this
                 // whole publication: without the running mark, the next registration
                 // acknowledgement re-enters here and publishes the capabilities again.
-                await timeWebLatencyPhase('machine.startup.publishCapabilities',
-                    () => this.publishOperationProtocolCapabilitiesOnSocket(socket, capabilities));
+                await timeWebLatencyPhase('machine.startup.publishCapabilities', () => publish(capabilities));
                 this.advertisedOperationProtocolCapabilitiesGeneration = transportGeneration;
-            }
+            });
             if (
                 this.socket !== socket
                 || this.activeTransportGeneration !== transportGeneration
@@ -1578,7 +1578,7 @@ export class ApiMachineClient {
                 // Pairs with the unready warning below: an operator reading the daemon log
                 // can tell a connection that recovered from one that never did.
                 logger.info('[API MACHINE] Core machine-control RPC registration ready', {
-                    advertisesOperationProtocolCapabilities: capabilities !== null,
+                    advertisesOperationProtocolCapabilities: this.advertisedOperationProtocolCapabilitiesGeneration === transportGeneration,
                 });
             }
             return false;
@@ -5289,10 +5289,7 @@ export class ApiMachineClient {
         if (!socket) {
             throw new Error('Machine socket is not connected');
         }
-        return await this.publishOperationProtocolCapabilitiesOnSocket(
-            socket,
-            capabilities,
-        );
+        return await this.withOperationProtocolCapabilitiesPublication(socket, publish => publish(capabilities));
     }
 
     async releasePendingResetStart(request: Readonly<{ sessionId: string; localId: string; reset: PendingResetStartBindingV1 }>): Promise<void> {
@@ -5453,16 +5450,21 @@ export class ApiMachineClient {
         }
     }
 
-    private async publishOperationProtocolCapabilitiesOnSocket(
+    private withOperationProtocolCapabilitiesPublication<T>(
         socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>,
-        capabilities: MachineOperationProtocolCapabilitiesV1,
-    ): Promise<number> {
-        const revision = await publishMachineOperationProtocolCapabilitiesOnSocket({
-            socket,
-            machineId: this.machine.id,
-            capabilities,
-        });
-        return revision;
+        operation: (publish: (capabilities: MachineOperationProtocolCapabilitiesV1) => Promise<number>) => Promise<T>,
+    ): Promise<T> {
+        // Home replaces the whole projection. Let each write settle before
+        // preparing the next one so an older snapshot cannot withdraw a live leaf.
+        const previous = this.operationProtocolCapabilitiesPublications.get(socket) ?? Promise.resolve();
+        const publication = previous.then(() => operation(capabilities => {
+            if (this.socket !== socket) throw new Error('Machine socket is not connected');
+            return publishMachineOperationProtocolCapabilitiesOnSocket({
+                socket, machineId: this.machine.id, capabilities,
+            });
+        }));
+        this.operationProtocolCapabilitiesPublications.set(socket, publication.then(() => undefined, () => undefined));
+        return publication;
     }
 
     /**
@@ -5655,9 +5657,10 @@ export class ApiMachineClient {
         // therefore have to republish the complete capability set; publishing
         // only the endpoint while readiness is still being established would
         // silently withdraw session and plugin capabilities.
-        const capabilities = await this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication() ?? {};
         try {
-            await this.publishOperationProtocolCapabilitiesOnSocket(socket, capabilities);
+            await this.withOperationProtocolCapabilitiesPublication(socket, async publish => {
+                await publish(await this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication() ?? {});
+            });
         } catch (error) {
             this.currentIrohMachineEndpoint = previousEndpoint;
             throw error;
@@ -5732,11 +5735,12 @@ export class ApiMachineClient {
         if (!socket || socket.connected !== true) return;
         // Replace-all projection: republish the complete capability set so the
         // readiness changes never withdraw unrelated session or endpoint capabilities.
-        const capabilities = await this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication(
-            true,
-            currentServerFeatures,
-        ) ?? {};
-        await this.publishOperationProtocolCapabilitiesOnSocket(socket, capabilities);
+        await this.withOperationProtocolCapabilitiesPublication(socket, async publish => {
+            await publish(await this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication(
+                true,
+                currentServerFeatures,
+            ) ?? {});
+        });
         if (this.socket === socket && socket.connected === true) {
             this.advertisedOperationProtocolCapabilitiesGeneration = this.activeTransportGeneration;
         }
@@ -6139,10 +6143,9 @@ export class ApiMachineClient {
                             missingCoreHandlers.length > 0
                             || this.currentMachineOperationProtocolCapabilities() === null
                         ) {
-                            const failClosedCapabilities =
-                                this.currentMachineOperationProtocolCapabilities(false) ?? {};
                             await this
-                                .publishOperationProtocolCapabilitiesOnSocket(socket, failClosedCapabilities)
+                                .withOperationProtocolCapabilitiesPublication(socket, publish =>
+                                    publish(this.currentMachineOperationProtocolCapabilities(false) ?? {}))
                                 .catch(() => {
                                     logger.warn('[API MACHINE] Failed to publish the fail-closed operation protocol capability projection on connect');
                                 });

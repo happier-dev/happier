@@ -141,10 +141,15 @@ function resolveSessionStartupFailureCause(
     const startupRecovery = presentSessionStartupFailureRecovery([code]);
     if (startupRecovery) return startupRecovery.cause;
     if (code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) return t('errors.workspaceFolderMissing');
-    if (code === 'broker_unavailable') return [
-        t('teams.credentials.errors.brokerUnavailable'),
-        t('teams.credentials.recovery.ownerHandoff'),
-    ].join(' ');
+    if (code === 'broker_unavailable') {
+        if (failureCause?.actionCause?.errorCode === 'initiator_endpoint_missing') {
+            return t('teams.credentials.errors.brokerInitiatorUnavailable');
+        }
+        return [
+            t('teams.credentials.errors.brokerUnavailable'),
+            t('teams.credentials.recovery.ownerHandoff'),
+        ].join(' ');
+    }
     if (code === 'team_credential_provider_binding_unavailable') return t('session.startFailure.cause.teamCredential');
     const provider = ProviderErrorCodeV1Schema.safeParse(code);
     if (provider.success) {

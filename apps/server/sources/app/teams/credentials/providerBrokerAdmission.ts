@@ -98,6 +98,7 @@ type Failure = Readonly<{
     ok: false;
     reasonCode: ProviderBrokerAdmissionFailureCodeV1 | 'token_limit_unavailable';
     usageLimit?: TeamCredentialUsageLimitDenialV1;
+    failureCause?: Extract<ProviderBrokerOpenResponseV1, { ok: false }>['failureCause'];
     refusalReason?: BrokerRefusalReason
         | Exclude<SessionTeamCredentialBindingRejectionV1, 'broker_unavailable'>
         | 'binding_missing';
@@ -596,7 +597,15 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         machineId: request.initiatorMachineId,
         sessionId,
     });
-    if (!initiatorEndpoint) return brokerUnavailable('initiator_endpoint_missing');
+    if (!initiatorEndpoint) {
+        const refusalReason = 'initiator_endpoint_missing';
+        return { ...brokerUnavailable(refusalReason), failureCause: {
+            phase: 'providers.team_credential.broker_admission',
+            errorClass: 'Error',
+            errorCode: refusalReason,
+            httpStatus: null,
+        } };
+    }
     return {
         request,
         sessionId,
