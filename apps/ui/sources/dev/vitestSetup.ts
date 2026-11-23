@@ -8,7 +8,6 @@ import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim, loadVitestModuleForNodeRequire } from './vitestRnShim';
 import { getVitestNodeBuiltin } from './vitestNodeBuiltins';
-import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { createReactNavigationNativeMock } from './testkit/mocks/reactNavigation';
@@ -337,7 +336,7 @@ beforeEach(async () => {
     }
 });
 
-afterEach(() => {
+afterEach(async () => {
     // Ensure fake timers never leak across tests (even when a test fails mid-flight).
     vi.useRealTimers();
 
@@ -348,6 +347,8 @@ afterEach(() => {
 
     // Tests may override `runtimeFetch` via `setRuntimeFetch(...)`. Reset it after each test to
     // prevent cross-test pollution (module state can persist across files in the same Vitest fork).
+    // Load lazily to preserve the suite's platform setup. Transport mocks need not export cleanup.
+    const { resetRuntimeFetch } = await vi.importActual<typeof import('@/utils/system/runtimeFetch')>('@/utils/system/runtimeFetch');
     resetRuntimeFetch();
 
     // Many tests use `vi.stubGlobal('fetch', ...)` and other globals. Ensure they don't leak across
