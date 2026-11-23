@@ -558,24 +558,21 @@ describe('Project Open RPC', () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     let admitted = true;
     let admissionReads = 0;
-    let mutations = 0;
+    const writes: string[][] = [];
     const rows: ProjectAccountRowV1[] = [];
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
       machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
         installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => { admissionReads += 1; return admitted; } };
     vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
-      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
-      const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
-      const changed = request.mutations.map(mutation => ({ key: mutation.key, revision: 0, content: mutation.content }));
-      rows.push(...changed);
-      mutations += 1;
-      // Revocation after acceptance cannot make an acknowledged Open unknown.
-      admitted = false;
-      return { status: 200, data: { status: 'updated', rows: changed, cursor: 1 } };
-    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary(rows, {
+      beforeMutation: request => {
+        const kinds = request.mutations.map(mutation => mutation.key.kind);
+        writes.push(kinds);
+        // Revocation at checkout acceptance cannot make the admitted Open unknown.
+        if (kinds.includes('workspace-ref')) admitted = false;
+      },
+    }));
     const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: 'srv_test_home', machineId: 'machine',
       serverHttpBaseUrl: 'https://home.example', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) });
     const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: root },
@@ -583,10 +580,11 @@ describe('Project Open RPC', () => {
     try {
       expect(await handler(input, context)).toMatchObject({ kind: 'opened', directory: root });
       expect(admissionReads).toBe(1); // One admission for this finite Open, before effects.
-      expect(mutations).toBe(1);
+      expect(writes).toEqual([['workspace-ref', 'relationship-graph'], ['project-organization']]);
+      post.mockClear();
       expect(await handler(input, context)).toEqual({ kind: 'refused', code: 'machine_access_denied', effectAttempted: false });
       expect(admissionReads).toBe(2);
-      expect(mutations).toBe(1);
+      expect(post).not.toHaveBeenCalled();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -1672,11 +1670,17 @@ describe('Project Open RPC', () => {
       }, context);
       expect(result).toMatchObject({ kind: 'opened', directory: root,
         workspace: { serverId: 'srv_test_home', machineId: 'machine', rootPath: root } });
-      expect(writes).toHaveLength(1);
+      expect(writes).toHaveLength(2);
       expect(ProjectAccountRowMutationRequestV1Schema.parse(writes[0]).mutations).toEqual([
         expect.objectContaining({ key: expect.objectContaining({ kind: 'workspace-ref', serverId: 'srv_test_home' }) }),
         { key: { kind: 'relationship-graph' }, expectedRevision: 'absent',
           content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [] } } } },
+      ]);
+      expect(ProjectAccountRowMutationRequestV1Schema.parse(writes[1]).mutations).toEqual([
+        expect.objectContaining({
+          key: expect.objectContaining({ kind: 'project-organization', serverId: 'srv_test_home' }),
+          content: expect.objectContaining({ t: 'plain', v: expect.objectContaining({ value: { hidden: false } }) }),
+        }),
       ]);
       await access(join(root, '.happier/project.json'));
       expect(vi.mocked(axios.post).mock.calls.some(([url]) => url.includes('/sessions') || url.includes('/machines/managed/'))).toBe(false);

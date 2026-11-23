@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
 import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
 import type { ScmBranchCheckoutResponse } from '@happier-dev/protocol/scm/branches';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { OpenProjectResultV1, WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
@@ -120,9 +120,12 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
     if (!clone.success) {
       if (clone.destinationPath || !clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
+      const failureCause = clone.failureCause ?? (clone.errorCode ? {
+        phase: 'projects.open', errorClass: 'Error' as const, errorCode: clone.errorCode, httpStatus: null,
+      } : undefined);
       return refused(clone.errorCode ?? 'checkout_failed', clone.error,
         { ...(clone.destinationPath ? { destinationPath: clone.destinationPath } : {}),
-          ...(clone.failureCause ? { failureCause: clone.failureCause } : {}),
+          ...(failureCause ? { failureCause } : {}),
           ...(clone.remediation ? { remediation: clone.remediation } : {}),
           ...(clone.errorCode === 'REMOTE_RATE_LIMITED' ? { retryNotBeforeMs: clone.retryNotBeforeMs } : {}) });
     }
@@ -148,7 +151,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
         if (!('outcome' in checkout) || checkout.outcome?.kind !== 'failed') return refused(code, checkout.error);
         const failure = Object.assign(new Error(checkout.error ?? code), { code });
         throw new PluginError({ code, message: failure.message,
-          failureCause: projectActionFailureCauseV1(failure, 'project_open.checkout_ref') });
+          failureCause: readActionFailureCauseV1({ phase: 'project_open.checkout_ref', errorClass: 'Error', errorCode: code, httpStatus: null }) });
       }
     }
     const directory = input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : rootPath;
