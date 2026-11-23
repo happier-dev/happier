@@ -15542,6 +15542,10 @@ settingsSession: {
     webBrowserRequiredDescription:
       "Les liens de connexion au terminal ne peuvent être ouverts que dans un navigateur web, pour des raisons de sécurité. Utilise le scanner de QR code ou ouvre ce lien sur un ordinateur.",
     processingConnection: "Traitement de la connexion…",
+    signInStep: {
+      title: "Connecte le terminal.\nConnecte-toi pour terminer.",
+      subtitle: "Si tu utilises déjà Happier sur un autre appareil, utilise le même compte.",
+    },
     invalidConnectionLink: "Lien de connexion invalide",
     invalidConnectionLinkDescription:
       "Le lien de connexion est manquant ou invalide. Vérifie l’URL et réessaie.",

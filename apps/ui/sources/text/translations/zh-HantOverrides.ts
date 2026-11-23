@@ -12803,6 +12803,10 @@ settingsSession: {
         webBrowserRequired: '需要 Web 瀏覽器',
         webBrowserRequiredDescription: '出於安全原因，終端連線連結只能在 Web 瀏覽器中開啟。請使用 QR Code 掃描器或在電腦上開啟此連結。',
         processingConnection: '正在處理連線...',
+        signInStep: {
+          title: '連接終端機。\n登入以完成連線。',
+          subtitle: '如果你已在其他裝置上使用 Happier，請使用同一個帳號。',
+        },
         invalidConnectionLink: '無效的連線連結',
         invalidConnectionLinkDescription: '連線連結缺失或無效。請檢查 URL 並重試。',
         connectTerminal: '連線終端',

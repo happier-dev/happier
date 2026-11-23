@@ -15497,6 +15497,10 @@ settingsSession: {
     webBrowserRequiredDescription:
       "Linki połączenia terminala można otwierać tylko w przeglądarce internetowej ze względów bezpieczeństwa. Użyj skanera kodów QR lub otwórz ten link na komputerze.",
     processingConnection: "Przetwarzanie połączenia...",
+    signInStep: {
+      title: "Połącz terminal.\nZaloguj się, aby zakończyć.",
+      subtitle: "Jeśli korzystasz już z Happier na innym urządzeniu, użyj tego samego konta.",
+    },
     invalidConnectionLink: "Nieprawidłowy link połączenia",
     invalidConnectionLinkDescription:
       "Link połączenia jest nieprawidłowy lub go brakuje. Sprawdź URL i spróbuj ponownie.",

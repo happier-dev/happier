@@ -15767,6 +15767,10 @@ settingsSession: {
         webBrowserRequired: 'Webbrowser erforderlich',
         webBrowserRequiredDescription: 'Links zum Verbinden eines Terminals lassen sich aus Sicherheitsgründen nur in einem Webbrowser öffnen. Nutze den QR-Code-Scanner oder öffne diesen Link auf einem Computer.',
         processingConnection: 'Verbindung wird verarbeitet…',
+        signInStep: {
+          title: 'Terminal verbinden.\nMelde dich an, um abzuschließen.',
+          subtitle: 'Wenn du Happier schon auf einem anderen Gerät nutzt, verwende dasselbe Konto.',
+        },
         invalidConnectionLink: 'Ungültiger Verbindungslink',
         invalidConnectionLinkDescription: 'Der Verbindungslink fehlt oder ist ungültig. Prüf die URL und versuch es noch einmal.',
         connectTerminal: 'Terminal verbinden',

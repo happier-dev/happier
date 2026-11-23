@@ -14714,6 +14714,10 @@ settingsSession: {
         webBrowserRequired: 'Es requereix un navegador web',
         webBrowserRequiredDescription: 'Els enllaços de connexió de terminal només es poden obrir en un navegador web per raons de seguretat. Utilitza l\'escàner de codi QR o obre aquest enllaç en un ordinador.',
         processingConnection: 'Processant la connexió...',
+        signInStep: {
+          title: 'Connecta el terminal.\nInicia la sessió per acabar.',
+          subtitle: 'Si ja fas servir Happier en un altre dispositiu, utilitza el mateix compte.',
+        },
         invalidConnectionLink: 'Enllaç de connexió no vàlid',
         invalidConnectionLinkDescription: 'L\'enllaç de connexió falta o no és vàlid. Comprova l\'URL i torna-ho a provar.',
         connectTerminal: 'Connecta el terminal',

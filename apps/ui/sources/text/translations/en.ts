@@ -18829,6 +18829,10 @@ const enTerminal = {
   webBrowserRequiredDescription:
     'Terminal connection links can only be opened in a web browser for security reasons. Please use the QR code scanner or open this link on a computer.',
   processingConnection: 'Processing connection...',
+  signInStep: {
+    title: 'Connect terminal.\nSign in to finish.',
+    subtitle: 'If you already use Happier on another device, use that same account.',
+  },
   invalidConnectionLink: 'Invalid connection link',
   invalidConnectionLinkDescription:
     'The connection link is missing or invalid. Please check the URL and try again.',

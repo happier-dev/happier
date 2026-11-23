@@ -15946,6 +15946,10 @@ settingsSession: {
     webBrowserRequiredDescription:
       "ターミナル接続リンクはセキュリティ上の理由からWebブラウザでのみ開くことができます。QRコードスキャナーを使用するか、コンピューターでこのリンクを開いてください。",
     processingConnection: "接続を処理中...",
+    signInStep: {
+      title: "ターミナルを接続。\nサインインして完了。",
+      subtitle: "別のデバイスですでに Happier を使っている場合は、同じアカウントを使ってください。",
+    },
     invalidConnectionLink: "無効な接続リンク",
     invalidConnectionLinkDescription:
       "接続リンクが見つからないか無効です。URLを確認して再試行してください。",

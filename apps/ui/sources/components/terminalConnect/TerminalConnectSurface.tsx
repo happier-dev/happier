@@ -38,6 +38,7 @@ type TerminalConnectApprovalState = Readonly<{
 export type TerminalConnectSurfaceState =
     | Readonly<{ kind: 'connected'; result?: TerminalConnectSuccess; onContinue: () => void }>
     | TerminalConnectMessageState
+    | Readonly<{ kind: 'sign-in'; action: TerminalConnectMessageState['action'] }>
     | TerminalConnectApprovalState;
 
 export type TerminalConnectSurfaceProps = Readonly<{
@@ -151,6 +152,16 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                 primary={{ testID: 'terminal-connect-continue', label: t('terminal.connectedStep.continue'), onPress: props.state.onContinue }}
             />
         );
+    }
+
+    if (props.state.kind === 'sign-in') {
+        return <TerminalConnectFrame
+            signedIn={false}
+            testID={props.testID}
+            title={t('terminal.signInStep.title')}
+            subtitle={t('terminal.signInStep.subtitle')}
+            step={{ primary: props.state.action }}
+        />;
     }
 
     if (props.state.kind === 'message') {

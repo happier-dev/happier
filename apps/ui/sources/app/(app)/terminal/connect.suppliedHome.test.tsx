@@ -163,6 +163,8 @@ it('adopts a preauth terminal Home address and opens its sign-in without changin
     const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
     await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-sign-in')).not.toBeNull());
+    expect(screen.findByTestId('terminal-connect-surface-title')?.props.children).toBe('terminal.signInStep.title');
+    expect(screen.findAll(node => node.props.children === 'terminal.signInStep.subtitle').length).toBeGreaterThan(0);
     expect(replaceSpy).not.toHaveBeenCalled();
     await screen.pressByTestIdAsync('terminal-connect-sign-in');
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(address)}`));

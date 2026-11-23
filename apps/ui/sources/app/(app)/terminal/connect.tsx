@@ -76,8 +76,7 @@ export default function TerminalConnectScreen() {
             <TerminalConnectSurface
                 testID="terminal-connect-surface"
                 state={{
-                    kind: 'message',
-                    title: t('modals.pleaseSignInFirst'),
+                    kind: 'sign-in',
                     action: signInAction,
                 }}
             />

@@ -15174,6 +15174,10 @@ settingsSession: {
     webBrowserRequiredDescription:
       "出于安全原因，终端连接链接只能在 Web 浏览器中打开。请使用二维码扫描器或在计算机上打开此链接。",
     processingConnection: "正在处理连接...",
+    signInStep: {
+      title: "连接终端。\n登录以完成连接。",
+      subtitle: "如果你已在其他设备上使用 Happier，请使用同一个账号。",
+    },
     invalidConnectionLink: "无效的连接链接",
     invalidConnectionLinkDescription: "连接链接缺失或无效。请检查 URL 并重试。",
     connectTerminal: "连接终端",
