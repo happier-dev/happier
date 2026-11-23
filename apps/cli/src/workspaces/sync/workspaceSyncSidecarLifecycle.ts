@@ -1,3 +1,4 @@
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createSupervisedProcess, type SupervisedProcess } from '@/subprocess/supervision/supervisedProcess';
 import type { TerminationEvent } from '@/subprocess/supervision/types';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -97,8 +98,15 @@ function readiness(): Readiness {
   return { promise, resolve, reject };
 }
 
-function engineUnavailable(error: unknown): WorkspaceSyncEngineError {
-  if (error instanceof WorkspaceSyncEngineError) return error;
+/** Carry the runtime owner's typed code through lifecycle and startup projection. */
+export function readWorkspaceSyncRuntimeErrorCode(error: unknown): string | undefined {
+  return readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code : undefined);
+}
+
+function engineUnavailable(error: unknown): Error & { code: string } {
+  const code = readWorkspaceSyncRuntimeErrorCode(error);
+  if (error instanceof Error && code) return Object.assign(error, { code });
   const message = error instanceof Error ? error.message : String(error);
   return new WorkspaceSyncEngineError('engine_unavailable', `Workspace sync engine unavailable: ${message}`, {
     cause: error,
@@ -408,9 +416,12 @@ export class WorkspaceSyncSidecarLifecycle {
           () => { this.activeBroker = broker; },
         );
       }
+      const unavailable = this.authenticated && !this.stopping && !readWorkspaceSyncRuntimeErrorCode(error)
+        ? Object.assign(error instanceof Error ? error : new Error('Workspace Sync reconciliation failed', { cause: error }),
+          { code: 'workspace_sync_unavailable' })
+        : engineUnavailable(error);
       this.ready = false;
       this.authenticated = false;
-      const unavailable = engineUnavailable(error);
       this.publishReadiness({ state: 'unavailable', errorCode: unavailable.code });
       this.currentReadiness?.reject(unavailable);
       this.currentAuthenticatedReadiness?.reject(unavailable);
@@ -451,7 +462,8 @@ export class WorkspaceSyncSidecarLifecycle {
     if (event.type !== 'spawn_error') this.activeProcess = null;
     this.ready = false;
     this.authenticated = false;
-    if (!this.stopping) {
+    // spawnOne already published the originating startup/reconciliation cause.
+    if (!this.stopping && (event.type !== 'spawn_error' || this.publishedReadiness?.state !== 'unavailable')) {
       this.publishReadiness({ state: 'unavailable', errorCode: 'engine_unavailable' });
     }
     if (broker) {

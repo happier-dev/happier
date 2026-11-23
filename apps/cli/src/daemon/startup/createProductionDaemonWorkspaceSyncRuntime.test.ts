@@ -1,3 +1,4 @@
+import { BrokerProtocolError } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -1294,6 +1295,47 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
+  it('preserves the native startup refusal in readiness and the next create request', async () => {
+    const readiness: unknown[] = [];
+    const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    onTestFinished(() => log.mockRestore());
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      nativeListFailure: new BrokerProtocolError('peer_unavailable', 'Initial native list refused; token=fixture-startup-secret'),
+      onReadinessPublished: state => readiness.push(state),
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined,
+    });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+      readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await expect(fixture.settleProjects()).rejects.toBeDefined();
+    const create = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE);
+    if (!create) throw new Error('Create handler is unavailable');
+    const failure = await create({ v: 1, operationId: 'startup-cause-copy', actionInput: { v: 1,
+      sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId,
+      targetPath: fixture.targetPath, mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace',
+      purpose: 'worker_clean_copy', contentPolicy: fixture.prepareInput.action.contentPolicy,
+    } }, { transportRequestId: 'startup-cause-rpc', signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+        installationId: 'parent-installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true,
+    }).catch((error: unknown) => error);
+    expect(failure instanceof Error ? failure.message : failure).toContain('Initial native list refused');
+    expect(failure).toMatchObject({ rpcErrorCode: 'peer_unavailable',
+      message: expect.stringContaining('Initial native list refused'), failureCause: { errorCode: 'peer_unavailable' } });
+    expect(readiness.at(-1)).toMatchObject({ engine: { state: 'unavailable', errorCode: 'peer_unavailable' } });
+    expect(log).toHaveBeenCalledWith('[Workspace Sync] Relationship create failed', expect.objectContaining({
+      requestId: 'startup-cause-rpc',
+      cause: expect.objectContaining({ code: 'peer_unavailable', message: expect.stringContaining('Initial native list refused') }),
+      failureCause: expect.objectContaining({ errorCode: 'peer_unavailable' }),
+    }));
+    expect(JSON.stringify([failure, log.mock.calls])).not.toContain('fixture-startup-secret');
+  });
+
   it.each(['fresh', 'retire-created', 'staged', 'retired', 'refresh-during-create', 'remote-git', 'remote-missing-parents', 'remote-known-endpoints', 'remote-refusal', 'carrier-refusal', 'native-dial-refusal', 'pinned-9', 'native-failure'] as const)('creates a worker copy or returns an actionable native failure (%s)', async intent => {
     const createFailureLog = intent === 'native-failure' ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
     if (createFailureLog) onTestFinished(() => createFailureLog.mockRestore());
@@ -1322,9 +1364,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       } } : {}),
       ...(intent === 'refresh-during-create' ? { onNativeCreate: async () => { await refreshDuringCreate?.(); } } : {}),
       ...(intent === 'pinned-9' ? { nativeEndpointSummary: 'pinned-9' as const } : {}),
-      ...(intent === 'native-failure' ? { nativeCreateFailure: Object.assign(
-        new Error('Native command failed; token=fixture-native-secret'), { code: 'ENOSPC' },
-      ) } : {}),
+      ...(intent === 'native-failure' ? { nativeCreateFailure:
+        new Error('Native command failed: no space left on device; token=fixture-native-secret') } : {}),
       readAdditionalHttpPostResponse: async (url, body) => {
         if (!url.includes('/v1/account/project-rows/')) return undefined;
         if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
@@ -1456,6 +1497,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
           });
         },
         workspaceSyncRelationshipCreate: async ({ input, operationId }) => await rpc.handleRequest({
+          requestId: '9f876c24-dc7f-4053-ae16-2132ee04e9cf',
           method: `${fixture.sourceRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
           params: { v: 1, operationId, actionInput: input },
           callerAuthority: 'present_user',
@@ -1469,14 +1511,16 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       });
       expect(actionResult).toMatchObject({ ok: false, errorCode, ...(carrierReason ? { error: carrierReason } : {}) });
       if (createFailureLog) {
-        expect(actionResult).toMatchObject({ error: expect.stringContaining('ENOSPC'), failureCause: { errorCode: 'ENOSPC' } });
-        expect(projectedFailure).toMatchObject({ cause: {
-          name: 'WorkspaceSyncPreparationRefusal', code: 'ENOSPC', message: expect.stringContaining('Native command failed'),
-        }, failureCause: { errorCode: 'ENOSPC' } });
-        expect(createFailureLog).toHaveBeenCalledWith('[Workspace Sync] Relationship create failed', expect.objectContaining({
-          cause: { name: 'WorkspaceSyncPreparationRefusal', code: 'ENOSPC', message: expect.stringContaining('Native command failed') },
-        }));
+        expect(projectedFailure).not.toHaveProperty('message', expect.stringContaining('fixture-native-secret'));
         expect(JSON.stringify([projectedFailure, actionResult, createFailureLog.mock.calls])).not.toContain('fixture-native-secret');
+        expect(actionResult).toMatchObject({ error: expect.stringContaining('no space left on device'), failureCause: { errorCode: 'workspace_sync_unavailable' } });
+        expect(projectedFailure).toMatchObject({ cause: {
+          name: 'WorkspaceSyncPreparationRefusal', code: 'workspace_sync_unavailable', message: expect.stringContaining('no space left on device'),
+        }, failureCause: { errorCode: 'workspace_sync_unavailable' } });
+        expect(createFailureLog).toHaveBeenCalledWith('[Workspace Sync] Relationship create failed', expect.objectContaining({
+          requestId: '9f876c24-dc7f-4053-ae16-2132ee04e9cf', failureCause: expect.objectContaining({ errorCode: 'workspace_sync_unavailable' }),
+          cause: { name: 'WorkspaceSyncPreparationRefusal', code: 'workspace_sync_unavailable', message: expect.stringContaining('no space left on device') },
+        }));
       }
       expect(completions).toContainEqual(expect.objectContaining({ outcomeCode: errorCode }));
       if (carrierTrace) expect(carrierTrace.mock.calls.filter(([message]) => message === '[workspace-sync-carrier-stage]')).toEqual([]);

@@ -1,5 +1,6 @@
 import { t } from '@/text';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -81,7 +82,7 @@ export type WorkspaceSyncFailurePresentation = Readonly<{
 /**
  * The refusal copy for a failed Workspace Sync Action: the human message for its typed cause, with the
  * exact code under Technical details (UI refinements ruling, Board B 2026-11-22 17:42Z). Request ids and
- * other diagnostics stay on the carried error, never on the failure screen (OWNER-RULINGS 2026-11-12 (7)).
+ * other diagnostics stay on the carried error. A dispatch failure's safe originating reason stays in that disclosure.
  * Own-folder guidance is for the Can use route only; `placement` is Add Machine's decided route.
  */
 export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement): WorkspaceSyncFailurePresentation | null {
@@ -101,8 +102,11 @@ export function presentWorkspaceSyncFailure(error: unknown, placement?: Workspac
     if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
     const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
         ...(failureCause ? { failureCause } : {}) }).reason;
+    const reason = failureCause?.phase === 'dispatch' && typeof record.error === 'string'
+        ? redactBugReportSensitiveText(record.error).trim() : '';
     return { message, code: shownCode,
-        technicalDetails: [{ key: 'code', label: t('workflows.run.technical.failureCode'), value: shownCode }] };
+        technicalDetails: [{ key: 'code', label: t('workflows.run.technical.failureCode'), value: shownCode },
+            ...(reason && reason !== shownCode ? [{ key: 'reason', label: t('approvals.failureTechnicalLabels.reason'), value: reason }] : [])] };
 }
 
 export function resolveWorkspaceSyncModeTranslationKey(value: unknown): WorkspaceSyncModeTranslationKey | null {

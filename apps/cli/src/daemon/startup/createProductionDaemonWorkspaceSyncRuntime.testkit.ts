@@ -209,6 +209,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   /** Immutable mutagen-v0.18.1-happier.9 endpoint serialization (f02d01e8). */
   nativeEndpointSummary?: 'pinned-9';
   nativeCreateFailure?: Error;
+  nativeListFailure?: Error;
+  onReadinessPublished?: Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['onReadinessPublished'];
   /** Real broker + carrier admission, with .11 error wrapping at the native process boundary. */
   nativeCarrierRefusal?: boolean;
   /** Exercise an actual native error envelope after endpoint/grant admission. */
@@ -531,10 +533,12 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
         return { stateIndex: await nativeChanges.waitForChange(input.previousStateIndex, signal) };
       }
       if (input.t === 'shutdown') return null;
+      if (input.t === 'list' && options.nativeListFailure) throw options.nativeListFailure;
       if (input.t === 'list') return { sessions: [...sessions.values()].sort((a, b) => a.identifier < b.identifier ? -1 : a.identifier > b.identifier ? 1 : 0).map(nativeSummary), nextCursor: null };
       if (input.t === 'create') {
         await options.onNativeCreate?.();
-        if (options.nativeCreateFailure) throw options.nativeCreateFailure;
+        // Pinned Go SendResult carries OS diagnostics as message, with engine_unavailable as its IPC code.
+        if (options.nativeCreateFailure) throw new BrokerProtocolError('engine_unavailable', options.nativeCreateFailure.message);
         const endpoint = (value: string) => ({ protocol: 'external' as const, host: value.replace('external://', ''), path: '' as const,
           state: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } });
         const session: MutagenSessionSummaryV1 = { identifier: input.session.name, name: input.session.name,
@@ -729,6 +733,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       activeServerDir: join(root, machineId, 'servers', localProfileId), activeServerId: localProfileId, localMachineId: machineId,
       releaseChannel: 'publicdev' as const, credentials: machineCredentials,
       isCurrent: async () => true,
+      ...(options.onReadinessPublished ? { onReadinessPublished: options.onReadinessPublished } : {}),
       ...(machineId === sourceRef.machineId && options.privateCheckout ? { privateCheckout: options.privateCheckout } : {}),
       ...(machineId === sourceRef.machineId && options.agentIsolation ? { agentIsolation: options.agentIsolation } : {}),
       ...(localHomeTarget ? { homeTarget: localHomeTarget } : {}),

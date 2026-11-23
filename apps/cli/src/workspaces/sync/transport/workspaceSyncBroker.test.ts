@@ -1133,7 +1133,7 @@ describe('workspace sync broker authentication and attach rules', () => {
     });
     try {
       await expect(fixture.broker.command({ t: 'resume', requestId: 'unrelated', sessionIdentifier: 'other-session' },
-        { operationId: 'other-operation' })).rejects.toMatchObject({ code: 'engine_unavailable' });
+        { operationId: 'other-operation' })).rejects.toMatchObject({ code: 'workspace_sync_unavailable', message: 'Native command failed' });
       await expect(fixture.broker.command({ t: 'resume', requestId: 'matching', sessionIdentifier: 'session' },
         { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'machine_carrier_unavailable',
         message: 'Authenticated Iroh machine carrier is unavailable' });
@@ -1143,7 +1143,7 @@ describe('workspace sync broker authentication and attach rules', () => {
         { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'git_selection_unavailable' });
       nativeCode = 'engine_unavailable';
       await expect(fixture.broker.command({ t: 'resume', requestId: 'retry', sessionIdentifier: 'session' },
-        { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'engine_unavailable' });
+        { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'workspace_sync_unavailable', message: 'Native command failed' });
     } finally { await client.close(); }
   });
 

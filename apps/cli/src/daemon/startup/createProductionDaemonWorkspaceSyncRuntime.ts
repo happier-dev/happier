@@ -1,3 +1,5 @@
+import { readWorkspaceSyncRuntimeErrorCode } from '@/workspaces/sync/workspaceSyncSidecarLifecycle';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed, type CallWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { computeWorkspaceSyncPolicyDigest, createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { randomUUID } from 'node:crypto';
@@ -2564,10 +2566,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   reconcileAuthority();
   const startup = privateRecovery.then(async () => {
     await runtime.start().catch((error) => {
-      publishReadiness({ state: 'unavailable', errorCode: 'engine_unavailable' });
+      const code = readWorkspaceSyncRuntimeErrorCode(error) ?? 'workspace_sync_unavailable';
+      publishReadiness({ state: 'unavailable', errorCode: code });
       factories.warn(
         '[DAEMON RUN] Workspace sync engine is initially unavailable; commands and settings changes may retry it',
-        error,
+        { code, message: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Workspace Sync startup failed') },
       );
     });
   });

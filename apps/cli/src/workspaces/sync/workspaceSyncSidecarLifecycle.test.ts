@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { projectWorkspaceSyncRpcError } from '@/api/machine/workspaceSyncRpcErrors';
+import { logger } from '@/ui/logger';
 
 import {
   WorkspaceSyncSidecarLifecycle,
@@ -794,7 +797,7 @@ describe('WorkspaceSyncSidecarLifecycle', () => {
     }
   });
 
-  it.each(['reconciliation_failure', 'root_stop'] as const)(
+  it.each(['reconciliation_failure', 'reconciliation_untyped', 'root_stop'] as const)(
     'stops and closes a replacement sidecar without publishing readiness after %s', async (reason) => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -837,7 +840,9 @@ describe('WorkspaceSyncSidecarLifecycle', () => {
 
       expect(spawn).toHaveBeenCalledTimes(2);
       let waitingStartSettled = false;
-      const waitingStart = lifecycle.start();
+      const waitingStart = lifecycle.command({ t: 'create', requestId: 'create-during-reconciliation',
+        session: { name: 'new-copy', alpha: 'external://alpha', beta: 'external://beta',
+          mode: 'one-way-safe', labels: {}, contentPolicy: { selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [] } } });
       void waitingStart.then(
         () => { waitingStartSettled = true; },
         () => { waitingStartSettled = true; },
@@ -847,11 +852,28 @@ describe('WorkspaceSyncSidecarLifecycle', () => {
 
       const stopping = reason === 'root_stop' ? lifecycle.readProcessRoots()[0]?.stop?.() : undefined;
       if (reason === 'root_stop') finishRestartReconciliation();
-      else rejectRestartReconciliation(new Error('settings reconciliation failed'));
-      await expect(waitingStart).rejects.toMatchObject({ code: 'engine_unavailable' });
+      else rejectRestartReconciliation(reason === 'reconciliation_failure'
+        ? Object.assign(new Error('settings reconciliation failed'), { code: 'peer_unavailable' })
+        : new Error('settings reconciliation failed'));
+      const code = reason === 'reconciliation_failure' ? 'peer_unavailable' : 'workspace_sync_unavailable';
+      await expect(waitingStart).rejects.toMatchObject(reason === 'root_stop'
+        ? { code: 'engine_unavailable' } : { code, message: 'settings reconciliation failed' });
+      if (reason !== 'root_stop') {
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+          const failure = projectWorkspaceSyncRpcError(await waitingStart.catch(error => error),
+            RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, 'reconciliation-create');
+          expect(failure).toMatchObject({ rpcErrorCode: code,
+            failureCause: { errorCode: code }, message: 'settings reconciliation failed' });
+          expect(log).toHaveBeenCalledWith('[Workspace Sync] Relationship create failed', expect.objectContaining({
+            requestId: 'reconciliation-create', cause: expect.objectContaining({ code,
+              message: 'settings reconciliation failed' }), failureCause: expect.objectContaining({ errorCode: code }),
+          }));
+        } finally { log.mockRestore(); }
+      }
       await stopping;
       expect(states.filter((state) => state === 'ready')).toHaveLength(1);
-      if (reason === 'reconciliation_failure') {
+      if (reason !== 'root_stop') {
         expect(stops[1]).toHaveBeenCalledTimes(1);
         expect(brokerCloses[1]).toHaveBeenCalledTimes(1);
       } else {

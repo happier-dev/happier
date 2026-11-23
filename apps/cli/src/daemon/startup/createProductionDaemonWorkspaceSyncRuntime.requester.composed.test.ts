@@ -24,7 +24,7 @@ import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approva
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, createDirectRouteGrantSigningInputV2 } from '@happier-dev/protocol';
-import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectAccountRelationshipGraphV1Schema, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { sealExternalActionRequesterAccountContextV1, sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -832,6 +832,34 @@ it.skipIf(process.platform !== 'linux').each(['missing admission', 'withdrawn gr
     delete stored.sourceAdmission;
     await writeFile(files[0]!, JSON.stringify(stored));
   }
+  let stagedRelationshipId: string | undefined;
+  if (failure === 'missing admission') {
+    // Historical Home boundary: a staged, never-committed copy survives beside
+    // the committed pre-admission link. Build both through the real create first.
+    const staged = await setup.executeNativeRelationshipAction(await setup.prepareInvocation({
+      ...setup.request, operationId: `${setup.request.operationId}-historical-staged`,
+      actionInput: { ...setup.request.actionInput, targetPath: `${setup.targetPath}-historical-staged` },
+    }));
+    expect(staged).toMatchObject({ ok: true, result: { created: true } });
+    if (!staged.ok) throw new Error('Historical staged copy fixture failed');
+    const stagedId = WorkspaceSyncRelationshipCreateResultV1Schema.parse(staged.result).relationshipId;
+    stagedRelationshipId = stagedId;
+    const stagedFiles = (await Promise.all(roots.map(root => readdir(root, { recursive: true })
+      .then(names => names.map(name => join(root, String(name))), () => []))))
+      .flat().filter(path => path.endsWith(`relationship-${encodeURIComponent(stagedId)}.json`));
+    expect(stagedFiles).toHaveLength(1);
+    const stagedCustody = JSON.parse(await readFile(stagedFiles[0]!, 'utf8'));
+    delete stagedCustody.sourceAdmission;
+    await writeFile(stagedFiles[0]!, JSON.stringify(stagedCustody));
+    const graphIndex = setup.rows.findIndex(row => ProjectAccountRowV1Schema.parse(row).key.kind === 'relationship-graph');
+    const graph = ProjectAccountRowV1Schema.parse(setup.rows[graphIndex]);
+    if (graph.content?.t !== 'plain') throw new Error('Expected plain historical Home row');
+    const payload = graph.content.v;
+    const value = ProjectAccountRelationshipGraphV1Schema.parse(payload.value);
+    setup.rows[graphIndex] = ProjectAccountRowV1Schema.parse({ ...graph, revision: graph.revision + 1,
+      content: { t: 'plain', v: { ...payload, value: { relationships: value.relationships.map(link =>
+        link.relationshipId === stagedId ? { ...link, enabled: false, committedAtMs: null } : link) } } } });
+  }
   const get = vi.mocked(axios.get).getMockImplementation();
   if (!get) throw new Error('HTTP boundary is unavailable');
   let refusedReads = 0;
@@ -867,6 +895,10 @@ it.skipIf(process.platform !== 'linux').each(['missing admission', 'withdrawn gr
   expect(phases).toEqual(expect.arrayContaining(['prepare', 'release']));
   expect(result).toMatchObject({ ok: true, result: { created: true } });
   const relationships = (await controller.listRelationships({})).relationships;
+  if (stagedRelationshipId) expect(relationships).toEqual(expect.arrayContaining([
+    expect.objectContaining({ definition: expect.objectContaining({ relationshipId: stagedRelationshipId,
+      enabled: false, committedAtMs: null }) }),
+  ]));
   if (failure === 'missing admission') {
     expect(relationships).toEqual(expect.arrayContaining([
       expect.objectContaining({ definition: expect.objectContaining({ relationshipId }),

@@ -748,8 +748,13 @@ export class WorkspaceSyncBroker {
     if (!command) return;
     this.commands.delete(requestId);
     command.abortCleanup?.();
-    if (error) command.reject(error.code === 'engine_unavailable' ? command.resumeCarrierFailure ?? error : error);
-    else command.resolve(result);
+    if (error) {
+      // SendResult's generic code came from a responding native process.
+      // Keep the broker-owned endpoint refusal when one exists, else its native message.
+      command.reject(error.code === 'engine_unavailable'
+        ? command.resumeCarrierFailure ?? Object.assign(new Error(error.message, { cause: error }), { code: 'workspace_sync_unavailable' })
+        : error);
+    } else command.resolve(result);
   }
 
   private failCommands(error: Error): void {

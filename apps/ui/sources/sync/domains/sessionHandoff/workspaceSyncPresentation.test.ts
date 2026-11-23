@@ -18,6 +18,17 @@ function failure(message: string, code: string) {
 }
 
 describe('workspaceSyncPresentation', () => {
+    it('keeps the redacted originating create message under Technical details', () => {
+        const error = { code: 'workspace_sync_unavailable', error: 'Native create failed: no space left on device; token=fixture-sync-secret',
+            requestId: 'private-request-reference', failureCause: { phase: 'dispatch', errorClass: 'Error',
+                errorCode: 'workspace_sync_unavailable', httpStatus: null } };
+        const presented = presentWorkspaceSyncFailure(error, 'source_relationship');
+        expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'reason',
+            value: expect.stringContaining('no space left on device') }));
+        expect(JSON.stringify(presented)).not.toContain('fixture-sync-secret');
+        expect(JSON.stringify(presented)).not.toContain('private-request-reference');
+    });
+
     it('explains unavailable requester access while preserving the original relationship refusal', () => {
         const code = 'relationship_not_owned';
         expect(resolveWorkspaceSyncErrorTranslationKey(code)).toBe('workspaceSync.error.requesterAccessUnavailable');
