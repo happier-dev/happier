@@ -42,6 +42,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
   projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
   projectExternalActionDiscussionEnvelopeIdV1,
+  projectExternalActionTerminalSessionEnvelopeIdV1,
   ExternalActionExecutionAuthorizationV1Schema,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
@@ -114,10 +115,16 @@ export function computeExternalActionRequestEnvelopeDigestV1(envelope: ExternalA
   ]);
 }
 
-/** Exact envelope and closed-purpose binding; current resource authority remains Home-owned. */
+/**
+ * Exact envelope and closed-purpose binding; current resource authority remains Home-owned.
+ * A terminal session root binds its session instead of one page: a later read of that same
+ * terminal matches; the Action and every other operand stay exact, so a write never does.
+ */
 export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalActionExecutionAuthorizationBindingV1,
   input: Readonly<{ actionId: string; machineId: string; envelope: ExternalActionRequestEnvelope }>): boolean {
   try {
+    const terminalSession = binding.terminalSession;
+    if (terminalSession && projectExternalActionTerminalSessionEnvelopeIdV1(input) !== terminalSession.terminalId) return false;
     const nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input);
     const metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(input);
     const sync = input.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(input.actionId, input.envelope.input)
@@ -131,14 +138,14 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       || !sameStrictJsonValue(binding.sessionPresetAcquisition ? { selection: binding.sessionPresetAcquisition.selection,
         controller: binding.sessionPresetAcquisition.controller } : undefined, input.envelope.sessionSpawnAdmission?.managedPresetAcquisition)) return false;
     return binding.actionId === input.actionId && binding.machineId === input.machineId
-      && binding.requestId === input.envelope.requestId
+      && (terminalSession !== undefined || binding.requestId === input.envelope.requestId)
       && binding.requesterOperationRead === (input.envelope.v === 2 ? input.envelope.requesterOperationRead : undefined)
       && binding.idempotencyKey === input.envelope.idempotencyKey
       && (input.envelope.v !== 2 || binding.machineRuntimeDemand === input.envelope.machineRuntimeDemand)
       && (input.envelope.target?.kind === 'session'
         || input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId)
       && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
-      && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope)
+      && (terminalSession !== undefined || binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope))
       && binding.discussionId === projectExternalActionDiscussionEnvelopeIdV1(input)
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
       && (input.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1

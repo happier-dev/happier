@@ -40,6 +40,8 @@ import { DeploymentTargetMachinesV1Schema } from '../deployments/deploymentEnvir
 import { ProjectSourceOwnerV1Schema, ProjectSourcesCreateActionInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
 import { PROJECT_SOURCE_CREATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
+import { isMachineTerminalSessionReadActionIdV1 } from './specs/machineTerminalActionIdsV1.js';
+import { TerminalStreamReadRequestSchema } from '../terminal/stream.js';
 import type { ProjectSourceArtifactReadOptionsV1 } from '../projects/sources/projectSourceAttachmentAdmissionV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
@@ -1005,6 +1007,8 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
   /** Exact non-content Discussion root needed by Home-owned recipient repair. */
   discussionId: z.optional(DiscussionIdSchema),
+  /** Non-content terminal session operand of a terminal read; the receiving Machine checks it against the sealed input. */
+  terminalId: z.optional(TerminalStreamReadRequestSchema.shape.terminalId),
   target: z.optional(ExternalActionTargetV1Schema),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
   payload: z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1), maxCodeUnits(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES_V2)) }),
@@ -1132,6 +1136,31 @@ export function projectExternalActionDiscussionEnvelopeIdV1(input: Readonly<{
   }
   return input.envelope.v === 1 ? projectExternalActionDiscussionIdV1(input.actionId, input.envelope.input)
     : input.envelope.discussionId;
+}
+
+/** The terminal session an interactive read addresses; V2 carries it as a non-content operand. */
+export function projectExternalActionTerminalSessionEnvelopeIdV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): string | undefined {
+  if (!isMachineTerminalSessionReadActionIdV1(input.actionId)) return undefined;
+  if (input.envelope.v === 2) return input.envelope.terminalId;
+  const fields = z.looseObject({ terminalId: TerminalStreamReadRequestSchema.shape.terminalId }).safeParse(input.envelope.input);
+  return fields.success ? fields.data.terminalId : undefined;
+}
+
+/**
+ * A foreign Account-credential terminal read is admitted once per terminal session: its root
+ * binds the session instead of one page. Home re-reads current Machine access for each later
+ * page; the Machine refuses this root for finite output, which keeps per-request admission.
+ */
+export function projectExternalActionTerminalSessionBindingV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope; accountId: string; custodianAccountId: string;
+  authenticationKind: string | undefined;
+}>): Readonly<{ terminalId: string }> | undefined {
+  if (input.authenticationKind !== 'account' || input.accountId === input.custodianAccountId
+    || input.envelope.v === 2 && input.envelope.requesterOperationRead) return undefined;
+  const terminalId = projectExternalActionTerminalSessionEnvelopeIdV1(input);
+  return terminalId === undefined ? undefined : { terminalId };
 }
 /** One selection projection for editable defaults and creation preparation. */
 export function projectExternalActionProjectSessionDefaultsAdmissionV1(actionId: string, input: unknown): ProjectSessionDefaultsAdmissionV1 | undefined {
@@ -1528,6 +1557,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
     projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),
     projectSourceCheckoutId: z.optional(ProjectAccountWorkspaceRefKeyV1Schema.shape.id),
+    /** Home admitted this foreign terminal session once; later pages re-present this root. */
+    terminalSession: z.optional(z.strictObject({ terminalId: TerminalStreamReadRequestSchema.shape.terminalId })),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionApiTokenServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
@@ -1541,6 +1572,14 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin || value.managedContinuation
     || value.handoffAdmission)) {
     context.addIssue({ code: 'custom', path: ['requesterOperationRead'], message: 'Requester custody binds only Account operation Get, List, or Cancel on one Machine' });
+  }
+  if (value.terminalSession && (!isMachineTerminalSessionReadActionIdV1(value.actionId)
+    || !('authentication' in value) || value.authentication.kind !== 'account'
+    || value.accountId === value.custodianAccountId || value.admittedMachineRole === undefined
+    || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    || value.requesterOperationRead || value.sessionActionOrigin || value.workflowActionOrigin
+    || value.handoffAdmission || value.managedContinuation || value.managedAdmission)) {
+    context.addIssue({ code: 'custom', path: ['terminalSession'], message: 'A terminal session root binds one foreign Account read on its admitted Machine' });
   }
   const publication = value.deploymentCandidatePublication;
   if (publication?.reviewed && (!isDeploymentMembershipActionIdV1(value.actionId)

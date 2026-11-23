@@ -19514,6 +19514,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -23622,6 +23623,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -30551,6 +30553,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -34659,6 +34662,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -48464,6 +48468,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -52572,6 +52577,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -57492,6 +57498,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -61600,6 +61607,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -66447,6 +66455,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;
@@ -70555,6 +70564,7 @@ export type ManagedMachinesActionResultById = {
                 machineRuntimeDemand?: 'required' | undefined;
                 idempotencyKey?: string | undefined;
                 discussionId?: string | undefined;
+                terminalId?: string | undefined;
                 target?: undefined | {
                     kind: 'machine';
                     machineId: string;

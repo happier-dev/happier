@@ -31,7 +31,8 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
     projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
-    projectExternalActionDiscussionEnvelopeIdV1, isExternalActionWorkflowActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectExternalActionDiscussionEnvelopeIdV1, isExternalActionWorkflowActionIdV1,
+    projectExternalActionTerminalSessionBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import {
     type ExternalActionDaemonDispatcher,
@@ -39,7 +40,7 @@ import {
 import { ExternalActionAdmissionUnexpectedError } from '@/app/machines/managed/managedAcquire';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { auth, ApiTokenOperationError } from "@/app/auth/auth";
-import { resolveMachineAdmission } from "@/app/machines/machineAccess";
+import { readActiveMachineAdmissionInTx, resolveMachineAdmission } from "@/app/machines/machineAccess";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { db } from "@/storage/db";
@@ -288,6 +289,27 @@ function createRequestLifetime(
     };
 }
 
+/**
+ * A session-bound terminal read root relays under the same Account credential that minted it.
+ * Each page runs only the still-active lookup: current grants, the same custody, and the
+ * current role, so withdrawn or narrowed access takes effect at the next page.
+ */
+async function readAdmittedTerminalSessionRelay(request: FastifyRequest, actionId: string,
+    body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>,
+    root: ExternalActionExecutionAuthorizationBindingV1,
+    authorization: NonNullable<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>['executionAuthorization']>) {
+    const requester = readExternalActionRequestPrincipal(request, actionId, body);
+    if (!requester || requester === 'present_user_required' || !('authentication' in requester) || !('authentication' in root)
+        || requester.authentication.kind !== 'account' || requester.authentication.tokenEpoch !== root.authentication.tokenEpoch) return null;
+    const principal = projectExternalActionBoundPrincipal(root, requester, request.authAuthority);
+    if (!principal) return null;
+    const machineAdmission = await inTx(tx => readActiveMachineAdmissionInTx(tx,
+        { actorAccountId: root.accountId, machineId: root.machineId }));
+    if (!machineAdmission || machineAdmission.installationId !== root.installationId
+        || machineAdmission.custodianAccountId !== root.custodianAccountId) return null;
+    return { principal, authorization, machineAdmission, authenticationEvidence: request.authTokenAuthenticationEvidence };
+}
+
 /** A previously admitted root re-enters only its same original request, without fresh caller claims. */
 async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, actionId: string,
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
@@ -304,6 +326,10 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
         && (request.authTokenKind !== 'account' || !root.sessionActionOrigin || !root.sessionActionSource
             || !('authentication' in root) || root.authentication.kind !== 'account'
             || root.authentication.tokenEpoch !== request.authTokenEpoch)) return null;
+    // A terminal session root was admitted once at mint for this Account, Machine and terminal.
+    // Each later page proves the signature, the binding and this request's Account credential,
+    // then one still-active Machine access lookup; no new admission or mint.
+    if (root.terminalSession) return readAdmittedTerminalSessionRelay(request, actionId, body, root, authorization);
     // Every presentation of a root to the Home, daemon-signed or person-presented,
     // is new work: it passes full admission here before any dispatch.
     // This front door has already authenticated this Account and checked login
@@ -867,6 +893,9 @@ export function registerExternalActionRoutes(
             try {
                 const { authority: _authority, ...provenance } = principal;
                 const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(actionId.data, body.data.envelope);
+                const terminalSession = projectExternalActionTerminalSessionBindingV1({ actionId: actionId.data,
+                    envelope: body.data.envelope, accountId: principal.accountId, custodianAccountId: admission.custodianAccountId,
+                    authenticationKind: 'authentication' in principal ? principal.authentication.kind : undefined });
                 const mintInput = {
                     serverIdentityId: homeId,
                     ...provenance,
@@ -890,6 +919,7 @@ export function registerExternalActionRoutes(
                     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
                     ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
                     ...(projectSourceCheckoutId === undefined ? {} : { projectSourceCheckoutId }),
+                    ...(terminalSession ? { terminalSession } : {}),
                     ...(managedAdmission ? { managedAdmission } : {}),
                     ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
                     ...(handoffAdmission ? { handoffAdmission } : {}),

@@ -128,6 +128,12 @@ export async function projectActiveMachineAdmissionFromFacts(
     return { actorAccountId, custodianAccountId: facts.accountId, machineId: facts.id,
         installationId: facts.installationId, role, encryptionMode };
 }
+
+/** The same still-active lookup for admitted work that holds only its Machine binding. */
+export async function readActiveMachineAdmissionInTx(tx: Tx, input: MachineActor): Promise<SocketRpcMachineAdmissionContextV1 | null> {
+    const row = await readMachineAdmissionFactsInTx(tx, input);
+    return row ? projectActiveMachineAdmissionFromFacts(tx, row, input.actorAccountId) : null;
+}
 function resolveMachineRpcRequiredRole(input: Readonly<{
     method: string; owned: boolean; requiredRole: MachineAccessRoleV1; actionId?: string;
 }>): MachineAccessRoleV1 | null {

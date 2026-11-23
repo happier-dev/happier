@@ -17,3 +17,8 @@ export type MachineTerminalStreamActionIdV1 = 'machines.terminal.read' | 'machin
 export function isMachineTerminalStreamActionIdV1(value: string): value is MachineTerminalStreamActionIdV1 {
   return value === 'machines.terminal.read' || value === 'machines.terminal.write';
 }
+
+/** Only an interactive viewer's read ends on Machine access loss, so only it may reuse one session admission. */
+export function isMachineTerminalSessionReadActionIdV1(value: string): value is 'machines.terminal.read' {
+  return value === 'machines.terminal.read';
+}

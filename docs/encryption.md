@@ -6409,7 +6409,18 @@ custodian can inspect sign-in material delivered there.
 The installed terminal runtime consumes these same admitted original requester
 ports for an accepted Project standalone shell and an exact own local Session
 workspace. Current Machine Use and requester custody remain required for each
-operation and reconnect; guessed or foreign terminal ids refuse. This creates
+operation and reconnect; guessed or foreign terminal ids refuse. A read of a
+terminal on another person's Machine is admitted once per terminal session:
+its signed root binds the Account, Machine installation and terminal id instead
+of one page. For each later page Home checks that root's signature and binding,
+the request's own Account credential and token epoch, and runs one current
+Machine access lookup (current grants, the same custodian and installation, and
+the current role). It runs no new admission or mint, and a removed or narrowed
+grant takes effect at the next page. In a V2 envelope the terminal id is a
+plaintext operand (`terminalId`, an opaque per-PTY id); the receiving Machine
+checks it against the sealed input. Writes keep per-request admission, and the
+Machine refuses a session root for finite output, which then falls back to it.
+This creates
 neither an Agent nor a borrowed custodian credential. The original-caller refusal
 at the signed finite Project-script ingress remains unchanged.
 

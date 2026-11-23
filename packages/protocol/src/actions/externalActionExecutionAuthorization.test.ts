@@ -8,6 +8,7 @@ import { encodeReviewedActionChildHttpProofV1, decodeReviewedActionChildHttpProo
 import { isExternalActionAuthorizationBoundToEnvelope } from './externalActionExecutionAuthorization.js';
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionTargetV1 } from './externalActionApi.js';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from './externalActionApi.js';
+import { projectExternalActionTerminalSessionBindingV1 } from './externalActionApi.js';
 import { WorkspaceSyncSourceContextV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '../rpc/socket.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { sealExternalActionRequestV2 } from './externalActionEncryption.js';
@@ -930,4 +931,50 @@ it.each(['plain', 'e2ee'] as const)('binds draft DNS root references and keeps p
   const replacement = projectDeploymentNativeAdmissionV1(actionId, { ...input, requestKey: 'another-attempt' });
   expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentNativeAdmission: replacement },
     { actionId, machineId: target.machineId, envelope })).toBe(false);
+});
+
+it('binds a foreign terminal read root to its session, not one page', () => {
+  const actionId = 'machines.terminal.read';
+  const target = { kind: 'machine', machineId: 'shared-machine' } as const;
+  const page = (byteOffset: number, terminalId = 'terminal-a') => ({ v: 1, requestId: `page-${byteOffset}-${terminalId}`, target,
+    input: { serverId: 'srv_home', machineId: target.machineId, terminalId, byteOffset } }) as const;
+  const first = page(0);
+  const fields = { accountId: 'viewer', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'srv_home', machineId: target.machineId, installationId: 'installation', actionId, admittedMachineRole: 'use',
+    requestId: first.requestId, target, accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(first) } as const;
+  const session = projectExternalActionTerminalSessionBindingV1({ actionId, envelope: first, accountId: 'viewer', custodianAccountId: 'custodian', authenticationKind: 'account' });
+  expect(session).toEqual({ terminalId: 'terminal-a' });
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: { ...fields, terminalSession: session } }).binding;
+  const bound = (binding: ExternalActionExecutionAuthorizationBindingV1, envelope: ReturnType<typeof page>, machineId = target.machineId,
+    effect: string = actionId) => isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: effect, machineId, envelope });
+  expect(bound(root, page(7))).toBe(true);
+  expect(bound(root, page(0))).toBe(true);
+  expect(bound(root, page(7, 'terminal-b'))).toBe(false);
+  expect(bound(root, { ...page(7), target: { kind: 'machine', machineId: 'other-machine' } }, 'other-machine')).toBe(false);
+  expect(bound(root, page(7), target.machineId, 'machines.terminal.write')).toBe(false);
+  // A page-bound root (own Machine, or any other Action) still binds exactly one page.
+  const pageRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: fields }).binding;
+  expect(bound(pageRoot, first)).toBe(true);
+  expect(bound(pageRoot, page(7))).toBe(false);
+});
+
+it('keeps per-request admission for writes and own-Machine reads', () => {
+  const target = { kind: 'machine', machineId: 'shared-machine' } as const;
+  const envelope = (actionId: string) => ({ v: 1, requestId: 'request', target,
+    input: { serverId: 'srv_home', machineId: target.machineId, terminalId: 'terminal-a', byteOffset: 0 } }) as const;
+  expect(projectExternalActionTerminalSessionBindingV1({ actionId: 'machines.terminal.write', envelope: envelope('machines.terminal.write'),
+    accountId: 'viewer', custodianAccountId: 'custodian', authenticationKind: 'account' })).toBeUndefined();
+  expect(projectExternalActionTerminalSessionBindingV1({ actionId: 'machines.terminal.read', envelope: envelope('machines.terminal.read'),
+    accountId: 'custodian', custodianAccountId: 'custodian', authenticationKind: 'account' })).toBeUndefined();
+  expect(projectExternalActionTerminalSessionBindingV1({ actionId: 'machines.terminal.read', envelope: envelope('machines.terminal.read'),
+    accountId: 'viewer', custodianAccountId: 'custodian', authenticationKind: 'terminal' })).toBeUndefined();
+  const fields = { accountId: 'viewer', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'srv_home', machineId: target.machineId, installationId: 'installation', admittedMachineRole: 'use',
+    requestId: 'request', target, requestEnvelopeDigest: 'A'.repeat(43), terminalSession: { terminalId: 'terminal-a' } } as const;
+  expect(ExternalActionExecutionAuthorizationV1Schema.safeParse({ v: 1, token: 'proof',
+    binding: { ...fields, actionId: 'machines.terminal.read' } }).success).toBe(true);
+  for (const binding of [{ ...fields, actionId: 'machines.terminal.write' }, { ...fields, actionId: 'machines.terminal.read', accountId: 'custodian' },
+    { ...fields, actionId: 'machines.terminal.read', authentication: { kind: 'terminal', tokenEpoch: 1 } }]) {
+    expect(ExternalActionExecutionAuthorizationV1Schema.safeParse({ v: 1, token: 'proof', binding }).success).toBe(false);
+  }
 });

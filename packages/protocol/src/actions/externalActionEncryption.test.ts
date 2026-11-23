@@ -57,6 +57,25 @@ describe('whole external Action encryption', () => {
     expect(open(withoutScope)).toBeNull();
   });
 
+  it('carries a terminal read session as a non-content operand and rejects a substituted terminal', () => {
+    const readBinding = { ...binding, actionId: 'machines.terminal.read' };
+    const input = { serverId: 'srv_test', machineId: 'machine-1', terminalId: 'terminal-a', byteOffset: 0 };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: readBinding, input, material, randomBytes });
+    expect(request.terminalId).toBe('terminal-a');
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: readBinding, material });
+    expect(open(request)).toEqual({ input });
+    expect(open({ ...request, terminalId: 'terminal-b' })).toBeNull();
+    const { terminalId: _terminal, ...withoutOperand } = request;
+    expect(open(withoutOperand)).toBeNull();
+    // Writes keep per-request admission and carry no session operand.
+    expect(sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { ...binding, actionId: 'machines.terminal.write' },
+      input: { serverId: 'srv_test', machineId: 'machine-1', terminalId: 'terminal-a', event: { t: 'text', data: 'x' } },
+      material, randomBytes })).not.toHaveProperty('terminalId');
+  });
+
   it('keeps the finite theme-content read intent inside its authenticated requester envelope', () => {
     const themeBinding = { ...binding, actionId: 'registries.items.read' };
     const input = { kind: 'theme', sourceId: 'private-open-vsx', itemId: 'sample/palette' };

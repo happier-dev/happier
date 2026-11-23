@@ -42,6 +42,7 @@ import {
   projectExternalActionDeploymentMetadataReceiptIdV1,
   projectExternalActionProjectSessionDefaultsAdmissionV1,
   projectExternalActionProjectSourceCheckoutIdV1,
+  projectExternalActionTerminalSessionEnvelopeIdV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
   type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
@@ -195,8 +196,11 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
   const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const browserSessionId = projectExternalActionBrowserSessionIdV1(payload.actionId, payload.input);
+  const terminalId = projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: payload.actionId,
+    envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } });
   const envelope: ExternalActionRequestEnvelopeV2 = { v: 2, requestId: payload.requestId, target: payload.target,
     ...(browserSessionId === undefined ? {} : { browserSessionId }),
+    ...(terminalId === undefined ? {} : { terminalId }),
     ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     ...(discussionId === undefined ? {} : { discussionId }),
@@ -235,7 +239,7 @@ export function openExternalActionRequestV2(params: Readonly<{
   /** Host-local phase witness; never part of the transport response or opened content. */
   onFailure?: (failure: Readonly<{
     phase: 'envelope_parse' | 'envelope_binding' | 'ciphertext_open' | 'plaintext_parse'
-      | 'plaintext_binding' | 'browser_session_admission' | 'machine_runtime_demand' | 'reset_admission' | 'approval_decision_admission' | 'deployment_read_admission' | 'deployment_link_admission' | 'deployment_metadata_admission' | 'deployment_preparation_admission'
+      | 'plaintext_binding' | 'browser_session_admission' | 'terminal_session_admission' | 'machine_runtime_demand' | 'reset_admission' | 'approval_decision_admission' | 'deployment_read_admission' | 'deployment_link_admission' | 'deployment_metadata_admission' | 'deployment_preparation_admission'
       | 'deployment_native_admission' | 'registry_app_update_admission' | 'project_session_defaults_admission' | 'managed_admission' | 'discussion_admission' | 'plaintext_limit';
     error?: unknown;
   }>) => void;
@@ -271,6 +275,9 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (!matches(decoded.data, params.binding)) return refused();
     phase = 'browser_session_admission';
     if (projectExternalActionBrowserSessionIdV1(decoded.data.actionId, decoded.data.input) !== envelope.browserSessionId) return refused();
+    phase = 'terminal_session_admission';
+    if (projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: decoded.data.actionId, envelope: { v: 1,
+      requestId: decoded.data.requestId, target: decoded.data.target, input: decoded.data.input } }) !== envelope.terminalId) return refused();
     phase = 'machine_runtime_demand';
     if (params.projectMachineRuntimeDemand(decoded.data.actionId, decoded.data.input, decoded.data.target)
       !== envelope.machineRuntimeDemand) return refused();

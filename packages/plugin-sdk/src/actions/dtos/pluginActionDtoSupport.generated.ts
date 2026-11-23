@@ -19851,6 +19851,9 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             projectSourceCheckoutId?: string | undefined;
+            terminalSession?: undefined | {
+                terminalId: string;
+            };
         } | {
             accountId: string;
             authentication: {
@@ -21175,6 +21178,9 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             projectSourceCheckoutId?: string | undefined;
+            terminalSession?: undefined | {
+                terminalId: string;
+            };
         } | {
             credentialId: string;
             accountId: string;
@@ -22553,6 +22559,9 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             projectSourceCheckoutId?: string | undefined;
+            terminalSession?: undefined | {
+                terminalId: string;
+            };
         };
     };
     reviewedChild?: undefined | {
