@@ -207,7 +207,7 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
 }
 
 async function restorePortableFixture(requestedService = service, homeClient = false, vendorResponseReady?: Promise<void>, machinePresence: boolean | 'online' | 'legacy' | 'guests' | 'mixed' = false, offlineMachineId?: string, vendorStatus = 503,
-    accountsReady?: Promise<void>, rejectVercelToken?: string) {
+    accountsReady?: Promise<void>, rejectVercelToken?: string, machineInventoryReady?: Promise<void>) {
     const accountId = 'portable-controller';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const serverUrl = 'https://portable-controller.test';
@@ -311,6 +311,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 }
                 machineReads += 1;
                 finishBootstrap();
+                await machineInventoryReady;
                 if (request.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
                     id => machines.find(machine => machine.id === id) ?? null);
                 if (request.pathname === '/v1/machines') return Response.json(machines);
@@ -339,7 +340,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
     });
     await bootstrapped;
     // Complete the real app inventory owner before measuring authentication demand.
-    await (await import('@/sync/sync')).sync.refreshMachines();
+    if (!machineInventoryReady) await (await import('@/sync/sync')).sync.refreshMachines();
     // addHome primes its ordinary capabilities; consume this fixture's current
     // HTTP response through the same client the authentication host reads.
     const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -353,6 +354,27 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         get creates() { return creates; },
         get machineReads() { return machineReads; }, get machineRpcs() { return machineRpcs; } };
 }
+
+it('keeps browser sign-in preparing until the Home returns its Machine inventory', () => withPortableSheetBrowser(async () => {
+    let releaseMachines!: () => void;
+    const machinesReady = new Promise<void>(resolve => { releaseMachines = resolve; });
+    const fixture = await restorePortableFixture(claude, false, undefined, 'online', undefined, 503, undefined, undefined, machinesReady);
+    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={claude} sheet onCancel={() => {}} />);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-service-setup:method:oauth')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-service-setup:method:oauth');
+        await vi.waitFor(() => expect(fixture.paths).toContain('/v4/connect/qualified/accounts'));
+        await flushHookEffects();
+        expect(screen.findHostByTestId('connected-service-setup:preparing')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('connectedServices.errors.browserSignInMachineUnavailable'));
+        releaseMachines();
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('connectedServicesSettings.setupChooseMachine')));
+        expect(screen.getTextContent()).not.toContain(t('connectedServices.errors.browserSignInMachineUnavailable'));
+    } finally {
+        releaseMachines();
+        await screen.unmount();
+    }
+}));
 
 it.each([false, true])('explains Claude browser OAuth needs an available Machine (retained offline selection: %s)', async retainedSelection => {
     const fixture = await restorePortableFixture(claude, false, undefined, true);

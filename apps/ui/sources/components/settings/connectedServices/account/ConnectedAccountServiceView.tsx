@@ -520,7 +520,9 @@ const ConnectedAccountServiceController = React.memo(
         ? selectedExecutionTarget?.machine.id ?? '' : '';
     const machineId = machineRequired && (selectedBrowserMachineSupport === null || selectedBrowserMachineSupport === 'supported')
         ? selectedMachineId : '';
-    const browserMachineUnavailableCode = !machineId && !attempt && !configuration
+    const browserMachineInventoryLoading = browserRequiresMachine && !machineId && !attempt && !configuration
+        && !hasSupportedBrowserMachine && targetSelection.activeAccountInventoryStatus === 'loading';
+    const browserMachineUnavailableCode = !browserMachineInventoryLoading && !machineId && !attempt && !configuration
         && browserRequiresMachine && accountAuthenticationModes?.status === 'available'
         ? selectedBrowserMachineNeedsUpdate || hasOnlineBrowserMachine && !hasSupportedBrowserMachine
             ? 'cli_update_required' : accountAuthenticationModes.machineUnavailableCode : undefined;
@@ -1606,7 +1608,8 @@ const ConnectedAccountServiceController = React.memo(
         ? browserMachineUnavailableCode === 'cli_update_required' || !hasOnlineBrowserMachine
             ? resolveConnectedServiceSettingsErrorMessage({ code: browserMachineUnavailableCode })
             : t('connectedServicesSettings.setupChooseMachine') : undefined;
-    const machineRequirement = browserMachineRequirementMessage ? <SurfaceStateCard
+    const machineRequirement = browserMachineInventoryLoading ? <ConnectedServiceSetupFlowBody state="preparing" />
+        : browserMachineRequirementMessage ? <SurfaceStateCard
         testID="connected-account-browser-machine-unavailable"
         size="line" kind="unavailable"
         title={browserMachineRequirementMessage}
@@ -1614,7 +1617,7 @@ const ConnectedAccountServiceController = React.memo(
 
     if (controllerProps.panel && !hasAccountDirectSetup && !hasPortableAuthenticationModes
         && !browserMachineUnavailableCode && machineRequired && (!serverId || !machineId) && !description && !errorCode && !flowActive) {
-        return <ConnectedServiceSetupFlowBody state="chooseMachine" />;
+        return machineRequirement;
     }
     if (!controllerProps.panel && !hasAccountDirectSetup && machineRequired && (!serverId || !machineId) && !accountDetailAvailable && !description && !errorCode) {
         const pendingTitle = registryEntry
@@ -2036,7 +2039,8 @@ const ConnectedAccountServiceController = React.memo(
             <ConnectedServiceSetupFlowBody
                 // A method that signs in on a Machine waits for one, not for a description it cannot load
                 // without one: until it is chosen the body says so, never an endless Preparing line.
-                state={installation || browserMachineUnavailableCode || choosingMethod || flowActive || awaitsMachineChoice
+                state={browserMachineInventoryLoading && !installation ? 'preparing'
+                    : installation || browserMachineUnavailableCode || choosingMethod || flowActive || awaitsMachineChoice
                     || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
                 methods={ranked.map((entry) => ({
                     id: entry.mode.id,

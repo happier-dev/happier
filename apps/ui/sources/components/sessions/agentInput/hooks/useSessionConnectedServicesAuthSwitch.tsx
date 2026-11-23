@@ -385,7 +385,8 @@ function SessionConnectedServicesSwitchSelection({
         <SurfaceStateCard kind="loading" size="line" lineDensity="menu" title={t('common.loading')} />
     ) : published.status === 'failed' ? (
         <SurfaceStateCard testID="session-auth-switch-options" kind="error" size="line" lineDensity="menu"
-            title={t('workflows.start.choicesFailed')} action={{ label: t('common.retry'), onPress: () => retry() }} />
+            title={t('workflows.start.choicesFailed')} diagnosticCode={published.errorCode} diagnosticDetail={published.requestId}
+            action={{ label: t('common.retry'), onPress: () => retry() }} />
     ) : undefined;
     const { options, profileOptionsByServiceId } = React.useMemo(() => {
         const options: SwitchRouting[] = [];

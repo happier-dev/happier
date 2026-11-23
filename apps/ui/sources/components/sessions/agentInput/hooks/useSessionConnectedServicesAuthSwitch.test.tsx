@@ -588,6 +588,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                     }
                     if (scenario === 'retry') {
                         await vi.waitFor(() => expect(picker.getTextContent()).toContain('workflows.start.choicesFailed'));
+                        expect(picker.findByTestId('session-auth-switch-options-diagnostic-unavailable')).toBeTruthy();
                         expect(picker.getTextContent()).not.toContain(empty);
                         await picker.pressByTestIdAsync('session-auth-switch-options-action');
                     }

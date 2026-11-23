@@ -12,7 +12,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import { readMachineInventoryStatus } from '@/sync/domains/machines/machineInventorySnapshots';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
+import type { MachineInventoryStatus, ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { resolveFleetMachineAvailability } from './fleetUnion';
@@ -110,6 +110,7 @@ export type MachineAdministrationTargetSelectionV1 = Readonly<{
     changeIntent?: 'scope' | 'draft';
     candidates: readonly MachineAdministrationCandidateV1[];
     pickerRows: readonly MachineAdministrationTargetPickerRowV1[];
+    activeAccountInventoryStatus?: MachineInventoryStatus;
     state: MachineAdministrationTargetStateV1;
     selectedTarget: MachineAdministrationTargetV1 | null;
     /**
@@ -301,6 +302,9 @@ export function useMachineAdministrationTargetSelection(
         options.rows === 'selected' && !storedTarget ? MACHINE_ADMINISTRATION_AUTOMATIC_CHOICE_DEMAND
             : selectionKey === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers || options.rows === 'selected'
                 ? readMachineAdministrationTargetFacts : undefined);
+    const activeAccountInventoryStatus = React.useMemo(() => activeAccountScope
+        ? readMachineInventoryStatus(inventorySnapshots, activeAccountScope.serverId)
+        : undefined, [inventorySnapshots, activeAccountScope?.serverId]);
     const snapshots = React.useMemo(() => accountScope ? inventorySnapshots.filter(snapshot => snapshot.kind === 'resolved'
         && snapshot.accountId === accountScope.accountId
         && areServerProfileIdentifiersEquivalent(snapshot.profileId, accountScope.serverId)) : inventorySnapshots,
@@ -382,6 +386,7 @@ export function useMachineAdministrationTargetSelection(
     return React.useMemo(() => ({
         candidates,
         pickerRows,
+        activeAccountInventoryStatus,
         state: targetState,
         selectedTarget: storedTarget,
         selectedTargetServerMatchesActiveAccount,
@@ -391,6 +396,7 @@ export function useMachineAdministrationTargetSelection(
         resolveExecutionTarget,
     }), [
         enabled,
+        activeAccountInventoryStatus,
         candidates,
         clearTarget,
         pickerRows,
