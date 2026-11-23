@@ -2,17 +2,11 @@ import * as React from 'react';
 import type { View } from 'react-native';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
-import { WIDGET_FLOW_WIDTH_PX, WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
-import { useDeviceType } from '@/utils/platform/responsive';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
-import { WidgetSetupStep } from './WidgetSetupStep';
 import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
 
-/**
- * Edit inputs and in-card repair (lab dbind E/Ep, dagent ST): the same step as the Add pane, in its
- * own popover and sheet, anchored to the widget's ⋯ (or its repair action). Only this copy changes.
- */
-export function WidgetSetupPopover(props: Readonly<{
+export type WidgetSetupPopoverProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<View | null>;
     placement?: 'top' | 'bottom';
@@ -27,32 +21,19 @@ export function WidgetSetupPopover(props: Readonly<{
     /** A repair opens the step at the input it names, its choices open. */
     focusPath?: string;
     testID: string;
-}>): React.ReactElement | null {
-    const phone = useDeviceType() === 'phone';
-    if (!props.open) return null;
-    return <OpenWidgetSetupPopover {...props} phone={phone} />;
-}
+}>;
 
-function OpenWidgetSetupPopover(props: React.ComponentProps<typeof WidgetSetupPopover> & Readonly<{ phone: boolean }>): React.ReactElement {
-    const [setup] = React.useState(props.setup);
-    const step = (
-        <WidgetSetupStep
-            setup={setup}
-            callerContext={props.callerContext}
-            phone={props.phone}
-            onCancel={props.onRequestClose}
-            onClose={props.onRequestClose}
-            onDone={props.onDone ?? props.onRequestClose}
-            notice={props.notice}
-            {...(props.serverId ? { serverId: props.serverId } : {})}
-            {...(props.sessionId ? { sessionId: props.sessionId } : {})}
-            {...(props.focusPath ? { focusPath: props.focusPath } : {})}
-            testID={props.testID}
-        />
-    );
-    return (
-        <WidgetFlowShell title={setup.title} testID={props.testID} anchorRef={props.anchorRef} placement={props.placement} width={WIDGET_FLOW_WIDTH_PX.setup} onRequestClose={props.onRequestClose}>
-            {step}
-        </WidgetFlowShell>
-    );
+const WidgetSetupPopoverBody = retryableLazy(async () => ({
+    default: (await import('./WidgetSetupPopoverBody')).WidgetSetupPopoverBody,
+}));
+
+/**
+ * Edit inputs and in-card repair (lab dbind E/Ep, dagent ST): the same step as the Add pane, in its
+ * own popover and sheet, anchored to the widget's ⋯ (or its repair action). Only this copy changes.
+ */
+export function WidgetSetupPopover(props: WidgetSetupPopoverProps): React.ReactElement | null {
+    if (!props.open) return null;
+    return <React.Suspense fallback={null}>
+        <WidgetSetupPopoverBody {...props} />
+    </React.Suspense>;
 }

@@ -162,6 +162,11 @@ it.each(['edit', 'pane', 'surface'] as const)('keeps the %s setup preview mounte
             await act(async () => {
                 document.querySelector<HTMLElement>('[data-testid="setup.entry.note"]')!.click();
             });
+        } else {
+            await vi.waitFor(async () => {
+                await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+                expect(input()).not.toBeNull();
+            });
         }
         const original = input();
         expect(original).not.toBeNull();

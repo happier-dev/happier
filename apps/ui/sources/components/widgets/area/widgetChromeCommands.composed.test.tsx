@@ -391,7 +391,10 @@ it.each(['editor', 'gallery', 'copy', 'about'] as const)('keeps initial setup op
     const period = () => screen.root.findAllByType(WidgetSetupFieldRow).find(row => row.props.entry.field.path === 'period');
     await act(open);
     if (mode === 'about') expect(screen.findByTestId('initial.about')).toBeNull();
-    await act(async () => { await vi.waitFor(() => expect(period()?.props.optionsStatus).toBe('failed')); });
+    await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(period()?.props.optionsStatus).toBe('failed');
+    });
     expect(period()!.props.options).toHaveLength(0);
     await act(async () => { expect((await invoke(mode === 'gallery' ? 'Back: Add widget' : mode === 'copy'
         ? `${t('common.back')}: ${candidate.title}` : `${t('common.close')}: ${candidate.title}`)).ok).toBe(true); });
@@ -403,7 +406,10 @@ it.each(['editor', 'gallery', 'copy', 'about'] as const)('keeps initial setup op
     }, { serverId, surface: 'agent' });
     expect(agentOptions.ok, JSON.stringify(agentOptions)).toBe(true);
     await act(open);
-    await act(async () => { await vi.waitFor(() => expect(period()?.props.optionsStatus).toBe('ready')); });
+    await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(period()?.props.optionsStatus).toBe('ready');
+    });
     expect(period()!.props.options.length).toBeGreaterThan(0);
 });
 
