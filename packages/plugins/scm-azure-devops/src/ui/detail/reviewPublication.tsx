@@ -1,7 +1,9 @@
 import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
-import type {
-  ReviewCommentPublicationVerdictV1,
+import {
+  buildReviewPublicationSummaryV1,
+  serializeReviewPublicationSummaryForForgeV1,
+  type ReviewCommentPublicationVerdictV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
@@ -12,8 +14,10 @@ import {
   Text,
   Action,
   projectPluginActionControlExecutionV1,
+  useHappierReviewPublicationEvidence,
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
+  useReviewPublicationSelection,
   type PluginActionExecution,
   type ReviewCommentProposalWithBodyV1,
   type PluginTranslate,
@@ -275,21 +279,24 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
   const completion = useTriagePostMutationCompletion();
   const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
-  const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
+  // The shared publication owner decides the default selection and keeps the person's choices across pages.
+  const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals.proposals);
   const [verdict, setVerdict] = React.useState<VerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
-  React.useEffect(() => {
-    if (proposals.status !== 'ready') return;
-    setSelectedIds((current) => {
-      const retained = current.filter((id) => proposals.proposals.some((item) => item.id === id));
-      return retained.length > 0 ? retained : proposals.proposals.map((proposal) => proposal.id);
-    });
-  }, [proposals]);
+  const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const body = summary.trim();
-  const verdictValue: ReviewCommentPublicationVerdictV1 | null = verdict === 'none' || body === ''
+  const headRevision = input.observation.snapshot.reviewRevision?.headSha;
+  // The shared summary formatter: the person's words, the findings it posts and the round's evidence.
+  const verdictValue: ReviewCommentPublicationVerdictV1 | null = verdict === 'none' || body === '' || !headRevision
     ? null
-    : { kind: verdict, body };
+    : { kind: verdict, body: serializeReviewPublicationSummaryForForgeV1(buildReviewPublicationSummaryV1({
+      verdict: { kind: verdict, body },
+      headRevision,
+      findings: selected.flatMap((proposal) => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
+      reviewId: input.admittedReview?.reviewId,
+      quality,
+    })) };
   const submitPayload = buildAzureSubmitReviewInputV1(input, selected, verdictValue);
   // Mirrors the public Reviews routing owner: file-scoped proposals stay provider-preflighted;
   // anything without a file belongs in the real user-authored verdict summary.

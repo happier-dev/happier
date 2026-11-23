@@ -52,6 +52,8 @@ let completedMutations = 0;
  * hold one. Every other action still settles into `nextResult`.
  */
 let readResults: Readonly<Record<string, JsonValue>> = {};
+/** Further proposals the linked review returns after the fixture's own one. */
+let extraProposals: readonly Readonly<Record<string, unknown>>[] = [];
 
 /** One Azure review thread, as its published projection publishes it. */
 const THREADS_RESULT = {
@@ -237,7 +239,7 @@ async function mountDetail(
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
           if (action === 'reviews.comments.list') {
-            return { items: [REVIEW_PROPOSAL], cursor: null } as JsonValue;
+            return { items: [REVIEW_PROPOSAL, ...extraProposals.map((extra) => ({ ...REVIEW_PROPOSAL, ...extra }))], cursor: null } as JsonValue;
           }
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           return readResults[localId] ?? nextResult;
@@ -260,6 +262,7 @@ function recordedWrites(): { action: unknown; input: unknown }[] {
 afterEach(async () => {
   recorded.splice(0);
   readResults = {};
+  extraProposals = [];
   nextActionError = null;
   completedMutations = 0;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
@@ -635,6 +638,31 @@ describe('the mounted Azure DevOps review publication', () => {
         },
       },
     });
+  });
+
+  it('starts with the shared selection (nits unchecked) and posts the shared summary', async () => {
+    extraProposals = [{
+      id: 'azure-review-comment-nit',
+      body: 'Spelling in the comment.',
+      finding: { id: 'finding-nit', severity: 'nit', category: 'style', title: 'Spelling in the comment', summary: 'Spelling.' },
+    }];
+    const detail = await mountDetail(REVIEW_INPUT);
+    await expect(detail.findByRole('checkbox', { name: 'Spelling in the comment.' }))
+      .resolves.toMatchObject({ state: { checked: false } });
+    await expect(detail.getByRole('checkbox', { name: 'Please keep this branch explicit.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+    await act(async () => detail.press(await detail.getByRole('radio', { name: 'Comment' })));
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Review summary"]');
+    expect(field).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, 'Keep the branch named before merging.');
+      field!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => detail.controls.press('Submit review'));
+    const submitted = recordedWrites().at(-1) as { input: { publicationPlan: { entries: { happierCommentId: string }[]; verdict: { body: string } } } };
+    expect(submitted.input.publicationPlan.entries.map((entry) => entry.happierCommentId)).toEqual(['azure-review-comment-1']);
+    expect(submitted.input.publicationPlan.verdict.body).toContain('Keep the branch named before merging.');
+    expect(submitted.input.publicationPlan.verdict.body).toContain('Reviewed with Happier');
   });
 
   it('replies to the exact rendered thread and latest parent comment with an unversioned plan', async () => {

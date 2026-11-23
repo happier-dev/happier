@@ -1,7 +1,9 @@
 import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
-import type {
-  ReviewCommentPublicationPlanV1,
+import {
+  buildReviewPublicationSummaryV1,
+  serializeReviewPublicationSummaryForForgeV1,
+  type ReviewCommentPublicationPlanV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
@@ -13,8 +15,10 @@ import {
   Action,
   projectPluginActionControlExecutionV1,
   isPluginActionConfirmationDeclined,
+  useHappierReviewPublicationEvidence,
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
+  useReviewPublicationSelection,
   type PluginActionExecution,
   type PluginTranslate,
   type TextTone,
@@ -409,16 +413,11 @@ function BitbucketReviewPublicationControls({
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
-  const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
+  // The shared publication owner decides the default selection and keeps the person's choices across pages.
+  const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals);
   const [verdict, setVerdict] = React.useState<'comment' | 'approve' | 'requestChanges'>('comment');
   const [summary, setSummary] = React.useState('');
-  React.useEffect(() => {
-    if (status !== 'ready') return;
-    setSelectedIds((selected) => {
-      const retained = selected.filter((id) => proposals.some((proposal) => proposal.id === id));
-      return retained.length > 0 ? retained : proposals.map((proposal) => proposal.id);
-    });
-  }, [proposals, status]);
+  const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
 
   const selected = proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const revision = input.observation.snapshot.reviewRevision;
@@ -438,7 +437,14 @@ function BitbucketReviewPublicationControls({
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
       entries,
-      verdict: { kind: verdict, body: trimmedSummary },
+      // The shared summary formatter: the person's words, the findings it posts and the round's evidence.
+      verdict: { kind: verdict, body: serializeReviewPublicationSummaryForForgeV1(buildReviewPublicationSummaryV1({
+        verdict: { kind: verdict, body: trimmedSummary },
+        headRevision: revision.headSha,
+        findings: selected.flatMap((proposal) => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
+        reviewId: input.admittedReview?.reviewId,
+        quality,
+      })) },
     };
   const single = target === null || revision === undefined || entries.length !== 1 ? null : {
     target,

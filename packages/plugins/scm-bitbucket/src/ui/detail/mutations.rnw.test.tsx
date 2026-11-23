@@ -43,6 +43,8 @@ let completedMutations = 0;
  * Comments panel hold one. Every other action still settles into `nextResult`.
  */
 let readResults: Readonly<Record<string, JsonValue>> = {};
+/** Further proposals the linked review returns after the fixture's own one. */
+let extraProposals: readonly Readonly<Record<string, JsonValue>>[] = [];
 
 /** One Bitbucket comment page, at whichever resolution the case needs. */
 function commentsResult(
@@ -119,7 +121,20 @@ async function mountDetail(
                   diffContext: { side: 'after', baseSha: revision.baseSha, headSha: revision.headSha },
                 },
                 linkedRefs: [{ kind: 'pullRequest', url: FIXTURE.detailInput.observation.locator.webUrl }],
-              }],
+              }, ...extraProposals.map((extra) => ({
+                serverRevision: 3,
+                anchor: { kind: 'line', filePath: 'src/index.ts', line: 14, side: 'after' },
+                snapshot: {
+                  kind: 'text', selectedLines: ['return ready;'], beforeContext: [], afterContext: [],
+                  selectedLinesHash: 'selected-hash', contextWindowHash: 'context-hash', capturedAt: 1,
+                  fileLength: 20, source: 'committed', commitSha: revision.headSha,
+                  isUncommitted: false, isUntracked: false, truncated: false,
+                  hasBidiControls: false, likelyMinified: false,
+                  diffContext: { side: 'after', baseSha: revision.baseSha, headSha: revision.headSha },
+                },
+                linkedRefs: [{ kind: 'pullRequest', url: FIXTURE.detailInput.observation.locator.webUrl }],
+                ...extra,
+              }))],
               cursor: null,
             } as JsonValue;
           }
@@ -135,6 +150,7 @@ async function mountDetail(
 
 afterEach(async () => {
   recorded.splice(0);
+  extraProposals = [];
   readResults = {};
   nextActionError = null;
   completedMutations = 0;
@@ -195,6 +211,33 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
         },
       },
     });
+  });
+
+  it('starts with the shared selection (nits unchecked) and posts the shared summary', async () => {
+    extraProposals = [{
+      id: 'review-comment-nit',
+      body: 'Spelling in the comment.',
+      finding: { id: 'finding-nit', severity: 'nit', category: 'style', title: 'Spelling in the comment', summary: 'Spelling.' },
+    }];
+    const detail = await mountDetail({
+      ...FIXTURE.detailInput,
+      linkedSessions: [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    } as unknown as JsonValue);
+    await expect(detail.findByRole('checkbox', { name: 'Spelling in the comment.' }))
+      .resolves.toMatchObject({ state: { checked: false } });
+    await expect(detail.findByRole('checkbox', { name: 'Please keep this invariant explicit.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Review summary"]');
+    expect(field).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, 'Looks right once the invariant is named.');
+      field!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => detail.controls.press('Submit review'));
+    const submitted = recordedWrites().at(-1) as { input: { publicationPlan: { entries: { happierCommentId: string }[]; verdict: { body: string } } } };
+    expect(submitted.input.publicationPlan.entries.map((entry) => entry.happierCommentId)).toEqual(['review-comment-1']);
+    expect(submitted.input.publicationPlan.verdict.body).toContain('Looks right once the invariant is named.');
+    expect(submitted.input.publicationPlan.verdict.body).toContain('Reviewed with Happier');
   });
 
   it('localizes the review publication outcome counts instead of composing English chrome', async () => {
