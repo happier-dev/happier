@@ -141,6 +141,20 @@ export function buildCreateArgs(launch: LimaLaunch & Readonly<{ instance: string
       { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', guestPortRange: [1, 65535], ignore: true },
     ])}`,
     '--set', '.ssh.forwardAgent = false | .containerd.user = false | .containerd.system = false',
+    '--set', `.provision += ${JSON.stringify([{
+      mode: 'dependency',
+      script: [
+        '#!/bin/sh',
+        'set -eu',
+        // The Ubuntu recipe owns its guest packages. Leave other custom Linux images to their package setup.
+        'if command -v apt-get >/dev/null 2>&1 && ! command -v bwrap >/dev/null 2>&1; then',
+        '  export DEBIAN_FRONTEND=noninteractive',
+        '  apt-get update',
+        '  apt-get install -y --no-install-recommends bubblewrap',
+        'fi',
+        '',
+      ].join('\n'),
+    }])}`,
     'template://ubuntu-24.04',
   ];
 }

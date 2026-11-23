@@ -218,6 +218,17 @@ describe('public Lima native leaf', () => {
     expect(JSON.parse(bootstrapUser![1])).not.toBe('happier');
   });
 
+  it.each(['vz', 'qemu'] as const)('provisions bubblewrap with the guest packages for a fresh %s VM', vmType => {
+    const args = buildCreateArgs({ ...launch, instance: 'happier-native-sandbox-test', vmType });
+    const prefix = '.provision += ';
+    const provision = args.find((arg, index) => args[index - 1] === '--set' && arg.startsWith(prefix));
+    expect(provision).toBeDefined();
+    expect(JSON.parse(provision!.slice(prefix.length))).toContainEqual({
+      mode: 'dependency',
+      script: expect.stringMatching(/apt-get install[^\n]*\bbubblewrap\b/u),
+    });
+  });
+
   it.each(['Stopped', 'Broken'])('recovers the exact existing %s guest without allocating or starting it', async status => {
     const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, status }), err: '' }));
     expect(await createLimaProvider(executor).reconcile({ resource })).toMatchObject({ kind: 'bound', resource: { value: resource } });
