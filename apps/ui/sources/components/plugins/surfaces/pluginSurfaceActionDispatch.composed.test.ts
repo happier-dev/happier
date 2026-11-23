@@ -11621,6 +11621,13 @@ describe('external author Doc collaboration through physical SDK carriers', () =
             ...(mode === 'e2ee' ? { credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }),
                 secret: Buffer.from(new Uint8Array(32).fill(24)).toString('base64url') } } : {}) });
         const network = answerDiscussionThreadForTests(homes, serverId, { mode, loseCreate: false, loseFirstRejoin: false });
+        homes.answer(serverId, 'GET /v1/discussions/committed-thread/data-key/recipients', { select: () => {
+            const discussion = network.stored()?.discussion;
+            if (!discussion) return { status: 404, body: { error: 'not_found' } };
+            return { body: { discussionId: discussion.id, ownerAccountId: discussion.ownerAccountId, access: 'owner',
+                encryptionMode: discussion.encryptionMode, dataEncryptionKey: discussion.dataEncryptionKey,
+                callerDataEncryptionKey: discussion.dataEncryptionKey, recipients: [] } };
+        } });
         // Only the Home HTTP decision boundary is substituted. Proposal lookup,
         // acceptance preparation, encryption and Action policy remain real.
         for (const decision of ['accept', 'decline'] as const) {
