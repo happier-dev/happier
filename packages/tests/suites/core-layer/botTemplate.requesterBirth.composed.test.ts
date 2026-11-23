@@ -110,8 +110,8 @@ describe('ordinary Account template Session birth over real HTTP', () => {
         const foreign = await postAsOther(onboardingPath(created.session.id), request);
         expect(foreign.status).toBe(200);
         expect(await foreign.json()).toMatchObject({ result: { status: 'rejected', code: 'session_input_target_unavailable' } });
-        await db.sessionShare.create({ data: { sessionId: created.session.id, sharedByUserId: fixture.account.id,
-            sharedWithUserId: fixture.machine.accountId, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: created.session.id,
+            createdByAccountId: fixture.account.id, accountId: fixture.machine.accountId, accessLevel: 'edit' } });
         const editor = await postAsOther(onboardingPath(created.session.id), request);
         expect(editor.status).toBe(200);
         expect(await editor.json()).toMatchObject({ result: { status: 'rejected', code: 'session_input_target_unavailable' } });
