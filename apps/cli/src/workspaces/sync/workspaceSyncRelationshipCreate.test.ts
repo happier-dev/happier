@@ -221,6 +221,20 @@ describe('createWorkspaceSyncRelationshipForProject', () => {
     expect(h.ensureRelationship).not.toHaveBeenCalled();
   });
 
+  it.each([null, undefined])('does not observe an uncommitted copy as created (timestamp=%s)', async committedAtMs => {
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' as const } };
+    const h = createHarness({ existingRelationships: [{ v: 1, relationshipId: 'relationship_link_1',
+      controllerMachineId: 'machine_source', alphaWorkspaceRefId: 'source_ref', betaWorkspaceRefId: 'target_ref',
+      mode: 'keep_synced', contentPolicy: policy, enabled: true, createdAtMs: 1, updatedAtMs: 1,
+      ...(committedAtMs === null ? { committedAtMs } : {}),
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'target_ref' } }] });
+    await expect(h.owner.observeCreation({ ...worker, serverId: 'server_a' })).resolves.toEqual({
+      outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed',
+    });
+    expect(h.readRelationships()).toHaveLength(1);
+  });
+
   it('keeps an admitted creation unknown while its original effect is still active', async () => {
     const h = createHarness({ freshTarget: true, targetCopy: 'absent' });
     const requested = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
@@ -262,16 +276,6 @@ describe('createWorkspaceSyncRelationshipForProject', () => {
     expect(h.readRelationships()[0]).toMatchObject({ enabled: false, committedAtMs: 100 });
     await h.owner.setEnabled(first.relationshipId, true);
     expect(h.readRelationships()[0]).toMatchObject({ enabled: true, committedAtMs: 100 });
-  });
-
-  it('leaves a failed worker copy without commitment in the stored creation intent', async () => {
-    const h = createHarness({ freshTarget: true });
-    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
-    const failure = new Error('Target commit failed');
-    h.commitRelationshipTarget.mockRejectedValueOnce(failure);
-    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies,
-      { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' } })).rejects.toBe(failure);
-    expect(h.readRelationships()[0]).toMatchObject({ enabled: false, committedAtMs: null });
   });
 
   it('never upgrades an ordinary existing relationship into a worker copy', async () => {

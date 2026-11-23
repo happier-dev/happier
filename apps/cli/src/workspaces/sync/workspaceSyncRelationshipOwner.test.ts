@@ -415,7 +415,7 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     expect(harness.commitRelationshipTarget).toHaveBeenCalledWith(expect.objectContaining({ relationshipId: 'relationship_1' }));
   });
 
-  it('keeps the durable relationship disabled until target READY commit succeeds', async () => {
+  it('keeps intent disabled until target READY and removes it when commit refuses', async () => {
     const harness = createHarness();
     const crashAtTargetCommit = new Error('injected process loss before target READY');
     let relationshipAtTargetCommit: unknown;
@@ -430,9 +430,7 @@ describe('WorkspaceSyncRelationshipOwner', () => {
       relationshipId: 'relationship_1',
       enabled: false,
     }));
-    expect(harness.read().relationships).toEqual([
-      expect.objectContaining({ relationshipId: 'relationship_1', enabled: false }),
-    ]);
+    expect(harness.read().relationships).toEqual([]);
   });
 
   it('reuses only the exact Action-derived relationship and requires replacement for an occupied endpoint pair', async () => {

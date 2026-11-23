@@ -704,6 +704,40 @@ it.skipIf(process.platform !== 'linux')('refuses another Account executing recei
   expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
 
+it.skipIf(process.platform !== 'linux').each([false, true])(
+  'settles a Worker copy with committed custody or clean refusal (commit refused=%s)', async refuseCommit => {
+  executionBoundary.member = false;
+  let commitRefused = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true,
+  });
+  const callTargetPhase = setup.installed.machine.callWorkspaceSyncTargetPhase.bind(setup.installed.machine);
+  vi.spyOn(setup.installed.machine, 'callWorkspaceSyncTargetPhase').mockImplementation(async descriptor => {
+    if (refuseCommit && descriptor.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+      && WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(descriptor.request).reason === 'relationship_committed') {
+      commitRefused = true;
+      throw Object.assign(new Error('Target commit transport refused'), { code: 'target_unavailable' });
+    }
+    return callTargetPhase(descriptor);
+  });
+  const result = await setup.executeNativeRelationshipAction(await setup.prepareInvocation({
+    ...setup.request, operationId: `sync-commit-cleanup-${refuseCommit}` }));
+  const persisted = await readProjectAccountRows({ credentials: setup.credentials,
+    serverId: setup.installed.homeServerIdentityId, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+  if (refuseCommit) {
+    expect(commitRefused).toBe(true);
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+      failureCause: { errorCode: 'target_unavailable' } });
+    expect((await setup.fixture.parentManagedWorkspaceSync!.listRelationships({})).relationships).toEqual([]);
+    expect(persisted.relationships).toEqual([]);
+  } else {
+    expect(result).toMatchObject({ ok: true, result: { created: true } });
+    expect(persisted.relationships).toHaveLength(1);
+    expect(persisted.relationships[0].committedAtMs).toEqual(expect.any(Number));
+    expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  }
+});
+
 it.skipIf(process.platform !== 'linux')('preflights the shared Manage destination through the source Action before creating its worker copy', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,

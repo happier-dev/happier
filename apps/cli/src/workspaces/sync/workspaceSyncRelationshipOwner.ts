@@ -568,6 +568,23 @@ export function createWorkspaceSyncRelationshipOwner(
         await options.waitForProjectReconciliation(rollbackVersion);
       };
 
+      const cleanupFailedCreation = async (definition: WorkspaceSyncRelationshipV1): Promise<unknown[]> => {
+        const cleanupErrors: unknown[] = [];
+        try {
+          await options.terminateRelationshipRuntime(definition);
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        // Restore staged intent even when runtime termination fails, preserving
+        // cleanup failures alongside the original preparation or commit cause.
+        try {
+          await restoreStagedIntent();
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        return cleanupErrors;
+      };
+
       await stageDurableIntent();
       let status: WorkspaceSyncStatusV1;
       try {
@@ -591,19 +608,7 @@ export function createWorkspaceSyncRelationshipOwner(
         status = await options.flushRelationship(relationship.relationshipId, input.signal);
       } catch (error) {
         if (runtimeOwnedByTransaction && !isIndeterminate(error)) {
-          const cleanupErrors: unknown[] = [];
-          try {
-            await options.terminateRelationshipRuntime(relationship);
-          } catch (cleanupError) {
-            cleanupErrors.push(cleanupError);
-          }
-          // A refused preparation (for example a destination that needs bootstrap) must not leave
-          // the staged paused link behind; the caller's refusal stays the reported failure.
-          try {
-            await restoreStagedIntent();
-          } catch (cleanupError) {
-            cleanupErrors.push(cleanupError);
-          }
+          const cleanupErrors = await cleanupFailedCreation(relationship);
           const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : undefined);
           if (cleanupErrors.length) {
@@ -671,11 +676,8 @@ export function createWorkspaceSyncRelationshipOwner(
               ? ownerError('indeterminate', 'Workspace relationship settings outcome is unknown')
               : error;
             if (!published && runtimeOwnedByTransaction && !isIndeterminate(failure)) {
-              try {
-                await options.terminateRelationshipRuntime(runtimeRelationship);
-              } catch (cleanupError) {
-                throw withCleanupErrors(failure, [cleanupError]);
-              }
+              const cleanupErrors = await cleanupFailedCreation(runtimeRelationship);
+              if (cleanupErrors.length) throw withCleanupErrors(failure, cleanupErrors);
               closed = true;
             }
             throw failure;
@@ -716,7 +718,7 @@ export function createWorkspaceSyncRelationshipOwner(
       const target = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: input.serverId,
         machineId: input.actionInput.targetMachineId, rootPath: input.actionInput.targetPath });
       const relationship = snapshot.relationships.find(value => value.relationshipId === deriveRelationshipId(input.operationId));
-      if (!relationship) return { outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed' };
+      if (relationship?.committedAtMs == null) return { outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed' };
       if (!target) return { outcome: 'unknown' };
       const candidate = validateWorkspaceSyncRelationship({ ...relationship, controllerMachineId: options.localMachineId,
         alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id,
