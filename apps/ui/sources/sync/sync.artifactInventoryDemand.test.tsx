@@ -1036,6 +1036,62 @@ describe('Sync mounted Artifact inventory demand', () => {
         }
     }, 120_000);
 
+    it('settles late Allowed readers once from a held covering inventory without requests or unrelated renders', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const scope = storage.getState().profileScope!;
+        const selection = { approvalSessionIds: ['allowed-session', 'other-session'] };
+        const transcriptSettled = vi.fn();
+        const releaseTranscript = sync.observeArtifactInventory(scope, selection, {
+            refreshOnAdmission: true, onSettled: transcriptSettled,
+        });
+        const releases: Array<() => void> = [];
+        let unrelatedRenders = 0;
+        const unrelated = await renderHook(() => {
+            unrelatedRenders++;
+            return storage(state => state.artifacts['unrelated-artifact']);
+        });
+        try {
+            await fixture.settleInventory();
+            expect(transcriptSettled.mock.calls).toEqual([['success']]);
+            fixture.pages.length = 0;
+            const rendersBeforeJoin = unrelatedRenders;
+            const allowedSettled = vi.fn();
+            releases.push(sync.observeArtifactInventory(scope, selection, {
+                refreshOnAdmission: true, onSettled: allowedSettled,
+            }));
+            await fixture.settleInventory();
+            expect(allowedSettled.mock.calls).toEqual([['success']]);
+            const narrowSettled = vi.fn();
+            releases.push(sync.observeArtifactInventory(scope, { approvalSessionIds: ['allowed-session'] }, {
+                refreshOnAdmission: true, onSettled: narrowSettled,
+            }));
+            await fixture.settleInventory();
+            expect(narrowSettled.mock.calls).toEqual([['success']]);
+            expect(transcriptSettled.mock.calls).toEqual([['success']]);
+            expect(fixture.pages).toEqual([]);
+            expect(unrelatedRenders - rendersBeforeJoin).toBe(0);
+            // A later real membership change still reaches the held selection.
+            const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+                createdBy: { surface: 'agent', sessionId: 'allowed-session' }, requestedSurface: 'agent',
+                actionId: 'session.list', actionArgs: {}, summary: 'Allowed demand control' });
+            const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: scope.serverId });
+            const arrived = { ...fixture.inventory[0]!, id: '11111111-1111-4111-8111-999999999999',
+                kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn, ...deriveApprovalArtifactQueryHintsV1(header),
+                header: encodePlainArtifactStoredContent(header),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }) };
+            fixture.inventory.push(arrived);
+            await fixture.recoverSnapshot();
+            expect(storage.getState().artifacts[arrived.id]?.header).toEqual(header);
+            expect(allowedSettled.mock.calls).toEqual([['success'], ['success']]);
+            expect(narrowSettled.mock.calls).toEqual([['success'], ['success']]);
+        } finally {
+            releases.forEach(release => release());
+            releaseTranscript();
+            await unrelated.unmount();
+        }
+    });
+
     it('reopens a Session approval selection from held rows and re-reads it only after a refresh it missed', async () => {
         const { sync } = await import('./sync');
         const { storage } = await import('./domains/state/storage');

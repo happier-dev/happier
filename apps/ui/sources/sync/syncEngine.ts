@@ -1567,7 +1567,9 @@ class Sync {
      * regardless of consumers, so only a whole refresh it missed makes its remount re-read.
      */
     private artifactInventoryWholeRefreshes = 0;
-    private artifactInventoryReadAfterWholeRefresh = new Map<string, number>();
+    private artifactInventoryReadAfterWholeRefresh = new Map<string, Readonly<{
+        selection: ArtifactInventorySelection | undefined; wholeRefreshes: number;
+    }>>();
     /** Every unfinished acquisition (queued or a surface's explicit Retry), so no run starts a second one. */
     private artifactInventoryUnfinished = new Set<Readonly<{ generation: number; scope: ServerAccountScope | null; selection: ArtifactInventorySelection | undefined; signal?: AbortSignal }>>();
     private artifactInventoryConsumers = new Set<Readonly<{
@@ -9634,8 +9636,14 @@ class Sync {
         const consumer = { scope, selection, includeProvenance: options?.includeProvenance === true, onSettled: options?.onSettled,
             window: options?.window };
         this.artifactInventoryConsumers.add(consumer);
-        if (options?.refreshOnAdmission && this.artifactInventoryReadAfterWholeRefresh.get(JSON.stringify(selection ?? null))
-            !== this.artifactInventoryWholeRefreshes) {
+        const current = areServerAccountScopesEqual(scope, this.pendingSettingsScope)
+            && [...this.artifactInventoryReadAfterWholeRefresh.values()].some(read =>
+                read.wholeRefreshes === this.artifactInventoryWholeRefreshes
+                && doesArtifactInventorySelectionCover(read.selection, selection));
+        if (current) {
+            // Joining held rows settles only the newcomer; existing holders have no new fact.
+            this.settleArtifactInventoryConsumers(scope, selection, 'success', [consumer]);
+        } else if (options?.refreshOnAdmission) {
             // Only the admitted consumer's own selection may have missed a whole refresh while unmounted.
             this.selectArtifactInventoryRefresh([selection]);
             this.artifactsSync.invalidate();
@@ -9700,13 +9708,15 @@ class Sync {
     private recordArtifactInventoryRead(selection: ArtifactInventorySelection | undefined, wholeRefreshesAtStart: number): void {
         const covered = [selection, ...this.readArtifactInventoryConsumers()
             .filter(consumer => doesArtifactInventorySelectionCover(selection, consumer.selection)).map(consumer => consumer.selection)];
-        for (const read of covered) this.artifactInventoryReadAfterWholeRefresh.set(JSON.stringify(read ?? null), wholeRefreshesAtStart);
+        for (const read of covered) this.artifactInventoryReadAfterWholeRefresh.set(JSON.stringify(read ?? null), {
+            selection: read, wholeRefreshes: wholeRefreshesAtStart,
+        });
     }
 
     private settleArtifactInventoryConsumers(scope: ServerAccountScope | null, selection: ArtifactInventorySelection | undefined,
-        outcome: 'success' | 'failed'): void {
+        outcome: 'success' | 'failed', consumers = this.readArtifactInventoryConsumers()): void {
         if (!scope || !areServerAccountScopesEqual(scope, this.pendingSettingsScope)) return;
-        for (const consumer of this.readArtifactInventoryConsumers()) {
+        for (const consumer of consumers) {
             if (doesArtifactInventorySelectionCover(selection, consumer.selection)) {
                 // A full structural census can still contain unreadable headers. It answers
                 // full membership, not the browser's stricter private-policy classification.
