@@ -2347,6 +2347,14 @@ field, and Session targets use their declared target field. An Environment appro
 scope advertises applicability to Environments; without a declared unconditional
 input operand it does not invent an `environmentId` primary subject.
 
+In 0.3 development source, the Database Workbench declares a client-placed
+Open Action. The Action supplies a selected database descriptor and a place
+to the Workbench destination. Subsequent database operations use daemon
+Actions under the selected target's admission. Console SQL and SQL-only
+history stay under the editor's device scope, and staged edits remain in
+the mounted Workbench until the reviewed Apply. The Open Action returns
+a location outcome and carries no Console content.
+
 In 0.3 development source, `action_interception_rejected` is presented as
 a refusal. `readActionFailurePresentationV1` owns that classification and reads
 only the producer's safe `details.message`; absent text uses the surface's

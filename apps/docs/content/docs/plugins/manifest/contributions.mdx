@@ -388,6 +388,54 @@ A projected entry grants no filesystem, secret,
 or deployment authority. Check the generated
 [availability report](/plugins/manifest/availability) for your exact SDK and host.
 
+## Database engines (0.3 development source)
+
+Contribute a database driver through `definePlugin`. The Workbench uses the
+declared URL scheme to select it when a person connects a database using a
+Saved Secret. The manifest lists capabilities before the host loads the driver.
+
+```ts
+import { definePlugin, type PluginDatabaseEngineRuntimeV1 } from '@happier-dev/plugin-sdk';
+
+declare const runtime: PluginDatabaseEngineRuntimeV1;
+
+export const { manifest, activate } = definePlugin({
+  id: 'org.example.database-driver',
+  version: '1.0.0',
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  databaseEngines: {
+    example: {
+      declaration: {
+        engineId: 'org.example.database-driver.example',
+        scheme: 'exampledb',
+        capabilities: [
+          { operation: 'describe', available: true },
+          { operation: 'statement.run', available: true },
+        ],
+      },
+      runtime,
+    },
+  },
+});
+```
+
+Implement `runtime.open` to use the selected connection string and enforce the
+supplied access class. Implement `execute` with the typed operands and results
+from `@happier-dev/plugin-sdk/database` and honor the supplied cancellation
+signal. Release the connection in `close`. Connection strings and live handles
+stay in the daemon. Callers continue to use the semantic database Actions.
+
+Hosted database providers link their databases to an Environment through
+`deploymentTargets`. Implement `dataV1.database.runtime` to receive the host's
+admitted selection. `listTargets` discovers databases for the selected link
+on demand. `open` receives the exact database, access class and placement
+and returns a descriptor plus a live connection. Use the Account invocation
+context for the host-admitted secret access and declare the operations supported
+by the resulting connection. The deployment host owns target and access admission.
+
+See the [availability report](/plugins/manifest/availability) for the SDK and
+host combinations that expose these contributions.
+
 ## Machine setup declarations (unreleased development contract)
 
 These additions target unreleased 0.3 source. Check the generated

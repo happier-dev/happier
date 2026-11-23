@@ -737,6 +737,25 @@ The wrapper adds no keyboard stop or accessible name; label the input itself.
 It does not search or retain a query. A custom material adapter may use
 `renderSurface({ style, children })` while retaining the shared focus target.
 
+## Code editing and device drafts (0.3 development)
+
+Render `CodeEditor` from `@happier-dev/plugin-ui/components` with the current
+document's `resetKey`, `value`, `language` and `onChange`. The mounted
+presentation host supplies the editor. Where only the text field fallback is
+available, basic editing still works. If you use `onSelection`, its ranges are
+ordered, zero-based UTF-16 offsets and a collapsed range is a caret.
+
+For drafts that should survive a reload on the same device, use the negotiated
+`deviceState` method from the bound surface Host API. It accepts a keyed JSON
+read, write or remove request. The host adds the Home, Account, plugin and
+contribution scope. Include the resource identity in your own key when one
+surface can edit several resources. Keep input live while loading a draft and
+show a typed unavailable outcome if the host cannot access device storage.
+
+The Database Console stores its SQL text and SQL-only history this way. It keeps
+parameters, result cells and staged changes in the workbench. Device drafts stay
+on the current device, outside Account settings.
+
 ## Collection filters and saved views (0.3 development)
 
 The prepublication `/components` surface exposes the same pure filter evaluator
