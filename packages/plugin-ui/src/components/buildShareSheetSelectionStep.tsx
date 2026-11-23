@@ -191,8 +191,11 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             id: 'public-link', testID: `${idPrefix}${ns}-public-link`, label: publicLink.label ?? host.text('session.sharing.publicLink'),
             icon: () => <host.Icon name="link" />,
             accessibilityLabel: `${publicLink.label ?? host.text('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
-            rightAccessory: () => <host.PublicLinkState stateLabel={publicLink.stateLabel} />,
-            onSelect: publicLink.onOpen ?? (() => input.onExpand('public-link')),
+            rightAccessory: () => <host.PublicLinkState stateLabel={publicLink.stateLabel} opens={Boolean(publicLink.onOpen)} />,
+            // A link edited in place is a disclosure like its siblings (the turning caret, and pressing again closes it);
+            // only one that opens its own page ends in a chevron.
+            ...(publicLink.onOpen ? { onSelect: publicLink.onOpen } : {
+                disclosure: true, onSelect: () => input.onExpand(input.expandedKey === 'public-link' ? null : 'public-link') }),
             ...(publicLink.renderContent ? { expandedContentInset: 'text', expandedContent: () => publicLink.renderContent!(context) } : {}),
         }] });
     }

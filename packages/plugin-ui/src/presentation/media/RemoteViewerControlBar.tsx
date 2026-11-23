@@ -73,7 +73,9 @@ export function RemoteViewerControlBar(props: RemoteViewerControlBarProps) {
     const { Surface, Button, IconButton, SegmentedTabBar, KeyHint } = props.host;
     const styles = {
         root: { position: 'absolute' as const, left: props.spacing.inset, right: props.spacing.inset, bottom: props.spacing.inset, zIndex: 3 },
-        row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: props.spacing.gap },
+        // The bar's surface is a capsule: its rows start on the same inset as a host's folded row above them (the
+        // hand-back title), clear of the rounded ends.
+        row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: props.spacing.gap, paddingHorizontal: props.spacing.inset },
     };
     const modifiers = (Object.keys(actions.modifiers) as RemoteViewerModifier[])
         .filter(modifier => !actions.supportedModifiers || actions.supportedModifiers.includes(modifier));

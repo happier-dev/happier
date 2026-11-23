@@ -476,6 +476,21 @@ describe('ShareSheet full presentation', () => {
         expect(screen.findByTestId('document-share-help-content')).toBeNull();
     });
 
+    it('opens a public link that expands in place as a disclosure, with the turning caret and no navigation chevron (DESIGN-ACCEPT-144 #4)', async () => {
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions}
+            adapter={{ ...adapter, publicLink: { stateLabel: 'Off', renderContent: () => null } }}
+            presentation="full" testID="document-share-editor" />);
+        const publicCaret = () => screen.findAllByType(DisclosureCaret).map(node => node.props.expanded as boolean);
+        // Every caret drawn is a disclosure's own (Details and the public link): the state draws no navigation chevron.
+        const carets = () => screen.findAll(node => node.props?.name === 'caret-right');
+        expect(publicCaret()).toEqual([false, false]);
+        expect(carets()).toHaveLength(screen.findAllByType(DisclosureCaret).length);
+        await screen.pressByTestIdAsync('document-share-public-link');
+        expect(publicCaret()).toEqual([true, false]);
+        await screen.pressByTestIdAsync('document-share-public-link');
+        expect(publicCaret()).toEqual([false, false]);
+    });
+
     it('retains an adapter before-grant disclosure when browsing a pushed directory step', async () => {
         const disclosureAdapter = { ...adapter, showLeadingOnDirectorySteps: true,
             sections: () => ({ leading: [{ kind: 'static' as const, id: 'trust', options: [{

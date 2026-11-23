@@ -28,7 +28,8 @@ export type ShareSheetHost = Readonly<{
     Icon: React.ComponentType<Readonly<{ name: 'link' | 'copy' | 'info' | 'users' | 'plus' }>>;
     SecondaryText: React.ComponentType<Readonly<{ children: React.ReactNode }>>;
     Description: React.ComponentType<Readonly<{ children: React.ReactNode }>>;
-    PublicLinkState: React.ComponentType<Readonly<{ stateLabel: string }>>;
+    /** The public link's state beside its row; `opens`: the row leads to its own page, so it ends in a chevron. */
+    PublicLinkState: React.ComponentType<Readonly<{ stateLabel: string; opens?: boolean }>>;
     Button: React.ComponentType<HappierShareSheetButtonProps & Readonly<{ loading?: boolean }>>;
     List: React.ComponentType<ShareSheetListRequest>;
     ConnectedPeoplePrompt: React.ComponentType<Readonly<{ testID: string; title: string; actionLabel: string }>>;

@@ -644,7 +644,8 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
           showChevron={Boolean(props.option.openStep) || disclosureExpanded !== undefined}
           accessibilityState={disclosureExpanded === undefined ? undefined : { expanded: disclosureExpanded }}
           keepChevronWithRightElement={
-            props.option.keepChevronWithAccessory === true
+            // A row that opens in place keeps its turning caret beside its accessory (the public link's state).
+            props.option.keepChevronWithAccessory === true || disclosureExpanded !== undefined
           }
           webRole="presentation"
           {...itemInsetAndTextProps}
@@ -760,7 +761,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         showChevron={Boolean(props.option.openStep) || disclosureExpanded !== undefined}
         accessibilityState={disclosureExpanded === undefined ? undefined : { expanded: disclosureExpanded }}
         keepChevronWithRightElement={
-          props.option.keepChevronWithAccessory === true
+          props.option.keepChevronWithAccessory === true || disclosureExpanded !== undefined
         }
         accessibilityRole="button"
         accessibilityLabel={optionAria.accessibilityLabel}

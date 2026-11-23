@@ -51,11 +51,11 @@ function ShareAddIcon(): React.ReactElement {
     return <Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
 }
 
-function SharePublicLinkState(props: Readonly<{ stateLabel: string }>): React.ReactElement {
+function SharePublicLinkState(props: Readonly<{ stateLabel: string; opens?: boolean }>): React.ReactElement {
     const { theme } = useUnistyles();
     return <View style={{ flexDirection: 'row', alignItems: 'center', gap: PAGE_LIST_METRICS.groupHeadingGapPx }}>
         <Text style={styles.helpLine}>{props.stateLabel}</Text>
-        <Icon name="caret-right" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+        {props.opens ? <Icon name="caret-right" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
     </View>;
 }
 
