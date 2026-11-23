@@ -12,7 +12,7 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { requiresReviewWorkflowCompositionV1, reviewReviewerDisplayNamesForStartV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerDisplayNamesForStartV1, reviewReviewerIdentitiesForStartV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
@@ -373,21 +373,21 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
           // Resolve display content once from each selected Session's own Home.
-          // Later rounds retain these names with the admitted roster in the Artifact.
+          // Later rounds retain these identities with the admitted roster in the Artifact.
           const sessionKey = (session: Readonly<{ serverId: string; sessionId: string }>) => JSON.stringify([session.serverId, session.sessionId]);
           const selectedSessions = new Map(reviewers.flatMap(reviewer => reviewer.kind === 'session'
             ? [[sessionKey(reviewer.session), reviewer.session] as const] : []));
           const catalogs = new Map<string, Promise<ReturnType<typeof AgentsBackendsListOutputSchema.parse>>>();
-          const sessionNames = new Map(await Promise.all([...selectedSessions].map(async ([key, session]) => {
+          const sessionIdentities = new Map(await Promise.all([...selectedSessions].map(async ([key, session]) => {
             const context = { ...ctx, serverId: session.serverId };
             const response = await executeHostChild('session.status.get', { sessionId: session.sessionId, live: false }, context);
             if (!response.ok) throw createActionExecuteFailureError(response);
             const status = SessionStatusResultSchema.parse(response.result);
             if (status.session.id !== session.sessionId) throw createActionExecuteFailureError({
               ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
-            if (status.session.title) return [key, status.session.title] as const;
             const target = status.agentTarget;
-            if (!target) return [key, undefined] as const;
+            const agentId = target ? buildQualifiedPluginContributionKey(target.identity) : undefined;
+            if (status.session.title || !target) return [key, { displayName: status.session.title, agentId }] as const;
             const catalogKey = JSON.stringify([session.serverId, status.session.machineId]);
             let catalog = catalogs.get(catalogKey);
             if (!catalog) {
@@ -400,13 +400,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               })();
               catalogs.set(catalogKey, catalog);
             }
-            const identity = buildQualifiedPluginContributionKey(target.identity);
             const item = (await catalog).items.find(item => {
               const candidate = item.agentTarget?.identity ?? item.identity;
-              return candidate && buildQualifiedPluginContributionKey(candidate) === identity
+              return candidate && buildQualifiedPluginContributionKey(candidate) === agentId
                 && item.agentTarget?.definitionId === target.definitionId;
             });
-            return [key, item?.label] as const;
+            return [key, { displayName: item?.label, agentId }] as const;
           })));
           const composedRunId = globalThis.crypto.randomUUID();
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
@@ -419,8 +418,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ...(comparisonCapture ? { comparisonCapture } : {}),
             ...(sourceSessionId ? { sourceSessionId } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
-            reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, undefined,
-              reviewer => sessionNames.get(sessionKey(reviewer.session))),
+            ...reviewReviewerIdentitiesForStartV1(reviewInput, undefined,
+              reviewer => sessionIdentities.get(sessionKey(reviewer.session))),
             startedAt: Date.now(), signal: ctx.signal });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'

@@ -134,15 +134,31 @@ export function reviewReviewerIdsForStartV1(input: Pick<ReviewStartInput, 'revie
 export function reviewReviewerDisplayNamesForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>,
   readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined,
   readSessionLabel?: (reviewer: Extract<ReviewReviewerSelectionV1, { kind: 'session' }>) => string | undefined): Readonly<Record<string, string>> {
-  return Object.fromEntries(reviewExecutableRosterForStartV1(input).flatMap(({ reviewer, id }) => {
+  return reviewReviewerIdentitiesForStartV1(input, readEngineLabel,
+    readSessionLabel ? reviewer => ({ displayName: readSessionLabel(reviewer) }) : undefined).reviewerDisplayNames;
+}
+
+/** Projects admitted roster identities; callers supply facts from their existing Session read. */
+export function reviewReviewerIdentitiesForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>,
+  readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined,
+  readSessionIdentity?: (reviewer: Extract<ReviewReviewerSelectionV1, { kind: 'session' }>) => Readonly<{ displayName?: string; agentId?: string }> | undefined,
+): Readonly<{ reviewerDisplayNames: Readonly<Record<string, string>>; reviewerAgentIds: Readonly<Record<string, string>> }> {
+  const reviewerDisplayNames: Record<string, string> = {};
+  const reviewerAgentIds: Record<string, string> = {};
+  for (const { reviewer, id } of reviewExecutableRosterForStartV1(input)) {
+    const sessionIdentity = reviewer.kind === 'session' ? readSessionIdentity?.(reviewer) : undefined;
+    const agentId = reviewer.kind === 'model' ? buildQualifiedPluginContributionKey(reviewer.launch.agentTarget.identity)
+      : sessionIdentity?.agentId;
     const name = reviewer.kind === 'engine'
       ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
         ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
-      : reviewer.kind === 'model' ? buildQualifiedPluginContributionKey(reviewer.launch.agentTarget.identity)
-      : reviewer.kind === 'session' ? readSessionLabel?.(reviewer)
+      : reviewer.kind === 'model' ? agentId
+      : reviewer.kind === 'session' ? sessionIdentity?.displayName
       : undefined;
-    return name ? [[id, name]] : [];
-  }));
+    if (name) reviewerDisplayNames[id] = name;
+    if (agentId) reviewerAgentIds[id] = agentId;
+  }
+  return { reviewerDisplayNames, reviewerAgentIds };
 }
 
 /** Read compatibility for observed persisted pre-roster Run inputs, once at this owner. */

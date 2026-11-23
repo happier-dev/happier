@@ -829,6 +829,18 @@ mixed-development adapter changes.
 
 ## Review rosters and completion (unreleased 0.3)
 
+Review rounds optionally retain `reviewerAgentIds`, keyed by admitted reviewer
+slot, beside `reviewerDisplayNames`. Settled `reviewerOutcomes` carry the same
+optional qualified contribution key as `agentId`. Session admission obtains both
+facts from its existing Session status read; retry and settlement retain them at
+the Artifact owner. These are display facts, not execution or routing authority.
+Existing stored rounds without Agent identity remain readable and are not
+backfilled. Earlier strict development readers require matching Protocol and UI
+source for the added fields. The inspected 0.2 frontier
+`001ec4ea8502c60053ba5a32baeb30f806b2352a` has no Review Artifact reader;
+this unpublished 0.3 direct cut adds no wire epoch, migration or compatibility
+adapter.
+
 Current Review start writers emit ordered `reviewers` selections rather than
 `engineIds`. The canonical Review input owner translates the observed retained
 engine-list shape into engine selections, preserving its engine options and

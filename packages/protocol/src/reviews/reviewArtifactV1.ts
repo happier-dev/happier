@@ -10,6 +10,7 @@ import {
 } from './reviewPublicationEvidence.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionRuntimeIssueSourceV1Schema } from '../sessions/control/runtimeIssueV1.js';
+import { PluginContributionProtocolIdV1Schema } from '../plugins/contributionIdentity.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
@@ -78,6 +79,7 @@ const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
 export const ReviewRoundReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
   reviewerId: z.string().check(z.minLength(1)),
   displayName: z.optional(z.string().check(z.minLength(1))),
+  agentId: z.optional(asProtocolZod(PluginContributionProtocolIdV1Schema)),
   outcome: z.enum(['completed', 'partial', 'failed', 'cancelled']),
   runId: z.optional(z.string().check(z.minLength(1))),
   startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -98,6 +100,7 @@ export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), roun
   state: ReviewRoundStateV1Schema, startedAt: z.number(), finishedAt: z.nullable(z.number()),
   reviewerIds: z.array(z.string()), runs: z.array(ReviewRunReferenceV1Schema),
   reviewerDisplayNames: z.optional(z.record(z.string(), z.string().check(z.minLength(1)))),
+  reviewerAgentIds: z.optional(z.record(z.string(), asProtocolZod(PluginContributionProtocolIdV1Schema))),
   reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
   medianQualityScore: z.optional(z.number().check(z.minimum(1), z.maximum(5))),
   reviewerOutcomes: z.optional(z.array(ReviewRoundReviewerOutcomeV1Schema)),
@@ -150,7 +153,8 @@ export interface ReviewArtifactTransportV1 {
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
   sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; workflowRunId?: string; comparisonId?: string;
   comparisonCapture?: ReviewRoundComparisonCaptureV1; sourceSessionId?: string;
-  reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
+  reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>;
+  reviewerAgentIds?: Readonly<Record<string, string>>; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   outcome: Exclude<ReviewRoundStateV1, 'running'>; finishedAt: number; runs: readonly ReviewRunReferenceV1[];
   reviewerOutcomes?: readonly ReviewReviewerOutcomeV1[];
@@ -173,7 +177,7 @@ export function resolveReviewSourceSessionIdV1(capture: ReviewRoundComparisonCap
   if ((source?.kind === 'session' || source?.kind === 'turnCheckpoint') && source.sessionId) return source.sessionId;
   return capture?.input.sessionId;
 }
-function settleReviewerOutcome(reviewerId: string, displayName: string | undefined,
+function settleReviewerOutcome(reviewerId: string, displayName: string | undefined, agentId: string | undefined,
   input: ReviewRoundSettlementV1): ReviewRoundReviewerOutcomeV1 {
   const own = (input.reviewerOutcomes ?? []).filter(item => item.key === reviewerId);
   const cancelled = own.length === 0 ? input.outcome === 'cancelled' : own.every(item => item.outcome === 'cancelled');
@@ -183,7 +187,7 @@ function settleReviewerOutcome(reviewerId: string, displayName: string | undefin
     || item.reviewOutcome !== 'complete' || item.materialization?.kind !== 'complete') ?? own[0];
   const starts = own.flatMap(item => item.startedAt === undefined ? [] : [item.startedAt]);
   const finishes = own.flatMap(item => item.finishedAt === undefined ? [] : [item.finishedAt]);
-  return { reviewerId, ...(displayName ? { displayName } : {}),
+  return { reviewerId, ...(displayName ? { displayName } : {}), ...(agentId ? { agentId } : {}),
     outcome,
     ...(runId ? { runId } : {}),
     ...(receipt ? { reason: { run: receipt.outcome,
@@ -213,14 +217,23 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
       if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
       const ordinal = lastOrdinal + 1;
-      // A selected retry omits other slots; their admitted names still belong to
+      // A selected retry omits other slots; their admitted identities still belong to
       // the retained roster when a later round includes them again.
       const admittedDisplayNames: Record<string, string> = {};
-      for (const round of previous?.rounds ?? []) Object.assign(admittedDisplayNames, round.reviewerDisplayNames);
+      const admittedAgentIds: Record<string, string> = {};
+      for (const round of previous?.rounds ?? []) {
+        Object.assign(admittedDisplayNames, round.reviewerDisplayNames);
+        Object.assign(admittedAgentIds, round.reviewerAgentIds);
+      }
       Object.assign(admittedDisplayNames, input.reviewerDisplayNames);
+      Object.assign(admittedAgentIds, input.reviewerAgentIds);
       const reviewerDisplayNames = Object.fromEntries(input.reviewerIds.flatMap(id => {
         const name = admittedDisplayNames[id];
         return name ? [[id, name]] : [];
+      }));
+      const reviewerAgentIds = Object.fromEntries(input.reviewerIds.flatMap(id => {
+        const agentId = admittedAgentIds[id];
+        return agentId ? [[id, agentId]] : [];
       }));
       const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;
       const sourceSessionId = resolveReviewSourceSessionIdV1(input.comparisonCapture) ?? input.sourceSessionId;
@@ -234,7 +247,8 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
           ...(comparisonId ? { comparisonId } : {}),
           ...(input.comparisonCapture ? { comparisonCapture: input.comparisonCapture } : {}), state: 'running', startedAt: input.startedAt,
           finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [],
-          ...(Object.keys(reviewerDisplayNames).length ? { reviewerDisplayNames } : {}) }] };
+          ...(Object.keys(reviewerDisplayNames).length ? { reviewerDisplayNames } : {}),
+          ...(Object.keys(reviewerAgentIds).length ? { reviewerAgentIds } : {}) }] };
       if (!row) await transport.create({ artifactId: input.reviewId, ...content(next), reviewMetadata, signal: input.signal });
       else {
         const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
@@ -261,7 +275,7 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         return quality ? [{ reviewerId, ...(displayName ? { displayName } : {}), ...quality }] : [];
       });
       const reviewerOutcomes = round.reviewerIds.map(reviewerId =>
-        settleReviewerOutcome(reviewerId, round.reviewerDisplayNames?.[reviewerId], input));
+        settleReviewerOutcome(reviewerId, round.reviewerDisplayNames?.[reviewerId], round.reviewerAgentIds?.[reviewerId], input));
       const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(reviewerQuality.length ? { reviewerQuality } : {}),
         ...(reviewerOutcomes.length ? { reviewerOutcomes } : {}),

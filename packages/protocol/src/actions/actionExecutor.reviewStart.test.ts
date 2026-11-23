@@ -110,9 +110,10 @@ describe('createActionExecutor (review.start)', () => {
     expect(reviewId).not.toBe('');
     const round = (await records.read(reviewId))?.rounds[0];
     expect(round?.reviewerDisplayNames).toMatchObject({ 'step-1-reviewer-1': name, 'step-2-reviewer-1': name });
+    expect(round?.reviewerAgentIds).toEqual({ 'step-1-reviewer-1': 'review.plugin/reviewer', 'step-2-reviewer-1': 'review.plugin/reviewer' });
     expect(round?.reviewerOutcomes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name }),
-      expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name }),
+      expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name, agentId: 'review.plugin/reviewer' }),
+      expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name, agentId: 'review.plugin/reviewer' }),
     ]));
     expect(reads).toEqual([{ sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
     expect(catalogs).toEqual(nameSource === 'Session title' ? [] : ['reviewer-machine']);
