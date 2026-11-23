@@ -387,6 +387,17 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(screen.getTextContent()).toContain('connect.requesterDeviceAddedBody');
         expect(observed('/v1/auth/account/response')).toHaveLength(1);
     });
+    it('offers a new code when a requester QR was already used', async () => {
+        await trustTargetHome();
+        http.complete.mockImplementation(() => Response.json({ error: 'already_completed' }, { status: 409 }));
+        const screen = await mount();
+        const { completion } = await beginRequesterApproval(screen);
+        await completion;
+
+        expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('connect.requesterDeviceAddedBody');
+        expect(observed('/v1/auth/account/response')).toHaveLength(1);
+    });
     it('does not dispatch reverse completion UI after unmount', async () => {
         await trustTargetHome(); const held = hold(); http.complete.mockImplementation(() => held.promise);
         const screen = await mount(); const { completion } = await beginRequesterApproval(screen);

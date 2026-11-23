@@ -706,6 +706,9 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                             case 'completed':
                                 publishTerminalResult('succeeded');
                                 return;
+                            case 'already_completed':
+                                publishTerminalResult('already_requested');
+                                return;
                             case 'expired':
                             case 'invalid_request':
                                 publishTerminalResult(outcome.kind);

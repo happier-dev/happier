@@ -423,6 +423,27 @@ describe('runDirectHomeQrCompletion (approver completion for a requester-display
     }));
   });
 
+  it('reports a requester-displayed code that was completed before this approval as used', async () => {
+    const h = harness({ status: [requesterDisplayed()], complete: async () => 'already_completed' });
+
+    await expect(approverRun(h).completion).resolves.toEqual({ kind: 'already_completed', requestedDeviceLabel: 'Phone' });
+    expect(h.consume).not.toHaveBeenCalled();
+  });
+
+  it('adopts the prior completion when this approval lost the Home response', async () => {
+    let attempts = 0;
+    const h = harness({
+      status: [requesterDisplayed(), requesterDisplayed()],
+      complete: async () => {
+        if (attempts++ === 0) throw new DirectHomeQrCompletionError('retryable');
+        return 'already_completed';
+      },
+    });
+
+    await expect(approverRun(h).completion).resolves.toEqual({ kind: 'completed', requestedDeviceLabel: 'Phone' });
+    expect(h.complete).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects the pairing row when the requester proof does not verify', async () => {
     // A trusted_home_displays proof is not valid for the requester-displayed direction.
     const h = harness({ status: [requested()] });

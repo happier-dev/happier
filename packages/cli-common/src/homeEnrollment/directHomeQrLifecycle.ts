@@ -82,10 +82,13 @@ export type DirectHomeQrCompletionRun = Readonly<{
   cancel(): Promise<DirectHomeQrCancellationResult>;
 }>;
 
-export type DirectHomeQrCompletionOutcome =
+type DirectHomeQrGeneratedOutcome =
   | Readonly<{ kind: 'completed'; requestedDeviceLabel: string | null }>
   | Readonly<{ kind: 'cancelled' | 'expired' | 'invalid_request' }>
   | Readonly<{ kind: 'failed'; status: number }>;
+
+export type DirectHomeQrCompletionOutcome = DirectHomeQrGeneratedOutcome
+  | Readonly<{ kind: 'already_completed'; requestedDeviceLabel: string | null }>;
 
 export type DirectHomeQrStartResult =
   | Readonly<{ kind: 'update_required' }>
@@ -96,7 +99,7 @@ export type DirectHomeQrStartResult =
       invite: HomeQrInviteV2;
       link: string;
       qrAvailable: boolean;
-      completion: Promise<DirectHomeQrCompletionOutcome>;
+      completion: Promise<DirectHomeQrGeneratedOutcome>;
       cancel(): Promise<DirectHomeQrCancellationResult>;
     }>;
 
@@ -221,7 +224,11 @@ export async function startDirectHomeQrLifecycle(input: Readonly<{
     invite,
     link: rendered.link,
     qrAvailable: rendered.ok,
-    completion: run.completion,
+    // This device generated the invitation, so a completion already recorded
+    // on its row is the successful end of its pairing session.
+    completion: run.completion.then((outcome) => outcome.kind === 'already_completed'
+      ? { kind: 'completed', requestedDeviceLabel: outcome.requestedDeviceLabel }
+      : outcome),
     cancel: run.cancel,
   };
 }
@@ -285,6 +292,7 @@ export function runDirectHomeQrCompletion(input: Readonly<{
   input.signal?.addEventListener('abort', onExternalAbort, { once: true });
   const completion = (async (): Promise<DirectHomeQrCompletionOutcome> => {
     let transientFailures = 0;
+    let completionMayHaveWon = false;
     try {
       if (input.signal?.aborted) await cancel();
       while (!cancelled) {
@@ -350,7 +358,7 @@ export function runDirectHomeQrCompletion(input: Readonly<{
               return { kind: 'invalid_request' };
             }
             try {
-              await adapters.complete({
+              const settled = await adapters.complete({
                 context: {
                   direction: input.direction,
                   pairId,
@@ -363,9 +371,11 @@ export function runDirectHomeQrCompletion(input: Readonly<{
                 requestedDeviceLabel: parsedStatus.requestedDeviceLabel,
                 signal: controller.signal,
               });
-              return cancelled
-                ? { kind: 'cancelled' }
-                : { kind: 'completed', requestedDeviceLabel: parsedStatus.requestedDeviceLabel };
+              if (cancelled) return { kind: 'cancelled' };
+              return {
+                kind: completionMayHaveWon ? 'completed' : settled,
+                requestedDeviceLabel: parsedStatus.requestedDeviceLabel,
+              };
             } catch (error) {
               if (error instanceof CredentialRequestRedirectError) throw error;
               const pendingCancellation = cancellationRequested ? readPendingCancellation() : null;
@@ -373,11 +383,14 @@ export function runDirectHomeQrCompletion(input: Readonly<{
                 const cancellation = await pendingCancellation;
                 if (cancellation.ok && cancellation.outcome === 'cancelled') return { kind: 'cancelled' };
                 if (!cancellation.ok) return { kind: 'failed', status: 0 };
+                completionMayHaveWon = true;
                 transientFailures += 1;
                 continue;
               }
               if (cancelled) return { kind: 'cancelled' };
               if (error instanceof DirectHomeQrCompletionError && error.classification === 'retryable') {
+                // An answer lost after this device submitted may have committed here.
+                completionMayHaveWon = true;
                 transientFailures += 1;
               } else if (error instanceof DirectHomeQrCompletionError && error.classification === 'invalid') {
                 await reject();

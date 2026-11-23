@@ -180,7 +180,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<HomeEnrollmentScannerResul
  * On the reverse direction the scanner is the approving, already-enrolled
  * device, so joiner/restore guidance is false for it. Results not listed here
  * (update_required) are direction-neutral; the approver never publishes the
- * joiner-only results (partial_commit, already_requested, rejected, ...).
+ * joiner-only results (partial_commit, rejected, ...).
  */
 const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
     HomeEnrollmentScannerResult,
@@ -191,6 +191,7 @@ const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
     wrong_target: 'connect.requesterDeviceWrongHomeBody',
     expired: 'connect.requesterDeviceQrExpiredBody',
     invalid_request: 'connect.requesterDeviceRequestInvalidBody',
+    already_requested: 'connect.requesterDeviceRequestInvalidBody',
 };
 
 /**
