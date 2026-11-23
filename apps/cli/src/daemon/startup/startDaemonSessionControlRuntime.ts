@@ -1687,7 +1687,6 @@ export async function startDaemonSessionControlRuntime(
     serverId: params.serverId,
     requesterCustodyServerId: params.requesterSessionCustodyServerId ?? params.serverId,
     serverHttpBaseUrl: params.serverBaseUrl,
-    custodianAccountId: params.externalActionAccountId,
     credentials: params.credentials,
     findTrackedSession: sessionId => findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId),
     withSessionAccountContext,

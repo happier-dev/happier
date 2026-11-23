@@ -34,4 +34,15 @@ describe('requester Session account custody', () => {
     expect(await custody.resolveSessionAccountContext('session-a')).toBe(context);
     expect(reads()).toBe(1);
   });
+
+  it('uses held custodian credentials for an admitted owner options read even with a tracked requester', async () => {
+    const { custody } = heldRequester();
+    expect(await custody.resolveSessionAccountContext('session-a', undefined, undefined, {
+      authorization: { kind: 'session.read', sessionId: 'session-a' },
+      machineAdmission: {
+        actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-a',
+        installationId: 'installation-a', role: 'manage', encryptionMode: 'plain',
+      },
+    })).toBeNull();
+  });
 });

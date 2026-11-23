@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { TrackedSession } from '../types';
 
 import {
@@ -15,6 +17,7 @@ import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackin
 import { retainRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
 
 type RetainedAttribution = TrackedSession['requesterWorkAttributionV1'];
+type SessionReadContext = Pick<RpcHandlerContext, 'authorization' | 'machineAdmission'>;
 
 /**
  * Machine core's one requester-custody view for Session-scoped work. Sessions,
@@ -25,10 +28,10 @@ type RetainedAttribution = TrackedSession['requesterWorkAttributionV1'];
  */
 export type RequesterSessionAccountContextCustody = Readonly<{
   resolveSessionAccountContext: (sessionId: string | null, retainedAttribution?: RetainedAttribution,
-    signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>;
+    signal?: AbortSignal, admittedRead?: SessionReadContext) => Promise<RequesterSessionRuntimeContext | null>;
   withSessionAccountContext: <T>(sessionId: string | null,
     operation: (context: RequesterSessionRuntimeContext | null) => Promise<T>,
-    retainedAttribution?: RetainedAttribution, signal?: AbortSignal) => Promise<T>;
+    retainedAttribution?: RetainedAttribution, signal?: AbortSignal, admittedRead?: SessionReadContext) => Promise<T>;
   assertSessionAccountCurrent: (sessionId: string | null, expected: RequesterSessionRuntimeContext | null,
     retainedAttribution?: RetainedAttribution, signal?: AbortSignal) => Promise<void>;
   withSessionAccountHome: <T>(context: RequesterSessionRuntimeContext | null, operation: () => Promise<T>) => Promise<T>;
@@ -62,9 +65,15 @@ export function createRequesterSessionAccountContextCustody(params: Readonly<{
     if (context && resolve && params.releaseRequesterSessionRuntimeContext) await params.releaseRequesterSessionRuntimeContext(context);
   };
   const resolveSessionAccountContext: RequesterSessionAccountContextCustody['resolveSessionAccountContext'] = async (
-    sessionId, retainedAttribution, signal,
+    sessionId, retainedAttribution, signal, admittedRead,
   ) => {
     if (sessionId === null) return null;
+    const admission = admittedRead?.machineAdmission;
+    // An admitted custodian read can use held credentials without reconstructing a Session runtime.
+    if (admittedRead?.authorization?.kind === 'session.read' && admittedRead.authorization.sessionId === sessionId
+      && admission && isCustodianMachineAdmission(admission) && admission.actorAccountId === params.externalActionAccountId) {
+      return null;
+    }
     const tracked = findTrackedSessionByHappySessionId(params.trackedSessions.values(), sessionId);
     const attribution = retainedAttribution ?? tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
     const context = (await resolve?.(sessionId, attribution, signal)) ?? null;
@@ -89,8 +98,8 @@ export function createRequesterSessionAccountContextCustody(params: Readonly<{
   return {
     resolveSessionAccountContext,
     releaseSessionAccountContext,
-    withSessionAccountContext: async (sessionId, operation, retainedAttribution, signal) => {
-      const context = await resolveSessionAccountContext(sessionId, retainedAttribution, signal);
+    withSessionAccountContext: async (sessionId, operation, retainedAttribution, signal, admittedRead) => {
+      const context = await resolveSessionAccountContext(sessionId, retainedAttribution, signal, admittedRead);
       const releaseOperation = context ? retainRequesterSessionRuntimeContext(context) : null;
       try {
         return await operation(context);

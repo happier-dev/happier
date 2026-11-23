@@ -4,7 +4,7 @@ import { fetchAccountProfile } from '@/api/accountProfile';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { isCustodianMachineAdmission, projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { RequesterSessionAccountContextCustody } from '@/daemon/sessionEncryption/requesterSessionAccountContextCustody';
 import type { RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
@@ -26,7 +26,6 @@ export function createSessionConnectedServiceAuthOptionsReader(params: Readonly<
   serverId: string;
   requesterCustodyServerId: string;
   serverHttpBaseUrl: string;
-  custodianAccountId?: string | null;
   credentials: StoredCredentials;
   findTrackedSession: (sessionId: string) => TrackedSession | null | undefined;
   withSessionAccountContext: RequesterSessionAccountContextCustody['withSessionAccountContext'];
@@ -67,14 +66,7 @@ export function createSessionConnectedServiceAuthOptionsReader(params: Readonly<
       });
     };
 
-    const admission = context?.machineAdmission;
-    // The Home admitted an owner-only Session read. Account catalog reads can use
-    // the custodian's held credentials without reconstructing a Session runtime.
-    if (context?.authorization?.kind === 'session.read' && context.authorization.sessionId === sessionId
-      && admission && isCustodianMachineAdmission(admission) && admission.actorAccountId === params.custodianAccountId) {
-      return await read(null);
-    }
     return await params.withSessionAccountContext(sessionId, read,
-      projectRpcRequesterWorkAttribution(context, params.requesterCustodyServerId), signal);
+      projectRpcRequesterWorkAttribution(context, params.requesterCustodyServerId), signal, context);
   };
 }

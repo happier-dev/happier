@@ -93,7 +93,7 @@ it.each([
     handlers: { spawnSession: async () => { throw new Error('The options read started a runner'); },
       stopSession: async () => { throw new Error('The options read stopped a runner'); }, requestShutdown() {} },
     deps: { currentMachineId: machineId, readSessionConnectedServiceAuthOptions: createSessionConnectedServiceAuthOptionsReader({
-      credentials, serverId, requesterCustodyServerId: serverId, serverHttpBaseUrl, machineId, custodianAccountId: accountId,
+      credentials, serverId, requesterCustodyServerId: serverId, serverHttpBaseUrl, machineId,
       findTrackedSession: id => [...trackedSessions.values()].find(item => item.happySessionId === id),
       withSessionAccountContext, isRetired: () => false,
     }) },
