@@ -445,12 +445,15 @@ function projectVoiceAttemptForProvider(value: unknown): unknown {
   const voice = readResultRecord(result.voice);
   if (voice.presentation === undefined) return value;
 
-  const { failureMessage: _failureMessage, failureTitle: _failureTitle, providerError: _providerError,
-    failureKind, recovery, ...controls } = readResultRecord(voice.presentation);
-  const kind = VoiceAttemptFailureKindSchema.safeParse(failureKind);
-  const action = VoiceAttemptRecoveryActionSchema.safeParse(readResultRecord(recovery).action);
+  const presentation = readResultRecord(voice.presentation);
+  const kind = VoiceAttemptFailureKindSchema.safeParse(presentation.failureKind);
+  const action = VoiceAttemptRecoveryActionSchema.safeParse(readResultRecord(presentation.recovery).action);
+  const controls = [
+    'attemptId', 'surfaceState', 'live', 'muted', 'canStart', 'canStop', 'canMute',
+    'canCommitInput', 'canDismissFailedAttempt', 'canDismissEnded',
+  ] as const;
   return { ...result, voice: { ...voice, presentation: {
-    ...controls,
+    ...Object.fromEntries(controls.filter(key => presentation[key] !== undefined).map(key => [key, presentation[key]])),
     failureKind: kind.success ? kind.data : null,
     recovery: action.success ? { action: action.data } : null,
   } } };

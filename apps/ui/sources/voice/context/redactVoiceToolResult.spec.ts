@@ -23,7 +23,12 @@ describe('redactVoiceToolResultValue', () => {
         status: 'error',
         presentation: {
           failureKind: 'provider_error',
+          attemptId: 'attempt-1',
+          surfaceState: 'error',
+          live: false,
+          canStart: true,
           failureTitle: vendorProse,
+          futureDiagnosticText: vendorProse,
           failureMessage: vendorProse,
           recovery: { action: 'retry', label: 'Retry', icon: 'arrow-clockwise', runtimeTarget: null },
         },
@@ -33,7 +38,10 @@ describe('redactVoiceToolResultValue', () => {
       status: 'completed',
       voice: {
         status: 'error',
-        presentation: { failureKind: 'provider_error', recovery: { action: 'retry' } },
+        presentation: {
+          attemptId: 'attempt-1', surfaceState: 'error', live: false, canStart: true,
+          failureKind: 'provider_error', recovery: { action: 'retry' },
+        },
       },
     };
     expect(redactVoiceToolResultForProvider(action.id, result, SHARE_ALL)).toEqual(expected);
