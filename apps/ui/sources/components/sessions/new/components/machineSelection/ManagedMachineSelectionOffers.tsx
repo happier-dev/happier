@@ -133,6 +133,8 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
             // Pools choose their controller at configuration; Account-side creation has no assigned controller.
             if (!preset.controller) continue;
             const controller = controllers.get(preset.controller.machineId);
+            // A Team member can't see the owner's controller; the server's acquire admission decides its readiness.
+            if (!controller && preset.teamAcquireDelegated) continue;
             const availability = resolveManagedWakeAvailability(preset.controller, controller
                 ? { ...controller, online: describeMachinePresenceLine(controller, nowMs, undefined, scope).online } : undefined);
             if (availability.kind === 'unavailable') unavailable[preset.id] = true;

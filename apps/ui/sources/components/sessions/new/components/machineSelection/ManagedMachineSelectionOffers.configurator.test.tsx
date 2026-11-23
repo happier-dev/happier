@@ -198,6 +198,27 @@ describe('useManagedMachineSelectionOffers', () => {
     } finally { await hook.unmount(); standardCleanup(); storage.setState(beforeState, true); }
   });
 
+  it('offers a Team-delegated preset whose controller this Account cannot see, leaving readiness to admission', async () => {
+    const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
+    const accountBinding = binding();
+    const presetInput = {
+      id: 'team-preset', homeId: 'home-a', revision: 1, name: 'Team box',
+      owner: { kind: 'team', teamId: 'team-a' },
+      launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      controller: { machineId: 'owner-controller', installationId: 'installation-o' },
+    } as const;
+    const delegated = createPlainManagedMachinePresetFixture({ ...presetInput, teamAcquireDelegated: true }).opened;
+    const undelegated = createPlainManagedMachinePresetFixture({ ...presetInput, id: 'own-preset' }).opened;
+    const hook = await renderHook(() => useManagedMachineSelectionOffers({ homeId: 'home-a', binding: accountBinding,
+      serverId: 'server-a', presets: [delegated, undelegated], configure: vi.fn() }));
+    try {
+      const offer = (presetId: string) => hook.getCurrent().find(row => row.presetId === presetId);
+      expect(offer('team-preset')).toBeDefined();
+      expect(offer('team-preset')!.disabled).not.toBe(true);
+      expect(offer('own-preset')!.disabled).toBe(true);
+    } finally { await hook.unmount(); standardCleanup(); }
+  });
+
   it('keeps the offers identity across a machine list change that leaves the controller name alone', async () => {
     const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
     const accountBinding = binding();
