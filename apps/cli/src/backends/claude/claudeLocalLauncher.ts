@@ -100,6 +100,8 @@ export async function claudeLocalLauncher(
          * - `switch`: switching from remote → local (must enforce discard/pending safety before switching)
          */
         entry?: 'initial' | 'switch';
+        /** Session model selected at startup, available before the session metadata snapshot. */
+        startupModelId?: string;
         /**
          * Enables the legacy local→remote takeover path. Claude unified terminal owns
          * UI input through terminal-host injection and must not enter legacy remote mode.
@@ -499,7 +501,9 @@ export async function claudeLocalLauncher(
                 // `--model` would pin the model and ignore later changes from the app.
                 const localClaudeArgs = withClaudeSessionModelArgs(
                     session.claudeArgs,
-                    resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId,
+                    metadataSnapshot
+                        ? resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId
+                        : opts?.startupModelId,
                 );
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();

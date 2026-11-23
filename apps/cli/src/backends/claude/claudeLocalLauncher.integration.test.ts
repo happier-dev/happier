@@ -38,7 +38,7 @@ vi.mock('node:child_process', async importOriginal => {
 type MetadataSnapshot = {
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
-  modelOverrideV1?: { v: 1; updatedAt: number; modelId: string };
+  modelOverrideV1?: { v: 1; updatedAt: number; modelId: string | null };
 };
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
@@ -95,7 +95,7 @@ await import('./claudeLocalLauncher');
 
 type SessionClientStub = EventEmitter &
   SessionClientPort & {
-    getMetadataSnapshot?: () => MetadataSnapshot;
+    getMetadataSnapshot?: () => MetadataSnapshot | null;
   };
 
 type LocalHarness = {
@@ -168,7 +168,7 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 }
 
 function createLocalHarness(options?: {
-  metadataSnapshot?: MetadataSnapshot;
+  metadataSnapshot?: MetadataSnapshot | null;
   sessionId?: string;
   path?: string;
   providerTasks?: NonNullable<ConstructorParameters<typeof Session>[0]['runtimeActivityContributions']>['providerTasks'];
@@ -188,7 +188,7 @@ function createLocalHarness(options?: {
       sessionId: 'happy_sess_1',
       enqueueSessionTurn: async mutation => { turnMutations.push(mutation); },
     }),
-    getMetadataSnapshot: options?.metadataSnapshot ? vi.fn(() => options.metadataSnapshot) : undefined,
+    getMetadataSnapshot: options?.metadataSnapshot !== undefined ? vi.fn(() => options.metadataSnapshot) : undefined,
     waitForMetadataUpdate: vi.fn(async () => false),
     waitForPendingEligibilityUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
@@ -571,12 +571,20 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
-  it('spawns local Claude with the session model from metadata without storing it in the shared session args', async () => {
-    const { session } = createLocalHarness({
-      metadataSnapshot: {
-        modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' },
-      },
-    });
+  it.each<{ state: string; snapshot: MetadataSnapshot | null; model: string | null }>([
+    { state: 'before attach', snapshot: null, model: 'claude-model-a' },
+    {
+      state: 'after a model change',
+      snapshot: { modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' } },
+      model: 'claude-model-b',
+    },
+    {
+      state: 'after a reset to default',
+      snapshot: { modelOverrideV1: { v: 1, updatedAt: 456, modelId: null } },
+      model: null,
+    },
+  ])('uses the effective local launch model $state without storing it in shared args', async ({ snapshot, model }) => {
+    const { session } = createLocalHarness({ metadataSnapshot: snapshot });
     session.claudeArgs = ['--verbose'];
 
     let spawnedArgs: string[] | undefined;
@@ -585,11 +593,11 @@ describe('claudeLocalLauncher', () => {
     });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const result = await claudeLocalLauncher(session);
+    const result = await claudeLocalLauncher(session, { startupModelId: 'claude-model-a' });
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ type: 'exit', code: 0 });
-    expect(spawnedArgs).toEqual(['--verbose', '--model', 'claude-model-b']);
+    expect(spawnedArgs).toEqual(model ? ['--verbose', '--model', model] : ['--verbose']);
     // A later remote launch reuses session.claudeArgs, where any --model is a fixed override.
     expect(session.claudeArgs).toEqual(['--verbose']);
   });
