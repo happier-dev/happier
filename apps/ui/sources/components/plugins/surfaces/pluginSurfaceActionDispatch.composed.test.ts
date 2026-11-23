@@ -9401,6 +9401,7 @@ describe('plugin-surface action branch selection', () => {
         expect(contributed).not.toHaveBeenCalled();
         expect(execute).toHaveBeenCalledWith(HOST_ACTION_ID, { pluginId: CALLER_PLUGIN_ID }, {
             serverId: 'server-1',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
             surface: 'plugin',
             authority: 'account_automation',
             actionCaller: {
@@ -9430,6 +9431,7 @@ describe('plugin-surface action branch selection', () => {
 
         expect(execute).toHaveBeenCalledWith(HOST_ACTION_ID, {}, {
             serverId: 'server-1',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
             signal: cancellation.signal,
             surface: 'plugin',
             authority: 'account_automation',
@@ -11119,6 +11121,7 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
             surface: 'plugin',
             authority: 'account_automation',
             serverId: 'server-composed',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-composed' },
         });
     });
 
@@ -11504,6 +11507,7 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
         expect(executeHostAction).toHaveBeenCalledWith(HOST_ACTION_ID, { pluginId: CALLER_PLUGIN_ID }, {
             actionRequestId: adapter.requests[0]?.requestId,
             serverId: 'server-rn',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-rn' },
             surface: 'plugin',
             authority: 'account_automation',
             actionCaller: {
