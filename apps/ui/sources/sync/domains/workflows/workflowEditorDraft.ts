@@ -1,4 +1,4 @@
-import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, createWorkflowLeafBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, resolvePreviousResultInputForInsertion, type WorkflowBlockKind, type WorkflowBlockListRef, type WorkflowLeafBlockSeed, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, createWorkflowLeafBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, resolvePreviousResultInputForInsertion, setWorkflowFinalOutput, type WorkflowBlockKind, type WorkflowBlockListRef, type WorkflowLeafBlockSeed, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowBlock, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { WorkflowStarterExampleSelection, WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
@@ -50,14 +50,18 @@ export function createWorkflowEditorDraft(params: Readonly<{
   defaults?: WorkflowStepExecutionSelection;
   blocks?: readonly WorkflowBlock[];
 }>): WorkflowEditorDraft {
-  const blocks = params.blocks ?? [createWorkflowBlock('step', new Set<string>())];
-  return {
+  const draft: WorkflowEditorDraft = {
     draftId: params.draftId,
     name: params.name ?? '',
     inputs: [],
     defaults: params.defaults ?? {},
-    blocks,
+    blocks: params.blocks ?? [],
   };
+  if (params.blocks !== undefined) return draft;
+  const firstStep = createWorkflowBlock('step', new Set<string>());
+  return setWorkflowFinalOutput({ ...draft, blocks: [firstStep] }, {
+    kind: 'result', producer: { blockId: firstStep.id, scope: { kind: 'current' } }, path: [],
+  });
 }
 
 export type WorkflowStarterExampleInsertion = Readonly<{
@@ -88,14 +92,16 @@ export function insertWorkflowStarterExample(
   };
   const inputs = new Map(definition.inputs.map((input) => [input.name, unique(input.name, takenInputs, '_')]));
   const { blocks, remapResult } = copyWorkflowBlocks(definition.blocks, takenIds, inputs);
-  const replacedPlaceholder = draft.finalOutput === undefined && draft.blocks.length === 1
-    && pluginJsonValuesEqual(draft.blocks[0], createWorkflowBlock('step', new Set<string>()));
-  let next = { ...draft, blocks: replacedPlaceholder ? [] : draft.blocks,
+  const blankDraft = createWorkflowEditorDraft({ draftId: draft.draftId });
+  const replacedPlaceholder = draft.blocks.length === 1 && pluginJsonValuesEqual(draft.blocks[0], blankDraft.blocks[0])
+    && (draft.finalOutput === undefined || pluginJsonValuesEqual(draft.finalOutput, blankDraft.finalOutput));
+  const base = replacedPlaceholder ? setWorkflowFinalOutput(draft, null) : draft;
+  let next = { ...base, blocks: replacedPlaceholder ? [] : draft.blocks,
     inputs: [...draft.inputs, ...definition.inputs.map((input) => ({ ...input, name: inputs.get(input.name)! }))] };
   for (const block of blocks) next = insertWorkflowBlock(next, { list: { kind: 'root' }, block });
   const projected: WorkflowEditorDraft = { ...next,
     ...(draft.name.length === 0 && title !== undefined ? { name: title } : {}),
-    ...(draft.finalOutput === undefined && definition.finalOutput !== undefined ? { finalOutput: remapResult(definition.finalOutput) } : {}),
+    ...(base.finalOutput === undefined && definition.finalOutput !== undefined ? { finalOutput: remapResult(definition.finalOutput) } : {}),
   };
   return { draft: projected, before: draft, rootIds: blocks.map((block) => block.id), inputNames: [...inputs.values()], replacedPlaceholder,
     ...(example.trigger === undefined ? {} : { trigger: example.trigger }),

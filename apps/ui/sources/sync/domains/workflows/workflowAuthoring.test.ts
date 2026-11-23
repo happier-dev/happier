@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { WorkflowDefinitionV1Schema, type WorkflowBlock, type WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
+import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol/workflows/builtins/examples';
 
 import {
   buildWorkflowEditorDraftFromDefinition,
@@ -19,8 +20,8 @@ import {
   validateWorkflowEditorDraft,
   workflowIssuesForBlock,
 } from './workflowAuthoring';
-import { createWorkflowEditorDraft, type WorkflowEditorDraft } from './workflowEditorDraft';
-import { collectWorkflowBlockIds, createWorkflowBlock, setWorkflowDefaultField, setWorkflowInputs, setWorkflowStepExecutionField, setWorkflowStepText } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { createWorkflowEditorDraft, insertWorkflowStarterExample, type WorkflowEditorDraft } from './workflowEditorDraft';
+import { collectWorkflowBlockIds, createWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowInputs, setWorkflowStepExecutionField, setWorkflowStepText } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 const CLAUDE_AGENT_TARGET = {
   kind: 'agent' as const,
@@ -47,6 +48,30 @@ function draftWith(blocks: readonly WorkflowBlock[]): WorkflowEditorDraft {
 }
 
 describe('draft validation through the canonical validator', () => {
+  it('publishes the first prompt result as the final output of a new blank workflow', () => {
+    const blank = createWorkflowEditorDraft({ draftId: 'first-workflow', defaults: { agentTarget: CLAUDE_AGENT_TARGET } });
+    const firstStep = blank.blocks[0]!;
+    const draft = setWorkflowStepText(blank, firstStep.id, 'Summarize the work.');
+
+    const validation = validateWorkflowEditorDraft(draft);
+    expect(validation.valid).toBe(true);
+    expect(validation.normalizedDefinition?.finalOutput).toEqual({
+      kind: 'result', producer: { blockId: firstStep.id, scope: { kind: 'current' } }, path: [],
+    });
+    expect(validateWorkflowEditorDraft(setWorkflowFinalOutput(draft, null)).normalizedDefinition?.finalOutput).toBeUndefined();
+  });
+
+  it('replaces the untouched prompt and its default result when starting from an example', () => {
+    const blank = createWorkflowEditorDraft({ draftId: 'first-workflow' });
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'ask-once')!;
+    const { draft, replacedPlaceholder } = insertWorkflowStarterExample(blank, example);
+
+    expect(replacedPlaceholder).toBe(true);
+    expect(draft.blocks).toHaveLength(1);
+    expect(draft.blocks[0]?.id).not.toBe(blank.blocks[0]?.id);
+    expect(draft.finalOutput?.producer.blockId).toBe(draft.blocks[0]?.id);
+  });
+
   it('keeps portable role declarations in the current draft admitted by Run now', () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [],
       defaults: { engine: { role: 'portable_builder' } }, blocks: [step('build')],
