@@ -12,12 +12,15 @@ import { ProviderBrokerOpenResponseV1Schema, PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
   PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceSummaryV1Schema,
   TeamCredentialResourceAudienceInputV1Schema, teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import { DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema,
+  DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createLightSqliteHarness, createAccountTokenForTests,
   type LightSqliteHarness } from '../../../../apps/server/sources/testkit/lightSqliteHarness';
 import { resolvePeerMediationGrantSigningConfig } from '../../../../apps/server/sources/app/machines/peer/mediation/mintDirectRouteGrantV1';
 import { verifyProviderBrokerRouteGrantSignatureV1 } from '../../../../apps/server/sources/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { peerMediationGrantSigningEnv } from '../../../../apps/server/sources/testkit/env';
+import type { Fastify } from '../../../../apps/server/sources/app/api/types';
 import { createAuthenticatedTestApp } from '../../../../apps/server/sources/app/api/testkit/sqliteFastify';
 import { registerTeamCredentialResourceRoutes } from '../../../../apps/server/sources/app/teams/credentials/registerTeamCredentialResourceRoutes';
 import { homeDomainActionPathForMethod } from '../../../../apps/server/sources/app/api/routes/actions/homeDomainActionRoute';
@@ -39,6 +42,7 @@ import { createActionSettingsProvider } from '../../../../apps/cli/src/settings/
 import { composeConnectedServiceTeamCredentialBindingIntents } from '../../../../apps/ui/sources/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { buildNewSessionConnectedServicesSelectionListModel, createTeamResourceServiceOptionId } from '../../../../apps/ui/sources/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 import { buildSessionModelPickerSections } from '../../../../apps/ui/sources/components/sessions/modelPicker/buildSessionModelPickerSections';
+import { isTeamCredentialProviderModelPickerValue } from '../../../../apps/ui/sources/components/sessions/modelPicker/sessionModelSelectionKey';
 import { createPiAgentRuntime } from '../../../plugins/pi/src/agent/runtime/engine';
 import { hostBoundaries } from '../../../plugins/pi/src/agent/runtime/nativeProcess.test-support';
 
@@ -123,11 +127,12 @@ it('shares Muse through Meta into recipient Pi, hides it from Muse, and refuses 
   const unexpected = async (): Promise<never> => { throw new Error('Catalog must not materialize owner credentials'); };
   // Account metadata storage, daemon RPC, native model probe and carrier are IO
   // boundaries. Share issuance, catalog, UI, admission and Pi preparation stay real.
+  const credentialIsPresent = async () => Boolean(await db.serviceAccountToken.findUnique({ where: { id: credential.id } }));
   const purposes = createConnectedAccountPurposeBindingOwner({
     store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
     selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
     assertTargetAccountMaterializable: unexpected,
-    resolveTarget: async target => target.kind === 'account' && await db.serviceAccountToken.findUnique({ where: { id: credential.id } })
+    resolveTarget: async target => target.kind === 'account' && await credentialIsPresent()
       ? { account: target.account, displayName: 'Owner Muse' } : null,
   });
   const observeModels = createConnectedAccountModelObserver({ registry, invoke: async request => {
@@ -140,7 +145,16 @@ it('shares Muse through Meta into recipient Pi, hides it from Muse, and refuses 
   home.machineDaemonPresence = { in: () => ({ fetchSockets: async () => machines.map(machine => ({
     data: { clientType: 'machine-scoped', userId: machine.accountId, machineId: machine.id },
   })) }) };
-  home.forwardRpcForUser = async ({ params }: { params: unknown }) => {
+  home.forwardRpcForUser = async ({ method, params }: Parameters<Fastify['forwardRpcForUser']>[0]) => {
+    if (method === `${broker.id}:${RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY}`) {
+      const request = DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema.parse(params);
+      expect(request).toMatchObject({ machineId: broker.id, teamId: team.id, resourceId: resource.id,
+        source: { kind: 'connected_account', target: { kind: 'account', account } } });
+      return { ok: true, result: DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.parse(
+        await credentialIsPresent() ? { status: 'eligible' } : { status: 'unavailable', reason: 'source_unavailable' },
+      ) };
+    }
+    expect(method).toBe(`${broker.id}:${RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION}`);
     const request = DaemonProviderModelProjectionRequestV1Schema.parse(params);
     const projection = await projectConnectedAccountCatalog({ registry, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1,
       resolveSelection: purposes.resolveBindingIntentSelection, observeModels, request });
@@ -168,13 +182,18 @@ it('shares Muse through Meta into recipient Pi, hides it from Muse, and refuses 
     nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
     teamCredentialResources: resources }).flatMap(section => section.options);
   expect(picker).toHaveLength(1);
-  expect(picker[0]?.disabled).toBe(false);
+  const choice = picker[0];
+  expect(choice?.disabled).toBe(false);
+  if (!choice || !isTeamCredentialProviderModelPickerValue(choice.value)) {
+    throw new Error('Picker did not offer a Team credential model');
+  }
+  const { kind: _kind, ...teamModelRef } = choice.value;
   const bindings = { v: 2 as const, bindingsByServiceId: { [serviceKey]: selection } };
   const intents = composeConnectedServiceTeamCredentialBindingIntents({ consumer: piDeclaration.identity,
     declarations: (piDeclaration.connectedAccounts ?? []).map(purpose => ({ ...purpose,
       service: qualifyPluginContributionReferenceV1(purpose.service, piDeclaration.identity.pluginId) })), bindings, resources });
   const launchOptions = { directory: harness!.baseDir, connectedServices: bindings, teamCredentialBindings: intents,
-    modelSelection: { v: 1 as const, updatedAt: 1, ref: { agentTargetKey: piTarget, providerConnectionId: null, modelId } } };
+    modelSelection: { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const, ...teamModelRef } } };
   const normalize = () => normalizeSessionTeamCredentialLaunch({ options: launchOptions, agentId: 'pi', agentTargetKey: piTarget,
     executionMachineId: worker.id, contributions: registry, applications: [application], readCatalog });
   const admitted = await normalize();

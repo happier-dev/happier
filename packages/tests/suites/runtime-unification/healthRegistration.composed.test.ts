@@ -113,7 +113,7 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
                 machineId: home.machineId, qualifiedActionId: `${plugin.manifest.id}/health/setup`,
                 expectedContributorOccurrenceId: occurrenceId, executionSurface: 'ui', input,
                 invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId: plugin.manifest.id,
-                    contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.failed.localId, occurrenceId, sourceCustody,
+                    contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, occurrenceId, sourceCustody,
                     materializationRef: materialization } },
             }, { signal: lifetime.signal, callerAuthority: 'present_user' }));
             // Replace only the OS executable; the bundled native adapter, discovery,
@@ -155,7 +155,7 @@ else process.exitCode=17;
             const source = PluginEventAutomationSetupResultV1Schema.parse(prepared.result);
             const triggers = createCliWorkflowTriggerActions({ credentials, serverHttpBaseUrl: home.baseUrl,
                 resolveWorkflow: async () => { throw new Error('Observation-only Health has no Workflow'); } });
-            const trigger = { kind: 'pluginEvent' as const, eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed,
+            const trigger = { kind: 'pluginEvent' as const, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
                 ...source, v: undefined, observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: materialization },
                 filter: null, maximumObservationAgeMs: null, enabled: true };
             // v belongs to the setup result, not the Event definition request.
@@ -167,8 +167,6 @@ else process.exitCode=17;
             expect(refusalBodies).toEqual([{ error: 'Automation Event watcher is not current' }]);
             const written = await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Observed service', trigger: eventTrigger });
             expect(written.set.health).toBe('available');
-            await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Recovered service',
-                trigger: { ...eventTrigger, eventRef: HEALTH_CHECK_EVENT_REFS_V1.recovered } });
 
             const noticeResults: unknown[] = [];
             let probes = 0;

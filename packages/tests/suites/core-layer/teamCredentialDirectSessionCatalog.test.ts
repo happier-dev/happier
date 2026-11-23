@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import type { AgentRuntime, AgentSessionModelsSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/compatibility/v1';
 import type { Metadata } from '../../../../apps/cli/src/api/types';
 import { createTestMetadata } from '../../../../apps/cli/src/testkit/backends/sessionMetadata';
 import {
@@ -45,8 +46,21 @@ it('keeps the accepted Direct Team Session on its execution-side model observati
     return { send: async () => ({ status: 'admitted' }), watch: () => ({ dispose() {} }), async dispose() {} };
   } } };
   const contributions = createExternalContributionFixtures(agentId);
+  const providerRequirements = {
+    acceptsProtocols: ['openai-responses'],
+    required: {},
+    credentialSupport: { supportsNoAuth: false, apiKeyTransports: [{
+      protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
+    }] },
+    authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['SOURCE_TOKEN'] },
+    materialization: 'spawnEnv',
+    applyPolicy: 'restart_session',
+    supportsFreeformModelIds: true,
+  } satisfies AgentProviderRequirementsV1;
+  const agent = { ...contributions.agent, richDefinition: { ...contributions.agent.richDefinition,
+    definition: { ...contributions.agent.richDefinition.definition, providerRequirements } } };
   const plan = await createNativeAgentRuntimeSessionPlanFixture({ runtime, lease: createLease(agentId),
-    backend: contributions.backend, agent: contributions.agent, createSessionHostServiceOwners,
+    backend: contributions.backend, agent, createSessionHostServiceOwners,
     prepareTeamCredentialProviderBinding: async request => {
       preparations++;
       expect(request).toMatchObject({ resourceId: selected.resourceId, modelId: selected.modelId });
@@ -81,16 +95,16 @@ it('keeps the accepted Direct Team Session on its execution-side model observati
   try {
     await publisher.flush();
     expect(created.nativeRuntime?.readAppliedTeamCredentialModel?.()).toEqual(selected);
-    expect(pickerIds()).toEqual(['gpt-6.1-sol', 'gpt-6.1-terra']);
+    expect(pickerIds()).toEqual(['default', 'gpt-6.1-sol', 'gpt-6.1-terra']);
     expect(metadata.sessionModelsV1?.availableModels.map(model => model.id)).not.toContain('gpt-5.5');
     snapshot = { observedAt: 3, currentModelId: selected.modelId, models: [{ id: selected.modelId, name: 'Observed Sol' }] };
     for (const listener of listeners) listener(snapshot);
     await publisher.flush();
-    expect(pickerIds()).toEqual(['gpt-6.1-sol']);
+    expect(pickerIds()).toEqual(['default', 'gpt-6.1-sol']);
     snapshot = { observedAt: 4, currentModelId: selected.modelId, models: [] };
     for (const listener of listeners) listener(snapshot);
     await publisher.flush();
-    expect(pickerIds()).toEqual([]);
+    expect(pickerIds()).toEqual(['default']);
     expect(preparations).toBe(1);
     expect(opens).toBe(1);
   } finally {
