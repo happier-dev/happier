@@ -2717,7 +2717,9 @@ launches still carry their actual Agent target and apply its compatibility rules
 In 0.3 development, the managed wrapper embeds CLIProxyAPI v8.0.80. Its
 Go module owns the SDK selection; catalog generation derives both the TypeScript
 compatibility rows and the wrapper SDK identity from that selection. The private
-wrapper contract remains v3. Connected Services remains the credential acquisition
+wrapper contract remains v3. If a readiness refusal and cleanup failure happen
+in the same start, the shared Provider failure carrier retains the primary
+readiness cause. Connected Services remains the credential acquisition
 and refresh owner: SDK entries contain registration sentinels, skip Claude profile
 lookup, and treat upstream 401s as request-scoped failures so a later daemon lease
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.

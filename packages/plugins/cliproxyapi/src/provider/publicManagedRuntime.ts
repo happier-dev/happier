@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';
 import type {
@@ -324,10 +325,10 @@ const start: ManagedProviderRuntime['start'] = async (request, context) => {
     try {
       await service.dispose();
     } catch (cleanupError) {
-      throw new AggregateError(
+      throw Object.assign(new AggregateError(
         [error, cleanupError],
         'CLIProxyAPI managed service readiness and cleanup failed',
-      );
+      ), { failureCause: projectActionFailureCauseV1(error, 'providers.cliproxyapi.readiness') });
     }
     throw error;
   }

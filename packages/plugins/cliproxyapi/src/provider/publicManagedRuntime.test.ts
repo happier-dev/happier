@@ -6,6 +6,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 
 import type {
   ConnectedAccountsService,
@@ -549,6 +551,25 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       managedServices: { dependencies: {} as never, supervise: async () => service },
       signal: new AbortController().signal,
     })).rejects.toThrow('identity mismatch');
+    expect(service.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a typed readiness refusal when releasing the managed service also fails', async () => {
+    const refusal = new PluginError({ code: 'plugin_managed_server_health_timeout' });
+    const service = { ...managedService(['openai-upstream']),
+      waitUntilHealthy: vi.fn().mockRejectedValue(refusal),
+      dispose: vi.fn().mockRejectedValue(new Error('Managed process cleanup failed')),
+    };
+    const pending = CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({ reason: 'sessionDemand',
+      connectionId: 'gateway-readiness', connectionRevision: 1, endpointTemplateIds: requestedEndpointTemplateIds }, {
+      connectedAccounts: connectedAccounts(['openai-upstream']).service,
+      managedServices: { dependencies: {} as never, supervise: async () => service },
+      signal: new AbortController().signal,
+    });
+    await expect(pending).rejects.toBeInstanceOf(Error);
+    expect(await pending.catch(error => projectActionFailureCauseV1(error))).toMatchObject({
+      phase: 'providers.cliproxyapi.readiness', errorCode: refusal.code,
+    });
     expect(service.dispose).toHaveBeenCalledOnce();
   });
 
