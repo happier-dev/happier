@@ -2724,6 +2724,11 @@ export const ca: TranslationStructure = {
                 confirmCta: 'Usa el restabliment',
             },
         },
+        requestErrors: {
+            unreachable: 'No es pot connectar amb el servidor de Happier. Comprova la xarxa o la connexió VPN i torna-ho a provar.',
+            timeout: 'El servidor de Happier no ha respost a temps.',
+            serverHttp: ({ status }: { status: string }) => `El servidor de Happier ha retornat un error (${status}). Torna-ho a provar d'aquí a un moment.`,
+        },
         oauthPaste: {
             invalidConfig: 'Configuració del servei connectat no vàlida.',
             connectWebGroupTitle: 'Connecta (web)',
@@ -2766,7 +2771,11 @@ export const ca: TranslationStructure = {
             },
             errors: {
                 missingState: 'Falta l\'estat OAuth a l\'URL de redirecció.',
-                stateMismatch: 'L\'estat OAuth no coincideix.',
+                stateMismatch: 'Aquesta resposta d\'autorització no coincideix amb l\'intent actual. Inicia una autorització nova.',
+                rejected: ({ reason }: { reason: string }) => `El proveïdor ha rebutjat l'autorització: ${reason}`,
+                rejectedGeneric: 'El proveïdor ha rebutjat l\'autorització.',
+                exchangeOutcomeUnknown: "No hem pogut confirmar si s’ha completat l’inici de sessió. Comprova els comptes connectats i, si cal, torna a iniciar sessió amb un codi nou.",
+                responseKept: "La sol·licitud no s’ha enviat. Comprova la connexió i prem Continua per utilitzar la resposta que ja has enganxat.",
             },
         },
         oauthEmbedded: {

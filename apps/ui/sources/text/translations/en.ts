@@ -2639,6 +2639,11 @@ export const en = {
                 confirmCta: 'Use reset',
             },
         },
+        requestErrors: {
+            unreachable: 'Cannot connect to the Happier server. Check your network or VPN connection and try again.',
+            timeout: 'The Happier server did not respond in time.',
+            serverHttp: ({ status }: { status: string }) => `The Happier server returned an error (${status}). Try again in a moment.`,
+        },
         oauthPaste: {
             invalidConfig: 'Invalid connected service configuration.',
             connectWebGroupTitle: 'Connect (web)',
@@ -2681,7 +2686,11 @@ export const en = {
             },
             errors: {
                 missingState: 'Missing OAuth state in redirect URL.',
-                stateMismatch: 'OAuth state mismatch.',
+                stateMismatch: 'This authorization response does not match the current attempt. Start a new authorization.',
+                rejected: ({ reason }: { reason: string }) => `The provider rejected the authorization: ${reason}`,
+                rejectedGeneric: 'The provider rejected the authorization.',
+                exchangeOutcomeUnknown: "Happier couldn’t confirm whether sign-in completed. Check your connected accounts. If you need to sign in again, start with a new code.",
+                responseKept: "The request wasn’t sent. Check your connection, then press Continue to use the response you already pasted.",
             },
         },
         oauthEmbedded: {

@@ -2697,6 +2697,11 @@ export const zhHans: TranslationStructure = {
         confirmCta: "使用重置",
       },
     },
+    requestErrors: {
+      unreachable: "无法连接到 Happier 服务器。请检查网络或 VPN 连接后重试。",
+      timeout: "Happier 服务器未能及时响应。",
+      serverHttp: ({ status }: { status: string }) => `Happier 服务器返回了错误（${status}）。请稍后重试。`,
+    },
     oauthPaste: {
       invalidConfig: "已连接服务配置无效。",
       connectWebGroupTitle: "连接（网页）",
@@ -2740,7 +2745,11 @@ export const zhHans: TranslationStructure = {
       },
       errors: {
         missingState: "重定向 URL 中缺少 OAuth state。",
-        stateMismatch: "OAuth state 不匹配。",
+        stateMismatch: "此授权响应与当前尝试不匹配。请重新开始授权。",
+        rejected: ({ reason }: { reason: string }) => `提供方拒绝了授权：${reason}`,
+        rejectedGeneric: "提供方拒绝了授权。",
+        exchangeOutcomeUnknown: "无法确认登录是否已完成。请检查已连接的账户，如需重新登录，请使用新验证码。",
+        responseKept: "请求未发送。请检查网络连接，然后按“继续”使用已粘贴的响应。",
       },
     },
     oauthEmbedded: {

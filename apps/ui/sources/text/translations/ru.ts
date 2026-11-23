@@ -2724,6 +2724,11 @@ export const ru: TranslationStructure = {
         confirmCta: "Применить сброс",
       },
     },
+    requestErrors: {
+      unreachable: "Не удаётся подключиться к серверу Happier. Проверьте сеть или VPN-подключение и повторите попытку.",
+      timeout: "Сервер Happier не ответил вовремя.",
+      serverHttp: ({ status }: { status: string }) => `Сервер Happier вернул ошибку (${status}). Повторите попытку через минуту.`,
+    },
     oauthPaste: {
       invalidConfig: "Неверная конфигурация подключённого сервиса.",
       connectWebGroupTitle: "Подключить (web)",
@@ -2767,7 +2772,11 @@ export const ru: TranslationStructure = {
       },
       errors: {
         missingState: "Отсутствует состояние OAuth в URL редиректа.",
-        stateMismatch: "Состояние OAuth не совпадает.",
+        stateMismatch: "Этот ответ авторизации не соответствует текущей попытке. Начните новую авторизацию.",
+        rejected: ({ reason }: { reason: string }) => `Провайдер отклонил авторизацию: ${reason}`,
+        rejectedGeneric: "Провайдер отклонил авторизацию.",
+        exchangeOutcomeUnknown: "Не удалось подтвердить завершение входа. Проверьте подключённые аккаунты и при необходимости войдите снова с новым кодом.",
+        responseKept: "Запрос не был отправлен. Проверьте подключение и нажмите «Продолжить», чтобы использовать уже вставленный ответ.",
       },
     },
     oauthEmbedded: {
