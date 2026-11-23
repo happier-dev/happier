@@ -933,7 +933,6 @@ export function machineUpdateHandler(
                         metadataVersion: true,
                         daemonStateVersion: true,
                         metadata: true,
-                        daemonState: true,
                         dataEncryptionKey: true,
                         installationId: true,
                         revokedAt: true,
@@ -974,7 +973,7 @@ export function machineUpdateHandler(
                     mode: admission.encryptionMode,
                     dataEncryptionKey: machine.dataEncryptionKey,
                     metadata,
-                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication(metadata, machine.daemonState))) {
+                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication({ metadata }))) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
                     return null;
                 }

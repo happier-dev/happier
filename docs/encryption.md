@@ -5061,6 +5061,9 @@ The frontier does not infer Account mode from keys or create encryption material
   and status, foreign work ids/commands/content, and undeclared peer/transfer native
   bags are not part of that projection. This is producer-side admission, not
   recipient-specific UI redaction, and does not claim an arbitrary path-free blob.
+  Plain socket updates validate the incoming metadata or daemon-state field
+  against its published shape. A read by another Account still requires both
+  retained fields to satisfy the share-wide content contract.
 - The development machine-resources contracts admit `metadata.resourcesPolicyV1`
   and `daemonState.resources` through that same share-wide content owner and
   Machine-mode encoding. The resources policy, including its Storage section, and

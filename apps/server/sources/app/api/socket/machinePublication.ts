@@ -5,7 +5,7 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { resolveCurrentMachineRecipientAccountIdsInTx, lockMachinePublicationInTx } from '@/app/machines/machineAccess';
 import { isPlainMachineDataKeyMarker, decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { parseMachinePublishedDaemonStateV1, parseMachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readAccountStoredContentCompatibilityForSocket, buildAccountStoredContentSocketUpgradeError } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from './machineSocketInstallationProof';
 import { buildMachineActivityEphemeral, eventRouter } from '@/app/events/eventRouter';
@@ -112,12 +112,14 @@ export function encodedMachineEnvelope(dataEncryptionKey: Uint8Array<ArrayBuffer
     return dataEncryptionKey === null ? null : privacyKit.encodeBase64(dataEncryptionKey);
 }
 
-export function isSafePlainMachinePublication(metadata: string, daemonState: string | null): boolean {
+export function isSafePlainMachinePublication(input: Readonly<{ metadata: string } | { daemonState: string }>): boolean {
     try {
-        return isMachinePublishedContentSafeV1({
-            metadata: decodePlainMachineStoredContent(metadata),
-            daemonState: daemonState === null ? null : decodePlainMachineStoredContent(daemonState),
-        });
+        if ('metadata' in input) {
+            parseMachinePublishedMetadataV1(decodePlainMachineStoredContent(input.metadata));
+        } else {
+            parseMachinePublishedDaemonStateV1(decodePlainMachineStoredContent(input.daemonState));
+        }
+        return true;
     } catch {
         return false;
     }

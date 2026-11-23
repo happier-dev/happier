@@ -93,7 +93,7 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                     daemonState,
                     dataEncryptionKey: machine.dataEncryptionKey,
                     storedRead: true,
-                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication(machine.metadata, daemonState))) {
+                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication({ daemonState }))) {
                     return response({ result: 'error', message: 'Invalid parameters' });
                 }
 

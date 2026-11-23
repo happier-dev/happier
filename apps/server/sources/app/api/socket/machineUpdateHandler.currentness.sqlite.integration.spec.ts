@@ -874,6 +874,45 @@ describe("Machine authority mutations on an established socket", () => {
             .toEqual({ status: "authenticated", value: { current: true } });
     });
 
+    it.each(["metadata", "daemonState"] as const)("publishes Plain %s while preserving historical sibling content", async field => {
+        const subject = await createEstablishedMachineFixture(`plain-${field}`);
+        await db.account.update({ where: { id: subject.accountId }, data: {
+            encryptionMode: "plain", publicKey: null, contentPublicKey: null, contentPublicKeySig: null,
+        } });
+        const metadata = encodePlainMachineStoredContent(PUBLISHED_METADATA);
+        const daemonState = encodePlainMachineStoredContent({ status: "running" });
+        await db.machine.update({ where: { id: subject.machineId }, data: {
+            metadata, daemonState, dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        writeAccountStoredContentCompatibilityForSocket(subject.socket as unknown as Socket,
+            evaluateAccountStoredContentSocketCompatibility({ accountStoredContentCompatibility: { v: 1, protocolVersion: 4 } }));
+        const event = field === "metadata" ? "machine-update-metadata" : "machine-update-state";
+        const publish = (value: unknown, expectedVersion: number) => emit(subject, event, {
+            machineId: subject.machineId, [field]: encodePlainMachineStoredContent(value), expectedVersion,
+            expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        });
+        const control = field === "metadata" ? { ...PUBLISHED_METADATA, host: "updated-host" } : { status: "running", pid: 10 };
+        expect(await publish(control, 0)).toHaveBeenCalledWith({ result: "success", version: 1,
+            [field]: encodePlainMachineStoredContent(control) });
+
+        const sibling = field === "metadata" ? "daemonState" : "metadata";
+        const retained = encodePlainMachineStoredContent(field === "metadata"
+            ? { status: "running", managedActivity: { kind: "idle", since: 10 } }
+            : { ...PUBLISHED_METADATA, setup: { version: 1, revision: 2, exclusions: [], sources: [
+                { kind: "direct", setup: {} }, { kind: "accountPreset", presetId: "saved-preset", presetRevision: 1, setup: {} },
+            ] } });
+        await db.machine.update({ where: { id: subject.machineId }, data: { [sibling]: retained } });
+
+        expect(await publish({ ...control, privateValue: "not a published field" }, 1))
+            .toHaveBeenCalledWith({ result: "error", message: "Invalid parameters" });
+        const next = field === "metadata" ? { ...PUBLISHED_METADATA, host: "reconnected-host" } : { status: "running", pid: 20 };
+        expect(await publish(next, 1)).toHaveBeenCalledWith({ result: "success", version: 2,
+            [field]: encodePlainMachineStoredContent(next) });
+        expect(await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } })).toMatchObject({
+            [field]: encodePlainMachineStoredContent(next), [`${field}Version`]: 2, [sibling]: retained, [`${sibling}Version`]: 0,
+        });
+    });
+
     it("uses the exact Plain marker identity without requiring any client Account encryption material", async () => {
         const subject = await createEstablishedMachineFixture("plain-keyless");
         await db.account.update({ where: { id: subject.accountId }, data: {
