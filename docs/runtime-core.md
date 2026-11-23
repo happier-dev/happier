@@ -1035,6 +1035,12 @@ app-server setup and spawn (`codex.app_server_spawn`), app-server initialization
 HTTP status when available. Native messages and response data stay in the
 owning process.
 
+The local warning for a failed thread lookup includes the UUID-shaped native
+thread ID, the resolved executable path, the version and Codex home reported
+at initialization, and any SQLite root Happier supplied as a launch override.
+A null `requestedSqliteHome` means Happier supplied no SQLite override. Codex
+configuration owns the effective root. These launch facts stay in the local log.
+
 In 0.3 development, ACP prompt usage projection may complete asynchronously at
 the existing prompt-response boundary. The host supplies the native Session id,
 effective process environment and cancellation signal to the

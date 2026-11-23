@@ -219,7 +219,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       const turnId = message.method === 'turn/start'
         ? options.turnIdForStart?.(turnStartOccurrence) ?? `provider-turn-${turnStartOccurrence}` : 'fixture-turn';
       if (message.method === 'initialize') {
-        result = { userAgent: `happier_cli/${CODEX_SUPPORTED_RUNTIME_VERSION} (fixture)` };
+        result = { userAgent: `happier_cli/${CODEX_SUPPORTED_RUNTIME_VERSION} (fixture)`, codexHome: root };
         error = options.initializeFailure;
       } else if (message.method === 'config/read') {
         result = { config: { cli_auth_credentials_store: 'file', mcp_servers: options.nativeMcpServers ?? {}, features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };

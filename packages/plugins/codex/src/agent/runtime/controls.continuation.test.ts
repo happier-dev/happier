@@ -1,22 +1,29 @@
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 
 import { withCodexNativeAttachFixture } from './appServer/runtime.nativeAttach.test-support.js';
+import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../cli/supportedRuntime.js';
 import { createCodexNativeSessionControls } from './controls.js';
 
 describe('Codex continuation native failure evidence', () => {
-  it('retains only code/class evidence from a real JSON-RPC rejection and records it before host refusal', async () => {
+  it('logs the retained thread and app-server launch facts on a rejected lookup', async () => {
     await withCodexNativeAttachFixture(async fixture => {
       fixture.failRead();
       const warn = vi.fn();
+      const threadId = '01a204bd-6690-7160-864e-3d8262d08290';
+      const sqliteHome = join(fixture.directory, 'sqlite');
+      const launchEnvironment = { ...fixture.launchEnvironment, values: {
+        CODEX_HOME: join(fixture.directory, 'requested-home'), CODEX_SQLITE_HOME: sqliteHome, OPENAI_API_KEY: 'PRIVATE_LAUNCH_VALUE',
+      } };
       const context = {
         signal: new AbortController().signal,
         services: { exec: fixture.exec, logger: { warn, debug: vi.fn() } },
-        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment },
       } as unknown as AgentSessionControlContext;
       const result = await createCodexNativeSessionControls().continuation.verify({
-        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'fresh-thread',
+        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: threadId,
       }, context);
       expect(result).toMatchObject({ status: 'unreachable', diagnostic: {
         code: 'codex_continuation_unreachable',
@@ -26,10 +33,34 @@ describe('Codex continuation native failure evidence', () => {
       } });
       expect(warn).toHaveBeenCalledWith('codex_continuation_unreachable', {
         phase: 'codex.thread_read', errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
+        threadId, executablePath: '/fixture/codex', nativeVersion: CODEX_SUPPORTED_RUNTIME_VERSION,
+        codexHome: fixture.directory, requestedSqliteHome: sqliteHome,
       });
       if (result.status !== 'reachable') expect(AgentRuntimeDiagnosticDataV1Schema.safeParse(result.diagnostic).success).toBe(true);
-      expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toContain('rollout persistence failed');
+      expect(JSON.stringify(result)).not.toContain(threadId);
+      expect(JSON.stringify(result)).not.toContain(fixture.directory);
+      expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toMatch(/rollout persistence failed|PRIVATE_LAUNCH_VALUE/);
       expect(fixture.requests.some(request => request.method === 'thread/resume')).toBe(false);
+    });
+  });
+
+  it('omits opaque thread handles from lookup logs', async () => {
+    await withCodexNativeAttachFixture(async fixture => {
+      fixture.failRead();
+      const warn = vi.fn();
+      const context = {
+        signal: new AbortController().signal,
+        services: { exec: fixture.exec, logger: { warn, debug: vi.fn() } },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
+      } as unknown as AgentSessionControlContext;
+      const result = await createCodexNativeSessionControls().continuation.verify({
+        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'PRIVATE_OPAQUE_HANDLE',
+      }, context);
+      expect(result.status).toBe('unreachable');
+      expect(warn).toHaveBeenCalledWith('codex_continuation_unreachable', expect.objectContaining({
+        phase: 'codex.thread_read', requestedSqliteHome: null,
+      }));
+      expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toContain('PRIVATE_OPAQUE_HANDLE');
     });
   });
 

@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { PluginError, type JsonValue, type LoggerService } from '@happier-dev/plugin-sdk';
 import { codexNativeUpstreamConfigOverrides } from '../../providerBinding/runtimeConfig.js';
 import type {
@@ -66,6 +67,11 @@ export type CodexAppServerClient = Readonly<{
 
 export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
     onNativeEvent: (observer: (method: string, params: unknown, receivedAtMs: number) => void) => () => void;
+    launchDetails?: Readonly<{
+        executablePath: string;
+        codexHome: string | null;
+        requestedSqliteHome: string | null;
+    }>;
     launchFeatures: Readonly<{
         realtimeConversationAdvertised: boolean;
         nativeVersion?: string;
@@ -456,9 +462,10 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         ...(params.signal ? { signal: params.signal } : {}),
     });
     const ready = await withCodexNativeStartupLock(
-        async (configOverrides, admit) => ({ configOverrides, client: await params.exec.withSpawnAdmission(admit, async exec =>
+        async (configOverrides, admit, requestedSqliteHome) => ({ configOverrides, client: await params.exec.withSpawnAdmission(admit, async exec =>
             await createUnlockedCodexNativeAppServerClient({ ...params, exec, configOverrides }, {
-                executable: resolvedSystemTool.executable, realtimeConversationAdvertised,
+                executable: resolvedSystemTool.executable, executablePath: resolvedSystemTool.executablePath,
+                realtimeConversationAdvertised, requestedSqliteHome,
             })) }),
         params.initializeRequestOptions?.signal ?? params.signal,
         params.logger,
@@ -497,7 +504,9 @@ function annotateUnixSocketStartupFailure(error: unknown, transport: CodexNative
 
 async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppServerClientParams, prepared?: Readonly<{
     executable: ManagedExecutableRef;
+    executablePath: string;
     realtimeConversationAdvertised: boolean;
+    requestedSqliteHome: string | null;
 }>): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
     const realtimeConversationAdvertised = params.transport?.kind === 'unixWebSocket'
@@ -550,10 +559,16 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
             notify: async (method) => await client.notify(method),
         });
         params.logger?.debug('Codex startup phase', { phase: 'initialize', elapsedMs: Date.now() - initializeStartedAt });
-        const userAgent = initialized && typeof initialized === 'object' ? (initialized as Readonly<{ userAgent?: unknown }>).userAgent : null;
+        const { userAgent, codexHome } = initialized && typeof initialized === 'object'
+            ? initialized as Readonly<{ userAgent?: unknown; codexHome?: unknown }>
+            : {};
         const nativeVersion = typeof userAgent === 'string' ? /\/(\d+\.\d+\.\d+)(?:\s|$)/u.exec(userAgent)?.[1] : undefined;
         if (nativeVersion) launchFeatures.nativeVersion = nativeVersion;
-        return client;
+        return prepared ? { ...client, launchDetails: {
+            executablePath: prepared.executablePath,
+            codexHome: typeof codexHome === 'string' && isAbsolute(codexHome) ? codexHome : null,
+            requestedSqliteHome: prepared.requestedSqliteHome,
+        } } : client;
     } catch (error) {
         annotateUnixSocketStartupFailure(error, params.transport);
         await client.dispose().catch(() => undefined);

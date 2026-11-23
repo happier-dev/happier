@@ -82,7 +82,7 @@ async function isWarm(root: string, markerPath: string, version: string): Promis
 
 /** Exclude first initialization/migration, leaving warm starts independent. */
 export async function withCodexNativeStartupLock<TResult>(
-  initialize: (configOverrides: readonly string[], admit: (signal?: AbortSignal) => Promise<void>) => Promise<TResult>,
+  initialize: (configOverrides: readonly string[], admit: (signal?: AbortSignal) => Promise<void>, requestedSqliteHome: string | null) => Promise<TResult>,
   signal?: AbortSignal,
   logger?: Pick<LoggerService, 'debug'>,
   configuration?: StartupConfiguration,
@@ -109,7 +109,7 @@ export async function withCodexNativeStartupLock<TResult>(
   const markerPath = join(root ?? userInfo().homedir, '.happier-codex-native-startup.version');
   if (root && version && await isWarm(root, markerPath, version)) {
     signal?.throwIfAborted();
-    return await initialize(overrides, async () => {});
+    return await initialize(overrides, async () => {}, launchRoot);
   }
   let settle!: () => void;
   const settled = new Promise<void>(resolve => { settle = resolve; });
@@ -148,7 +148,7 @@ export async function withCodexNativeStartupLock<TResult>(
   };
   try {
     if (!configuration?.deferUntilSpawn) await admit();
-    const result = await initialize(overrides, admit);
+    const result = await initialize(overrides, admit, launchRoot);
     completed = true;
     return result;
   } finally {

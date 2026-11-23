@@ -223,9 +223,11 @@ const continuation: AgentSessionContinuationControl = {
       ? request.providerSessionId
       : request.source.providerSessionId;
     let phase = 'codex.app_server_spawn';
+    let lookupClient: Awaited<ReturnType<typeof createCodexNativeAppServerClient>> | undefined;
     try {
       await withControlClient(context, async (client) => {
         phase = 'codex.thread_read';
+        lookupClient = client;
         await client.request('thread/read', { threadId: providerSessionId, includeTurns: false });
       }, () => {
         phase = 'codex.app_server_initialize';
@@ -234,7 +236,14 @@ const continuation: AgentSessionContinuationControl = {
     } catch (error) {
       const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(readCodexAppServerPrimaryFailure(error));
       const failureCause = { phase, errorClass, errorCode, httpStatus } satisfies ActionFailureCauseV1;
-      context.services.logger.warn('codex_continuation_unreachable', failureCause);
+      context.services.logger.warn('codex_continuation_unreachable', {
+        ...failureCause,
+        ...(lookupClient ? {
+          ...lookupClient.launchDetails,
+          nativeVersion: lookupClient.launchFeatures.nativeVersion ?? null,
+          ...(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(providerSessionId) ? { threadId: providerSessionId } : {}),
+        } : {}),
+      });
       return {
         status: 'unreachable',
         diagnostic: { ...diagnostic('codex_continuation_unreachable'), details: { failureCause } },
