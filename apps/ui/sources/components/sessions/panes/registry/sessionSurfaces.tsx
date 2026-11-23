@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import { useSimulatorLiveStreamRelaySocket } from '@/components/devices/simulator/relay/useSimulatorLiveStreamRelaySocket';
+import { useSimulatorPreviewLiveSurface } from '@/components/devices/simulator/relay/useSimulatorPreviewLiveSurface';
+
 import {
     SimulatorDeviceResourceV1Schema,
     type SimulatorDeviceResourceV1,
@@ -83,31 +86,41 @@ function resolveSimulatorPreviewViewModel(params: Readonly<{
     });
 }
 
-function renderSimulatorSessionSurfaceTab(params: Readonly<{
+function SessionSimulatorSurface(props: Readonly<{
     sessionId: string;
-    tab: DetailsTabState;
+    machineId?: string | null;
+    serverId?: string | null;
+    simulatorViewerId?: string;
+    resource: SimulatorPreviewSessionSurfaceResource;
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     nowMs?: () => number;
-}>): React.ReactNode | null {
-    if (!isSimulatorPreviewSessionSurfaceResource(params.tab.resource)) {
-        return null;
-    }
-    return (
-        <SessionSimulatorPreviewPane
-            sessionId={params.sessionId}
-            viewModel={resolveSimulatorPreviewViewModel({
-                resource: params.tab.resource,
-                runtime: params.simulatorPreview,
-                nowMs: params.nowMs,
-            })}
-            actions={params.simulatorPreview?.actions ?? EMPTY_SIMULATOR_PREVIEW_ACTIONS}
-        />
-    );
+}>) {
+    // Mount below the tab's presentation owner so the runtime observes its own visibility.
+    const enabled = props.simulatorPreview === undefined;
+    const socket = useSimulatorLiveStreamRelaySocket({
+        machineId: props.machineId, serverId: props.serverId, enabled,
+    });
+    const livePreview = useSimulatorPreviewLiveSurface({
+        runtime: {
+            machineId: props.machineId, serverId: props.serverId, enabled,
+            viewerId: props.simulatorViewerId ?? readOptionalString(props.resource.viewerId) ?? 'session-simulator-viewer',
+            nowMs: props.nowMs,
+        },
+        relay: { socket },
+    });
+    const runtime = props.simulatorPreview !== undefined ? props.simulatorPreview : livePreview;
+    return <SessionSimulatorPreviewPane
+        sessionId={props.sessionId}
+        viewModel={resolveSimulatorPreviewViewModel({ resource: props.resource, runtime, nowMs: props.nowMs })}
+        actions={runtime?.actions ?? EMPTY_SIMULATOR_PREVIEW_ACTIONS}
+    />;
 }
 
 export function renderSessionSurfaceTab(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
+    machineId?: string | null;
+    simulatorViewerId?: string;
     tab: DetailsTabState;
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     nowMs?: () => number;
@@ -116,10 +129,14 @@ export function renderSessionSurfaceTab(params: Readonly<{
     if (computerScreen) {
         return <SessionComputerScreenPane sessionId={params.sessionId} serverId={params.serverId ?? null} machineId={computerScreen.machineId} />;
     }
-    return renderSimulatorSessionSurfaceTab({
-        sessionId: params.sessionId,
-        tab: params.tab,
-        simulatorPreview: params.simulatorPreview,
-        nowMs: params.nowMs,
-    });
+    if (!isSimulatorPreviewSessionSurfaceResource(params.tab.resource)) return null;
+    return <SessionSimulatorSurface
+        sessionId={params.sessionId}
+        machineId={params.machineId}
+        serverId={params.serverId}
+        simulatorViewerId={params.simulatorViewerId}
+        resource={params.tab.resource}
+        simulatorPreview={params.simulatorPreview}
+        nowMs={params.nowMs}
+    />;
 }

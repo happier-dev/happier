@@ -98,6 +98,7 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     localServicePreviewState?: LocalServicePreviewState | null;
     localServiceLauncherState?: BrowserDetailsSurfaceRendererOptions['localServiceLauncherState'];
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
+    simulatorViewerId?: string;
     platform?: LocalServicePreviewPlatform;
     formFactor?: PluginUiDestinationRuntimeFormFactorV1;
     productModels?: BrowserSurfaceProductModels;
@@ -322,6 +323,8 @@ export function createSessionDetailsSurfaceRenderers(
             render: (input) => renderSessionSurfaceTab({
                 sessionId: options.sessionId,
                 serverId: options.serverId,
+                machineId: options.machineId,
+                simulatorViewerId: options.simulatorViewerId,
                 tab: input.tab,
                 simulatorPreview: options.simulatorPreview,
                 nowMs: options.nowMs,

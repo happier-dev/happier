@@ -2897,10 +2897,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             agentId: target.defaultAgentId, settings, pluginSettings, session,
           }) : {}),
         });
-        accountContext.assertCurrent();
         if (resumed.type === 'error') return { ok: false, errorCode: resumed.rpcErrorCode ?? resumed.errorCode, error: resumed.errorMessage,
           ...(resumed.errorDetail ? { details: { errorDetail: resumed.errorDetail } } : {}) };
         if (intent === 'resume') return { ok: true, status: 'opened', sessionId, serverId, address: { serverId, sessionId } };
+        // Resume has settled; caller retirement cannot rewrite its receipt.
+        // A remaining open/navigation effect still requires the current caller.
+        accountContext.assertCurrent();
       }
       if ((tabId || destination) && workspace) {
         const outcome = await workspace({ actionId: 'workspace.tabs.open',

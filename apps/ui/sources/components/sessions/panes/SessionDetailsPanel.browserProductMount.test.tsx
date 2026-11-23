@@ -189,9 +189,12 @@ describe('SessionDetailsPanel browser product mount', () => {
             <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
         </runtime.Wrapper>);
         await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        // Two destinations keep the strip visible; one file intentionally owns its own header.
+        await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('b.txt'), { intent: 'pinned' }));
+        await flushHookEffects();
         await screen.pressByTestIdAsync('session-details-open-browser');
         expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'browser' });
-        expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt']);
+        expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt', 'file:b.txt']);
     });
 
     it('keeps the right-pane toggle reachable when one file’s header takes the pane controls', async () => {

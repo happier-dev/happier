@@ -48,8 +48,6 @@ import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/use
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
 import { useSessionDetailsPanelPluginRuntime } from './useSessionDetailsPanelPluginRuntime';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
-import { useSimulatorPreviewLiveSurface } from '@/components/devices/simulator/relay/useSimulatorPreviewLiveSurface';
-import { useSimulatorLiveStreamRelaySocket } from '@/components/devices/simulator/relay/useSimulatorLiveStreamRelaySocket';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useSessionBrowserRecordingRuntime } from '@/components/sessions/browser/sessionBrowserRecordingRuntime';
 import { useSessionBrowserContextProductModel } from '@/components/sessions/browser/useSessionBrowserContextProductModel';
@@ -140,15 +138,6 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
     );
     const localServicePreviewState = props.localServicePreviewState;
     const localServiceLauncherState = props.localServiceLauncherState;
-    // Live `server_relay` ingestion (Phase 8.1b): resolve the host machine's relay socket
-    // and thread decoded frames into the simulator preview view-model. The socket hook is
-    // gated behind the `devices.simulatorPreview` decision, so this stays inert until that
-    // gate is flipped (5.3 representation migration, separate lane).
-    const simulatorRelaySocket = useSimulatorLiveStreamRelaySocket({
-        machineId: pluginRuntime.machineId,
-        serverId: pluginRuntime.serverId,
-        enabled: props.simulatorPreview === undefined,
-    });
     const mountedSessionAddress = normalizeSessionAddress(pluginRuntime.serverId, props.sessionId);
     const trackSessionAddress = React.useMemo(() => mountedSessionAddress ?? { serverId: pluginRuntime.serverId ?? '', sessionId: props.sessionId },
         [mountedSessionAddress?.serverId, mountedSessionAddress?.sessionId, pluginRuntime.serverId, props.sessionId]);
@@ -160,23 +149,11 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
         && mountedBoard.binding.snapshot.itemsById.size > 0;
     const showDedicatedBoardAction = boardFeatureEnabled
         && (boardHasContent || isSessionBoardVisibleInDetails(pane.scopeState?.details));
-    const liveSimulatorPreview = useSimulatorPreviewLiveSurface({
-        runtime: {
-            machineId: pluginRuntime.machineId,
-            serverId: pluginRuntime.serverId,
-            enabled: props.simulatorPreview === undefined,
-            viewerId: JSON.stringify([
-                mountedSessionAddress ? sessionAddressKey(mountedSessionAddress) : props.scopeId,
-                'simulator-preview',
-            ]),
-            nowMs: props.nowMs,
-        },
-        relay: { socket: simulatorRelaySocket },
-    });
-    const simulatorPreview =
-        props.simulatorPreview !== undefined
-            ? props.simulatorPreview
-            : liveSimulatorPreview;
+    const simulatorPreview = props.simulatorPreview;
+    const simulatorViewerId = JSON.stringify([
+        mountedSessionAddress ? sessionAddressKey(mountedSessionAddress) : props.scopeId,
+        'simulator-preview',
+    ]);
     const browserContextProductModel = useSessionBrowserContextProductModel({
         machineId: pluginRuntime.machineId,
         serverId: pluginRuntime.serverId,
@@ -307,6 +284,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
             localServicePreviewState,
             localServiceLauncherState,
             simulatorPreview,
+            simulatorViewerId,
             platform: pluginRuntime.platform,
             formFactor: pluginRuntimeFormFactor,
             productModels: browserProductModels,
@@ -345,6 +323,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
         session,
         sessionScreenTestIdsEnabled,
         simulatorPreview,
+        simulatorViewerId,
     ]);
 
     const renderTabContent = React.useCallback((

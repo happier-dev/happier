@@ -79,6 +79,31 @@ const simulatorTab = {
 await import('./SessionDetailsPanel');
 
 describe('SessionDetailsPanel simulator runtime wiring', () => {
+
+    it('acquires Simulator facts only for its presented tab, never a Browser sibling', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" nowMs={nowMs} />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' }));
+        await act(async () => {});
+        expect(rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT)).toEqual([]);
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        try {
+            await act(async () => runtime.pane.openDetailsTab(simulatorTab, { intent: 'pinned' }));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('session-simulator:s1')).toBeTruthy());
+            await waitForHomeGovernance(() => expect(rpcRequests.filter(request =>
+                request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT)).toHaveLength(1));
+            const acquired = rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT).length;
+            await act(async () => runtime.pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' }));
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT)).toHaveLength(acquired);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it.each(['failed', 'snapshot-failed', 'empty'] as const)('does not claim an empty simulator inventory before the daemon settles %s', async outcome => {
         let resolveSnapshot!: (value: unknown) => void;
         let rejectSnapshot!: (error: Error) => void;
