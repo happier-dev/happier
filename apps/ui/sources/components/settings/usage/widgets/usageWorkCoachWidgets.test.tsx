@@ -17,6 +17,7 @@ import { useUsageWork } from './useUsageWork';
 import { resolveUsagePageInitialFilters } from '../usageRouteParams';
 import { resolveUsageWidgetPageInitialQuery } from '../usageWidgetPageContext';
 import { UsageAgentMark, usagePeriodPhrase } from './usageBodyKit';
+import { usageCostKindPhrase } from '../usageCostPresentation';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
@@ -43,7 +44,7 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
-import { UsageWorkProviderMark } from './UsageWorkProviderMark';
+import { UsageWorkProviderMark, resolveUsageWorkProviderDisplay } from './UsageWorkProviderMark';
 import { UsageWorkMarks } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
@@ -385,12 +386,49 @@ describe('Work and Coach widget bodies', () => {
     await screen.pressByTestIdAsync(toggle);
     expect(screen.findByTestId('ledger.project.p1.detail')).toBeTruthy();
     const identities = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
-    expect(identities).toEqual(expect.arrayContaining([...hidden.map(id => usageAgentTitle(id)), sessionlessProvider]));
+    expect(identities).toEqual(expect.arrayContaining([...hidden.map(id => usageAgentTitle(id)),
+      resolveUsageWorkProviderDisplay({ providerId: sessionlessProvider, machineId: null }, 'home').label]));
     await screen.pressByTestIdAsync(toggle);
     await layout(1000);
     expect(displayed()).toHaveLength(agentIds.length);
     expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(1);
     expect(screen.getTextContent()).not.toContain('+');
+  });
+  it('names each Provider once by its display name, never by a raw id, on the row and in its detail (review J-B31, r224 #48)', async () => {
+    const bundled = 'happier.provider.cliproxyapi/cliproxyapi';
+    const undeclared = 'happier.provider.nowhere-declared/nowhere-declared';
+    const rows: UsageWorkContribution[] = [
+      { ...contribution('m1', 's1', 't1'), machineId: 'machine-1', providerId: bundled, providerConnectionId: 'connection' },
+      { ...contribution('m2', 's1', 't2'), machineId: 'machine-2', providerId: bundled, providerConnectionId: 'connection' },
+      { ...contribution('miss', 's1', 't3'), providerId: undeclared, providerConnectionId: 'connection' },
+    ];
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] }));
+    const screen = await renderScreen(<UsageChartInteractions>
+      <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+        slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+    </UsageChartInteractions>);
+    await layoutIdentityStrip(screen.findByTestId('ledger.marks'), 1000);
+    expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(2);
+    await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+    const identities = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
+    expect(new Set(identities).size).toBe(identities.length);
+    expect(identities.join(' · ')).not.toContain('happier.provider');
+    expect(identities).toEqual(expect.arrayContaining(['Nowhere Declared']));
+    const exact = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.project.p1.prs-datum-0');
+    expect(exact?.props.datum.accessibilityLabel ?? '').not.toContain('happier.provider');
+  });
+  it('leads a Project’s Sessions with the largest behind Show all and says an unlinked group once (acceptance r224 #48)', async () => {
+    const rows = Array.from({ length: 10 }, (_, index) => contribution(`c${index}`, `s${index}`, `t${index}`));
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+      slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />);
+    await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+    const sessions = () => screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'ledger.project.p1.session')!.props.rows;
+    expect(sessions()).toHaveLength(6);
+    expect(JSON.stringify(sessions())).not.toContain(t('usage.board.work.noOutcome'));
+    expect(screen.getTextContent().split(t('usage.board.work.noOutcome'))).toHaveLength(2);
+    await screen.pressByTestIdAsync('ledger.project.p1.session.more.toggle');
+    expect(sessions()).toHaveLength(10);
   });
   it.each(['linked PR', 'nested branch', 'standalone branch'] as const)(
     'recovers each fitted mark from the %s’s own detail',
@@ -440,7 +478,8 @@ describe('Work and Coach widget bodies', () => {
         expect(hidden).toBeGreaterThan(0);
         expect(strip.findAll(node => node.props.children === t('usage.board.work.moreMarks', { count: hidden })).length).toBeGreaterThan(0);
 
-        const names = [...group.agents.map(id => usageAgentTitle(id)), group.provider];
+        const names = [...group.agents.map(id => usageAgentTitle(id)),
+          resolveUsageWorkProviderDisplay({ providerId: group.provider, machineId: 'machine' }, 'home').label];
         if (kind === 'standalone branch') {
           const key = table.props.rowIds?.[index];
           await screen.pressByTestIdAsync(`ledger.branch.${key}.toggle`);
@@ -1163,6 +1202,28 @@ describe('Work and Coach widget bodies', () => {
       expect.objectContaining({ value: 'USD 4.56789', subtitle: expect.stringContaining('estimated') }),
     ]));
     expect(screen.getTextContent()).toContain('$4.57');
+  });
+  it.each([
+    { basis: 'api_equivalent', cost: (usd: number) => ({ reportedUsd: 0, estimatedUsd: 0, apiEquivalentUsd: usd, currency: 'USD' }) },
+    { basis: 'reported', cost: (usd: number) => ({ reportedUsd: usd, estimatedUsd: 0, currency: 'USD' }) },
+  ] as const)('says the $basis basis once, as the Session value caption, and leaves every shared-basis amount bare (acceptance r224 #47)', async ({ basis, cost }) => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', costBasis: basis });
+    const rows = [5, 3, 1].map((usd, index) => ({ ...contribution(`turn-${index}`, 's1', `t${index}`),
+      observedAtMs: index + 1, cost: cost(usd / 1000) }));
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery,
+        accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 3, cost: cost(0.009) }, contributions: rows },
+        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
+      id="usage_session_value" testID="value" />);
+    const phrase = usageCostKindPhrase(basis);
+    const text = screen.getTextContent();
+    expect(text.split(phrase)).toHaveLength(2);
+    const hero = screen.findAllByType(HappierDataMetric).find(node => node.props.label === usagePeriodPhrase(sessionQuery));
+    expect(hero?.props.caption).toContain(phrase);
+    const largest = screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.board.work.largestTurn'));
+    expect(largest?.props.valueFormatter(largest.props.value)).toMatch(/^\$0\.005\d*$/);
+    // A reported cost is never called API-equivalent.
+    if (basis === 'reported') expect(text).not.toContain(usageCostKindPhrase('api_equivalent'));
   });
   it.each([
     { kind: 'mixed recorded turns', fromParts: [false, true], secondTurn: 't2', exactDerived: 1 },

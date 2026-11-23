@@ -282,22 +282,25 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
       />
     </View>
   );
-  // One tree on every width: the bar recomposes by style, so a chooser opened on one side of the phone breakpoint
-  // is still open on the other.
-  // One row of controls (USAGE-ACCEPT 1118 #12, 1121 #14): a phone puts the period chooser, Filters, Tokens/Cost and the
-  // basis on one line, wrapping whole controls only in a long locale (lab uframe-Rp); a wide screen keeps period, scopes, basis and Tokens/Cost on one line (lab d2views)
-  // and wraps only the end group, right-aligned, when the window is too narrow. The basis chip holds its width while
-  // its read is outstanding (it shows the basis in force), so nothing moves when the read answers.
+  // One tree on every width: the bar recomposes by style and slot, and Tokens/Cost and the basis keep their place in it,
+  // so a chooser opened on one side of the phone breakpoint is still open on the other (HUNT-UI-STATE C2).
+  // A phone puts the period chooser, Filters, Tokens/Cost and the basis on one line, wrapping whole controls only in a
+  // long locale (lab uframe-Rp, USAGE-ACCEPT 1121 #14). A wide screen reads as two deliberate lines (acceptance r224 #49):
+  // the period and the page's lens (basis, Tokens/Cost) share the first, at its two edges; the scopes the widgets follow
+  // sit on the second, under the period. The bordered scope chips do not fit beside both at the settings pane's width,
+  // and a line decided by the layout never wraps one control at a time. The basis chip holds its width while its read
+  // is outstanding (it shows the basis in force), so nothing moves when the read answers.
+  const chipsRow = <View style={styles.chips}>{chips}</View>;
   return (
     <View testID={props.testID} style={phone ? styles.phone : styles.bar}>
-      {period}
-      {period && !phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
-      <View style={phone ? styles.phoneControls : styles.controls}>
-        <View style={styles.chips}>{chips}</View>
+      <View style={phone ? styles.phoneControls : styles.lens}>
+        {period}
+        {phone ? chipsRow : null}
         {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={phone ? styles.phoneTrailing : styles.trailing}>
           {trailing}
         </View> : null}
       </View>
+      {!phone && filters.length > 0 ? chipsRow : null}
     </View>
   );
 }
@@ -413,32 +416,10 @@ function UsageScopeSections(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.space.s10,
-    rowGap: theme.space.s8,
-    paddingVertical: theme.space.s4,
-  },
-  // Takes the room beside the period; the end group wraps under the scopes, never the scopes under the period.
-  controls: {
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 0,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.space.s10,
-    rowGap: theme.space.s8,
-  },
+  bar: { gap: theme.space.s8, paddingVertical: theme.space.s4 },
+  // The period at the start, the lens at the end; the period never shrinks under the lens.
+  lens: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s10, rowGap: theme.space.s8 },
   period: { flexShrink: 0 },
-  rule: {
-    width: StyleSheet.hairlineWidth,
-    height: 20,
-    backgroundColor: theme.colors.border.default,
-  },
   chips: {
     flexDirection: 'row',
     alignItems: 'center',

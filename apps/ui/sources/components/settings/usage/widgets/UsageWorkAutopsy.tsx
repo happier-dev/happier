@@ -74,7 +74,7 @@ export function UsageWorkAutopsy(
   const { theme: appTheme } = useUnistyles();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const { format, cell, datum, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
+  const { summary, format, cell, datum, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
   const accounting = useUsageAnalyticsView(props.slice, props.query);
   const cost = accounting?.pageCost;
   const costCurrency = cost?.selection?.currency ?? accounting?.costPresentation.currency ?? 'USD';
@@ -212,6 +212,13 @@ export function UsageWorkAutopsy(
         ? { start: phases.period.startMs, end: phases.period.endMs }
         : null;
   const caption = { fontSize: rowMetrics.subtitle.fontSize, lineHeight: rowMetrics.subtitle.lineHeight };
+  // The Session value caption names the page's cost basis once; an amount in that same basis is bare everywhere else
+  // on the page, and only an amount in another basis names its own (acceptance r224 #47).
+  const pageBasis = metric === 'cost' && cost?.amountUsd != null ? cost.selection : null;
+  const saidOnce = (basis: { kind: string; currency: string } | null | undefined) =>
+    Boolean(pageBasis && basis && basis.kind === pageBasis.kind && basis.currency === pageBasis.currency);
+  const amountText = (value: number | null, basis: { kind: string; currency: string } | null = summary?.moneyBasis ?? null) =>
+    value !== null && saidOnce(basis) ? formatUsageCost(value, basis!.currency) : format(value, basis);
   const metricLabel = metric === 'cost' ? t('usage.cost') : t('usage.tokens');
   const outcomes = autopsy?.outcomes ?? [];
   // The answer to "why is this Session expensive": where it went, largest first; the timeline above keeps the order.
@@ -278,7 +285,7 @@ export function UsageWorkAutopsy(
                 showLabel
                 label={t('usage.board.work.largestTurn')}
                 value={largest.amount!}
-                valueFormatter={value => format(value, largest.moneyBasis)}
+                valueFormatter={value => amountText(value, largest.moneyBasis)}
                 caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`].filter(Boolean).join(' · ')}
               />
             ) : null}
@@ -331,7 +338,7 @@ export function UsageWorkAutopsy(
       {/* A Session with no priced moment draws no empty plot: its Cost fact already says the money is unknown. */}
       {autopsy && pricedTimeline ? (
         <View style={styles.section}>
-          <UsageWorkSectionTitle caption={autopsy.costTimelineBasis
+          <UsageWorkSectionTitle caption={saidOnce(autopsy.costTimelineBasis) ? undefined : autopsy.costTimelineBasis
             ? `${usageCostKindPhrase(autopsy.costTimelineBasis.kind)} · ${autopsy.costTimelineBasis.currency}`
             : t('usage.board.recap.money_unpriced')}>{t('usage.board.work.costOverTime')}</UsageWorkSectionTitle>
           {plottedTimeline ? <StackedSeriesChart
@@ -364,7 +371,7 @@ export function UsageWorkAutopsy(
             testID={`${props.testID}.turns`}
             density="compact"
             showProportionShares={false}
-            valueFormatter={format}
+            valueFormatter={value => amountText(value)}
             rowIds={shownTurns.rows.map((turn) => turn.contributionId)}
             rowDatums={shownTurns.rows.map(turn => datum(
               turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId),

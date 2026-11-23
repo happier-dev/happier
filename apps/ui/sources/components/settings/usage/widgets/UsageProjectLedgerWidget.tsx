@@ -24,7 +24,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
-import { resolveUsageWorkProviderDisplay } from './UsageWorkProviderMark';
+import { resolveUsageWorkProviderDisplay, usageWorkProviderIdentities } from './UsageWorkProviderMark';
 import type {
   UsageWorkBranchRow,
   UsageWorkIdentities,
@@ -68,6 +68,18 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   );
   const drill = useUsageDrill(props.query);
   const [showAllProjects, setShowAllProjects] = React.useState(false);
+  // A Project or branch can hold hundreds of PRs and branches: each detail list leads with its largest and folds the
+  // rest behind the same "Show all · n" as the ledger (acceptance r224 #48). Keyed by the list's testID.
+  const [openLists, setOpenLists] = React.useState<ReadonlySet<string>>(() => new Set());
+  const toggleList = (key: string) => setOpenLists(current => {
+    const next = new Set(current);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  });
+  const listMore = (key: string, label: string, total: number, hidden: number) => (
+    <UsageShowAllRows label={label} total={total} hidden={hidden} expanded={openLists.has(key)}
+      onToggle={() => toggleList(key)} testID={`${key}.more`} />
+  );
   const disclosures = useUsageWorkDisclosures([
     ...leadingUsageRows(summary?.projects ?? [], showAllProjects).rows.map(row => ({
       id: `project:${row.projectKey ?? ''}`,
@@ -166,6 +178,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     ? <ChartDatum datum={conservationDatum} testID={`${props.testID}.conservation.detail`}>{visual}</ChartDatum> : visual;
   const sessionRows = (parts: UsageWorkProjectRow['sessions'], testID: string) => (
     <UsageWorkSessionRows
+      title={t('usage.board.work.funnelSessions')}
       parts={parts}
       summary={summary}
       format={format}
@@ -199,11 +212,12 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     { label: t('usage.board.work.linesKept') },
     { label: t('usage.board.work.linkedPrs') },
   ];
-  // Details name the full set witnessed for their own row, independently of the fitted strip.
-  const identityNames = (row: UsageWorkIdentities) => [
+  // Details name the full set witnessed for their own row, independently of the fitted strip: each identity once,
+  // by its display name, the same in the visible line and the spoken label (review J-B31).
+  const identityNames = (row: UsageWorkIdentities) => [...new Set([
     ...row.agentIds.map(id => usageAgentTitle(id)),
-    ...row.providers.map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
-  ].join(' · ');
+    ...usageWorkProviderIdentities(row.providers).map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
+  ])].join(' · ');
   const identityLine = (row: UsageWorkIdentities, testID: string) => {
     const names = identityNames(row);
     return names ? <Text style={[styles.reasonLabel, caption]} testID={`${testID}.identities`}>{names}</Text> : null;
@@ -223,8 +237,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
       accessibilityLabel: `${label}: ${value} · ${names}`,
     };
   };
-  const projectDetail = (row: UsageWorkProjectRow, testID: string) => (
-    <>
+  const projectDetail = (row: UsageWorkProjectRow, testID: string) => {
+    const prs = leadingUsageRows(row.outcomes, openLists.has(`${testID}.prs`));
+    const branches = leadingUsageRows(row.branches, openLists.has(`${testID}.branches`));
+    return <>
       {row.projectKey !== null && drill.available('projects') ? (
         <HappierPressable
           accessibilityRole="button"
@@ -254,8 +270,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             density="compact"
             showProportionShares={false}
             valueFormatter={format}
-            rowIds={row.outcomes.map((outcome) => outcome.key)}
-            rowLeads={row.outcomes.map((outcome) => (
+            rowIds={prs.rows.map((outcome) => outcome.key)}
+            rowLeads={prs.rows.map((outcome) => (
               <UsageWorkRowLead
                 icon="git-pull-request"
                 color={
@@ -265,7 +281,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 }
               />
             ))}
-            rowTrails={row.outcomes.map((outcome) => (
+            rowTrails={prs.rows.map((outcome) => (
               <UsageWorkMarks fitWidth
                 agentIds={outcome.agentIds}
                 providers={outcome.providers}
@@ -277,7 +293,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               { label: metricLabel, proportion: true },
               { label: t('usage.board.work.funnelSessions') },
             ]}
-            rows={row.outcomes.map((outcome) => [
+            rows={prs.rows.map((outcome) => [
               usageWorkPullRequestTitle(outcome.outcome.pullRequest),
               cell(outcome.amount, outcome.moneyBasis),
               t('usage.board.work.prLine', {
@@ -285,11 +301,12 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 state: usageWorkPullRequestState(outcome.outcome.pullRequest),
               }),
             ])}
-            rowDatums={row.outcomes.map(outcome => {
+            rowDatums={prs.rows.map(outcome => {
               const label = usageWorkPullRequestTitle(outcome.outcome.pullRequest);
               return withIdentityDatum(outcome, label, datum(label, outcome.amount, outcome.moneyBasis));
             })}
           />
+          {listMore(`${testID}.prs`, t('usage.board.work.linkedPrs'), row.outcomes.length, prs.hidden)}
         </View>
       ) : null}
       {row.branches.length > 0 ? (
@@ -303,11 +320,11 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             density="compact"
             showProportionShares={false}
             valueFormatter={format}
-            rowIds={row.branches.map((branch) => branch.branch.key)}
-            rowLeads={row.branches.map(() => (
+            rowIds={branches.rows.map((branch) => branch.branch.key)}
+            rowLeads={branches.rows.map(() => (
               <UsageWorkRowLead icon="git-branch" />
             ))}
-            rowTrails={row.branches.map((branch) => (
+            rowTrails={branches.rows.map((branch) => (
               <UsageWorkMarks fitWidth
                 agentIds={branch.agentIds}
                 providers={branch.providers}
@@ -315,18 +332,16 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               />
             ))}
             columns={branchColumns}
-            rows={row.branches.map((branch) => branchCells(branch, false))}
-            rowDatums={row.branches.map(branch =>
+            rows={branches.rows.map((branch) => branchCells(branch, false))}
+            rowDatums={branches.rows.map(branch =>
               withIdentityDatum(branch, usageWorkBranchName(branch.branch.branch.ref), branchDatum(branch)))}
           />
+          {listMore(`${testID}.branches`, t('usage.board.work.branches'), row.branches.length, branches.hidden)}
         </View>
       ) : null}
-      <View style={styles.group}>
-        <UsageWorkSectionTitle quiet>{t('usage.board.work.funnelSessions')}</UsageWorkSectionTitle>
-        {sessionRows(row.sessions, `${testID}.session`)}
-      </View>
-    </>
-  );
+      {sessionRows(row.sessions, `${testID}.session`)}
+    </>;
+  };
   return (
     <View style={styles.body} testID={`${props.testID}.ledger`}>
       <HappierDataRows
@@ -463,12 +478,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                           </Text>
                         </View>
                       ) : null}
-                      <View style={styles.group}>
-                        <UsageWorkSectionTitle quiet>
-                          {t('usage.board.work.funnelSessions')}
-                        </UsageWorkSectionTitle>
-                        {sessionRows(row.sessions, `${testID}.session`)}
-                      </View>
+                      {sessionRows(row.sessions, `${testID}.session`)}
                     </>
                   )}
                 >

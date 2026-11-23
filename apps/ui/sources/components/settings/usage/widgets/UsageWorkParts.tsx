@@ -10,8 +10,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { t } from '@/text';
-import { UsageAgentMark, useUsagePluginTheme } from './usageBodyKit';
-import { UsageWorkProviderMark } from './UsageWorkProviderMark';
+import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, useUsagePluginTheme } from './usageBodyKit';
+import { UsageWorkProviderMark, usageWorkProviderIdentities } from './UsageWorkProviderMark';
 import type {
   UsageWorkIdentities,
   UsageWorkSessionPart,
@@ -80,7 +80,9 @@ export function UsageWorkMarks(
   const metrics = usePageRowMetrics('list');
   const [width, setWidth] = React.useState<number | null>(null);
   const [countWidth, setCountWidth] = React.useState<number | null>(null);
-  const total = props.agentIds.length + props.providers.length;
+  // One Provider on several Machines is one identity: it is drawn once (review J-B31).
+  const providerIdentities = usageWorkProviderIdentities(props.providers);
+  const total = props.agentIds.length + providerIdentities.length;
   if (total === 0) return null;
   const gap = theme.space.s4;
   const slot = ICON_SIZE.sm + gap;
@@ -88,7 +90,7 @@ export function UsageWorkMarks(
   // The count takes its measured width (one mark's width until measured); each shown mark takes its slot.
   const shown = fits ? total : Math.max(0, Math.floor((width - (countWidth ?? ICON_SIZE.sm)) / slot));
   const agents = props.agentIds.slice(0, shown);
-  const providers = props.providers.slice(0, Math.max(0, shown - props.agentIds.length));
+  const providers = providerIdentities.slice(0, Math.max(0, shown - props.agentIds.length));
   // The line takes the width its row gives it (beside a name, or under it on a narrow card), never its content's
   // width: the marks sit on an absolutely placed strip so the count never feeds back into the width it is fit to.
   const marks = (
@@ -211,11 +213,14 @@ export function useUsageWorkDisclosures(rows: readonly Readonly<{ id: string; ti
 }
 
 /**
- * Every Session of a row with its exact part of that row. Each opens that Session's own autopsy
- * through the one Session Usage route.
+ * Every Session of a row with its exact part of that row, the largest first and the rest behind the Usage
+ * "Show all · n" footer (a Project can hold hundreds, acceptance r224 #48). Each opens that Session's own
+ * autopsy through the one Session Usage route. Under a `title`, a group in which no Session is linked to a PR
+ * says so once beside the title instead of on every row.
  */
 export function UsageWorkSessionRows(
   props: Readonly<{
+    title?: string;
     parts: readonly UsageWorkSessionPart[];
     summary: UsageWorkSummary;
     format: (value: number | null, moneyBasis?: UsageWorkMoneyBasis | null) => string;
@@ -232,7 +237,11 @@ export function UsageWorkSessionRows(
     () => new Map(props.summary.sessions.map((row) => [row.sessionId, row])),
     [props.summary.sessions],
   );
-  return (
+  const [expanded, setExpanded] = React.useState(false);
+  const shown = leadingUsageRows(props.parts, expanded);
+  const outcomeOnce = props.title !== undefined
+    && props.parts.every(part => (bySession.get(part.sessionId)?.outcomes.length ?? 0) === 0);
+  const rows = (
     <HappierDataRows
       theme={theme}
       label={t('usage.board.work.funnelSessions')}
@@ -240,8 +249,8 @@ export function UsageWorkSessionRows(
       density="compact"
       showProportionShares={false}
       valueFormatter={props.format}
-      rowIds={props.parts.map((part) => part.sessionId)}
-      rowLeads={props.parts.map((part) => {
+      rowIds={shown.rows.map((part) => part.sessionId)}
+      rowLeads={shown.rows.map((part) => {
         const row = bySession.get(part.sessionId);
         return row ? (
           <UsageWorkMarks agentIds={row.agentIds} providers={row.providers} serverId={props.serverId} />
@@ -252,15 +261,15 @@ export function UsageWorkSessionRows(
         { label: t('usage.board.work.valueLabel'), proportion: true },
         { label: t('usage.board.work.linkedOutcome') },
       ]}
-      rows={props.parts.map((part) => [
+      rows={shown.rows.map((part) => [
         props.sessionLabel(part.sessionId),
         props.cell(part.amount, part.moneyBasis),
-        [usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
+        [outcomeOnce ? null : usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
           part.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
       ])}
-      rowDatums={props.parts.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}
+      rowDatums={shown.rows.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}
       renderIdentity={(_row, visual, index) => {
-        const part = props.parts[index]!;
+        const part = shown.rows[index]!;
         return (
           <HappierPressable
             accessibilityRole="button"
@@ -276,6 +285,18 @@ export function UsageWorkSessionRows(
       }}
     />
   );
+  const more = (
+    <UsageShowAllRows label={props.title ?? t('usage.board.work.funnelSessions')} total={props.parts.length}
+      hidden={shown.hidden} expanded={expanded} onToggle={() => setExpanded(value => !value)} testID={`${props.testID}.more`} />
+  );
+  if (props.title === undefined) return <>{rows}{more}</>;
+  return (
+    <View style={styles.group}>
+      <UsageWorkSectionTitle quiet caption={outcomeOnce ? t('usage.board.work.noOutcome') : undefined}>{props.title}</UsageWorkSectionTitle>
+      {rows}
+      {more}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -284,6 +305,7 @@ const styles = StyleSheet.create((theme) => ({
   marksFit: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden',
     alignItems: 'center', gap: theme.space.s4 },
   marksMore: { ...Typography.default(), color: theme.colors.text.secondary, flexShrink: 0 },
+  group: { gap: theme.space.s6, minWidth: 0 },
   lead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
   sectionTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
   sectionName: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
