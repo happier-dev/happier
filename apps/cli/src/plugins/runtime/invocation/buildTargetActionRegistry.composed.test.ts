@@ -144,8 +144,8 @@ import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EFFECT_AC
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 const deploymentRoleFixtureSelector = { type: 'object', properties: {
-    kind: { type: 'string', const: 'production' }, scope: { type: 'string' },
-}, required: ['kind'], additionalProperties: false } as const;
+    kind: { type: 'string', const: 'preview' }, gitBranch: { type: 'string' },
+}, required: ['kind', 'gitBranch'], additionalProperties: false } as const;
 
 type BuildRegistryParams = Omit<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
@@ -2019,7 +2019,7 @@ describe('buildTargetActionInvocationRegistry', () => {
             console.info(`[managedDataQuery.postgresql] stopped owned PostgreSQL PID ${postgres.pid}`);
         }
     });
-    it.each(['current', 'principal', 'target-machine', 'scope', 'group', 'group-mismatch', 'group-change'] as const)('admits only the stored deployment role custody before purpose materialization (%s)', async variant => {
+    it.each(['current', 'principal', 'target-machine', 'selector', 'group', 'group-mismatch', 'group-change'] as const)('admits only the stored deployment role custody before purpose materialization (%s)', async variant => {
         const group = variant.startsWith('group');
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect', group ? { target: {
             kind: 'group', service: { pluginId: 'acme.alpha', localId: 'account' }, groupId: 'fallbacks',
@@ -2030,7 +2030,7 @@ describe('buildTargetActionInvocationRegistry', () => {
         selectedLink.machineId = 'controller'; selectedLink.installationId = 'installation-controller';
         if (variant === 'principal') stored.input.credentialPrincipal.accountId = 'other';
         if (variant === 'target-machine') selectedLink.machineId = 'other';
-        if (variant === 'scope') stored.input.providerEnvironment = { kind: 'native', selection: { kind: 'production', scope: 'other' } };
+        if (variant === 'selector') stored.input.providerEnvironment = { kind: 'native', selection: { kind: 'preview', gitBranch: 'other' } };
         if (variant === 'group-mismatch') stored.input.credentialRef.accountId = 'not-the-selected-member';
         const base = connectedAccountActionManifest();
         const action = base.contributes.actions[0]!;
@@ -2075,7 +2075,7 @@ describe('buildTargetActionInvocationRegistry', () => {
         });
         const result = await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input: stored.input, surface: 'plugin' });
         const succeeds = variant === 'current' || variant === 'group';
-        const securityRefusal = variant === 'principal' || variant === 'scope';
+        const securityRefusal = variant === 'principal' || variant === 'selector';
         expect(result.status).toBe(succeeds ? 'executed' : variant === 'group-change' || securityRefusal ? 'failed' : 'unavailable');
         if (securityRefusal) expect(result).toMatchObject({ code: 'deployment_access_denied' });
         if (succeeds) expect(materializeAccount).toHaveBeenCalledOnce();
