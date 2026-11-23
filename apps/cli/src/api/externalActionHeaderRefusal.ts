@@ -38,7 +38,7 @@ export function externalActionHeaderRefusalFailure(refusal: ExternalActionHeader
     error: `External Action authorization unavailable: ${refusal.reason}`,
     requestId: refusal.requestId, effectAttempted: false,
     details: { authorizationRefusalReason: refusal.reason },
-    failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
+    failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: refusal.reason, httpStatus: null },
   };
 }
 
