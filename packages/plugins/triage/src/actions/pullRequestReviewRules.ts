@@ -38,7 +38,7 @@ type SkipReason = PullRequestReviewSkipReasonV1;
 export async function readPullRequestReviewRules(params: Readonly<{
     repositoryPath: string;
     baseRevision: string;
-    occurrence: Occurrence;
+    occurrence: PullRequestReviewRuleOccurrenceV1;
     project: PullRequestReviewStepRulesV1 | undefined;
     context: PluginInvocationContext;
 }>): Promise<
