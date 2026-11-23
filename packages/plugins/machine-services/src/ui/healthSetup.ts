@@ -348,7 +348,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         setRefusedSave(false);
     };
     const investigationMode = investigation?.mode ?? 'inbox';
-    const configuredActionId = investigation?.configuredActionId ?? '';
+    const configuredActionId = investigation && 'configuredActionId' in investigation
+        ? investigation.configuredActionId ?? '' : '';
     const [saving, setSaving] = useState(false);
     const [refusedSave, setRefusedSave] = useState(false);
     const [loadingKinds, setLoadingKinds] = useState(false);
