@@ -106,11 +106,12 @@ export function settleAdminAccessSave(result: ActionExecuteResult): MachineAdmin
   );
   if (!parsed.success) return { kind: 'failed', code: 'action_invalid_output' };
   const answer = parsed.data;
-  if ('effect' in answer && answer.effect?.outcome === 'not_applied') {
-    const effect = answer.effect;
-    return effect.reasonCode === 'cancelled' ? { kind: 'idle' }
-      : { kind: 'failed', code: effect.reasonCode,
-          message: resolveActionExecutionErrorMessage({ code: effect.reasonCode, failure: effect.failure }, '') || undefined };
+  const effect = 'effect' in answer ? answer.effect : undefined;
+  if (effect?.outcome === 'not_applied' || effect?.outcome === 'outcome_unknown') {
+    const code = effect.outcome === 'not_applied' ? effect.reasonCode : effect.failure?.kind ?? 'action_outcome_unknown';
+    return code === 'cancelled' ? { kind: 'idle' }
+      : { kind: 'failed', code,
+          message: resolveActionExecutionErrorMessage({ code, failure: effect.failure }, '') || undefined };
   }
   if (
     answer.status === 'applied' ||

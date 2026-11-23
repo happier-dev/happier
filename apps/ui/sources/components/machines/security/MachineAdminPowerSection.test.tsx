@@ -121,6 +121,18 @@ describe('Machine → Security → Administrator power', () => {
     }
   });
 
+  it('shows native recovery when the desired policy was saved and its native effect is uncertain', async () => {
+    const remedy = 'Inspect the Machine’s administrator power before retrying Apply.';
+    const result = MachineAdminAccessMutationResultV1Schema.parse({ status: 'applied',
+      policy: ask, metadataVersion: 8, effect: { outcome: 'outcome_unknown',
+        failure: { kind: 'native_protocol_invalid', phase: 'apply', remedy } } });
+    const screen = await render(authority({ observation: observation(), desiredAdminAccess: ask }), {
+      control: controls({ save: settleAdminAccessSave({ ok: true, result }) }),
+    });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-admin-result' });
+    expect(card?.props).toMatchObject({ kind: 'error', reason: remedy, diagnosticCode: 'native_protocol_invalid' });
+  });
+
   it('leads with standing power the Machine observed, and says agents can’t only when isolation is in effect', () => {
     const isolated = describeAdminPowerHeadline(
       authority({
