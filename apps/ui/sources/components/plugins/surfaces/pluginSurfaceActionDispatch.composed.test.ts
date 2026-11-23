@@ -8036,7 +8036,7 @@ describe('plugin-surface action branch selection', () => {
                 const controller = createPluginContributedActionController({ resolveCurrent: () => ({
                     pluginProjectionById: { [CALLER_PLUGIN_ID]: plugin },
                     resolveContributedAction: resolveExactClientAction(activation.action),
-                    host: { machineId: CLIENT_ACTION_HOST_ORIGIN.machineId, serverId: accountLifetime.scope.serverId, accountLifetime },
+                    host: { machineId: null, serverId: accountLifetime.scope.serverId, accountLifetime },
                 }) });
                 const action = controller.list({ placement: 'detailsPanel', scope: 'global' })[0];
                 expect(action).toBeDefined();
@@ -8089,14 +8089,23 @@ describe('plugin-surface action branch selection', () => {
                 messageActionReference: { ...reference, ...(entry === 'stale' ? { observedRevision: 'revision-2' } : {}) } }], hasMore: false });
             return createEmptyAccountBootstrapHttpResponse(path, init);
         }));
+        const declaration = {
+            id: 'refresh-index', title: 'Create task', scopes: ['message'], surfaces: ['ui'],
+            placementBindings: ['message.menu'], dangerLevel: 'safe',
+            execution: { target: 'client', client: {
+                artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
+            }, platforms: [CLIENT_ACTION_TARGET.platform] },
+        } satisfies import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2;
+        const manifest = ingestPluginManifestV2({
+            schemaVersion: 2, id: CALLER_PLUGIN_ID, version: '1.2.3', displayName: 'Message tools',
+            runtime: { apiVersion: 1 }, contributes: { actions: [declaration] },
+        });
+        if (!manifest.ok) throw new Error('Message Action fixture manifest did not ingest');
+        publishClientActionAvailabilityFixture(accountLifetime.scope, manifest.manifest);
+        const admission = readPluginAccountAvailability(accountLifetime.scope).readCurrentAccountExecution(CALLER_PLUGIN_ID);
+        if (admission.kind !== 'available') throw new Error('Expected published Message Action Account custody');
         const activation = createClientActionActivation({ accountLifetime, accountPlacement: true,
-            accountActionDeclaration: {
-                id: 'refresh-index', title: 'Create task', scopes: ['message'], surfaces: ['ui'],
-                placementBindings: ['message.menu'], dangerLevel: 'safe',
-                execution: { target: 'client', client: {
-                    artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
-                }, platforms: [CLIENT_ACTION_TARGET.platform] },
-            },
+            occurrenceId: admission.custodyId, accountActionDeclaration: declaration,
             handler: async (_input, context) => { handlerEntered = true; receivedMessage = context.messageAction; return {}; },
         });
         const { Modal } = await import('@/modal');
@@ -8144,7 +8153,7 @@ describe('plugin-surface action branch selection', () => {
                     expect(dispatched).toMatchObject({ kind: 'settled', outcome: { ok: true, result: {} } });
                 } else {
                     expect(dispatched).toMatchObject({ kind: 'settled', outcome: {
-                        ok: false, code: 'unavailable', reason: 'plugin_message_action_unavailable',
+                        ok: false, code: 'plugin_message_action_unavailable', reason: 'plugin_message_action_unavailable',
                     } });
                 }
             }
