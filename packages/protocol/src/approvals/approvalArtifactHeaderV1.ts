@@ -1,11 +1,12 @@
 import { StoredApprovalRequestSchema, type ApprovalRequest } from './approvalRequestV1.js';
-import { APPROVAL_ARTIFACT_KINDS_V1 } from './approvalArtifactKindV1.js';
+import { APPROVAL_ARTIFACT_KINDS_V1, approvalArtifactSubjectIndexedKindV1 } from './approvalArtifactKindV1.js';
 import { ActionIdSchema, type ActionId } from '../actions/actionIds.js';
 import type { ApprovalQueueListItemV1, ApprovalQueueListResultV1 } from '../actions/executor/types.js';
 import type { ArtifactListSelectionOptionsV1 } from '../artifacts/artifactListSelectionV1.js';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '../local/services/launcher/v1.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
-import { ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ManagedDeleteInputV1Schema, ManagedPowerInputV1Schema } from '../machines/managed/actionsV1.js';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { isApiTokenGrantTargetMemberV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
 import { isDeploymentActionIdV1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
@@ -28,7 +29,7 @@ import {
  * matchers re-check. Artifact stores require the title, so it is declared rather
  * than left to the passthrough index signature.
  */
-export type ApprovalArtifactHeaderV1 = Readonly<{ title: string } & Record<string, unknown>>;
+export type ApprovalArtifactHeaderV1 = Readonly<{ title: string; subjectIndexKey?: string } & Record<string, unknown>>;
 
 /**
  * What a reader may be handed: any stored Artifact header, including one this
@@ -68,6 +69,12 @@ export function deriveManagedDeleteApprovalSubjectKeyV1(input: Readonly<{ homeId
   return `managed-delete:${computeCanonicalDomainSeparatedDigest('happier.approval.managed-delete-subject.v1', [input.homeId, input.managedId])}`;
 }
 
+export function deriveManagedPowerApprovalSubjectKeyV1(input: Readonly<{
+  homeId: string; managedId: string; intent: ReturnType<typeof ManagedPowerInputV1Schema.parse>['intent'];
+}>): string {
+  return `managed-power:${computeCanonicalDomainSeparatedDigest('happier.approval.managed-power-subject.v1', [input.homeId, input.managedId, input.intent])}`;
+}
+
 /** The private Artifact inventory supplies the Home and Account, independent of client profile aliases. */
 export function deriveDeploymentEnvironmentApprovalSubjectKeyV1(input: Readonly<{ environmentId: string }>): string {
   return `deployment-environment:${computeCanonicalDomainSeparatedDigest('happier.approval.deployment-environment-subject.v1', [input.environmentId])}`;
@@ -91,9 +98,17 @@ export function readApprovalRequestArtifactSubjectKeyV1(request: ApprovalRequest
   return input.success ? deriveManagedDeleteApprovalSubjectKeyV1(input.data) : null;
 }
 
-export function managedDeleteApprovalIndexedKindV1(subjectKey: string): string {
-  return `${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#${subjectKey}`;
+/** Acquisition-only subjects do not participate in header/body correspondence. */
+function readApprovalRequestArtifactSubjectIndexKeyV1(request: ApprovalRequest, matchedKey: string | null): string | null {
+  if (matchedKey !== null) return matchedKey;
+  if (request.actionId === MANAGED_POWER_SET_ACTION_ID_V1) {
+    const input = ManagedPowerInputV1Schema.safeParse(request.actionArgs);
+    return input.success ? deriveManagedPowerApprovalSubjectKeyV1(input.data) : null;
+  }
+  return null;
 }
+
+export { approvalArtifactSubjectIndexedKindV1 as managedDeleteApprovalIndexedKindV1 };
 
 /**
  * What list readers (Inbox grouping, Discussion attention) need without opening the body. The writer
@@ -162,6 +177,7 @@ export function buildApprovalRequestArtifactHeaderV1(
     ?? (typeof request.createdBy.sessionId === 'string' ? request.createdBy.sessionId.trim() : '');
   const legacyServerId = options.legacyServerId?.trim() || null;
   const approvalSubjectKey = readApprovalRequestArtifactSubjectKeyV1(request);
+  const subjectIndexKey = readApprovalRequestArtifactSubjectIndexKeyV1(request, approvalSubjectKey);
   const targetKind = approvalObservationTargetKind(origin?.target, sessionId, origin?.machineId);
   return {
     v: 1,
@@ -171,6 +187,7 @@ export function buildApprovalRequestArtifactHeaderV1(
     actionId: request.actionId,
     ...(targetKind ? { approvalTargetKind: targetKind } : {}),
     ...(approvalSubjectKey ? { approvalSubjectKey } : {}),
+    ...(subjectIndexKey ? { subjectIndexKey } : {}),
     ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
     ...(origin ? { serverId: origin.serverId } : legacyServerId ? { serverId: legacyServerId } : {}),
     ...(origin?.serverIdentityId ? { serverIdentityId: origin.serverIdentityId } : {}),
@@ -537,7 +554,7 @@ export async function listApprovalArtifactsV1(params: Readonly<{
       kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn, APPROVAL_ARTIFACT_KINDS_V1.targetAction],
       ...(status ? { approvalStates: [status] } : {}),
       ...(sessionId ? { approvalSessionIds: [sessionId] } : {}),
-      ...(params.subjectKey ? { indexedKinds: [managedDeleteApprovalIndexedKindV1(params.subjectKey)] } : {}),
+      ...(params.subjectKey ? { indexedKinds: [approvalArtifactSubjectIndexedKindV1(params.subjectKey)] } : {}),
       ...(params.targetGrant?.targets ? { headerAdmission: async (header: ApprovalArtifactHeaderCandidateV1) => {
         const target = approvalHeaderTarget(header);
         const candidates = [target];

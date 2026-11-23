@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
-import type { ArtifactInventoryPublication } from '@/sync/domains/artifacts/artifactInventory';
+import { doesApprovalInventoryKindMatchHeader, type ArtifactInventoryPublication } from '@/sync/domains/artifacts/artifactInventory';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { deriveArtifactKindV1, deriveArtifactKindWriteItemV1, tryDeriveArtifactStoredKindV1, writeArtifactKindBatchesV1,
     type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -1019,7 +1019,7 @@ export async function fetchAndApplyArtifactsList(params: {
                 if (members.has(row.id) || (current && current[row.id] !== row)) return false;
                 const header = row.rawHeader ?? row.header;
                 if (!header || typeof header.kind !== 'string' || !isApprovalArtifactKindV1(header.kind)
-                    || (params.kinds && !params.kinds.includes(header.kind))) return false;
+                    || (params.kinds && !doesApprovalInventoryKindMatchHeader(params.kinds, header))) return false;
                 const state = deriveApprovalArtifactQueryHintsV1(header).approvalState;
                 return state !== null && approvalStates.includes(state);
             });

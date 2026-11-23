@@ -20,7 +20,7 @@ import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken'
 import { CoordinationMessageRefV1Schema, type CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { ChangesResponseSchema, CurrentCursorResponseSchema, CursorGoneErrorSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, ApprovalArtifactQueryHintsV1Schema,
+import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, isApprovalArtifactSubjectIndexedKindV1, ApprovalArtifactQueryHintsV1Schema,
     type ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 
 /** Replace a test's admitted snapshot through the real writers, including all derived selection facts. */
@@ -199,7 +199,8 @@ export function createArtifactListHttpResponse(url: URL, inventory: readonly Sto
     const approvalStates = url.searchParams.has('approvalStates') ? JSON.parse(url.searchParams.get('approvalStates')!) as string[] : undefined;
     const approvalSessionIds = url.searchParams.has('approvalSessionIds') ? JSON.parse(url.searchParams.get('approvalSessionIds')!) as string[] : undefined;
     const approvalSelected = approvalStates !== undefined || approvalSessionIds !== undefined;
-    const approvalKind = (row: Artifact) => isApprovalArtifactKindV1(row.kindHint);
+    const approvalKind = (row: Artifact) => isApprovalArtifactKindV1(row.kindHint)
+        || typeof row.kindHint === 'string' && isApprovalArtifactSubjectIndexedKindV1(row.kindHint);
     const approvalUnknown = (row: StoredArtifactFixture) => !Object.hasOwn(row, 'kindHint') || approvalKind(row) && row.approvalState == null;
     const browserListed = url.searchParams.get('browserListed');
     if ((unclassified !== null && unclassified !== 'true' && unclassified !== 'coarse' && unclassified !== 'approval')
@@ -223,12 +224,14 @@ export function createArtifactListHttpResponse(url: URL, inventory: readonly Sto
         const { body: _body, ...header } = row;
         return projectArtifactBoundaryReadRow(header);
     });
-    const unclassifiedCount = scopedInventory.filter(row => approvalSelected || unclassified === 'approval' ? approvalUnknown(row) : !Object.hasOwn(row, 'kindHint')).length;
+    const indexedSubjects = approvalStates !== undefined && kinds?.every(isApprovalArtifactSubjectIndexedKindV1);
+    const unclassifiedCount = indexedSubjects ? 0 : scopedInventory.filter(row =>
+        approvalSelected || unclassified === 'approval' ? approvalUnknown(row) : !Object.hasOwn(row, 'kindHint')).length;
     const coverage = ArtifactKindCoverageV1Schema.parse(unclassifiedCount === 0
         ? { status: 'complete', unclassifiedCount: 0 }
         : { status: 'partial', unclassifiedCount, reason: 'unclassified_legacy_rows' });
     return json(kind === null && kinds === undefined && unclassified === null && browserListed === null && !approvalSelected ? items
-        : { items, hasUnclassified: scopedInventory.some(unknownKind),
+        : { items, hasUnclassified: !indexedSubjects && scopedInventory.some(unknownKind),
             ...(kinds !== undefined || unclassified !== null || browserListed !== null || approvalSelected ? { coverage } : {}) });
 }
 

@@ -1,5 +1,6 @@
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, readApprovalArtifactSubjectIndexedKindV1,
+    type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { INBOX_ARTIFACT_KINDS } from './inboxArtifacts';
 import type { ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { DecryptedArtifact } from './artifactTypes';
@@ -46,6 +47,12 @@ export function artifactInventorySelectionOptions(selection?: ArtifactInventoryS
     return { kinds: selection };
 }
 
+export function doesApprovalInventoryKindMatchHeader(kinds: readonly string[], header: Readonly<Record<string, unknown>>): boolean {
+    if (typeof header.kind === 'string' && kinds.includes(header.kind)) return true;
+    const indexedKind = readApprovalArtifactSubjectIndexedKindV1(header);
+    return indexedKind !== null && kinds.includes(indexedKind);
+}
+
 /** Reconcile only the members whose absence this acquisition can establish. */
 export function doesArtifactInventorySelectionMatchHeader(selection: ArtifactInventorySelection | undefined,
     header: Readonly<Record<string, unknown>>): boolean {
@@ -57,7 +64,7 @@ export function doesArtifactInventorySelectionMatchHeader(selection: ArtifactInv
         && (hints?.approvalState === 'open' || !isApprovalArtifactKindV1(header.kind));
     if (isApprovalSessionInventorySelection(selection)) return hints?.approvalSessionId !== null
         && hints?.approvalSessionId !== undefined && selection.approvalSessionIds.includes(hints.approvalSessionId);
-    if (isApprovalStateInventorySelection(selection)) return typeof header.kind === 'string' && selection.kinds.includes(header.kind)
+    if (isApprovalStateInventorySelection(selection)) return doesApprovalInventoryKindMatchHeader(selection.kinds, header)
         && hints?.approvalState !== null && hints?.approvalState !== undefined && selection.approvalStates.includes(hints.approvalState);
     return typeof header.kind === 'string' && selection.includes(header.kind);
 }

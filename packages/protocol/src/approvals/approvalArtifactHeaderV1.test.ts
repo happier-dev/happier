@@ -19,6 +19,7 @@ import { deriveArtifactStoredKindV1 } from '../artifacts/artifactKindV1.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { projectWorkflowDiscussionProducerV1 } from '../workflows/workflowDiscussionPublicationV1.js';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 describe('approval Artifact header correspondence', () => {
   const builtIn = ApprovalRequestV2Schema.parse({
@@ -131,6 +132,10 @@ describe('approval Artifact header correspondence', () => {
         declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } } } });
     const header = buildApprovalRequestArtifactHeaderV1(start);
     expect(header.approvalSubjectKey).toEqual(expect.stringMatching(/^project-service-start:/));
+    expect(header.subjectIndexKey).toBe(header.approvalSubjectKey);
+    const { subjectIndexKey: _hint, ...legacyHeader } = header;
+    expect(approvalArtifactBodyMatchesHeaderV1(legacyHeader, JSON.stringify(start))).toEqual({ family: 'built_in', request: start });
+    expect(deriveArtifactStoredKindV1(legacyHeader)).toBe(deriveArtifactStoredKindV1(header));
     expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(start))?.family).toBe('built_in');
     expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalSubjectKey: 'project-service-start:other' }, JSON.stringify(start))).toBeNull();
     expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalSubjectKey: { machineId: 'source' } }, JSON.stringify(start))).toBeNull();
@@ -327,6 +332,10 @@ describe('approval Artifact header correspondence', () => {
     const header = buildApprovalRequestArtifactHeaderV1(request);
     const subjectKey = deriveManagedDeleteApprovalSubjectKeyV1({ homeId: 'home', managedId: 'managed' });
     expect(header).toMatchObject({ kind: 'approval_request.v1', approvalSubjectKey: subjectKey });
+    expect(header.subjectIndexKey).toBe(header.approvalSubjectKey);
+    const { subjectIndexKey: _hint, ...legacyHeader } = header;
+    expect(approvalArtifactBodyMatchesHeaderV1(legacyHeader, JSON.stringify(request))).toEqual({ family: 'built_in', request: request });
+    expect(deriveArtifactStoredKindV1(legacyHeader)).toBe(deriveArtifactStoredKindV1(header));
     expect(deriveArtifactStoredKindV1(header)).toBe(`v1:other:${managedDeleteApprovalIndexedKindV1(subjectKey)}`);
     expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(request)))
       .toEqual({ family: 'built_in', request });
@@ -344,6 +353,31 @@ describe('approval Artifact header correspondence', () => {
     }));
   });
 
+  it('acquires managed power by Machine and intent without binding replay to the index hint', () => {
+    const power = (managedId: string, intent: 'start' | 'stop') => ApprovalRequestV2Schema.parse({
+      ...builtIn, status: 'open', decision: undefined, actionId: MANAGED_POWER_SET_ACTION_ID_V1,
+      actionArgs: { homeId: 'home', managedId, intent, when: 'now', expectedRevision: 4 },
+      executionOriginV1: { ...builtIn.executionOriginV1, actionId: MANAGED_POWER_SET_ACTION_ID_V1 },
+    });
+    const start = power('managed', 'start');
+    const header = buildApprovalRequestArtifactHeaderV1(start);
+    const stopHeader = buildApprovalRequestArtifactHeaderV1(power('managed', 'stop'));
+    const otherHeader = buildApprovalRequestArtifactHeaderV1(power('other', 'start'));
+    expect(deriveArtifactStoredKindV1(header)).toMatch(/^v1:other:approval_request\.v1#managed-power:/);
+    expect(header.subjectIndexKey).toEqual(expect.stringMatching(/^managed-power:/));
+    expect(header.subjectIndexKey).not.toBe(stopHeader.subjectIndexKey);
+    expect(header.subjectIndexKey).not.toBe(otherHeader.subjectIndexKey);
+    expect(header.approvalSubjectKey).toBeUndefined();
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(start))).toEqual({ family: 'built_in', request: start });
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, subjectIndexKey: stopHeader.subjectIndexKey }, JSON.stringify(start)))
+      .toEqual({ family: 'built_in', request: start });
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalSubjectKey: header.subjectIndexKey }, JSON.stringify(start)))
+      .toBeNull();
+    const { subjectIndexKey: _index, ...previousHeader } = header;
+    expect(approvalArtifactBodyMatchesHeaderV1(previousHeader, JSON.stringify(start)))
+      .toEqual({ family: 'built_in', request: start });
+  });
+
   it('indexes deployment approvals by Environment across profile aliases and keeps body authority', () => {
     const request = ApprovalRequestV2Schema.parse({ ...builtIn, status: 'open', decision: undefined,
       actionId: 'deployments.deploy', actionArgs: { serverId: 'home', environmentId: 'production' },
@@ -351,6 +385,10 @@ describe('approval Artifact header correspondence', () => {
     });
     const header = buildApprovalRequestArtifactHeaderV1(request);
     expect(header.approvalSubjectKey).toEqual(expect.any(String));
+    expect(header.subjectIndexKey).toBe(header.approvalSubjectKey);
+    const { subjectIndexKey: _hint, ...legacyHeader } = header;
+    expect(approvalArtifactBodyMatchesHeaderV1(legacyHeader, JSON.stringify(request))).toEqual({ family: 'built_in', request: request });
+    expect(deriveArtifactStoredKindV1(legacyHeader)).toBe(deriveArtifactStoredKindV1(header));
     expect(deriveArtifactStoredKindV1(header)).toBe(
       `v1:other:${managedDeleteApprovalIndexedKindV1(String(header.approvalSubjectKey))}`);
     expect(buildApprovalRequestArtifactHeaderV1({ ...request, actionArgs: { serverId: 'profile-alias', environmentId: 'production' } })

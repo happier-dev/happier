@@ -37,7 +37,8 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 import { artifactAccessFactsSelect, artifactGrantFacts, artifactGrantStorageAdapter, type ArtifactAccessFacts } from './artifactGrantStorageAdapter';
 import { withArtifactSourceReadersInTx, readArtifactSourcePublicationReadersInTx } from './artifactSourceReaders';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
-import { APPROVAL_ARTIFACT_KINDS_V1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { APPROVAL_ARTIFACT_KINDS_V1, isApprovalArtifactSubjectIndexedKindV1,
+    type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -796,9 +797,12 @@ export async function listArtifactHeaderPageForCaller(input: Parameters<typeof l
     items: (ArtifactInventoryItemForCaller & { storedSizeBytes?: number })[]; hasUnclassified: boolean; coverage: ArtifactKindCoverageV1;
 }> {
     if (input.approvalSessionIds?.length === 0) return { items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } };
-    const readCount = async (tx: Tx, candidateAccess: ArtifactCandidateAccess) => input.kind !== undefined || input.kinds !== undefined
+    // A named approval subject is published together with its indexed state. Unclassified
+    // inventory cannot answer this selector and must not trigger a legacy discovery walk.
+    const indexedSubjects = input.approvalStates !== undefined && input.kinds?.every(isApprovalArtifactSubjectIndexedKindV1);
+    const readCount = async (tx: Tx, candidateAccess: ArtifactCandidateAccess) => !indexedSubjects && (input.kind !== undefined || input.kinds !== undefined
         || input.browserListed || input.unclassified
-        || input.approvalStates !== undefined || input.approvalSessionIds !== undefined || input.audience !== undefined
+        || input.approvalStates !== undefined || input.approvalSessionIds !== undefined || input.audience !== undefined)
         ? await countUnclassifiedArtifactsInTx(tx, { ...input, coarseOnly: input.kind !== undefined || input.unclassified === 'coarse',
             includeApprovalState: !input.browserListed, candidateAccess }) : 0;
     const capture = async (tx: Tx) => {

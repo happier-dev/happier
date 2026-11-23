@@ -5557,6 +5557,16 @@ the extracted hints through the same metadata-only header-version CAS. An opaque
 header change without hints clears them; a body-only change preserves them.
 Settled private receipts retain their existing format and exact-id readers.
 No read-triggered backfill, cleanup policy or replacement receipt store is added.
+Open approval subject queries in unreleased 0.3 use the optional
+`subjectIndexKey` acquisition hint. Managed Delete, Project Service Start,
+and Deployments continue writing their existing `approvalSubjectKey` replay
+binding and copy it to the hint. Readers can still acquire those older
+headers by their existing key. Managed power writes only the acquisition
+hint, which distinguishes the Home, managed Machine, and power intent.
+The approval matcher continues to read its existing binding. A Start request
+written before the hint remains accessible through the Inbox or its linked
+Session. Named queries do not backfill old headers.
+
 State-filtered absence does not certify Artifact deletion. The UI inventory
 owner refreshes only formerly matching pending identities by exact header batch
 before absence reconciliation; exact not-found retains normal deletion handling.

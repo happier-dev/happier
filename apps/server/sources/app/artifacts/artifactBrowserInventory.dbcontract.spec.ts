@@ -1,5 +1,6 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import * as privacyKit from 'privacy-kit';
@@ -16,6 +17,7 @@ import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, prismaRuntime } from '@/storage/db';
 import { listArtifactHeadersForCallerInTx, readArtifactCandidateAccess } from './artifactAccessService';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { createArtifact } from './artifactWriteService';
 import * as resourceGrants from '@/app/teams/resourceGrantAccess';
 
@@ -123,6 +125,67 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
                 kinds: [`approval_request.v1#${String(open.header.approvalSubjectKey)}`], approvalStates: ['open'] });
             expect(exact.map(row => row.id)).toEqual([open.artifactId]);
         });
+    });
+
+    it('answers an exact open approval subject without counting unrelated unclassified rows', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const subject = 'managed-power:fixture';
+        const header = { kind: 'approval_request.v1', subjectIndexKey: subject, approvalStatus: 'open', title: 'Start' };
+        const base = { accountId: owner.id, body: new Uint8Array([0xff]),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 };
+        const id = randomUUID();
+        await db.artifact.createMany({ data: [
+            { ...base, id, kind: deriveArtifactStoredKindV1(header), header: bytes(header), approvalState: 'open' },
+            { ...base, id: randomUUID(), kind: deriveArtifactStoredKindV1(header),
+                header: bytes({ ...header, approvalStatus: 'canceled' }), approvalState: 'canceled' },
+            { ...base, id: randomUUID(), kind: null, header: bytes({ title: 'Unclassified' }) },
+        ] });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const read = async (accountId: string, subjectKey: string) => {
+                const query = new URLSearchParams({ kinds: JSON.stringify([`approval_request.v1#${subjectKey}`]), approvalStates: '["open"]' });
+                const response = await app.inject({ method: 'GET', url: `/v1/artifacts?${query}`, headers: {
+                    'x-test-user-id': accountId,
+                    'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
+                } });
+                expect(response.statusCode).toBe(200);
+                return pageSchema.parse(response.json());
+            };
+            const found = await read(owner.id, subject);
+            expect(found.items.map(row => row.id)).toEqual([id]);
+            expect(found.coverage).toEqual({ status: 'complete', unclassifiedCount: 0 });
+            const empty = await read(owner.id, 'managed-power:absent');
+            expect(empty.items).toEqual([]);
+            expect(await read(viewer.id, subject)).toEqual(empty);
+        });
+        if (provider === 'postgres') {
+            const unrelatedHeader = { title: 'Unrelated', kind: 'approval_request.v1', approvalStatus: 'open', subjectIndexKey: 'managed-power:other' };
+            await db.artifact.createMany({ data: Array.from({ length: 5000 }, () => ({ ...base, id: randomUUID(),
+                kind: deriveArtifactStoredKindV1(unrelatedHeader), header: bytes(unrelatedHeader), approvalState: 'open' })) });
+            await db.$executeRaw`ANALYZE "Artifact"`;
+            const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+            try {
+                const queries: Prisma.QueryEvent[] = [];
+                onDbClientQuery(client, query => queries.push(query));
+                const rows = await client.$transaction(tx => listArtifactHeadersForCallerInTx(tx, {
+                    actorAccountId: owner.id, kinds: [`approval_request.v1#${subject}`], approvalStates: ['open'], cursor: null, limit: 500,
+                }));
+                expect(rows.map(row => row.id)).toEqual([id]);
+                const selected = queries.find(query => /FROM "public"\."Artifact"/u.test(query.query) && /"header"/u.test(query.query));
+                if (!selected) throw new Error('Expected the actual PostgreSQL header selection');
+                expect(selected.query).not.toMatch(/"body"/u);
+                const parameters: unknown = JSON.parse(selected.params);
+                if (!Array.isArray(parameters)) throw new Error('Expected PostgreSQL query parameters');
+                const plan: unknown = await client.$queryRawUnsafe(`EXPLAIN (FORMAT JSON) ${selected.query}`, ...parameters);
+                // Inspect the chosen path, with default planner settings, for the real header query.
+                expect(plan).toEqual(expect.any(Array));
+                const details = JSON.stringify(plan);
+                expect(details).toMatch(/"Index Name":"Artifact_accountId_kind[^"\s]*"/u);
+                expect(details).not.toMatch(/"Node Type":"Seq Scan"[^}]*"Relation Name":"Artifact"/u);
+            } finally {
+                await client.$disconnect();
+            }
+        }
     });
 
     it('preserves raw exact kinds that resemble encoded storage values', async () => {

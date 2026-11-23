@@ -9,6 +9,23 @@ export const APPROVAL_ARTIFACT_KINDS_V1 = Object.freeze({
   executionRunHostAction: 'execution_run_host_action_approval.v1',
 } as const);
 
+const approvalArtifactSubjectKindPrefixV1 = `${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#`;
+
+export function approvalArtifactSubjectIndexedKindV1(subjectKey: string): string {
+  return `${approvalArtifactSubjectKindPrefixV1}${subjectKey}`;
+}
+
+export function isApprovalArtifactSubjectIndexedKindV1(kind: string): boolean {
+  return kind.length > approvalArtifactSubjectKindPrefixV1.length && kind.startsWith(approvalArtifactSubjectKindPrefixV1);
+}
+
+export function readApprovalArtifactSubjectIndexedKindV1(header: Readonly<Record<string, unknown>>): string | null {
+  if (header.kind !== APPROVAL_ARTIFACT_KINDS_V1.builtIn) return null;
+  const subjectKey = typeof header.subjectIndexKey === 'string' && header.subjectIndexKey
+    ? header.subjectIndexKey : header.approvalSubjectKey;
+  return typeof subjectKey === 'string' && subjectKey ? approvalArtifactSubjectIndexedKindV1(subjectKey) : null;
+}
+
 export function isApprovalArtifactKindV1(kind: unknown): boolean {
   return Object.values(APPROVAL_ARTIFACT_KINDS_V1).some((candidate) => candidate === kind);
 }

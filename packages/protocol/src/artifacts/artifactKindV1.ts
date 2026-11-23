@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { createServerHttpRequestBodyItemBudgetV1 } from '../server/http/requestBodyBoundsV1.js';
-import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
+import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1,
+  readApprovalArtifactSubjectIndexedKindV1 } from '../approvals/approvalArtifactKindV1.js';
 
 /** Plaintext search hint only; access and content admission still open the private header. */
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
@@ -161,11 +162,9 @@ export function encodeArtifactKindV1(value: ArtifactKindV1): string {
 
 /** Only the type discriminator leaves the private header; no title/name/content is extracted. */
 export function deriveArtifactKindV1(header: Readonly<Record<string, unknown>>): ArtifactKindV1 {
-  const approvalSubjectKey = header.kind === 'approval_request.v1' && typeof header.approvalSubjectKey === 'string'
-    ? header.approvalSubjectKey : null;
   return { kind: deriveArtifactCoarseKindV1(header),
-    kindHint: approvalSubjectKey ? `${header.kind}#${approvalSubjectKey}`
-      : typeof header.kind === 'string' && header.kind.length > 0 ? header.kind : null };
+    kindHint: readApprovalArtifactSubjectIndexedKindV1(header)
+      ?? (typeof header.kind === 'string' && header.kind.length > 0 ? header.kind : null) };
 }
 
 export function deriveArtifactStoredKindV1(header: Readonly<Record<string, unknown>>): string {
