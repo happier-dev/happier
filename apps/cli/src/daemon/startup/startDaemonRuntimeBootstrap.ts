@@ -234,7 +234,8 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
    * The quotas coordinator must consume this store directly for switch/fanout authority instead
    * of falling back to runtime quota snapshots when canonical usage evidence exists.
    */
-  providerAccountUsageStore: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'resolveRecordId' | 'resolveBySource' | 'retainSourcesForProfile'>;
+  providerAccountUsageStore: Pick<ProviderAccountUsageStore,
+    'recordSnapshot' | 'removeSource' | 'resolveRecordId' | 'resolveBySource' | 'retainSourcesForProfile'>;
   connectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
   connectedServiceQuotaFetcherDescriptors?: readonly ConnectedServiceQuotaFetcherDescriptor[];
 }>;
