@@ -2,7 +2,8 @@ import type { WorkflowActionFieldBindingV1, WorkflowBlock, WorkflowDefinitionV1 
 import type { WorkflowCondition, WorkflowValueReference } from '../workflowReferenceV1.js';
 import { document, input, literal, result } from './definitionParts.js';
 import { DeploymentBackupRunInputV1Schema, type DeploymentBackupRunInputV1 } from '../../deployments/deploymentBackupActionsV1.js';
-import { DeploymentBackupRestorePrepareInputV1Schema, type DeploymentBackupRestorePrepareInputV1 } from '../../deployments/deploymentBackupRestoreV1.js';
+import { DeploymentBackupRestorePrepareInputV1Schema, type DeploymentBackupRestorePrepareInputV1,
+  type DeploymentRestoreIntegrityUnavailableV1 } from '../../deployments/deploymentBackupRestoreV1.js';
 import { DeploymentEnvironmentUpdateInputV1Schema, type DeploymentEnvironmentUpdateInputV1 } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentDeployIntentInputV1Schema, type DeploymentDeployActionInputV1 } from '../../deployments/deploymentDeployIntentV1.js';
 import { DeploymentTeardownRequestInputV1Schema, type DeploymentTeardownRequestInputV1 } from '../../deployments/deploymentTeardownRequestV1.js';
@@ -104,7 +105,7 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
     ];
     return phases.map(phase => ({ ...phase, ...(id === 'app' ? { afterCutover: true } : {}) }));
   };
-  const finish: Phase[] = [
+  const prepareCutover: Phase[] = [
     { id: 'verify', name: 'Verify the exact final snapshot', actionId: DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
       fields: ref => ({ ...backup(), backupOperationId: ref('backup', ['operationId']),
         snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] }, level: literal('manifestReadBack') }),
@@ -113,8 +114,13 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
       fields: ref => ({ ...restore(ref), mode: literal('prepare') }), success: ref => equal(ref('prepareRestore', ['kind']), 'prepared') },
     { id: 'restore', name: 'Restore the verified final snapshot', actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
       fields: ref => ({ ...restore(ref), mode: literal('confirm'), prepareOperationId: ref('prepareRestore', ['operationId']) }),
-      success: ref => all(equal(ref('restore', ['kind']), 'restored'), equal(ref('restore', ['verified']), true)) },
+      success: ref => all(equal(ref('restore', ['kind']), 'restored'), { kind: 'any', conditions: [
+        equal(ref('restore', ['verified']), true),
+        equal(ref('restore', ['integrity', 'reason']), 'amcheck_extension_missing' satisfies DeploymentRestoreIntegrityUnavailableV1['reason']),
+      ] }) },
     ...healthPhases('health', 'destination'),
+  ];
+  const cutover: Phase[] = [
     { id: 'cutover', name: 'Apply the reviewed Connect and definition change', actionId: DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
       fields: () => fields('cutover', keys(DeploymentEnvironmentUpdateInputV1Schema, reviewed?.cutover)),
       success: ref => equal(ref('cutover', ['ok']), true), afterCutover: true },
@@ -141,6 +147,12 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
       { kind: 'if', id: `${phase.id}Succeeded`, when: next.length ? phase.success(ref) : { kind: 'not', condition: phase.success(ref) },
         then: next.length ? next : failed, otherwise: next.length ? failed : [] }];
   };
+  const reviewCutover = (depth: number, producers: Readonly<Record<string, number>>): WorkflowBlock[] => [
+    { kind: 'wait', id: 'reviewCutover', name: 'Review database cutover',
+      onlyWhen: equal(result('restore', ['verified'], { kind: 'outer', levels: depth - producers.restore! }), false),
+      document: document('The verified backup was restored and the destination is healthy. The amcheck extension is missing, so PostgreSQL could not run its physical integrity check. Complete this review to switch the app to the restored database.') },
+    ...sequence(cutover, depth, producers),
+  ];
   const start: Phase[] = [...quiescence, { id: 'backup', name: 'Capture the final backup with source writes quiesced',
     actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, fields: backup, success: ref => equal(ref('backup', ['kind']), 'verified') }];
   return { version: 1, defaults: {}, inputs: [{ name: 'dataMove', valueType: 'json', required: true,
@@ -153,7 +165,7 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
         items: result('backup', ['manifests'], { kind: 'outer', levels: depth - producers.backup! }),
         execution: 'sequential', failurePolicy: 'fail_stop' }, body: [{ kind: 'if', id: 'selectedSnapshot', when: {
           kind: 'compare', operator: 'eq', left: { kind: 'item', field: 'value', path: ['sourceId'] }, right: operand('sourceId'),
-        }, then: sequence(finish, depth + 2, producers), otherwise: [{ kind: 'wait', id: 'unselectedSnapshot',
+        }, then: sequence(prepareCutover, depth + 2, producers, reviewCutover), otherwise: [{ kind: 'wait', id: 'unselectedSnapshot',
           name: 'Ignore another backup source', onlyWhen: equal(literal(false), true),
           document: document('This manifest belongs to another source. It is not restored by this Move.') }] },
         // A nonselected manifest commits an empty result. If every manifest was

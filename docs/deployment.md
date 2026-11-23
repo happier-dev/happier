@@ -4209,8 +4209,11 @@ and run `pg_amcheck` separately. This is a warning, not an executable recovery
 Action or permission to escalate. An actual native integrity-check failure still
 prevents activation or invokes the existing rollback path. Completed restores
 retire their prepare receipt's temporary prune protection even when integrity
-is unavailable; normal retention still governs their backups. Data-safe Move
-continues to require `verified: true` before its separate connection cutover.
+is unavailable. Normal retention still governs their backups. Data-safe Move
+can offer an explicit human cutover review for the missing-amcheck result after
+verifying the exact backup and observing the restored destination healthy. The
+review shows the physical-integrity warning, and the restore stays
+`verified: false`.
 The matching Protocol, CLI and UI readers must reload together: the new strict
 result arm is an unpublished 0.3 direct cut, with no migration or compatibility
 adapter. The inspected clean `../0.2` deployment corridor at
@@ -6042,8 +6045,12 @@ The data-safe Move starter uses the existing Workflow Run and Action owners.
 It stops each reviewed source writer and observes its native stopped state before
 capturing the final backup. Only the selected source's final snapshot is verified
 and restored. Current destination health precedes the reviewed Connect change;
-the app deploy and health check follow that change. Source data stays retained
-unless the person explicitly supplies a separate resource-retirement request.
+the app deploy and health check follow that change. When the settled restore
+reports that amcheck is missing, the existing Workflow review card presents
+that warning after the current destination health check. The Run applies the
+Connect change only after a person completes the review. Source data stays
+retained unless the person explicitly supplies a separate resource-retirement
+request.
 
 For a cross-Environment restore, `deploymentId` names the source capture receipt
 under `source.origin`. The restore owner resolves the destination's active
