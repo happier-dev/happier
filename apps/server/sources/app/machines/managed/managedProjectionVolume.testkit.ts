@@ -14,7 +14,7 @@ import { db } from '@/storage/db';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import * as prisma from '@/storage/prisma';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
-import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { createReleaseLessDeclarationV1, readStoredPluginManifestV2 } from '@/app/plugins/availability/currentDeclaration';
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { resolveManagedDeclarationInTx, type StoredManagedMachine } from './managedRows';
@@ -200,8 +200,17 @@ export async function seedBundledManagedAvailability(accountId: string, homeId: 
     const manifestFiles = (await readdir(manifestDirectory, { withFileTypes: true }))
         .filter(entry => entry.isFile() && entry.name.endsWith('.json') && (!filenames || filenames.includes(entry.name)))
         .map(entry => entry.name).sort();
-    const manifests = await Promise.all(manifestFiles.map(async name =>
-        PluginManifestV2Schema.parse(JSON.parse(await readFile(join(manifestDirectory, name), 'utf8')))));
+    const manifests = await Promise.all(manifestFiles.map(async name => {
+        const body: unknown = JSON.parse(await readFile(join(manifestDirectory, name), 'utf8'));
+        if (!body || typeof body !== 'object' || !('id' in body) || typeof body.id !== 'string') {
+            throw new Error(`Missing bundled manifest identity: ${name}`);
+        }
+        if (body.id === 'happier.machine.lima') return PluginManifestV2Schema.parse(body);
+        // Other bundles stand in for retained declarations this request must never consume.
+        const manifest = readStoredPluginManifestV2(body, body.id);
+        if (!manifest) throw new Error(`Invalid retained bundled manifest identity: ${name}`);
+        return manifest;
+    }));
     const manifest = manifests.find(candidate => candidate.id === 'happier.machine.lima');
     if (!manifest) throw new Error(`Missing bundled Lima manifest at ${manifestDirectory}`);
     console.info('managed-projection-fixture', JSON.stringify({ plugins: manifests.length,
@@ -269,16 +278,17 @@ export async function exerciseManagedProjectionVolume() {
         const resource = { contributionRef: launch.provider, schemaVersion: 1, origin: 'created',
             value: { ...nativeChoices, instance: 'happier-volume-guest', memoryBytes: memoryGiB * 1024 ** 3, diskBytes: diskGiB * 1024 ** 3 } };
         const retention = { kind: 'until-delete' };
+        const reviewedFacts = { launch, controller, optionStatus: 'current', billing: retainedDeclaration.billing,
+            prerequisites: [], retentionCapabilities: retainedDeclaration.retention, retention, wakeOnAcceptedMessage: false,
+            provisioner: retainedDeclaration.provisioner };
         const enrolled = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
             admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: account.id,
                 computeInput: { enrollmentIdentity: { kind: 'dedicatedDaemonUser', role: 'deployTarget',
                     username: 'happier', serviceMode: 'user', adminAccessAtCreation: 'none' } }, bootstrapInstalled: true },
             launch, allocation: 'bound', enrolledMachineId: guest.id, resource, retention, wakeOnAcceptedMessage: false,
-            reviewedFacts: { launch, controller, optionStatus: 'current', billing: retainedDeclaration.billing,
-                prerequisites: [], retentionCapabilities: retainedDeclaration.retention, retention, wakeOnAcceptedMessage: false,
-                // Existing bound reports stored the server's lookup wrapper, including the admitted declaration.
-                provisioner: retainedDeclaration },
+            // Earlier bound reports stored the server's lookup wrapper.
+            reviewedFacts: { ...reviewedFacts, provisioner: retainedDeclaration },
         } });
         const rows: StoredManagedMachine[] = [enrolled];
         const lists: Array<{ count: number; value: Awaited<ReturnType<typeof app.inject>>; queries: QueryMeasurement[];
@@ -288,6 +298,7 @@ export async function exerciseManagedProjectionVolume() {
                 rows.push(await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
                     controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
                     admittedActionRequestId: randomUUID(), admittedInput: {}, launch,
+                    ...(rows.length === 2 ? { reviewedFacts } : {}),
                     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }));
             }
             const storedRows = vi.spyOn(createStoredReadSchema(ManagedMachineFullV1Schema)._zod, 'run');
@@ -314,11 +325,16 @@ export async function exerciseManagedProjectionVolume() {
         } }));
         for (const list of lists) {
             expect(list.value.statusCode, list.value.body).toBe(200);
-            const { machines } = ManagedListOutputV1Schema.parse(list.value.json());
-            expect(machines).toHaveLength(list.count);
-            expect(machines.map(unwrapManagedMachineReadV1).find(row => row.id === enrolled.id)).toMatchObject({
-                allocation: 'bound', enrolledMachineId: guest.id, resource, reviewedFacts: { provisioner: retainedDeclaration.provisioner },
-            });
+            const decoded = ManagedListOutputV1Schema.safeParse(list.value.json());
+            expect.soft(decoded.success, decoded.error?.message).toBe(true);
+            if (decoded.success) {
+                const machines = decoded.data.machines.map(unwrapManagedMachineReadV1);
+                expect(machines).toHaveLength(list.count);
+                expect(machines.find(row => row.id === enrolled.id)).toMatchObject({
+                    allocation: 'bound', enrolledMachineId: guest.id, resource, reviewedFacts: { provisioner: retainedDeclaration.provisioner },
+                });
+                if (list.count > 1) expect(machines.find(row => row.id === rows[2].id)).toMatchObject({ reviewedFacts });
+            }
             // Candidate access expands the one enrolled guest, then inventory reads the requested rows.
             expect(list.queries.filter(query => query.model === 'managedMachine').map(query => query.rows))
                 .toEqual([1, list.count]);
@@ -351,15 +367,20 @@ export async function exerciseManagedProjectionVolume() {
         expect(lists.map(list => declarationBytes(list.queries))).toEqual(lists.map(() => 0));
         // A retained row from an old installation must not inherit the current
         // installation's declared schema merely because its provider is the same.
+        const oldController = { ...controller, installationId: randomUUID() };
+        const oldLaunch = { ...launch, choices: { retainedOldInstallation: true } };
         const orphan = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
-            controllerMachineId: controller.machineId, controllerInstallationId: randomUUID(),
+            controllerMachineId: oldController.machineId, controllerInstallationId: oldController.installationId,
             admittedActionRequestId: randomUUID(), admittedInput: {},
-            launch: { ...launch, choices: { retainedOldInstallation: true } },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+            launch: oldLaunch, allocation: 'confirmed-absent', retention, wakeOnAcceptedMessage: false,
+            reviewedFacts: { ...reviewedFacts, launch: oldLaunch, controller: oldController, provisioner: retainedDeclaration } } });
         const retained = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/list', payload: { homeId } });
         expect(retained.statusCode, retained.body).toBe(200);
-        expect(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(retained.json()).machines.find(row => row.id === orphan.id))
-            .toMatchObject({ launch: { choices: { retainedOldInstallation: true } } });
+        const retainedMachines = ManagedListOutputV1Schema.parse(retained.json()).machines.map(unwrapManagedMachineReadV1);
+        expect(retainedMachines.find(row => row.id === orphan.id)).toMatchObject({
+            allocation: 'confirmed-absent', launch: oldLaunch, controller: oldController,
+            reviewedFacts: { ...reviewedFacts, launch: oldLaunch, controller: oldController },
+        });
         // Filtering and request-local reuse must retain installation, intent and trust currentness.
         expect(await declaration()).toMatchObject({ schemaVersion: 1 });
         expect(await declaration({ ...declarationInput, controller: { ...controller, installationId: randomUUID() } })).toBeNull();
