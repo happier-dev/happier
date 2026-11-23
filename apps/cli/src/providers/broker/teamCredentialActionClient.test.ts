@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import type { ProviderBrokerActionOpenResponseV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import {
+  PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+  type ProviderBrokerActionOpenRequestV3,
+  type ProviderBrokerActionOpenResponseV3,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import {
+  EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+} from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ApiClient } from '@/api/api';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { executeTeamCredentialBrokerAction } from './teamCredentialActionClient';
 
 const actionInput = {
@@ -35,6 +48,46 @@ function opened(): Extract<ProviderBrokerActionOpenResponseV3, { ok: true }> {
 }
 
 describe('finite Team broker Action client', () => {
+  it('opens an Action v3 grant over HTTP with the signed requester authority', async () => {
+    const grant = opened();
+    const { resourceId, initiator, consumer, inputDigest } = grant.authority.payload;
+    const request: ProviderBrokerActionOpenRequestV3 = {
+      v: 3, resourceId, initiatorMachineId: initiator.machineId, consumer, inputDigest,
+    };
+    const proof = {
+      [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'synthetic-action-authorization',
+      [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: 'synthetic-machine-signature',
+      [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: consumer.actionId,
+      [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: 'synthetic-action-target',
+    };
+    const requests: unknown[] = [];
+    const server = createServer(async (incoming, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+      requests.push({
+        method: incoming.method,
+        url: incoming.url,
+        bearer: incoming.headers.authorization,
+        signed: decodeExternalActionHttpBodyV1(JSON.parse(Buffer.concat(chunks).toString('utf8'))),
+      });
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(grant));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing Home listener');
+      const api = await ApiClient.create({ token: 'daemon-token', encryption: null });
+      await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () =>
+        api.openTeamCredentialProviderBroker(request, { requestHeaders: proof }))).resolves.toEqual(grant);
+      expect(requests).toEqual([{
+        method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+        bearer: undefined, signed: { headers: proof, body: request },
+      }]);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
   it.each(['open', 'execute'] as const)('retains the typed cause from a broker %s refusal', async phase => {
     const failureCause = { phase: 'provider.source_open', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const refusal = { ok: false as const, reasonCode: 'broker_unavailable' as const, failureCause };

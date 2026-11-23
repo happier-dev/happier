@@ -47,6 +47,9 @@ import { createAccountSessionClientTransport } from './client/createAccountSessi
 import { ensureSessionMachineAccessKeyBinding } from './session/ensureSessionMachineAccessKeyBinding';
 import { openTeamCredentialProviderBroker } from './client/providerBrokerApi';
 import {
+  ProviderBrokerActionAdmissionV3Schema, ProviderBrokerActionAdmissionResponseV3Schema,
+  type ProviderBrokerActionAdmissionResponseV3, type SignedProviderBrokerActionRouteGrantV3,
+  type ProviderBrokerActionOpenRequestV3, type ProviderBrokerActionOpenResponseV3,
   PROVIDER_BROKER_ACCOUNT_OPEN_HTTP_PATH_V2, PROVIDER_BROKER_ACCOUNT_ADMIT_HTTP_PATH_V2,
   ProviderBrokerAccountOpenRequestV2Schema, ProviderBrokerAccountOpenResponseV2Schema,
   ProviderBrokerAccountAdmissionV2Schema, ProviderBrokerAccountAdmissionResponseV2Schema,
@@ -1230,14 +1233,21 @@ export class ApiClient {
   }
 
   async openTeamCredentialProviderBroker(
+    request: ProviderBrokerActionOpenRequestV3,
+    options: Readonly<{ signal?: AbortSignal; requestHeaders: Readonly<Record<string, string>> }>,
+  ): Promise<ProviderBrokerActionOpenResponseV3>;
+  async openTeamCredentialProviderBroker(
     request: ProviderBrokerOpenRequestV1,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<ProviderBrokerOpenResponseV1> {
-    return await openTeamCredentialProviderBroker({
-      token: this.credential.token,
-      request,
-      ...(options?.signal ? { signal: options.signal } : {}),
-    });
+  ): Promise<ProviderBrokerOpenResponseV1>;
+  async openTeamCredentialProviderBroker(
+    request: ProviderBrokerOpenRequestV1 | ProviderBrokerActionOpenRequestV3,
+    options?: Readonly<{ signal?: AbortSignal; requestHeaders?: Readonly<Record<string, string>> }>,
+  ): Promise<ProviderBrokerOpenResponseV1 | ProviderBrokerActionOpenResponseV3> {
+    const common = { token: this.credential.token, ...(options?.signal ? { signal: options.signal } : {}) };
+    return request.v === 3
+      ? await openTeamCredentialProviderBroker({ ...common, request, requestHeaders: options?.requestHeaders })
+      : await openTeamCredentialProviderBroker({ ...common, request });
   }
 
   async openAccountConnectionProviderBroker(request: ProviderBrokerAccountOpenRequestV2,
@@ -1289,13 +1299,22 @@ export class ApiClient {
   }
 
   async admitTeamCredentialProviderBrokerRequest(
+    request: Readonly<{ v: 3; authority: SignedProviderBrokerActionRouteGrantV3 }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<ProviderBrokerActionAdmissionResponseV3>;
+  async admitTeamCredentialProviderBrokerRequest(
     request: ProviderBrokerRequestAdmissionV1,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<ProviderBrokerRequestAdmissionResponseV1> {
+  ): Promise<ProviderBrokerRequestAdmissionResponseV1>;
+  async admitTeamCredentialProviderBrokerRequest(
+    request: ProviderBrokerRequestAdmissionV1 | Readonly<{ v: 3; authority: SignedProviderBrokerActionRouteGrantV3 }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<ProviderBrokerRequestAdmissionResponseV1 | ProviderBrokerActionAdmissionResponseV3> {
     options?.signal?.throwIfAborted();
+    const isAction = request.v === 3;
     const response = await axios.post(
       `${resolveServerHttpBaseUrl()}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`,
-      ProviderBrokerRequestAdmissionV1Schema.parse(request),
+      isAction ? ProviderBrokerActionAdmissionV3Schema.parse(request) : ProviderBrokerRequestAdmissionV1Schema.parse(request),
       {
         headers: { Authorization: `Bearer ${this.credential.token}`, 'Content-Type': 'application/json' },
         // The native Provider request owns this admission's lifetime. An
@@ -1304,7 +1323,9 @@ export class ApiClient {
         ...(options?.signal ? { signal: options.signal } : {}),
       },
     );
-    return ProviderBrokerRequestAdmissionResponseV1Schema.parse(response.data);
+    return isAction
+      ? ProviderBrokerActionAdmissionResponseV3Schema.parse(response.data)
+      : ProviderBrokerRequestAdmissionResponseV1Schema.parse(response.data);
   }
 
   async authorizeTeamCredentialProviderModelCatalog(

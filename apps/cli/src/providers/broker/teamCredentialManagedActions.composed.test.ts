@@ -7,16 +7,17 @@ import { beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
+import { ApiClient } from '@/api/api';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/composition/executableTypes';
 import { withTeamCredentialActionRuntime } from './teamCredentialActionRuntime';
 import { createManagedMachineControllerClient } from '@/machines/managed/acquire';
 import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopback/server';
-import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation, listQualifiedConnectedAccountsV4,
   listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
@@ -30,7 +31,6 @@ import { startDaemonProviderBrokerRuntime } from './daemonProviderBrokerRuntime'
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
 import { createTeamCredentialBrokerActionExecutor } from './teamCredentialActionExecution';
 import { createTeamCredentialBrokerActionPurposeExecutor } from './teamCredentialActionClient';
-import { ProviderBrokerActionAdmissionResponseV3Schema, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createManagedNativeInvocation } from '@/machines/managed/reconcile';
 import { createDaemonManagedMachineActionAdapter } from '@/daemon/startup/managedMachineActionAdapter';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -96,7 +96,13 @@ describe('two-Account Team provisioner managed entry point', () => {
       }
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
-  it.each([AGENT37, BOAT].flatMap(manifest => [...(['options', 'acquire'] as const).map(role => ({ manifest, role, brokerRealm: false })), { manifest, role: 'options' as const, brokerRealm: true }]))(
+  it.each([
+    ...[AGENT37, BOAT].flatMap(manifest => [
+      ...(['options', 'acquire'] as const).map(role => ({ manifest, role, brokerRealm: false })),
+      { manifest, role: 'options' as const, brokerRealm: true },
+    ]),
+    { manifest: BOAT, role: 'check' as const, brokerRealm: true },
+  ])(
     'runs $manifest.id $role brokerRealm=$brokerRealm in the real Account host with a signed native root', async ({ manifest, role, brokerRealm }) => {
     const server = '../../../../server/sources/';
     const { createLightSqliteHarness, createAccountTokenForTests }: typeof import('../../../../server/sources/testkit/lightSqliteHarness') = await import(server + 'testkit/lightSqliteHarness');
@@ -123,8 +129,11 @@ describe('two-Account Team provisioner managed entry point', () => {
     } });
     let closeTransport: (() => Promise<void>) | undefined;
     onTestFinished(async () => { try { await closeTransport?.(); } finally { await harness.close(); } });
+    const bundled = loadCurrentBundledPluginLocatorResult({ pluginIds: [manifest.id] }).loadedPlugins[0];
+    if (!bundled) throw new Error(`Missing admitted declaration for ${manifest.id}`);
     const descriptor = manifest.contributes.connectedAccountDescriptors[0]!;
-    const shared = await createTeamDirectActionMaterialFixture({ manifest, serviceId: descriptor.id,
+    // Home and the broker must bind the same shipped declaration bytes.
+    const shared = await createTeamDirectActionMaterialFixture({ manifest: bundled.manifest, serviceId: descriptor.id,
       authenticationModeId: descriptor.authentication.defaultModeId, homeServerIdentityId: homeId,
       deliveryMode: brokerRealm ? 'brokered' : 'direct' });
     const signing = nacl.sign.keyPair();
@@ -135,7 +144,7 @@ describe('two-Account Team provisioner managed entry point', () => {
     await db.pluginMachineMaterialization.create({ data: { accountId: shared.recipient.id, serverIdentityId: homeId,
       machineId: shared.machine.id, materializationId: installationId, pluginId: manifest.id, version: manifest.version,
       sourceClass: 'bundledFirstParty', portableRelease: false,
-      archiveDigestSha256: createReleaseLessDeclarationV1(manifest).manifestDigestSha256,
+      archiveDigestSha256: createReleaseLessDeclarationV1(bundled.manifest).manifestDigestSha256,
       uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
     const app = createAuthenticatedTestApp({ authentication: 'real' });
     registerExternalActionRoutes(app);
@@ -173,11 +182,11 @@ describe('two-Account Team provisioner managed entry point', () => {
     const acquireInput = { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: {
       kind: 'one-off', homeId, controller, launch: { provider: contribution, schemaVersion: 1, name: 'Shared compute', choices,
         credentials: input.credentials }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
-    const rootActionId = role === 'options' ? 'machines.provisioners.options' : 'machines.managed.acquire';
+    const rootActionId = role === 'acquire' ? 'machines.managed.acquire' : `machines.provisioners.${role}` as const;
     const requestId = crypto.randomUUID();
     const issued = await app.inject({ method: 'POST', url: `/v1/actions/${rootActionId}/execution-authorization`,
       headers: { authorization: `Bearer ${credentials.token}` }, payload: { v: 1, machineId: shared.machine.id,
-        envelope: { v: 1, requestId, target: { kind: 'machine', machineId: shared.machine.id }, input: role === 'options' ? input : acquireInput } } });
+        envelope: { v: 1, requestId, target: { kind: 'machine', machineId: shared.machine.id }, input: role === 'acquire' ? acquireInput : input } } });
     expect(issued.statusCode, issued.body).toBe(200);
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
     // This projection is the Machine signing/network boundary. The managed
@@ -263,11 +272,14 @@ describe('two-Account Team provisioner managed entry point', () => {
         const routeSigning = resolvePeerMediationGrantSigningConfig(process.env);
         if (!routeSigning.ok) throw new Error('Home route signing unavailable');
         const trustRoots = [routeSigning.capability];
+        const requesterApi = await ApiClient.create(credentials);
+        const custodianApi = await ApiClient.create(custodianCredentials);
         brokerExecute = createTeamCredentialBrokerActionPurposeExecutor({ initiatorMachineId: shared.machine.id,
           openTunnel: createProviderBrokerMachineCarrierTunnelOpen({ accountId: shared.recipient.id,
             localMachineId: shared.machine.id, runtime: source, resolveTrustRoots: () => trustRoots }),
-          openBroker: (request, signal, requestHeaders) => openTeamCredentialProviderBroker({ token: credentials.token,
-            serverBaseUrl: serverUrl, request, signal, requestHeaders }) });
+          openBroker: (request, signal, requestHeaders) => runWithServerHttpBaseUrl(
+            serverUrl, () => requesterApi.openTeamCredentialProviderBroker(request, { signal, requestHeaders })),
+        });
         const custodianHome = join(happyHomeDir, 'custodian');
         const reload = createPluginReloadController({ happyHomeDir: custodianHome });
         onTestFinished(() => reload.shutdown());
@@ -314,10 +326,8 @@ describe('two-Account Team provisioner managed entry point', () => {
             }) }),
             admit: async (request, signal) => {
               brokerAdmissions++;
-              const response = await fetch(`${serverUrl}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`, {
-                method: 'POST', headers: { authorization: `Bearer ${custodianCredentials.token}`, 'content-type': 'application/json' },
-                body: JSON.stringify(request), signal });
-              return ProviderBrokerActionAdmissionResponseV3Schema.parse(await response.json());
+              return await runWithServerHttpBaseUrl(
+                serverUrl, () => custodianApi.admitTeamCredentialProviderBrokerRequest(request, { signal }));
             } },
         });
         onTestFinished(broker.close);
@@ -350,7 +360,7 @@ describe('two-Account Team provisioner managed entry point', () => {
           canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https' as const, url: serverUrl }] }, authority: 'current_connection' }) };
       const options = { requestId, context, signal: new AbortController().signal };
       let invoke: () => Promise<unknown>;
-      if (role === 'options') {
+      if (role !== 'acquire') {
           const adapter = createDaemonManagedMachineActionAdapter({ credentials, machineId: shared.machine.id,
             serverBaseUrl: serverUrl, serverId: 'two-account-home',
             ...(brokerExecute ? { executeTeamCredentialBrokerAction: brokerExecute } : {}),
@@ -358,7 +368,7 @@ describe('two-Account Team provisioner managed entry point', () => {
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
               resolveCurrentMachineId: () => shared.machine.id, resolveCurrentServerIdentityId: () => homeId }),
             acquireRuntimeRegistryLease: () => native.controller.acquireRuntimeRegistry() });
-          invoke = () => adapter({ actionId: 'machines.provisioners.options', input, context, signal: options.signal });
+          invoke = () => adapter({ actionId: `machines.provisioners.${role}`, input, context, signal: options.signal });
       }
       else {
         const client = createManagedMachineControllerClient(driverInput, options, 'machines.managed.acquire');
@@ -388,8 +398,8 @@ describe('two-Account Team provisioner managed entry point', () => {
             .flatMap(([, failure]) => failure && typeof failure === 'object' && 'reason' in failure
               && typeof failure.reason === 'string' ? [{ reason: failure.reason }] : []) })}`, { cause });
       }
-      expect(outcome).toMatchObject(role === 'options' ? { dimensions: expect.any(Object) }
-        : { kind: 'bound' });
+      if (role === 'check') expect(outcome).toMatchObject({ available: true });
+      if (role === 'acquire') expect(outcome).toMatchObject({ kind: 'bound' });
       if (role === 'options') expect(outcome).toMatchObject({ dimensions: {
         size: expect.arrayContaining([expect.objectContaining({ id: choices.size })]),
       } });
