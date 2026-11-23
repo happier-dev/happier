@@ -20330,6 +20330,7 @@ const ru: WorkflowTriggersCopy = {
         sendPrompt: 'Отправить запрос',
         doAction: 'Выполнить действие',
         notifyMe: 'Уведомить меня',
+        deliveryDefault: 'Ваш способ доставки по умолчанию',
         runWorkflow: 'Запустить процесс',
         sendPromptDescription: 'Агент этой сессии получит этот запрос в этой сессии. Он никогда не прерывает ваш ход.',
         promptLabel: 'Запрос',

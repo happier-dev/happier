@@ -15,11 +15,10 @@ const BUILTIN_PROMPT_KEYS = {
 } as const satisfies Record<string, TranslationKeyNoParams>;
 
 /**
- * The host's own input words (the Usage query inputs, `@happier-dev/protocol/inputs/usageQuery`):
- * their titles and static choice labels, in the words the Usage page already uses where it names the
- * same thing.
+ * The host's own input labels, in the words the product already uses for the same thing.
  */
 const BUILTIN_LABEL_KEYS = {
+  'Your delivery default': 'workflows.triggers.then.deliveryDefault',
   Period: 'usage.board.page.periodLabel',
   Agents: 'usage.board.page.filterAgents',
   Machines: 'usage.board.page.filterMachines',
@@ -131,6 +130,7 @@ export function localizeBuiltinInputHints(hints: InputHints): InputHints {
     fields: hints.fields.map((field) => ({
       ...field,
       title: localized(BUILTIN_LABEL_KEYS, field.title),
+      ...(field.unsetLabel === undefined ? {} : { unsetLabel: localized(BUILTIN_LABEL_KEYS, field.unsetLabel) }),
       ...(field.placeholder !== undefined && field.placeholder === `All ${field.title.toLowerCase()}`
         ? { placeholder: t('usage.board.page.filterAllOf', { what: localized(BUILTIN_LABEL_KEYS, field.title).toLocaleLowerCase() }) }
         : {}),

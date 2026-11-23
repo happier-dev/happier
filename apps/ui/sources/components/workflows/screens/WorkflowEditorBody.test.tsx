@@ -4106,6 +4106,35 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
+    it('reads the Notify delivery default in Sentence only while Send to is unbound', async () => {
+        const harness = await loadHarness();
+        const base = buildDraft(harness);
+        const notice = { kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+            input: { message: { kind: 'literal', value: 'Tests finished' } } } as const;
+        const renderNotice = async (block: WorkflowEditorDraft['blocks'][number]) => {
+            const screen = await renderScreen(<Controlled harness={harness} initial={{ ...base, blocks: [block] }} />);
+            await flushHookEffects();
+            const chip = screen.findHostByTestId('workflow-editor-sentence-step:notify');
+            const card = screen.findHostByTestId('workflow-editor-sentence-selection');
+            const destination = card?.findAll((node) => node.props.testID === 'workflow-editor-action-notify-field-channels')[0];
+            const destinationCopy = destination?.findAll((node) => typeof node.props.children === 'string')
+                .map((node) => node.props.children);
+            const sentenceCopy = chip?.props.accessibilityLabel;
+            expect(sentenceCopy).toContain('workflows.triggers.then.notifyMe');
+            expect(destination).toBeDefined();
+            await screen.unmount();
+            return { destinationCopy, sentenceCopy };
+        };
+        const unbound = await renderNotice(notice);
+        expect(unbound.destinationCopy).toContain('Your delivery default');
+        expect(unbound.sentenceCopy).toContain('Your delivery default');
+        const bound = await renderNotice({ ...notice, input: {
+            ...notice.input, channels: { kind: 'literal', value: ['desktop'] },
+        } });
+        expect(bound.destinationCopy).not.toContain('Your delivery default');
+        expect(bound.sentenceCopy).not.toContain('Your delivery default');
+    });
+
     it('uses the step Agent for its Sentence chip', async () => {
         const harness = await loadHarness();
         const initial = twoStepDraft(harness);

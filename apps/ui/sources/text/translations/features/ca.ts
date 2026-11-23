@@ -20319,6 +20319,7 @@ const ca: WorkflowTriggersCopy = {
         sendPrompt: 'Envia un prompt',
         doAction: 'Fes una acció',
         notifyMe: "Avisa'm",
+        deliveryDefault: 'La teva opció de lliurament predeterminada',
         runWorkflow: 'Executa un flux',
         sendPromptDescription: "L'agent d'aquesta sessió rep aquest prompt en aquesta sessió. Mai no interromp el teu torn.",
         promptLabel: 'Prompt',

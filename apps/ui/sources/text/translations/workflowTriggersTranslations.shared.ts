@@ -349,6 +349,7 @@ export const en = {
         sendPrompt: 'Send a prompt',
         doAction: 'Do an action',
         notifyMe: 'Notify me',
+        deliveryDefault: 'Your delivery default',
         runWorkflow: 'Run a workflow',
         sendPromptDescription: "This session's agent gets this prompt in this session. It never interrupts your turn.",
         promptLabel: 'Prompt',

@@ -129,6 +129,7 @@ Use `inputHints` to add meaningful labels, localized copy, semantic choices,
 conditional fields and consequence descriptions. Authored fields keep their
 order and take precedence; a nested authored field also suppresses a generated
 editor for its parent object while uncovered siblings receive their own hints.
+Set `unsetLabel` on an optional field to show what the Action uses when a Workflow leaves it unbound.
 Confidential paths still require an explicit
 `secret` widget; field names never establish confidentiality. Literal dotted
 property names and non-object roots do not fit the existing field-path grammar.

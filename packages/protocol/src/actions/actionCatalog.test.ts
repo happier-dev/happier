@@ -22,12 +22,26 @@ import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js'
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { ActionDiscoveryDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
+import { NOTIFICATION_NOTIFY_ME_ACTION_ID } from './notificationConfigurationActionIds.js';
 import {
   DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1,
   DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
 } from './actionIdsDatabaseV1.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('publishes the implicit Notify destination and explains it to Workflow authors', async () => {
+    const id = NOTIFICATION_NOTIFY_ME_ACTION_ID;
+    const result = await createActionExecutor({}).execute('action.spec.get', { id, includeOutputSchema: false },
+      { surface: 'agent', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: true, result: { actionSpec: {
+      id,
+      description: expect.stringMatching(/omit.*channels.*Account.*delivery default/i),
+      inputHints: { fields: expect.arrayContaining([
+        expect.objectContaining({ path: 'channels', unsetLabel: 'Your delivery default' }),
+      ]) },
+    } } });
+  });
+
   it.each([
     { id: DATABASE_STATEMENT_RUN_ACTION_ID_V1, scope: 'environment' as const, kinds: ['environment', 'database', 'approvalProfile'] },
     { id: DATABASE_TARGETS_FORGET_ACTION_ID_V1, scope: undefined, kinds: ['database', 'approvalProfile'] },

@@ -149,6 +149,8 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   prompt?: TText;
   description?: TText;
   placeholder?: TText;
+  /** Display label for an omitted value. */
+  unsetLabel?: TText;
   widget: InputWidget;
   inputType?: InputTypeReferenceV1;
   /** Own values never follow surface/group context; omitted means follow-able. */
@@ -431,6 +433,7 @@ function createInputHintsSchemasForSharedField<
     prompt: z.optional(textSchema),
     description: z.optional(textSchema),
     placeholder: z.optional(textSchema),
+    unsetLabel: z.optional(textSchema),
     options: z.optional(z.readonly(z.array(optionSchema))),
   })).check(z.superRefine((value, context) => {
     validateInputHintField(value, context, validationOptions);
@@ -531,6 +534,7 @@ export function normalizeInputHintsText<TText>(
       ...(field.prompt === undefined ? {} : { prompt: resolveText(field.prompt) }),
       ...(field.description === undefined ? {} : { description: resolveText(field.description) }),
       ...(field.placeholder === undefined ? {} : { placeholder: resolveText(field.placeholder) }),
+      ...(field.unsetLabel === undefined ? {} : { unsetLabel: resolveText(field.unsetLabel) }),
       widget: field.widget,
       ...(field.inputType === undefined ? {} : { inputType: field.inputType }),
       ...(field.contextMode === undefined ? {} : { contextMode: field.contextMode }),

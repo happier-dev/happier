@@ -2,6 +2,7 @@ import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { findWorkflowActionSpec } from './workflowActionCatalog';
 
 const SEPARATOR = ' → ';
 
@@ -22,7 +23,12 @@ export function formatWorkflowSummaryLine(draft: WorkflowEditorDraft, input: Rea
  * (round 1116c Q4). A step with nothing written yet reads by its kind ("agent step").
  */
 export function formatWorkflowSummaryStepName(block: WorkflowBlock): string {
-    return lowerSentenceStart(readSummaryPart(block) ?? workflowBlockReferenceLabel(block));
+    const name = lowerSentenceStart(readSummaryPart(block) ?? workflowBlockReferenceLabel(block));
+    if (block.kind !== 'action') return name;
+    const fields = findWorkflowActionSpec(block.actionId, [], { authored: true })?.inputHints?.fields ?? [];
+    const defaults = fields.flatMap(({ path, unsetLabel }) =>
+        unsetLabel !== undefined && !path.includes('.') && block.input[path] === undefined ? [unsetLabel] : []);
+    return [name, ...defaults].join(' · ');
 }
 
 /** A block by its name; an unnamed Agent step by its prompt's first sentence; an empty step says nothing. */

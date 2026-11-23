@@ -20180,6 +20180,7 @@ const zhHant: WorkflowTriggersCopy = {
         sendPrompt: '傳送提示',
         doAction: '執行動作',
         notifyMe: '通知我',
+        deliveryDefault: '你的預設通知管道',
         runWorkflow: '執行工作流程',
         sendPromptDescription: '此工作階段的代理會在此工作階段中收到這則提示。它不會打斷你的回合。',
         promptLabel: '提示',

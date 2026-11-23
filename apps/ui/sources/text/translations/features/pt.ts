@@ -20291,6 +20291,7 @@ const pt: WorkflowTriggersCopy = {
         sendPrompt: 'Enviar um prompt',
         doAction: 'Fazer uma ação',
         notifyMe: 'Notificar-me',
+        deliveryDefault: 'Sua opção de entrega padrão',
         runWorkflow: 'Executar um fluxo',
         sendPromptDescription: 'O agente desta sessão recebe este prompt nesta sessão. Ele nunca interrompe o seu turno.',
         promptLabel: 'Prompt',

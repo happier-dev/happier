@@ -19799,6 +19799,7 @@ const de: WorkflowTriggersCopy = {
         sendPrompt: 'Prompt senden',
         doAction: 'Aktion ausführen',
         notifyMe: 'Benachrichtige mich',
+        deliveryDefault: 'Deine Standardzustellung',
         runWorkflow: 'Workflow ausführen',
         sendPromptDescription: 'Der Agent dieser Sitzung erhält diesen Prompt in dieser Sitzung. Er unterbricht nie deinen Zug.',
         promptLabel: 'Prompt',

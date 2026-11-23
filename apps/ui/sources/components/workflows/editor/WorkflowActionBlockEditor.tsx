@@ -140,14 +140,11 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const actionSource = spec?.plugin?.title ?? (spec === null
         ? catalogReadLabel === null ? t('workflows.page.blocks.actionNotInCatalog') : undefined : 'Happier');
 
-    // Settings disclose progressively (owner 2026-11-06, lab round 1106 F1): what is set, required or
-    // in need of repair stays; an option nobody set waits behind one "N more settings" until asked for.
-    // A resting card reads only what is set (round 1116 S6): the disclosure belongs to the selected step.
-    // A reader never sees unset fields at all (`WorkflowBindingRow`), so this is the editor's alone.
-    // Every set field reads as its own row, a workflow input as its token: no summary line repeats them.
+    // Keep meaningful values, declared defaults and fields that need attention in view.
+    // The selected step can disclose the other optional settings (owner 2026-11-06, lab round 1106 F1).
     const [allSettingsShown, setAllSettingsShown] = React.useState(false);
     const quietRows = !editable || allSettingsShown ? NO_ROWS : rows.filter((row) =>
-        block.input[row.key] === undefined && !row.required && props.fieldIssues?.[row.key] === undefined);
+        block.input[row.key] === undefined && row.hint?.unsetLabel === undefined && !row.required && props.fieldIssues?.[row.key] === undefined);
     const shownRows = quietRows.length === 0 ? rows : rows.filter((row) => !quietRows.includes(row));
     const moreSettingsShown = quietRows.length > 0 && props.selected === true;
 
@@ -206,6 +203,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         structured={row.hint?.widget === 'json'}
                         {...(literalOnly ? { note: t('workflows.actionTitles.commandValuesInEnv') } : {})}
                         binding={binding}
+                        {...(row.hint?.unsetLabel === undefined ? {} : { defaultLabel: row.hint.unsetLabel })}
                         referenceLabels={props.referenceLabels?.[row.key]}
                         draft={props.draft}
                         fieldName={row.key}

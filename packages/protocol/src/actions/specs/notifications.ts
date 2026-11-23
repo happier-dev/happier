@@ -8,7 +8,7 @@ function createNotificationDeliveryActionSpecs() {
   {
     id: 'notifications.notify_me', approval: {result: 'required'},
     title: 'Notify me',
-    description: "Send a notification to your Account's configured channels, following your delivery policy.",
+    description: "Send a notification to your Account's configured channels. Omit channels to use the Account's delivery default.",
     sideEffectClass: 'write',
     safety: 'safe',
     requiredAuthority: 'account_automation',
@@ -29,7 +29,7 @@ function createNotificationDeliveryActionSpecs() {
         { path: 'message', title: 'Message', widget: 'textarea', required: true },
         { path: 'title', title: 'Title', widget: 'text' },
         { path: 'open', title: 'Open', description: 'Optional Session or Workflow run link.', widget: 'json' },
-        { path: 'channels', title: 'Send to', widget: 'multiselect', optionsSourceId: 'notifications.channels.available' },
+        { path: 'channels', title: 'Send to', unsetLabel: 'Your delivery default', widget: 'multiselect', optionsSourceId: 'notifications.channels.available' },
       ],
     },
     cli: {
