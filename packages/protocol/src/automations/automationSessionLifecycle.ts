@@ -114,6 +114,10 @@ export const AutomationSessionLifecycleSubjectV1Schema = lazyZodSchema(() => z.u
 ]));
 export type AutomationSessionLifecycleSubjectV1 = z.infer<typeof AutomationSessionLifecycleSubjectV1Schema>;
 
+/** The authoring choices are a projection of the same union arms accepted on Save. */
+export const AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1 = lazyDefinition(() =>
+  Object.freeze(AutomationSessionLifecycleSubjectV1Schema._zod.def.options.map(arm => arm.shape.kind._zod.def.values[0]!)));
+
 /** Matching facts are published by the lifecycle producer, never recomputed per habit. */
 export const AutomationSessionLifecycleFactsSchema = lazyZodSchema(() => z.strictObject({
   /** Domain-separated profile digest; raw launch-profile ids stay in the private definition. */

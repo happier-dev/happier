@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import {
+  AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1,
+  type AutomationSessionLifecycleSubjectV1,
+} from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HappierPressable,
@@ -36,7 +40,10 @@ import {
   workflowSessionMenuState,
 } from '@/components/workflows/presentation/workflowSessionChoice';
 import { workflowSessionOptionRow } from '@/components/workflows/presentation/workflowSessionOptionRow';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useAutomationSubjectPicker } from '@/sync/domains/workflows/useAutomationSubjectPicker';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
@@ -347,6 +354,7 @@ export function WorkflowTriggerBlock(
           testID={props.testID}
           when={when}
           serverId={props.serverId}
+          accountLifetime={props.accountLifetime}
           onChange={props.onChangeWhen}
         />
       ) : null}
@@ -928,67 +936,96 @@ function SessionEventTrackRows(
     testID: string;
     when: SessionEventWhen;
     serverId: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     onChange: (next: TriggerWhenValue) => void;
   }>,
 ) {
   const { when } = props;
-  const sourceSessionId = when.subject?.kind === 'session' ? when.subject.sessionId : undefined;
-  const [open, setOpen] = React.useState(false);
-  // The editor's Home, or the active one when the host names none (as "A session…" reads it).
+  const [browse, setBrowse] = React.useState<AutomationSessionLifecycleSubjectV1['kind'] | null>(null);
+  const [chosen, setChosen] = React.useState<{ key: string; title: string } | null>(null);
   const activeServerId = useActiveServerAccountScope()?.serverId ?? null;
-  const serverId = props.serverId ?? activeServerId;
-  // Any of your sessions, on any machine; read only while the chooser is open.
-  const { existingSessions, sessionOptionsStatus, retrySessionOptions } =
-    useWorkflowExistingSessionOptions({
-      serverId,
-      machineId: null,
-      enabled: open,
-      // A lifecycle source is only listened to: any visible Session, whatever its Agent.
-      purpose: 'listen',
-    });
-  const choice = resolveWorkflowSessionChoice(
-    sessionOptionsStatus,
-    existingSessions.length > 0,
-  );
-  const menu = workflowSessionMenuState(
-    choice,
-    t('workflows.triggers.card.noSession'),
-  );
+  const serverId = props.accountLifetime === undefined
+    ? props.serverId ?? activeServerId
+    : props.accountLifetime?.scope.serverId ?? null;
+
+  const sessionRead = useWorkflowExistingSessionOptions({
+    serverId, machineId: null, enabled: browse === 'session', purpose: 'listen',
+  });
+  const sourceSessionId = when.subject?.kind === 'session' ? when.subject.sessionId : undefined;
   const stored = useStoredSessionItem({
     sessionId: sourceSessionId ?? '',
     serverId,
-    offered: existingSessions.some(
-      (option) => option.sessionId === sourceSessionId,
-    ),
-    settled: open && sessionOptionsStatus === 'ready',
+    offered: sessionRead.existingSessions.some(option => option.sessionId === sourceSessionId),
+    settled: browse === 'session' && sessionRead.sessionOptionsStatus === 'ready',
   });
-  const items: ValueFieldSelectItem[] = [
-    { id: 'any-session', title: t('workflows.triggers.card.subjectKinds.session.any') },
-    ...menu.leadingItems.map((item) => ({
-      id: item.id,
-      title: item.title,
-      ...(item.subtitle ? { subtitle: item.subtitle } : {}),
+  const sessionMenu = workflowSessionMenuState(
+    resolveWorkflowSessionChoice(sessionRead.sessionOptionsStatus, sessionRead.existingSessions.length > 0),
+    t('workflows.triggers.card.noSession'),
+  );
+
+  const browsingResource = browse === 'project' || browse === 'machine';
+  const { binding, resolution } = useServerCredentialAccountScopeBinding(
+    browsingResource && props.accountLifetime === undefined ? serverId : null,
+  );
+  const fallbackLifetime = React.useMemo(() => binding ? readServerAccountScopeOwnerLifetime(binding) : null, [binding]);
+  const resourceLifetime = props.accountLifetime === undefined ? fallbackLifetime : props.accountLifetime;
+  const resources = useAutomationSubjectPicker({
+    kind: { kind: browse === 'machine' ? 'machine' : 'project' },
+    lifetime: resourceLifetime,
+    demanded: browsingResource,
+  });
+  const accountReadFailed = resolution.kind === 'unavailable';
+
+  const any = 'any-session';
+  const back = 'scope-back';
+  const retry = 'scope-retry';
+  const chosenKey = when.subject === undefined ? null : automationSubjectKeyV1(when.subject);
+  const sessionItems = sessionRead.existingSessions.map(option => {
+    const row = workflowSessionOptionRow(option);
+    return { id: option.sessionId, title: option.label, icon: row.icon, subtitle: row.subtitle };
+  });
+  const selectedTitle = when.subject === undefined
+    ? t('workflows.triggers.card.subjectKinds.session.any')
+    : chosen?.key === chosenKey ? chosen.title
+      : sessionItems.find(item => item.id === sourceSessionId)?.title
+        ?? stored?.title ?? t(`workflows.triggers.card.subjectKinds.${when.subject.kind}.this`);
+  const selectedId = browse === null
+    ? when.subject ? `scope-${when.subject.kind}` : any
+    : sourceSessionId ?? chosenKey;
+  const items: ValueFieldSelectItem[] = browse === null ? [
+    { id: any, title: t('workflows.triggers.card.subjectKinds.session.any') },
+    ...AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.map(kind => ({
+      id: `scope-${kind}`, title: kind === when.subject?.kind
+        ? selectedTitle : t(`workflows.triggers.card.subjectKinds.${kind}.label`),
     })),
-    ...(stored === null
-      ? []
-      : [
-          {
-            id: stored.id,
-            title: stored.title,
-            ...(stored.subtitle ? { subtitle: stored.subtitle } : {}),
-            ...(stored.disabled ? { disabled: true } : {}),
-          },
-        ]),
-    ...existingSessions.map((option) => {
-      const row = workflowSessionOptionRow(option);
-      return {
-        id: option.sessionId,
-        title: option.label,
-        icon: row.icon,
-        ...(row.subtitle ? { subtitle: row.subtitle } : {}),
-      };
-    }),
+  ] : [
+    { id: back, title: t('common.back') },
+    ...(browse === 'session'
+      ? [...sessionMenu.leadingItems, ...sessionItems]
+      : resources.status === 'error' || accountReadFailed
+        ? [{ id: retry, title: t('common.retry'), subtitle: t('common.requestFailed') }]
+        : resources.status === 'ready'
+          ? resources.items.length > 0
+            ? resources.items.map(item => ({ id: automationSubjectKeyV1(item.subject), title: item.label, subtitle: item.description }))
+            : [{ id: 'scope-empty', title: t('commandMenu.empty'), disabled: true }]
+          : resourceLifetime?.isCurrent() || resolution.kind === 'resolving'
+            ? [{ id: 'scope-loading', title: t('common.loading'), disabled: true }]
+            : [{ id: 'scope-unavailable', title: t('common.unavailable'), disabled: true }]),
+    ...(browse === 'session' && sessionItems.length === 0 && sessionMenu.emptyLabel
+      ? [{ id: 'scope-empty', title: sessionMenu.emptyLabel, disabled: true }] : []),
   ];
+  const selectSubject = (subject: AutomationSessionLifecycleSubjectV1 | undefined, title?: string) => {
+    const nextKey = subject === undefined ? null : automationSubjectKeyV1(subject);
+    if (title !== undefined && nextKey !== null) setChosen({ key: nextKey, title });
+    if (nextKey === chosenKey) return;
+    const { subject: _previous, ...rest } = when;
+    const next = subject === undefined ? rest : { ...rest, subject };
+    if (next.kind === 'turnEnds' && next.sourceTurnId !== undefined) {
+      const { sourceTurnId: _turn, ...unbound } = next;
+      props.onChange({ ...unbound, nextTimeOnly: true });
+    } else props.onChange(next);
+  };
+
   // "This turn" exists only for a trigger bound to a turn; the others are the policy the Session's events follow.
   const howOften =
     when.kind === 'turnEnds' && when.sourceTurnId !== undefined
@@ -1014,61 +1051,50 @@ function SessionEventTrackRows(
       label: t('workflows.triggers.card.howOftenKind.everyTime'),
     },
   ];
-  const withSource = (sessionId: string | undefined): SessionEventWhen => {
-    if (sessionId === sourceSessionId) return when;
-    const subjectServerId = resolvePortableServerIdentityForRoutingId(serverId);
-    if (sessionId !== undefined && subjectServerId === null) return when;
-    const subject = sessionId === undefined || subjectServerId === null ? undefined
-      : { kind: 'session' as const, serverId: subjectServerId, sessionId };
-    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) {
-      const { subject: _previous, sourceTurnId: _turn, ...unbound } = when;
-      return { ...unbound, ...(subject === undefined ? {} : { subject }), nextTimeOnly: true };
-    }
-    const { subject: _previous, ...rest } = when;
-    return subject === undefined ? rest : { ...rest, subject };
-  };
   return (
     <>
-      <TrackRow
-        label={t('workflows.triggers.card.session')}
-        trackKey={`${props.testID}-session`}
-      >
+      <TrackRow label={t('workflows.triggers.card.source')} trackKey={`${props.testID}-session`}>
         <View style={styles.selectBox}>
           <ValueFieldSelect
             testID={`${props.testID}-session`}
-            label={t('workflows.triggers.card.session')}
+            label={t('workflows.triggers.card.source')}
             items={items}
-            selectedId={sourceSessionId ?? 'any-session'}
-            placeholder={t('common.choose')}
-            onOpenChange={setOpen}
-            {...(menu.emptyLabel === undefined
-              ? {}
-              : { emptyLabel: menu.emptyLabel })}
-            keepsOpen={(id) => id === WORKFLOW_SESSION_RETRY_ITEM_ID}
+            selectedId={selectedId}
+            placeholder={selectedTitle}
+            onOpenChange={open => { if (!open) setBrowse(null); }}
+            keepsOpen={id => id === back || id === retry || id === WORKFLOW_SESSION_RETRY_ITEM_ID
+              || AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.some(kind => id === `scope-${kind}`)}
             invalid={stored?.disabled === true}
-            onSelect={(sessionId) => {
-              if (sessionId === 'any-session') {
-                props.onChange(withSource(undefined));
+            onSelect={id => {
+              if (id === any) return selectSubject(undefined);
+              if (id === back) return setBrowse(null);
+              if (id === retry) {
+                if (accountReadFailed && serverId !== null) retryServerCredentialAccountScope(serverId);
+                else void resources.reload();
                 return;
               }
-              if (sessionId === WORKFLOW_SESSION_RETRY_ITEM_ID) {
-                retrySessionOptions();
-                return;
+              if (id === WORKFLOW_SESSION_RETRY_ITEM_ID) { sessionRead.retrySessionOptions(); return; }
+              const kind = AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.find(kind => id === `scope-${kind}`);
+              if (kind !== undefined) return setBrowse(kind);
+              if (browse === 'session') {
+                const session = sessionRead.existingSessions.find(option => option.sessionId === id);
+                const portableServerId = resolvePortableServerIdentityForRoutingId(serverId);
+                if (session && portableServerId !== null) {
+                  selectSubject({ kind: 'session', serverId: portableServerId, sessionId: id }, session.label);
+                }
+              } else {
+                const option = resources.items.find(item => automationSubjectKeyV1(item.subject) === id);
+                if (option?.subject.kind === 'project') selectSubject(option.subject, option.label);
+                if (option?.subject.kind === 'machine') {
+                  const portableServerId = resolvePortableServerIdentityForRoutingId(serverId);
+                  if (portableServerId !== null) selectSubject({ ...option.subject, serverId: portableServerId }, option.label);
+                }
               }
-              if (
-                existingSessions.some(
-                  (option) => option.sessionId === sessionId,
-                )
-              )
-                props.onChange(withSource(sessionId));
             }}
           />
         </View>
       </TrackRow>
-      <TrackRow
-        label={t('workflows.triggers.card.howOften')}
-        trackKey={`${props.testID}-how-often`}
-      >
+      <TrackRow label={t('workflows.triggers.card.howOften')} trackKey={`${props.testID}-how-often`}>
         <SegmentedTabBar
           tabs={howOftenTabs}
           activeTabId={howOften}

@@ -96,6 +96,18 @@ describe('Action trigger catalog read presentation', () => {
         expect(changes.at(-1)).not.toHaveProperty('filter');
     });
 
+    it('settles a lifecycle resource browse when the host withholds Account scope', async () => {
+        const screen = await renderScreen(<WorkflowTriggerBlock testID="habit" title="Habit" when={{ kind: 'turnEnds' }}
+            enabled incomplete={false} startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={vi.fn()} onRemove={vi.fn()}
+            machineId={null} serverId={serverId} accountLifetime={null} />);
+        try {
+            const scope = () => screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'habit-session')!;
+            await act(async () => scope().props.onSelect('scope-project'));
+            expect(scope().props.items).toContainEqual(expect.objectContaining({ title: 'common.unavailable', disabled: true }));
+            expect(scope().props.items).not.toContainEqual(expect.objectContaining({ title: 'common.loading' }));
+        } finally { await screen.unmount(); }
+    });
+
     it('authors an all-Session changed-files habit through the shared lifecycle filter controls', async () => {
         const changes: import('./sessionTriggerForm').TriggerWhenValue[] = [];
         let restoreFilter = () => {};
