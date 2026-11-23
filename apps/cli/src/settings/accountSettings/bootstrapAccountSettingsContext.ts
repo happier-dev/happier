@@ -731,7 +731,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     );
     return publication;
   };
-  const publishContext = (candidate: AccountSettingsContext, start = initialIncumbent): PublishedAccountSettingsContext => {
+  const publishContext = (
+    candidate: AccountSettingsContext,
+    start = initialIncumbent,
+    openedEncryptedNetworkContent = false,
+  ): PublishedAccountSettingsContext => {
     if (params.publication === 'invocation') {
       if (params.shouldCommit?.() === false) {
         throw createAccountSettingsLiveApplyError('ACCOUNT_SETTINGS_SOURCE_STALE', 'Requester policy admission is no longer current.');
@@ -787,7 +791,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       loadedAtMs: candidate.loadedAtMs,
       settingsSecretsReadKeys: candidate.settingsSecretsReadKeys,
       scopeKey,
-    });
+    }, openedEncryptedNetworkContent);
     if (!isDeepStrictEqual(committed.snapshot.settingsSecretsReadKeys, settingsSecretsReadKeys)) {
       throw createAccountSettingsScopeChangedError(
         'bootstrap_scope_before_commit',
@@ -1006,7 +1010,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     const recordPublication = beginPhase('publication');
     let publication: ReturnType<typeof publishContext>;
     try {
-      publication = publishContext(candidate, start);
+      publication = publishContext(candidate, start, settingsContent?.t === 'encrypted');
       recordPublication('completed');
     } catch (error) {
       recordPublication('failed');

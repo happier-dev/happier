@@ -356,23 +356,28 @@ export function preserveAccountCatalogsInSnapshot(
 /** The sole publication cut for account settings (per Account in a session host). */
 export function commitActiveAccountSettingsSnapshot(
   next: ActiveAccountSettingsSnapshot,
+  openedEncryptedNetworkContent = false,
 ): ActiveAccountSettingsSnapshotCommit {
   const slot = slotForCommit(next);
   const previous = slot.active;
+  const keyMaterialChanged = previous !== null
+    && !isDeepStrictEqual(previous.settingsSecretsReadKeys, next.settingsSecretsReadKeys);
   if (
     previous?.scopeKey
     && next.scopeKey === previous.scopeKey
     && next.settingsVersion <= previous.settingsVersion
     // A first network read can confirm the cached revision (including empty
-    // version zero). Accept that provenance while retaining unchanged values.
-    && !(next.settingsVersion === previous.settingsVersion && previous.source !== 'network'
-      && next.source === 'network' && next.rawSettings !== undefined)
+    // version zero). Opening an encrypted network revision also admits a
+    // changed read-key set for that revision. Home advances the current
+    // Settings revision when it changes Account mode.
+    && !(next.settingsVersion === previous.settingsVersion
+      && next.source === 'network' && next.rawSettings !== undefined
+      && (previous.source !== 'network' || (openedEncryptedNetworkContent && keyMaterialChanged)))
   ) {
     return { snapshot: previous, didCommit: false };
   }
   let accepted = preserveAccountCatalogsInSnapshot(previous, next);
-  const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted)
-    || !isDeepStrictEqual(previous.settingsSecretsReadKeys, accepted.settingsSecretsReadKeys);
+  const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted) || keyMaterialChanged;
   if (lifetimeChanged) {
     slot.lifetimeToken = ++lifetimeTokenSequence;
     slot.acpCatalogRevision = undefined;
