@@ -586,6 +586,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         sharedSaveAdmission?: PluginSharedSaveAdmission,
     ): Promise<TargetActionInvocationResult> {
         const { registration } = indexed;
+        const readCurrentPluginOccurrenceId = params.readCurrentPluginOccurrenceId;
         let actionHandlerInvocation: PluginActionHandlerInvocation | undefined = 'notStarted';
         const operationProgress = registration.definition.operation
             ? invocation.operationProgress
@@ -744,6 +745,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     signal: lifetime.signal,
                     redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
                     isOccurrenceCurrent: indexed.isCurrent,
+                    ...(readCurrentPluginOccurrenceId
+                        ? { readCurrentOccurrenceId: () => readCurrentPluginOccurrenceId(registration.pluginId) }
+                        : {}),
                     retainCleanup: lifetime.retainCleanup,
                     ...(invocation.readObservation ? { retireReadObservation } : {}),
                     ...(invocation.managedBootstrapCredential

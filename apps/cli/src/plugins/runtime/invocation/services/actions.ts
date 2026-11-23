@@ -49,6 +49,7 @@ import { resolvePluginActionCaller, resolvePluginInvocationCallerExecutionOrigin
 import type { AgentInvocationTurnAdmissionWitness, PluginExternalActionContext, PluginInvocationServicesSeed } from './types';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
+import { logger } from '@/ui/logger';
 import { observeContributedActionRead } from './resourceActions';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
@@ -104,6 +105,7 @@ export type PluginActionsServiceSeed = Readonly<{
     /** Host-only authority withdrawal of the enclosing observed read. */
     retireReadObservation?(): void;
     isOccurrenceCurrent(): boolean;
+    readCurrentOccurrenceId?: PluginInvocationServicesSeed['readCurrentOccurrenceId'];
     /** Host-private recursion fence; only hook invocation owners may set this. */
     bypassActionInterception?: true;
 }>;
@@ -240,12 +242,24 @@ function throwIfInactive(
     details?: JsonValue,
     beforeActionHandler = false,
 ): void {
-    if (!seed.isOccurrenceCurrent() || seed.signal.aborted) {
+    const occurrenceCurrent = seed.isOccurrenceCurrent();
+    if (!occurrenceCurrent || seed.signal.aborted) {
         const error = {
             code: 'plugin_action_generation_retired',
             message: 'Plugin occurrenceId retired before the action result could be admitted',
             ...(details === undefined ? {} : { details }),
         };
+        logger.warnLocalFile('Plugin Action caller occurrence refused', {
+            code: error.code,
+            pluginId: seed.plugin.id,
+            localId: seed.contribution?.id,
+            requestId: seed.requestId ?? seed.approvalContext?.actionRequestId ?? seed.correlationId,
+            rootRequestId: seed.approvalContext?.externalActionExecutionAuthorization?.binding.requestId,
+            field: occurrenceCurrent ? 'invocationSignal' : 'occurrenceId',
+            expectedOccurrenceId: seed.occurrenceId,
+            currentOccurrenceId: seed.readCurrentOccurrenceId?.(),
+            invocationSignalAborted: seed.signal.aborted,
+        });
         throw beforeActionHandler ? createPluginActionHandlerNotStartedError(error) : new PluginError(error);
     }
     if (signal.aborted) {

@@ -2365,7 +2365,8 @@ describe('plugin invocation ActionsService', () => {
     it.each([true, false])('retains the initiating request identity when a real contributed target retires (request supplied: %s)', async supplied => {
         let effects = 0;
         let current = true;
-        let callerCurrent = true;
+        let currentCallerOccurrenceId = 'caller-current';
+        const callerLifetime = new AbortController();
         let failHandler = false;
         const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         const occurrenceId = createPluginRuntimeOccurrenceId('acme.target');
@@ -2404,7 +2405,8 @@ describe('plugin invocation ActionsService', () => {
             occurrenceId: 'caller-current', sourceCustody: createManagedPluginSourceCustody('caller'),
             surface: 'plugin', correlationId: 'traced-invocation',
             ...(supplied ? { requestId: 'initiating-request' } : {}),
-            signal: new AbortController().signal, isOccurrenceCurrent: () => callerCurrent,
+            signal: callerLifetime.signal, isOccurrenceCurrent: () => currentCallerOccurrenceId === 'caller-current',
+            readCurrentOccurrenceId: () => currentCallerOccurrenceId,
         }, invokeContributedAction });
         try {
             await expect(service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {})).resolves.toEqual({ accepted: true });
@@ -2419,10 +2421,21 @@ describe('plugin invocation ActionsService', () => {
             const error: unknown = await service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}).catch(error => error);
             expect(error).toMatchObject({ code: 'plugin_action_generation_retired' });
             expect(readPluginErrorRequestIdV1(error)).toBe(supplied ? 'initiating-request' : 'traced-invocation');
-            callerCurrent = false;
+            callerLifetime.abort();
+            await expect(service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}))
+                .rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
+            expect(warning).toHaveBeenCalledWith('Plugin Action caller occurrence refused', expect.objectContaining({
+                requestId, field: 'invocationSignal', expectedOccurrenceId: 'caller-current',
+                currentOccurrenceId: 'caller-current',
+            }));
+            currentCallerOccurrenceId = 'caller-replacement';
             const retiredCaller: unknown = await service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}).catch(error => error);
             expect(retiredCaller).toMatchObject({ code: 'plugin_action_generation_retired' });
             expect(readPluginErrorRequestIdV1(retiredCaller)).toBe(requestId);
+            expect(warning).toHaveBeenCalledWith('Plugin Action caller occurrence refused', expect.objectContaining({
+                requestId, field: 'occurrenceId', expectedOccurrenceId: 'caller-current',
+                currentOccurrenceId: 'caller-replacement',
+            }));
             expect(effects).toBe(1);
         } finally { warning.mockRestore(); targets.dispose(); await owners.dispose(); }
     });

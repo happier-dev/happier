@@ -882,6 +882,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     signal: seed.signal,
                     ...(seed.retireReadObservation ? { retireReadObservation: seed.retireReadObservation } : {}),
                     isOccurrenceCurrent: seed.isOccurrenceCurrent,
+                    ...(seed.readCurrentOccurrenceId ? { readCurrentOccurrenceId: seed.readCurrentOccurrenceId } : {}),
                     ...(seed.bypassActionInterception === true
                         ? { bypassActionInterception: true as const }
                         : {}),

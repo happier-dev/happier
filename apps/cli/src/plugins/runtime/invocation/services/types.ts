@@ -177,6 +177,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Host-private current-turn authority for runner-owned privileged effects. */
     readActiveTurnAdmissionWitness?(): AgentInvocationTurnAdmissionWitness | null;
     isOccurrenceCurrent(): boolean;
+    /** Diagnostic read from the same runtime owner as the captured Action occurrence. */
+    readCurrentOccurrenceId?(): string | null;
 }>;
 
 export type ManagedBootstrapCredentialInvocationBinding = import('@happier-dev/protocol/actions/executor/types').ManagedBootstrapCredentialInvocationBinding;
