@@ -103,12 +103,13 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         ] }, select: { id: true },
     }) : [];
     const automationIds = new Set([...(scope.automationIds ?? []), ...selectedAutomations.map(automation => automation.id)]);
-    // Definition writers validate and catch up their retained Run sources in the
-    // same transaction. Those source owners must precede the target's mode fence.
+    // Definition writers validate lifecycle sources while holding the same
+    // source locks as settlement, before locking the target Automation.
     const sourceTriggers = scope.sourceTriggerWhere ? await tx.automationTrigger.findMany({ where: {
-        AND: [scope.sourceTriggerWhere], kind: "runLifecycle", sourceRunMachineId: null, deletedAt: null,
-    }, select: { sourceRunId: true } }) : [];
-    const runIds = [...new Set([...(scope.runIds ?? []), ...sourceTriggers.flatMap(trigger => trigger.sourceRunId ? [trigger.sourceRunId] : [])])];
+        AND: [scope.sourceTriggerWhere], kind: { in: ["runLifecycle", "sessionLifecycle"] }, deletedAt: null,
+    }, select: { sourceRunId: true, sourceRunMachineId: true, sourceSessionId: true } }) : [];
+    const runIds = [...new Set([...(scope.runIds ?? []), ...sourceTriggers.flatMap(trigger =>
+        trigger.sourceRunId && trigger.sourceRunMachineId === null ? [trigger.sourceRunId] : [])])];
     const runFilters: Prisma.AutomationRunWhereInput[] = portableQueryChunks({
         values: runIds, bindingsPerValue: 1, fixedBindings: 1,
     }).map(ids => ({ id: { in: [...ids] } }));
@@ -150,6 +151,7 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         if (sessionId !== null) pendingTargetSessionIds.push(sessionId);
     }
     const sessionIds = [...new Set([...(scope.sessionIds ?? []), ...automationAudience.sessionIds,
+        ...sourceTriggers.flatMap(trigger => trigger.sourceSessionId ? [trigger.sourceSessionId] : []),
         ...pendingTargetSessionIds,
         ...runs.flatMap(run => {
             const sourceSessionId = getSessionReviewProjectionIdForRun(run);

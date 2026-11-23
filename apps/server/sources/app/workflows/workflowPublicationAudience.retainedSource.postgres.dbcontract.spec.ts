@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { updateAutomationTrigger } from '@/app/automations/automationCrudService';
+import { createAutomationSessionLifecycleFixtureFields } from '@/testkit/automationSessionLifecycleFixture';
 import {
   createDbMaintenanceClient,
   onDbClientQuery,
@@ -47,7 +48,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')(
       await shutdownDbClient();
     });
 
-    function lockedIds(table: 'Account' | 'AutomationRun'): Set<string> {
+    function lockedIds(
+      table: 'Account' | 'AutomationRun' | 'Session',
+    ): Set<string> {
       return new Set(
         queries.flatMap((event) =>
           event.query.includes(`FROM "${table}"`) &&
@@ -157,6 +160,65 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')(
       ).toMatchObject({ enabled: false });
       expect(lockedIds('AutomationRun')).toContain(sourceRun.id);
       expect(lockedIds('Account')).toContain(sourceOwner.id);
+    });
+
+    it('locks a retained Session-lifecycle source without admitting another Account when the trigger is disabled', async () => {
+      const [owner, outsider] = await Promise.all(
+        [0, 1].map(() =>
+          db.account.create({ data: { encryptionMode: 'plain' } }),
+        ),
+      );
+      const sourceSession = await db.session.create({
+        data: {
+          accountId: owner.id,
+          tag: randomUUID(),
+          encryptionMode: 'plain',
+          metadata: '{}',
+        },
+      });
+      const automation = await db.automation.create({
+        data: {
+          accountId: owner.id,
+          name: 'Session watcher',
+          enabled: true,
+          templateCiphertext: '{}',
+          templateVersion: 1,
+        },
+      });
+      const trigger = await db.automationTrigger.create({
+        data: {
+          automationId: automation.id,
+          kind: 'sessionLifecycle',
+          enabled: true,
+          ...(await createAutomationSessionLifecycleFixtureFields({
+            automationId: automation.id,
+            kind: 'sessionLifecycle',
+            sourceSessionId: sourceSession.id,
+            events: ['parentTurnCompleted'],
+            // Only a currentTurn trigger retains its exact source Session witness.
+            policy: { kind: 'currentTurn', sourceTurnId: randomUUID() },
+          })),
+        },
+      });
+
+      queries.length = 0;
+      // The disable patch names no source; only the retained trigger row names this Session.
+      await updateAutomationTrigger({
+        accountId: owner.id,
+        automationId: automation.id,
+        triggerId: trigger.id,
+        expectedRevision: trigger.revision,
+        enabled: false,
+      });
+
+      expect(
+        await db.automationTrigger.findUniqueOrThrow({
+          where: { id: trigger.id },
+        }),
+      ).toMatchObject({ enabled: false });
+      expect(lockedIds('Session')).toContain(sourceSession.id);
+      expect([...lockedIds('Account')]).toEqual([owner.id]);
+      expect(lockedIds('Account')).not.toContain(outsider.id);
     });
   },
 );
