@@ -382,6 +382,31 @@ async function renderPlanAccessibility(node: React.ReactElement) {
   return renderScreen(wrap(<UsageChartInteractions>{node}</UsageChartInteractions>));
 }
 
+function expectProjectionRowReading(
+  screen: Awaited<ReturnType<typeof renderPlanAccessibility>>,
+  testID: string,
+  caption: 'caption' | 'freshness',
+  readingOrder: readonly string[],
+) {
+  const captionID = `${testID}.${caption}`;
+  let row = screen.findHostByTestId(captionID)?.parent;
+  while (row && !row.findAll(node => typeof node.type === 'string' && node.props.testID === testID).length) {
+    row = row.parent;
+  }
+  while (row && (row.props['aria-hidden'] || typeof row.type !== 'string')) {
+    row = row.parent;
+  }
+  expect(row, captionID).toBeTruthy();
+  const reading = spokenPlanText(row!).join(' ');
+  let start = 0;
+  for (const phrase of readingOrder) {
+    expect.soft(reading.split(phrase), reading).toHaveLength(2);
+    const position = reading.indexOf(phrase, start);
+    expect.soft(position, `${phrase} in ${reading}`).toBeGreaterThanOrEqual(start);
+    start = Math.max(start, position + phrase.length);
+  }
+}
+
 it('presents an already exhausted window as used up in chart and list projections', async () => {
   const now = Date.now();
   const read = quotaRead('spent', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
@@ -940,7 +965,7 @@ it('does not declare all projections missing when a settled paced window is behi
 
 it('keeps the reported reset when pace has no window and labels a truly expired reading', async () => {
   const now = Date.now();
-  const resetAtMs = now + DAY;
+  const resetAtMs = now + 23 * HOUR + 30_000;
   const read = (accountId: string, usedPct: number, observedAtMs: number, keepDuration: boolean) => {
     const fixture = quotaRead(accountId, observedAtMs, [
       { meterId: 'weekly', label: 'Weekly', usedPct, resetAtMs, windowDurationMs: 7 * DAY },
@@ -957,10 +982,10 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
   expect(resetOnly.pace[0]?.value).toMatchObject({ status: 'unavailable', reason: 'unknown_window' });
 
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
-  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+  const screen = await renderPlanAccessibility(<WidgetPresentationProvider value={{ size: 'medium',
     footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
     <UsageProjectionsWidget {...bodyProps([expired, resetOnly])} id="usage_projections" testID="proj" />
-  </WidgetPresentationProvider>));
+  </WidgetPresentationProvider>);
   const expiredText = t('usage.board.plans.paceStale');
   expect.soft(screen.getTextContent()).toContain(expiredText);
   expect.soft(screen.findByTestId('proj.window.expired.weekly.freshness')).toBeTruthy();
@@ -968,6 +993,10 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
   expect.soft(screen.getTextContent()).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
   expect.soft(screen.getTextContent()).not.toContain(t('usage.board.plans.paceUnknownWindow'));
   expect(screen.findAllByType(BurnUpChart)).toHaveLength(0);
+  expectProjectionRowReading(screen, 'proj.window.reset.weekly', 'caption', ['Weekly', '70% left', '23h']);
+  expectProjectionRowReading(screen, 'proj.window.expired.weekly', 'freshness', [
+    'Weekly', '0% left', t('surfaceState.asOf', { time: formatAsOfTime(now - 2 * HOUR, now) }), '23h', expiredText,
+  ]);
 });
 
 it('keeps the old value and reset after a retained comparison expires', async () => {
@@ -998,21 +1027,24 @@ it('keeps the old value and reset after a retained comparison expires', async ()
   expect(text).toContain('99%');
 });
 
-it('gives each projection row one kind of fact: the projection in its column, the countdown and any cause in its caption (acceptance 11-22 #40)', async () => {
+it.each([
+  ['entitlement_changed', 'usage.board.plans.pacePlanChanged'],
+  ['denominator_changed', 'usage.board.plans.paceLimitChanged'],
+] as const)('reads a projection row and its countdown once when another row has %s', async (reason, causeKey) => {
   const now = Date.now();
   const base = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
-    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
-    resetAtMs: now + 3 * HOUR, windowDurationMs: DAY }]);
+    resetAtMs: now + 23 * HOUR + 30_000, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
+    resetAtMs: now + 3 * HOUR + 30_000, windowDurationMs: DAY }]);
   const read = ConnectedServiceQuotaGetResultV1Schema.parse({ ...base, pace: base.pace.map(row => row.meterId === 'daily'
-    ? { ...row, value: { status: 'unavailable', reason: 'entitlement_changed' } } : row) });
+    ? { ...row, value: { status: 'unavailable', reason } } : row) });
   const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
   const { UsageMeterRow } = await import('@/components/settings/connectedServices/usage/UsageMeterRow');
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
   // A half column of a 1440 sheet: narrower than the shared meter's wide reset column.
-  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+  const screen = await renderPlanAccessibility(<WidgetPresentationProvider value={{ size: 'medium',
     footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 470, height: 260 } }}>
     <UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />
-  </WidgetPresentationProvider>));
+  </WidgetPresentationProvider>);
   const meter = (id: string) => screen.findAllByType(UsageMeterRow).find(node => node.props.testID === `proj.window.work.${id}`)!;
   const projected = read.pace.find(row => row.meterId === 'weekly')!.value;
   if (projected.status !== 'available') throw new Error('Expected available pace');
@@ -1021,11 +1053,54 @@ it('gives each projection row one kind of fact: the projection in its column, th
   expect(meter('daily').props.resetText).toBe('');
   const caption = (id: string) => screen.findByTestId(`proj.window.work.${id}.caption`)!.findAll(node => typeof node.type === 'string')
     .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
-  expect(caption('daily')).toContain(t('usage.board.plans.pacePlanChanged'));
+  expect(caption('daily')).toContain(t(causeKey));
   expect(caption('daily')).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
   expect(caption('weekly')).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
   // Too narrow for the projection beside the bar: the row stacks, so its words are never cut.
   expect(meter('weekly').props.layout).toBe('stacked');
+  expectProjectionRowReading(screen, 'proj.window.work.daily', 'caption', [
+    'Daily', '90% left', '3h', t(causeKey),
+  ]);
+  expectProjectionRowReading(screen, 'proj.window.work.weekly', 'caption', [
+    'Weekly', '70% left', t('usage.board.plans.projectionAtReset', { percent: '40%' }), '23h',
+  ]);
+});
+
+it.each([
+  ['unread', 1, false],
+  ['observed', 0, true],
+  ['mixed', 2, true],
+] as const)('Projections names the unread-account count in a %s list alongside any observed windows', async (_state, count, observed) => {
+  const now = Date.now();
+  const reads = Array.from({ length: count }, (_, index) => quotaRead(
+    `unread-${index}`, 0, [], {}, { state: 'not_loaded' },
+  ));
+  if (observed) reads.push(quotaRead('work', now, [{
+    meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: now + DAY, windowDurationMs: 7 * DAY,
+  }]));
+  const { UsageWidgetBatchProvider } = await import('../usageWidgetBatch');
+  const { readUsageWidgetQueryOverrides } = await import('../../usageWidgetPageContext');
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderPlanAccessibility(
+    <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)} enabled={false}>
+      <WidgetPresentationProvider value={{ size: 'medium',
+        footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 470, height: 260 } }}>
+        <UsageProjectionsWidget {...bodyProps(reads)} id="usage_projections" testID="proj" />
+      </WidgetPresentationProvider>
+    </UsageWidgetBatchProvider>,
+  );
+  const body = screen.findHostByTestId('proj.projections');
+  expect(body).toBeTruthy();
+  const accessible = spokenPlanText(body!).join(' ');
+  expect(screen.findHostByTestId('proj.window.work.weekly') !== null).toBe(observed);
+  if (observed) expect(accessible).toContain('70% left');
+  if (count) {
+    const message = t('usage.board.plans.capacityNotRead', { count });
+    expect(screen.getTextContent()).toContain(message);
+    expect(accessible.split(message)).toHaveLength(2);
+  } else {
+    expect(accessible).not.toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
+  }
 });
 
 it('does not materialize curve points for the meter-list presentation', async () => {

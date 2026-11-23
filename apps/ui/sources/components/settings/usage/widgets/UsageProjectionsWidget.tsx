@@ -12,6 +12,7 @@ import {
   HAPPIER_PRESS_FEEDBACK_V1,
   HappierDataMetric,
   HappierPressable,
+  resolveHappierFreshnessText,
   type HappierSeries,
   type StackedSeriesBand,
 } from '@happier-dev/plugin-ui/presentation';
@@ -63,6 +64,7 @@ import {
   UsagePlanAccountStates,
   UsagePlansNothingRead,
   isUsagePlanAccountFirstReading,
+  isUsagePlanAccountSettledUnread,
   usePlanText,
 } from './plans/UsagePlanParts';
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
@@ -266,6 +268,15 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     .map(window => ({ account, window, name: nameOf(account) })));
   const rows = windows.filter(row => row.window.remainingFraction !== null);
   const unreported = windows.filter(row => row.window.remainingFraction === null);
+  const unreadCount = projection.accounts.filter(isUsagePlanAccountSettledUnread).length;
+  const onlyUnread = unreadCount === projection.accounts.length;
+  const unreadState = unreadCount > 0 ? (
+    <UsageBodyInsufficient
+      testID={`${props.testID}.unread`}
+      title={t('usage.board.plans.capacityNotRead', { count: unreadCount })}
+      replacesContent={onlyUnread}
+    />
+  ) : null;
   const focusName = focus ? nameOf(focus.account) : null;
   const focusTitle = focus && focusName ? `${focusName.title} · ${focus.window.label}` : '';
   const pace = focus?.window.pace ?? null;
@@ -355,6 +366,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         {depletingNote}
         {/* The legend explains pace marks; without any pace it explains nothing. */}
         {live.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
+        {unreadState}
         <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
           replacesContent={!rows.length && !unreported.length && !depletingNote}
           testID={`${props.testID}.state`} />
@@ -449,14 +461,14 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         // Which window leads is not known until every first read answers: the chart's room, not a "no pace" claim.
         <UsageBodyReading testID={`${props.testID}.reading`} shape={{ kind: 'chart', plotPx: stacked ? 120 : 150 }}
           waitingOn={{ slice: props.slice, sources: ['quota'] }} />
-      ) : (
+      ) : !onlyUnread ? (
         <UsageBodyInsufficient
           testID={`${props.testID}.noPace`}
           replacesContent={rows.length === 0}
           title={t('usage.board.plans.noPaceAnywhere')}
           reason={t('usage.board.plans.noPaceAnywhereReason')}
         />
-      )}
+      ) : null}
       {!tile && props.query.granularity !== 'hour' ? <UsageDailyQuotaHistory accounts={projection.accounts} nameOf={nameOf}
         testID={`${props.testID}.dailyHistory`} /> : null}
       {rows.length ? <UsagePlanDisclosure testID={`${props.testID}.reported`}
@@ -526,6 +538,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
           ]}
         />
       )}
+      {unreadState}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
         onRetry={props.model.refresh} testID={`${props.testID}.state`} />
     </View>
@@ -734,6 +747,7 @@ function ProjectionRow(
   }>,
 ) {
   const { window, statement } = props;
+  const label = `${props.name.title} · ${window.label}`;
   const text = usePlanText();
   const expired = window.paceUnavailable === 'stale';
   const statusText = !props.resetOnly && statement.kind === 'unavailable' ? statement.text : null;
@@ -741,22 +755,35 @@ function ProjectionRow(
   // window resets, and why it has no projection, are its caption.
   const projected = !expired && (statement.kind === 'at_reset' || statement.kind === 'depletes');
   const caption = [formatPlanResetPhrase(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ');
+  const projection = projected ? statement.text : '';
+  const locale = getPreferredLanguage();
+  const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, locale);
+  const value = exact === null ? t('common.unavailable') : t('usage.board.plans.cellLeft', { percent: exact });
+  const reported = window.estimated && exact !== null ? t('connectedServicesCollection.meterEstimated', { value }) : value;
+  const captionReading = expired
+    ? resolveHappierFreshnessText({
+        asOf: props.observedAtMs,
+        reason: caption,
+        formatAsOf: (time) => t('surfaceState.asOf', { time }),
+        locale,
+      })
+    : caption;
   const visual = (
     <UsageMeterRow
       testID={props.testID}
-      label={`${props.name.title} · ${window.label}`}
+      label={label}
       remainingPct={
         window.remainingFraction === null
           ? null
           : window.remainingFraction * 100
       }
-      resetsAt={window.resetAtMs}
+      resetsAt={null}
       tone={expired ? 'neutral' : window.tone}
       now={props.nowMs}
       estimated={window.estimated}
       size={props.stacked ? 'default' : 'wide'}
       layout={props.stacked ? 'stacked' : 'inline'}
-      resetText={projected ? statement.text : ''}
+      resetText={projection}
       {...(window.pace
         ? {
             pace: {
@@ -768,21 +795,20 @@ function ProjectionRow(
         : {})}
     />
   );
-  const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, getPreferredLanguage());
   const row = exact === null || !window.pace && formatPlanPercent(window.remainingFraction!).includes(exact) ? visual
-    : <ChartDatum testID={`${props.testID}.datum`} datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`,
-      value: t('usage.board.plans.cellLeft', { percent: exact }),
+    : <ChartDatum testID={`${props.testID}.datum`} datum={{ keyboard: false, label, value,
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
-        window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
+        window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, locale)}` : null,
         window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ') }}>
-      <View accessible accessibilityLabel={[`${props.name.title} · ${window.label}`, t('usage.board.charts.showValues'),
-        t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ')}>{visual}</View>
+      <View>{visual}</View>
     </ChartDatum>;
-  return <View style={styles.windowRow}>
-    {row}
-    {expired ? <SurfaceFreshnessLine testID={`${props.testID}.freshness`} presentation="inline" asOf={props.observedAtMs} reason={caption} />
-      : caption ? <Text testID={`${props.testID}.caption`} style={[styles.quiet, text.detail]} numberOfLines={1}>{caption}</Text> : null}
+  // The exact tooltip is pointer-only. Expose one reading for the meter and its caption in either row shape.
+  return <View accessible role="group" accessibilityLabel={[label, reported, projection, captionReading].filter(Boolean).join(' · ')}>
+    <View style={styles.windowRow} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {row}
+      {expired ? <SurfaceFreshnessLine testID={`${props.testID}.freshness`} presentation="inline" asOf={props.observedAtMs} reason={caption} />
+        : caption ? <Text testID={`${props.testID}.caption`} style={[styles.quiet, text.detail]} numberOfLines={1}>{caption}</Text> : null}
+    </View>
   </View>;
 }
 
