@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -39,6 +40,27 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     vi.resetModules();
     vi.doUnmock('@/api/session/resolveSessionCreateEncryptionMode');
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { status: 401, phase: 'verification_purpose' },
+    { status: 403, phase: 'effect_family' },
+  ] as const)('keeps a signed archive refusal definite and sends one request (%j)', async ({ status, phase }) => {
+    const { archiveSession } = await import('./sessionsHttp');
+    const send = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status,
+      data: { error: status === 401 ? 'invalid_token' : 'credential_scope_denied', authorizationRefusal: phase },
+    });
+    await expect(archiveSession({
+      token: 'unused-bearer',
+      sessionId: 'session',
+      resolveAuthorizationHeaders: () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' }),
+    })).rejects.toMatchObject({
+      errorCode: 'action_forbidden',
+      error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
+      failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
+    });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('throws a stable auth status error for fetchSessionById', async () => {

@@ -2,6 +2,9 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { createAuthoringMemoryRowCipher } from '@/settings/authoringMemory/createAuthoringMemoryClient';
 import { readProjectLastOpenedMemoryMap } from './projectLastOpenedMemory';
 
 const credentials = { token: 't', encryption: null };
@@ -31,6 +34,31 @@ describe('CLI Project last-opened memory', () => {
       .mockResolvedValueOnce({ status: 200, data: { rows: [] } });
     await expect(readProjectLastOpenedMemoryMap({ credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(31) } } }))
       .rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
+  });
+
+  it('keeps the signed Home phase when the Account memory list is refused', async () => {
+    const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 403, data: { error: 'credential_scope_denied', authorizationRefusal: 'effect_family' },
+    });
+    const { serverId } = anchor;
+    const accountId = 'requester';
+    const isCurrent = async () => true;
+    const authorization: ExternalActionExecutionAuthorizationV1 = {
+      v: 1, token: 'fixture', binding: { accountId, custodianAccountId: accountId, serverIdentityId: 'home',
+        machineId: 'machine', installationId: 'installation', requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43),
+        actionId: 'projects.list', target: { kind: 'machine', machineId: 'machine' },
+        authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain' },
+      requesterAccountProjection: { accountId, serverId, accountEncryptionMode: 'plain', isCurrent, readArtifact: async () => null,
+        authoringMemoryRowCipher: createAuthoringMemoryRowCipher({ accountMode: 'plain', material: null }),
+        projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }) },
+      requesterHttpProjection: { accountId, serverId, serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+        isCurrent, createRequestHeaders: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' }) },
+    };
+    await expect(readProjectLastOpenedMemoryMap({ authorization, effectActionId: authorization.binding.actionId })).rejects.toMatchObject({
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+      failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+    });
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed on invalid stored values, mode mismatch and encrypted Project identity rebinding', async () => {

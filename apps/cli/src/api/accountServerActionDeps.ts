@@ -53,6 +53,7 @@ import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accoun
 import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionPublicLinkCreateActionInputV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
@@ -374,6 +375,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       requestIssued = true;
       return await issueRequest();
     } catch (error) {
+      if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
       const cancelled = params.signal?.aborted === true || axios.isCancel(error);
       const failure = classifyActionTransportFailure(error, { mutation, requestIssued, cancelled });
       if (!failure) throw error;
@@ -386,7 +388,9 @@ export function createAccountServerActionDeps(input: Readonly<{
             // materialized body so bearer and ciphertext bytes stay exact.
             return await issueRequest();
           } catch (replayError) {
-            return accountHttpTransportOutcomeUnknown(replayError);
+            const failure = accountHttpTransportOutcomeUnknown(replayError);
+            return replayError instanceof SignedHomeAuthorizationHttpError
+              ? { ...failure, failureCause: replayError.failure.failureCause } : failure;
           }
         }
         return accountHttpTransportOutcomeUnknown(error);

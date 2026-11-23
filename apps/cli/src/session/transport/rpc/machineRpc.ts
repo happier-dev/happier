@@ -15,8 +15,6 @@ import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socket
 import { isRpcMethodNotAvailableError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import axios from '@/api/client/credentialAxios';
-import { createHttpStatusError, isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -321,18 +319,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
       timeout: params.timeoutMs,
       ...(params.signal ? { signal: params.signal } : {}),
     },
-  ).catch((error: unknown) => {
-    const status = readHttpStatus(error);
-    if (!isAuthenticationStatus(status)) throw error;
-    const response = typeof error === 'object' && error !== null && 'response' in error ? error.response : undefined;
-    const payload = typeof response === 'object' && response !== null && 'data' in response ? response.data : undefined;
-    const failure = projectHomeAuthorizationHttpFailure(status, headers, payload);
-    // Keep ordinary bearer recovery; signed refusals carry only the redacted owner result.
-    if (!failure.failureCause) throw error;
-    throw Object.assign(createHttpStatusError(status, failure.error, failure.errorCode), {
-      cause: failure, details: failure.details, failureCause: failure.failureCause,
-    });
-  });
+  );
   const raw = response.data?.machine as
     | {
         id?: unknown;

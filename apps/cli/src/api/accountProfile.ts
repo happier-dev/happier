@@ -6,7 +6,6 @@ import type { AccountProfileResponse } from '@happier-dev/protocol';
 import { CLIENT_UPGRADE_REQUIRED_HTTP_STATUS } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
-import { projectHomeAuthorizationHttpFailure } from './client/homeAuthorizationHttpFailure';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
 type AccountProfileReadOptions = Readonly<{ token: string; signal?: AbortSignal;
@@ -28,14 +27,6 @@ export async function fetchAccountProfile(opts: AccountProfileReadOptions & { pr
         validateStatus: () => true,
     });
     if (isAuthenticationStatus(response.status)) {
-        const failure = projectHomeAuthorizationHttpFailure(response.status, authorization, response.data);
-        // The shared projector attaches a cause only to an actual signed request.
-        // Keep ordinary bearer recovery while retaining the signed Action refusal.
-        if (failure.failureCause) {
-            throw Object.assign(createHttpStatusError(response.status, failure.error, failure.errorCode), {
-                details: failure.details, failureCause: failure.failureCause,
-            });
-        }
         throw createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching account profile (${response.status})`, response.data);
     }
     if (response.status < 200 || response.status >= 300) {

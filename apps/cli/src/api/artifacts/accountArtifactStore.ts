@@ -74,7 +74,7 @@ import { MemoryDecisionSourceErrorCodeV1Schema } from '@happier-dev/protocol/pro
 import { requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError, HttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createBackoff } from '@/utils/time';
@@ -86,7 +86,7 @@ import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptHostInputV1Schema, DocEdi
 function artifactReadHttpError(status: number, payload?: unknown, authorizationHeaders?: Readonly<Record<string, string>>) {
   const error = createHttpStatusError(status, 'artifact_read_unavailable', 'artifact_read_unavailable');
   const refusal: ActionExecuteFailure = authorizationHeaders && (status === 401 || status === 403)
-    ? projectHomeAuthorizationHttpFailure(status, authorizationHeaders, payload)
+    ? projectUnsignedHomeAuthorizationHttpFailure(status)
     : { ok: false, errorCode: 'artifact_read_unavailable', error: 'artifact_read_unavailable' };
   const failure = { ...refusal,
     failureCause: refusal.failureCause ?? projectActionFailureCauseV1(error, 'artifacts.read') };
@@ -1027,7 +1027,7 @@ export function createAccountArtifactStore(params: Readonly<{
           });
         }
         if ((result.status === 401 || result.status === 403) && authorize) {
-          const failure = projectHomeAuthorizationHttpFailure(result.status, requestHeaders, result.data);
+          const failure = projectUnsignedHomeAuthorizationHttpFailure(result.status);
           throw Object.assign(createHttpStatusError(result.status, failure.error, failure.errorCode), { cause: failure });
         }
         const refusal = readWriteFailure(result);
@@ -1466,7 +1466,7 @@ export function createAccountArtifactStore(params: Readonly<{
         throw Object.assign(new Error('memory_decision_source_unsupported'), { code: 'memory_decision_source_unsupported' });
       if (response.status < 200 || response.status >= 300) {
         if ((response.status === 401 || response.status === 403) && input.authorizationHeaders) {
-          const failure = projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data);
+          const failure = projectUnsignedHomeAuthorizationHttpFailure(response.status);
           throw Object.assign(createHttpStatusError(response.status, failure.error, failure.errorCode), { cause: failure });
         }
         // Only published storage codes may cross this boundary. Retain status

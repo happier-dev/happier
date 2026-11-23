@@ -1,4 +1,5 @@
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { isPermissionModeGrantedV1, isModelRefGrantedV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
@@ -1269,9 +1270,14 @@ export async function runSessionAgentTransition(
 
   if (cutover.ok === false) {
     if (cutover.effect === 'none') {
-      return cutover.error === 'internal'
+      const partialResult = cutover.error === 'internal'
         ? stopped.sourceStopped('context_unavailable')
         : stopped.sourceStopped('cutover_conflict');
+      if (cutover.failure) {
+        throw createActionExecuteFailureError({ ...cutover.failure.failure,
+          details: { refusal: cutover.failure.failure.details, partialResult } });
+      }
+      return partialResult;
     }
     if (cutover.effect === 'current_view_committed') {
       return stopped.cutoverCommitted().committed('divider_unavailable');

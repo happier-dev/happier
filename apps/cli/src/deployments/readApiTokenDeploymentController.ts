@@ -3,7 +3,7 @@ import { DeploymentEnvironmentControllerResultV1Schema } from '@happier-dev/prot
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({
   ok: false,
@@ -43,11 +43,7 @@ export async function readApiTokenDeploymentController(
   );
   if (!parsed.success) {
     if (response.status === 401 || response.status === 403)
-      return projectHomeAuthorizationHttpFailure(
-        response.status,
-        headers,
-        response.data,
-      );
+      return projectUnsignedHomeAuthorizationHttpFailure(response.status);
     return failure(
       response.status === 404 || response.status === 405
         ? 'unsupported_action'

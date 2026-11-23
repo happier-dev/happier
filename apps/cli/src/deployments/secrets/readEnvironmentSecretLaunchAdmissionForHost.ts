@@ -5,7 +5,7 @@ import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/sock
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import type { DeploymentDomainChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -153,8 +153,9 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
             try {
                 const response = await axios.request<unknown>({ method: 'POST', url, headers, data, signal,
                     maxRedirects: 0, validateStatus: () => true });
-                return { response, requestHeaders: headers };
+                return response;
             } catch (error) {
+                if (error instanceof SignedHomeAuthorizationHttpError) return refuse(error.code, error.failure);
                 if (signal.aborted) return refuse('cancelled');
                 // Only a request that left and got no response proves Home unreachable;
                 // anything else keeps its own classified cause.
@@ -199,7 +200,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
             ...input.materialization, actionOperationId,
         } });
     const read = async () => {
-        const { response, requestHeaders } = await custody.request(`/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`,
+        const response = await custody.request(`/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`,
             body, input.materialization.kind === 'bindings'
                 ? input.materialization.buildMachineId || input.environmentUpdate
                     ? 'deployments.environments.update' : 'deployments.bindings.set'
@@ -212,7 +213,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
                     ? input.context.externalActionExecutionAuthorization?.binding.actionId : undefined);
         const parsed = EnvironmentSecretLaunchAdmissionResultV1Schema.safeParse(response.data);
         if (!parsed.success && (response.status === 401 || response.status === 403)) {
-            const failure = projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data);
+            const failure = projectUnsignedHomeAuthorizationHttpFailure(response.status);
             return refuse(failure.errorCode, failure);
         }
         if (!parsed.success && ![404, 405, 501].includes(response.status)) {
@@ -318,13 +319,10 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
         }
         await custody.assertCurrent();
     } catch (error) { custody.release(); throw error; }
-    const projectResponse = ({ response, requestHeaders }: Readonly<{
-        response: Readonly<{ status: number; data: unknown }>;
-        requestHeaders: Readonly<Record<string, string>>;
-    }>) => {
+    const projectResponse = (response: Readonly<{ status: number; data: unknown }>) => {
         const parsed = MachineConnectorSecretGrantResultV1Schema.safeParse(response.data);
         if (!parsed.success && (response.status === 401 || response.status === 403)) {
-            const failure = projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data);
+            const failure = projectUnsignedHomeAuthorizationHttpFailure(response.status);
             return refuse(failure.errorCode, failure);
         }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501

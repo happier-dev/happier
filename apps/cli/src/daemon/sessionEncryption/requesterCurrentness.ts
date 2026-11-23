@@ -1,6 +1,7 @@
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverConnectionErrors';
 import { delayUnrefAbortable } from '@/utils/time';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -56,6 +57,7 @@ export async function captureRequesterCurrentnessRefusal<T>(read: () => Promise<
 /** Keep named Home refusals typed; unavailable evidence retains the existing
  * runner failure/respawn policy's retryable disposition and safe code. */
 export function projectRequesterHomeReadFailure(error: unknown): unknown {
+  if (error instanceof SignedHomeAuthorizationHttpError) return error;
   const failure = parseActionExecuteFailure(error);
   if (failure?.errorCode === 'credential_scope_denied' || failure?.errorCode === 'invalid_token') return error;
   if (isPluginError(error) && error.code === 'project_requester_home_unavailable') return error;

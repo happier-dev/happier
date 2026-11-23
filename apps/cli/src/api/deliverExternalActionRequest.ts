@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { projectRelayedHomeAuthorizationFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { configuration } from '@/configuration';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { withAbortTimeout } from '@/diagnostics/httpClient';
@@ -41,14 +42,15 @@ export async function deliverExternalActionRequest(input: Readonly<{
       const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
       if (refusal.success && 'requestId' in refusal.data && refusal.data.requestId !== undefined
         && refusal.data.requestId !== input.envelope.requestId) return fail('invalid_action_output');
-      return refusal.success ? projectExternalActionHttpFailureV1(refusal.data) : fail('project_transport_unavailable');
+      return refusal.success ? projectRelayedHomeAuthorizationFailure(projectExternalActionHttpFailureV1(refusal.data)) : fail('project_transport_unavailable');
     }
     if (input.envelope.v === 2 && input.material && input.binding) return openExternalActionResponseV2({ envelope: response.data,
       binding: input.binding, request: input.envelope, material: input.material }) ?? fail('invalid_action_output');
     const parsed = parseExternalActionResponseEnvelopeV1(response.data);
     return parsed && parsed.actionId === input.actionId && parsed.requestId === input.envelope.requestId
       ? readExternalActionResponseExecutionV1(parsed) : fail('invalid_action_output');
-  } catch {
+  } catch (error) {
+    if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
     // A dispatched write may have committed even when its response never arrives.
     // Return uncertainty without replaying it or asserting that the write failed.
     return finiteSavedSecret && deliverySignal?.aborted && !input.signal?.aborted

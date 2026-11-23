@@ -338,10 +338,11 @@ describe('createDaemonExternalActionTargetResolver', () => {
     if (!origin) throw new Error('Signed host child approval origin was unavailable');
     let homeCurrent = true;
     // Only Home HTTP is substituted; schema, signature and root binding stay real.
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    const verify = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(url).toBe('https://home.example/v1/actions/machines.guard.activity.undo/execution-authorization/verify');
       const admitted = homeCurrent && sameStrictJsonValue(body.binding, authorization.binding);
-      return { status: admitted ? 200 : 403, data: admitted ? { ok: true } : {} };
+      return { status: admitted ? 200 : 403, data: admitted ? { ok: true }
+        : { error: 'credential_scope_denied', authorizationRefusal: 'effect_family' } };
     });
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1', machineId: 'controller', serverId: 'home-profile',
@@ -358,7 +359,12 @@ describe('createDaemonExternalActionTargetResolver', () => {
     // The root Action itself still needs its exact admitted request ID.
     expect(childOrigin('machines.guard.activity.undo', 'guard-undo-child')).toBeNull();
     homeCurrent = false;
-    await expect(isCurrent({ origin, actionInput: childInput })).resolves.toBe(false);
+    verify.mockClear();
+    await expect(isCurrent({ origin, actionInput: childInput })).rejects.toMatchObject({
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+      failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+    });
+    expect(verify).toHaveBeenCalledTimes(1);
   });
 
   it.each([false, true])('rechecks a managed guest Session approval through Home source custody without inventing a guest-local source runner (cause=%s)', async hasCause => {
@@ -401,10 +407,11 @@ describe('createDaemonExternalActionTargetResolver', () => {
     let currentPolicy = spawnPolicy;
     // Only Home HTTP and the current identity/permission/settings reads are
     // substituted. Signature verification, source selection and policy stay real.
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    const verify = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(url).toBe('https://home.example/v1/actions/session.spawn_new/execution-authorization/verify');
       const admitted = homeCurrent && sameStrictJsonValue(body.binding, authorization.binding);
-      return { status: admitted ? 200 : 403, data: admitted ? { ok: true } : {} };
+      return { status: admitted ? 200 : 401, data: admitted ? { ok: true }
+        : { error: 'invalid_token', authorizationRefusal: 'source_after_principal' } };
     });
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1', machineId: 'guest', serverId: 'home-profile',
@@ -428,7 +435,11 @@ describe('createDaemonExternalActionTargetResolver', () => {
       persona: { serverId: 'srv_home', sessionId: caller.sessionId }, origin: null,
     } }, actionInput: spawnInput })).resolves.toBe(false);
     homeCurrent = false;
-    await expect(check()).resolves.toBe(false);
+    verify.mockClear();
+    const reportStale = vi.fn();
+    await expect(isCurrent({ origin, actionInput: spawnInput, reportStale })).resolves.toBe(false);
+    expect(reportStale).toHaveBeenCalledWith('session_changed');
+    expect(verify).toHaveBeenCalledTimes(1);
     homeCurrent = true;
     permission = 'default';
     await expect(check()).resolves.toBe(false);

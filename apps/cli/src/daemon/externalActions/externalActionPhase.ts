@@ -13,6 +13,7 @@ import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { resolveCliRuntimeRootPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 
 const innerStageContext = new AsyncLocalStorage<Readonly<{ actionId: string; rootRequestId: string }>>();
 
@@ -132,7 +133,7 @@ export type ExternalActionPhaseFailure = Readonly<{
   phase: string;
   errorClass: string;
   message: string;
-  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' }>;
+  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' | 'action_forbidden' }>;
 }>;
 
 type ModuleSourceLocation = Readonly<{ file: string; line: number; column?: number }>;
@@ -209,7 +210,9 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
     }
   } catch { /* Thrown values can have hostile prototype or message accessors. */ }
   const typedFailure = parseActionExecuteFailure(error);
-  const executionFailure: ExternalActionPhaseFailure['executionFailure'] = isPluginError(error) && error.code === 'project_requester_home_unavailable'
+  const executionFailure: ExternalActionPhaseFailure['executionFailure'] = error instanceof SignedHomeAuthorizationHttpError
+    ? { ...error.failure, errorCode: error.code }
+    : isPluginError(error) && error.code === 'project_requester_home_unavailable'
     ? { ok: false, errorCode: error.code, error: error.code }
     : typedFailure && (typedFailure.errorCode === 'credential_scope_denied' || typedFailure.errorCode === 'invalid_token')
       ? { ...typedFailure, errorCode: typedFailure.errorCode }

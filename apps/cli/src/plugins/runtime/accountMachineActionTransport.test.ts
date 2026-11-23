@@ -9,9 +9,7 @@ import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTar
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
-import { createHttpStatusError } from '@/api/client/httpStatusError';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { createSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { MachineRpcEncryptionModeMismatchError } from '@/session/transport/rpc/machineRpc';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -110,9 +108,7 @@ it.each([
         if (outcome === 'notSent') throw markRpcRequestDisposition(createRpcCallError({
             error: 'Machine transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }), 'notSent');
         if (outcome === 'authorizationRefused') {
-            const refusal = projectHomeAuthorizationHttpFailure(403,
-                { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'test-signed-authorization' }, {});
-            throw markRpcRequestDisposition(createHttpStatusError(403, refusal.error, refusal.errorCode), 'notSent');
+            throw markRpcRequestDisposition(createSignedHomeAuthorizationHttpError(403, {}), 'notSent');
         }
         if (outcome === 'modeMismatch') throw markRpcRequestDisposition(new MachineRpcEncryptionModeMismatchError('selected-machine'), 'notSent');
         if (outcome === 'unclassified') throw markRpcRequestDisposition(new Error('Unclassified preparation failure'), 'notSent');

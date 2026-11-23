@@ -2,6 +2,7 @@ import { createServer, maxHeaderSize } from 'node:http';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
   EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -24,6 +25,7 @@ it('sends a large signed mutation through the default HTTP parser without oversi
   let received: unknown;
   let largestHeader = 0;
   let redirectedRequests = 0;
+  let refusalRequests = 0;
   const server = createServer(async (request, response) => {
     if (request.url === '/redirect') {
       const address = server.address();
@@ -32,11 +34,16 @@ it('sends a large signed mutation through the default HTTP parser without oversi
       return;
     }
     if (request.url === '/other') redirectedRequests++;
+    if (request.url === '/refused') refusalRequests++;
     largestHeader = Math.max(...request.rawHeaders.map(value => Buffer.byteLength(value)));
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     received = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     response.setHeader('content-type', 'application/json');
+    if (request.url === '/refused') {
+      response.writeHead(403).end(JSON.stringify({ error: 'credential_scope_denied', authorizationRefusal: 'effect_family' }));
+      return;
+    }
     response.end('{}');
   });
   await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
@@ -70,6 +77,16 @@ it('sends a large signed mutation through the default HTTP parser without oversi
     expect(received).toMatchObject({ v: 1, authorization: {
       executionAuthorization: authorization.token, effectActionId: 'deployments.deploy',
     }, body });
+    const refusedHeaders = createExternalActionAuthorizedRequestHeaders({ authorization,
+      effectActionId: authorization.binding.actionId, target, installationId: authorization.binding.installationId,
+      privateKey: keys.secretKey, method: 'POST', path: '/refused', body });
+    await expect(axios.post(`http://127.0.0.1:${address.port}/refused`, body, {
+      headers: refusedHeaders, validateStatus: () => true,
+    })).rejects.toMatchObject({
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+      failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+    });
+    expect(refusalRequests).toBe(1);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -174,6 +191,45 @@ it('sends an accepted-input wake policy proof through the default parser without
     const decoded = decodeExternalActionHttpBodyV1(received);
     expect(decoded?.body).toEqual(body);
     expect(decoded?.headers[MANAGED_POLICY_PROOF_HEADER]).toBe(proof);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+it.each([
+  { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
+  { status: 401, phase: 'effect_family', acceptStatus: false, unsigned: false },
+  { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false },
+  { status: 404, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
+  { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: true },
+] as const)('keeps the Home refusal phase and sends one request (%j)', async ({
+  status, phase, acceptStatus, unsigned,
+}) => {
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests++;
+    response.writeHead(status, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ error: status === 403 ? 'credential_scope_denied' : 'invalid_token', authorizationRefusal: phase }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
+    const request = axios.get(`http://127.0.0.1:${address.port}/resource`, {
+      headers: unsigned ? { Authorization: 'Bearer fixture' } : { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' },
+      ...(acceptStatus ? { validateStatus: () => true } : {}),
+    });
+    if (unsigned || status === 404) {
+      await expect(request).resolves.toMatchObject({ status });
+    } else {
+      await expect(request).rejects.toMatchObject({
+        ok: false, errorCode: 'action_forbidden', error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
+        response: { status },
+        failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
+      });
+    }
+    expect(requests).toBe(1);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

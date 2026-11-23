@@ -167,19 +167,22 @@ it.each(['bearer', 'signed'] as const)('distinguishes a rejected %s request from
 });
 
 it.each([401, 403])('preserves the closed Home authorization phase on HTTP %s across deployment reads', async status => {
-    vi.spyOn(axios, 'request').mockResolvedValue({ status, data: {
+    const request = vi.spyOn(axios, 'request').mockResolvedValue({ status, data: {
         error: status === 401 ? 'invalid_token' : 'credential_scope_denied', authorizationRefusal: 'effect_family',
     } });
     const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
         resolveRequestHeaders: () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'never-record-header' }),
         dispatchReceipt: async () => { throw new Error('Read cannot dispatch a receipt'); } });
-    const results = [
-        await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' }, {}),
-        await deps.readEnvironmentAccess({ serverId: 'home', environmentIds: ['environment'] }, {}, 'deployments.receipts.list'),
-    ];
-    for (const result of results) expect(result).toEqual({ ok: false, errorCode: 'action_forbidden',
+    const failure = { ok: false, errorCode: 'action_forbidden',
         error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
-        failureCause: { phase: 'home.authorization.effect_family', errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: status } });
+        failureCause: { phase: 'home.authorization.effect_family', errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: status } };
+    await expect(deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' }, {}))
+        .resolves.toEqual(failure);
+    expect(request).toHaveBeenCalledTimes(1);
+    request.mockClear();
+    await expect(deps.readEnvironmentAccess({ serverId: 'home', environmentIds: ['environment'] }, {}, 'deployments.receipts.list'))
+        .resolves.toEqual(failure);
+    expect(request).toHaveBeenCalledTimes(1);
 });
 
 it('does not disclose unknown Home refusal metadata or classify bearer authentication as signed execution', async () => {

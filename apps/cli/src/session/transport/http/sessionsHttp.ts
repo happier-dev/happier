@@ -39,6 +39,7 @@ import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBin
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createAuthenticationHttpStatusError, createHttpStatusError, HttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import {
   buildCurrentAccountStoredContentCompatibilityHttpHeaders,
   readCliClientUpgradeRequired,
@@ -1097,6 +1098,7 @@ export type ApplySessionAgentTransitionCutoverHttpResult =
   | Readonly<{
       ok: false;
       effect: 'none';
+      failure?: SignedHomeAuthorizationHttpError;
       error:
         | 'invalid-params'
         | 'forbidden'
@@ -1208,7 +1210,10 @@ export async function applySessionAgentTransitionCutover(params: Readonly<{
         validateStatus: () => true,
       },
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof SignedHomeAuthorizationHttpError) {
+      return { ok: false, effect: 'none', error: 'forbidden', failure: error };
+    }
     return { ok: false, effect: 'unknown', error: 'transport' };
   }
 
@@ -1789,6 +1794,7 @@ async function postArchiveMutation(params: Readonly<{
       validateStatus: () => true,
     },
   ).catch((cause: unknown) => {
+    if (cause instanceof SignedHomeAuthorizationHttpError) throw cause;
     const disposition = classifyHomeDomainHttpMutationFailureV1({ error: cause, issued: true, aborted: params.signal?.aborted === true });
     throw Object.assign(new Error('Session archive mutation transport failed'), {
       code: disposition === 'not_dispatched' ? 'server_unreachable' : 'outcome_unknown', cause,

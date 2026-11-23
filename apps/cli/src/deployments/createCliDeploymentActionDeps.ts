@@ -4,7 +4,7 @@ import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentException } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -185,7 +185,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (changed) return changed;
       context.signal?.throwIfAborted();
       const parsed = DeploymentEnvironmentAccessResultV1Schema.safeParse(response.data);
-      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
+      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectUnsignedHomeAuthorizationHttpFailure(response.status);
       if (!parsed.success) return failure(response.status === 404 || response.status === 405 || response.status === 501
         ? 'unsupported_action' : 'invalid_action_output');
       if (!parsed.data.ok) return parsed.data;
@@ -199,6 +199,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       return parsed.data;
     } catch (error) {
       const thrown = error instanceof HomeTransportFailure ? error.transport : error;
+      if (thrown instanceof SignedHomeAuthorizationHttpError) return thrown.failure;
       return context.signal?.aborted ? failure('cancelled')
         : transportRefusal(thrown) ?? localAdmissionFailure(thrown) ?? homeRequestFailure(error, context);
     }
@@ -387,7 +388,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       const parsed = (approvalMetadata ? DeploymentApprovalEnvironmentResultV1Schema : actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
       if (!parsed.success && providerVariables) return withProviderEffect(failure('outcome_unknown'));
-      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
+      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectUnsignedHomeAuthorizationHttpFailure(response.status);
       if (!parsed.success && method === 'GET' && ![404, 405, 501].includes(response.status)) {
         return deploymentOutputValidationFailure(actionId, response.status, parsed.error);
       }
@@ -407,6 +408,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) } : parsed.data;
     } catch (caught) {
       const error = caught instanceof HomeTransportFailure ? caught.transport : caught;
+      if (error instanceof SignedHomeAuthorizationHttpError) return withProviderEffect(error.failure);
       if (providerVariables) return withProviderEffect({ ...failure(context.signal?.aborted ? 'cancelled' : 'outcome_unknown'),
         failureCause: normalizeActionExecutorThrownError(error, 'deployment.home.request').failureCause });
       // HTTP rejected these headers before routing, including for mutations.

@@ -43,7 +43,7 @@ import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from '.
 import { logger } from '@/ui/logger';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { createDeploymentPreparationContentArtifactIdV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { z } from 'zod/mini';
@@ -955,7 +955,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             data: body, signal: context.signal, validateStatus: () => true, headers: requestHeaders });
                         // A Home refusal is not a list result; keep its typed authorization reason.
                         if (response.status === 401 || response.status === 403) {
-                            return refuse(projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data));
+                            return refuse(projectUnsignedHomeAuthorizationHttpFailure(response.status));
                         }
                         return DeploymentTargetLinksListResultV1Schema.parse(response.data);
                     },

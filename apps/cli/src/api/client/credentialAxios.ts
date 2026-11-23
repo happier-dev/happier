@@ -1,13 +1,20 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosRequestTransformer, type AxiosResponse } from 'axios';
 import { assertCredentialRequestRedirectAllowed, CREDENTIAL_REQUEST_REDIRECT_POLICY, CredentialRequestRedirectError,
   resolveCredentialRequestRedirect } from '@happier-dev/cli-common/homeTarget';
-import { createHttpStatusError, readHttpStatus } from './httpStatusError';
+import { createHttpStatusError, isAuthenticationStatus, readHttpStatus } from './httpStatusError';
+import { createSignedHomeAuthorizationHttpError } from './homeAuthorizationHttpFailure';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
   EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 const privateActionProofHeaders = new Set(EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1);
 
-function scopeRedirects(client: AxiosInstance, config: AxiosRequestConfig | undefined): AxiosRequestConfig {
+function carriesExecutionAuthorization(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function scopeRequest(client: AxiosInstance, config: AxiosRequestConfig | undefined) {
+  let signed: boolean | undefined;
   let requestUrl: string | undefined;
   let method = config?.method ?? client.defaults.method ?? 'GET';
   let hasSecretBody = config?.data != null;
@@ -15,6 +22,7 @@ function scopeRedirects(client: AxiosInstance, config: AxiosRequestConfig | unde
   const transforms = config?.transformRequest ?? client.defaults.transformRequest;
   const frameAuthorization: AxiosRequestTransformer = function (data, headers) {
     const logicalMethod = (this.method ?? 'get').toLowerCase();
+    signed = carriesExecutionAuthorization(headers.get(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER));
     if (!['get', 'post', 'put', 'patch', 'delete'].includes(logicalMethod)) return data;
     const frame = encodeExternalActionHttpBodyV1(Object.fromEntries(
       EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.map(header => [header, headers.get(header)])), data);
@@ -30,7 +38,7 @@ function scopeRedirects(client: AxiosInstance, config: AxiosRequestConfig | unde
     hasSecretBody = true;
     return frame;
   };
-  return {
+  const scopedConfig: AxiosRequestConfig = {
     ...config,
     transformRequest: [frameAuthorization, ...(Array.isArray(transforms) ? transforms : transforms ? [transforms] : [])],
     maxRedirects: Math.min(config?.maxRedirects ?? client.defaults.maxRedirects ?? CREDENTIAL_REQUEST_REDIRECT_POLICY.maxRedirects,
@@ -53,18 +61,24 @@ function scopeRedirects(client: AxiosInstance, config: AxiosRequestConfig | unde
       hasSecretBody &&= !next.dropBody;
     },
   };
+  return {
+    config: scopedConfig,
+    settle: (response: Promise<AxiosResponse<unknown>>) => settle(response, () => signed
+      ?? Object.entries(config?.headers ?? {}).some(([name, value]) =>
+        name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER && carriesExecutionAuthorization(value))),
+  };
 }
 
-function assertCredentialResponseAllowed(status: number): void {
+function assertCredentialResponseAllowed(status: number, payload: unknown, isSigned: () => boolean): void {
   assertCredentialRequestRedirectAllowed(status);
   if (status === 431) throw createHttpStatusError(status, 'request_headers_too_large', 'request_headers_too_large');
+  if (isAuthenticationStatus(status) && isSigned()) throw createSignedHomeAuthorizationHttpError(status, payload);
 }
 
-async function settle(response: Promise<AxiosResponse<unknown>>): Promise<AxiosResponse<unknown>> {
+async function settle(response: Promise<AxiosResponse<unknown>>, isSigned: () => boolean): Promise<AxiosResponse<unknown>> {
+  let result: AxiosResponse<unknown>;
   try {
-    const result = await response;
-    assertCredentialResponseAllowed(result.status);
-    return result;
+    result = await response;
   } catch (error) {
     // follow-redirects/Axios wrap hook failures; expose only the closed policy error.
     for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
@@ -72,9 +86,15 @@ async function settle(response: Promise<AxiosResponse<unknown>>): Promise<AxiosR
     }
     // Both Axios validateStatus branches must produce the same secret-free error.
     const status = readHttpStatus(error);
-    if (status !== null) assertCredentialResponseAllowed(status);
+    if (status !== null) {
+      const response = typeof error === 'object' && error !== null && 'response' in error ? error.response : undefined;
+      const data = typeof response === 'object' && response !== null && 'data' in response ? response.data : undefined;
+      assertCredentialResponseAllowed(status, data, isSigned);
+    }
     throw error;
   }
+  assertCredentialResponseAllowed(result.status, result.data, isSigned);
+  return result;
 }
 
 const bodyMethodNames = ['post', 'put', 'patch', 'postForm', 'putForm', 'patchForm'] as const;
@@ -95,7 +115,8 @@ function credentialClient<T extends AxiosInstance>(client: T): T {
     const config = typeof first === 'string'
       ? { ...(second as AxiosRequestConfig | undefined), url: first }
       : first as AxiosRequestConfig;
-    return settle(client.request(scopeRedirects(client, config)));
+    const scoped = scopeRequest(client, config);
+    return scoped.settle(client.request(scoped.config));
   };
   return new Proxy(client, {
     apply(_target, _receiver, args: unknown[]) { return request(args); },
@@ -109,14 +130,15 @@ function credentialClient<T extends AxiosInstance>(client: T): T {
       else if (isAxiosMethodName(key)) {
         method = (...args: unknown[]) => {
           const configIndex = bodyMethods.has(key) ? 2 : 1;
-          args[configIndex] = scopeRedirects(client, {
+          const scoped = scopeRequest(client, {
             ...(args[configIndex] as AxiosRequestConfig | undefined),
             url: String(args[0]), method: key.replace('Form', ''),
             ...(bodyMethods.has(key) ? { data: args[1] } : {}),
           });
+          args[configIndex] = scoped.config;
           // Axios owns these public method signatures; the decorator changes only config.
           const instance: AxiosInstance = target;
-          return settle(Reflect.apply(Reflect.get(instance, key), target, args) as Promise<AxiosResponse<unknown>>);
+          return scoped.settle(Reflect.apply(Reflect.get(instance, key), target, args) as Promise<AxiosResponse<unknown>>);
         };
       } else return Reflect.get(target, key, receiver);
       methods.set(key, method);

@@ -22,8 +22,8 @@ import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSche
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readActionCredentialScopeDeniedHttpFailureV1, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { projectRelayedHomeAuthorizationFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
@@ -2348,7 +2348,7 @@ export async function prepareExternalActionRequesterAccountAuthorization(
   return (await prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input))?.authorization ?? null;
 }
 
-/** Spend the existing requester projection without substituting an Account bearer. */
+/** Build the request proof consumed by credentialAxios, which frames it and projects Home's refusal. */
 export async function resolveExternalActionRequesterServerRequestHeaders(input: Readonly<{
   context: Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'>;
   effectActionId: string;
@@ -2679,7 +2679,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       if (response.status !== 200 || !context.success || context.data.requestId !== params.continuation.creationRequestId
         || context.data.enrollmentInstallation.machineId !== params.targetMachineId) return fail('admission_unavailable');
       recipient = context.data.enrollmentInstallation;
-    } catch { return fail(params.signal?.aborted ? 'cancelled' : 'admission_unavailable'); }
+    } catch (error) {
+      if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
+      return fail(params.signal?.aborted ? 'cancelled' : 'admission_unavailable');
+    }
   }
   // Each child is an independent invocation, not a reuse of the parent codec or
   // either Account's encryption key. Only the exact enrolled guest can open it.
@@ -2717,7 +2720,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       const error = ExternalActionHttpErrorSchema.safeParse(response.data);
       if (error.success && 'requestId' in error.data && error.data.requestId !== undefined
         && error.data.requestId !== envelope.requestId) return fail('invalid_action_output');
-      return error.success ? projectExternalActionHttpFailureV1(error.data) : fail('target_unavailable');
+      return error.success ? projectRelayedHomeAuthorizationFailure(projectExternalActionHttpFailureV1(error.data)) : fail('target_unavailable');
     }
     if (envelope.v === 2 && childMaterial) return await observe(openExternalActionResponseV2({ envelope: response.data,
       binding, request: envelope, material: childMaterial }) ?? fail('invalid_encrypted_envelope'));
@@ -2725,6 +2728,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     return await observe(responseEnvelope && responseEnvelope.actionId === params.actionId
       && responseEnvelope.requestId === requestId ? readExternalActionResponseExecutionV1(responseEnvelope) : fail('invalid_envelope'));
   } catch (error) {
+    if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
     refuseExternalActionPhase('managed_child_http', params.targetMachineId, error);
     return fail(params.signal?.aborted ? 'cancelled' : 'target_unavailable');
   }
@@ -2968,7 +2972,11 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
         : !('credentialId' in next) || next.credentialId !== binding.credentialId
           || next.principalId !== binding.principalId || !sameStrictJsonValue(next.grant, binding.grant))) return null;
     return child.data;
-  } catch (error) { refuseExternalActionPhase('handoff_authorization', input.machineId, error); return null; }
+  } catch (error) {
+    if (error instanceof SignedHomeAuthorizationHttpError) throw error;
+    refuseExternalActionPhase('handoff_authorization', input.machineId, error);
+    return null;
+  }
 }
 
 export async function verifyExternalActionExecutionAuthorizationCurrent(input: Readonly<{
@@ -2981,7 +2989,7 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
   managedFiniteWakeTarget?: ManagedWakeTargetV1;
   retainedDiscussionSource?: SessionInputSourceSessionV1;
   /** Approval replay can report Home's verified Session source refusal as stale. */
-  onSessionSourceNotCurrent?: () => void;
+  onSessionSourceNotCurrent?: (failure: SignedHomeAuthorizationHttpError) => void;
   signal?: AbortSignal;
 }>): Promise<boolean> {
   const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(
@@ -3010,21 +3018,10 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
     });
     traceExternalActionInnerStage('requester.root_verification.http', { httpStatus: response.status });
     if (response.status < 200 || response.status >= 300) {
-      const denied = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
-      const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-      const failure = denied ? createActionExecuteFailureError(denied)
-        : response.status === 401 && refusal.success && refusal.data.error === 'invalid_token'
-          ? createActionExecuteFailureError({ ok: false, errorCode: refusal.data.error, error: refusal.data.error })
-          : createHttpStatusError(response.status, 'External Action authorization is unavailable');
+      const failure = createHttpStatusError(response.status, 'External Action authorization is unavailable');
       refuseExternalActionPhase('signed_root_http_status', input.authorization.binding.machineId, failure, {
         ...readSessionInputAdmissionDiagnostic(input.authorization.binding), httpStatus: response.status,
       });
-      if (input.onSessionSourceNotCurrent && response.status === 401 && refusal.success
-        && refusal.data.error === 'invalid_token' && (refusal.data.authorizationRefusal === 'source_before_principal'
-          || refusal.data.authorizationRefusal === 'source_after_principal')) {
-        input.onSessionSourceNotCurrent();
-        return false;
-      }
       rethrowRequesterHomeReadFailure(failure);
       return false;
     }
@@ -3032,6 +3029,17 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
     if (!parsed.success) refuseExternalActionPhase('signed_root_http_response', input.authorization.binding.machineId, parsed.error);
     return parsed.success;
   } catch (error) {
+    if (error instanceof SignedHomeAuthorizationHttpError) {
+      refuseExternalActionPhase('signed_root_http_status', input.authorization.binding.machineId, error, {
+        ...readSessionInputAdmissionDiagnostic(input.authorization.binding), httpStatus: error.response.status,
+      });
+      if (error.response.status === 401 && input.onSessionSourceNotCurrent
+        && (error.authorizationRefusal === 'source_before_principal' || error.authorizationRefusal === 'source_after_principal')) {
+        input.onSessionSourceNotCurrent(error);
+        return false;
+      }
+      throw error;
+    }
     refuseExternalActionPhase('signed_root_http_request', input.authorization.binding.machineId, error);
     rethrowRequesterHomeReadFailure(error);
     return false;

@@ -888,11 +888,16 @@ describe('managed continuation through the ordinary public Action transport', ()
             binding: { ...root.binding, accountEncryptionMode: 'plain' } } })).resolves.toMatchObject({ ok: true, result: { sessionId: 'plain-session' } });
     });
 
-    it('preserves a genuine child grant refusal instead of reporting it as unavailable transport', async () => {
-        vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: { error: 'credential_scope_denied' } });
+    it('preserves a signed child dispatch refusal and its phase', async () => {
+        const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403,
+            data: { error: 'credential_scope_denied', authorizationRefusal: 'effect_family' } });
         await expect(dispatchManagedSessionStart({ input, continuation, authorization: root,
             serverHttpBaseUrl: 'https://home.example', installationId: 'installation', privateKey: keyPair.secretKey,
-            material })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            material })).resolves.toMatchObject({
+            ok: false, errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+            failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+        });
+        expect(post).toHaveBeenCalledTimes(1);
     });
 
     it('refuses a saved target from another Home before transmitting or rewriting it to the root Home', async () => {

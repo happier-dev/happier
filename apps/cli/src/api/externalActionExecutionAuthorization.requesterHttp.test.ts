@@ -1131,16 +1131,21 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
   });
 
-  it.each([401, 403])('preserves a definitive Home refusal code (%s)', async status => {
+  it.each([{ status: 401, phase: 'verification_purpose' }, { status: 403, phase: 'effect_family' }] as const)
+  ('preserves a definitive Home refusal phase (%j)', async ({ status, phase }) => {
     const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
     const nativeAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
       binding: { ...authorization.binding, actionId: 'session.message.send', requestId } });
     const code = status === 403 ? 'credential_scope_denied' : 'invalid_token';
-    vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: code } });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: code, authorizationRefusal: phase } });
     await expect(verifyExternalActionExecutionAuthorizationCurrent({ authorization: nativeAuthorization, effectActionId: nativeAuthorization.binding.actionId,
       target, privateKey: keys.secretKey, installationId: authorization.binding.installationId,
-      serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({ ok: false, errorCode: code });
+      serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({
+      ok: false, errorCode: 'action_forbidden', error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
+      failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
+    });
+    expect(post).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith('[external-action-phase]', expect.objectContaining({
       phase: 'signed_root_http_status', httpStatus: status, requestId, actionId: 'session.message.send',
     }));
@@ -1195,6 +1200,28 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       pat: 'terminal-credential', serverHttpBaseUrl: 'https://home.test',
     })).resolves.toEqual({ ok: false, code: 'present_user_required' });
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the signed refusal on the published Machine read and preserves 404 absence', async () => {
+    const { readPublishedMachineRow } = await import('./machine/readPublishedMachineRow');
+    const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 403, data: {
+      error: 'credential_scope_denied', authorizationRefusal: 'effect_family',
+    } }).mockRejectedValueOnce(new axios.AxiosError('Missing Machine', undefined, undefined, undefined,
+      { status: 404 } as ConstructorParameters<typeof axios.AxiosError>[4]));
+    const projected = { ...authorization, requesterHttpProjection: {
+      accountId: authorization.binding.accountId, serverId: 'home', serverIdentityId: authorization.binding.serverIdentityId,
+      serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
+      createRequestHeaders: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' }),
+    } };
+    const read = () => readPublishedMachineRow(target.machineId, undefined, { authorization: projected });
+    await expect(read()).rejects.toMatchObject({
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+      failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+    });
+    expect(get).toHaveBeenCalledTimes(1);
+    get.mockClear();
+    await expect(read()).resolves.toBeNull();
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it('carries the Home authority refusal through the daemon public ingress without dispatch or another mint', async () => {
@@ -1372,7 +1399,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
         sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
     } });
     let changeRoot = false;
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       expect(request.handoffPreflight).toEqual({ authorization: root });
       expect(request.handoffContinuation).toBeUndefined();
@@ -1397,6 +1424,14 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(await prepare(input)).toMatchObject({ token: 'preflight-child' });
     changeRoot = true;
     expect(await prepare(input)).toBeNull();
+    post.mockClear().mockResolvedValueOnce({ status: 401, data: {
+      error: 'invalid_token', authorizationRefusal: 'verification_purpose',
+    } });
+    await expect(prepare(input)).rejects.toMatchObject({
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:verification_purpose)',
+      failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 },
+    });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it('derives a handoff child from the retained exact root after Session quiescence and refuses a changed root binding', async () => {

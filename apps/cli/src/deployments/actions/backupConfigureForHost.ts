@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -114,7 +114,7 @@ export function createDeploymentBackupConfigureForHost(host: Host) {
                 await host.assertCurrent(currentContext);
                 const parsed = DeploymentEnvironmentUpdateResultV1Schema.safeParse(response.data);
                 if (!parsed.success) return response.status === 401 || response.status === 403
-                    ? projectHomeAuthorizationHttpFailure(response.status, headers, response.data)
+                    ? projectUnsignedHomeAuthorizationHttpFailure(response.status)
                     : deploymentOutputValidationFailure('deployments.backup.configure', response.status, parsed.error);
                 const saved = parsed.data;
                 if (!saved.ok) return projectDeploymentFailure(saved.error);

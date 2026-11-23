@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import nacl from 'tweetnacl';
 import { z } from 'zod';
 import { resolveExistingSessionAttachContext } from '@/daemon/sessionEncryption/resolveExistingSessionAttachContext';
 import { logger } from '@/ui/logger';
@@ -278,6 +279,32 @@ describe('sessionControl.sessionsHttp.applySessionAgentTransitionCutover', () =>
   }).strict();
   const timing = { v: 1, minMs: 200, maxMs: 200 } as const;
   const sessionTiming = { v: 1, metadata: timing, agentState: null } as const;
+
+  it('preserves a definite signed cutover refusal and sends one request', async () => {
+    const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 403, data: { error: 'credential_scope_denied', authorizationRefusal: 'effect_family' },
+    });
+    const actionId = 'session.agent.transition';
+    const target = { kind: 'session', sessionId: 's1' } as const;
+    const installationId = 'installation';
+    await expect(applySessionAgentTransitionCutover({
+      token: 'unused', sessionId: target.sessionId,
+      currentView: { kind: 'legacy_v0', expectedMetadataVersion: 1, metadataCiphertext: 'metadata',
+        expectedAgentStateVersion: 1, agentStateCiphertext: null },
+      divider: { localId: 'agent-transition:submitted-1', content: { t: 'encrypted', c: 'divider' } },
+      externalAction: { effectActionId: actionId, installationId, privateKey: nacl.sign.keyPair().secretKey,
+        context: { externalActionTarget: target, externalActionExecutionAuthorization: {
+          v: 1, token: 'fixture',
+          binding: { accountId: 'account', custodianAccountId: 'account', serverIdentityId: 'home',
+            machineId: 'machine', installationId, requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43),
+            actionId, target, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'e2ee' },
+        } } },
+    })).resolves.toMatchObject({ ok: false, effect: 'none', failure: {
+      errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+      failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 },
+    } });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
 
   it.each(['plain', 'e2ee'] as const)('sends one legacy cutover accepted by the strict 0.2 server (%s)', async mode => {
     const currentView = {

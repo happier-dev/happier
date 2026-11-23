@@ -373,6 +373,7 @@ async function executeExternalActionRequest(input: Readonly<{
     if (!envelopeCodecMaterial) return { kind: 'invalid_request',
       errorCode: !current.ok && current.executionFailure ? current.executionFailure.errorCode
         : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+      ...(!current.ok && current.executionFailure?.failureCause ? { failureCause: current.executionFailure.failureCause } : {}),
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     rootAdmittedTarget = authorization.binding.target;
   }
@@ -392,7 +393,9 @@ async function executeExternalActionRequest(input: Readonly<{
     controllerInvocation = opened?.invocation;
     if (!opened || managedControllerCodec) return { kind: 'invalid_request',
       errorCode: current && !current.ok && current.executionFailure ? current.executionFailure.errorCode
-        : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
+        : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+      ...(current && !current.ok && current.executionFailure?.failureCause ? { failureCause: current.executionFailure.failureCause } : {}),
+      requestId: envelope.data.requestId };
     managedReviewedParent = opened.reviewedParent;
     managedSessionCreationTag = opened.sessionCreationTag;
     rootAdmittedTarget = authorization?.binding.target;

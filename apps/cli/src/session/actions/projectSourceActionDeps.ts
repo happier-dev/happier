@@ -1,7 +1,7 @@
 import axios from '@/api/client/credentialAxios';
 import { isAxiosError } from 'axios';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -78,7 +78,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       try { output = schema.parse(response.data); }
       catch {
         if (response.status === 404 || response.status === 405 || response.status === 501) return failure('unsupported_action');
-        if (response.status === 401 || response.status === 403) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
+        if (response.status === 401 || response.status === 403) return projectUnsignedHomeAuthorizationHttpFailure(response.status);
         return projectConfirmedActionHttpRefusal(failure(method === 'GET' ? 'invalid_action_output' : 'outcome_unknown'), response.status, response.data);
       }
       if (method === 'GET') {
@@ -88,6 +88,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       }
       return projectConfirmedActionHttpRefusal(output, response.status, response.data);
     } catch (error) {
+      if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
       if (outcome === 'cancelled' || context.signal?.aborted) return { ...failure('cancelled'), failureCause: projectActionFailureCauseV1(error, actionId) };
       if (method !== 'GET' && outcome === 'outcome_unknown') return { ...failure('outcome_unknown'), failureCause: projectActionFailureCauseV1(error, actionId) };
