@@ -72,8 +72,8 @@ it.each([true, false])('reads account allowance on demand through OAuth-only MSP
     const before = [...f.values];
     await expect(museConnectedAccountRuntime.quota!(f.context)).resolves.toMatchObject({
       observedAtMs: sample.usage.observedAtMs, planLabel: 'Subscription', limits: [
-        { id: 'weekly', used: 9, remainingPct: 91, resetsAtMs: 1794787200000, windowDurationMs: 604800000 },
-        { id: 'window', used: 6, remainingPct: 94, windowDurationMs: 18000000 },
+        { id: 'weekly', status: 'ok', utilizationPct: 9, remainingPct: 91, resetsAtMs: 1794787200000, windowDurationMs: 604800000 },
+        { id: 'window', status: 'ok', utilizationPct: 6, remainingPct: 94, windowDurationMs: 18000000 },
       ],
     });
     expect((await f.audit()).methods).toEqual(['initialize', 'initialized', 'usage/refresh']);
@@ -88,7 +88,9 @@ it('refreshes an imported OAuth login with no invented expiry', async () => {
   f.values.set('nativeObtainedVia', 'native-import');
   f.values.delete('expiresAtMs');
   try {
-    await expect(museConnectedAccountRuntime.quota!(f.context)).resolves.toMatchObject({ limits: [{ id: 'weekly', used: 9 }, { id: 'window', used: 6 }] });
+    await expect(museConnectedAccountRuntime.quota!(f.context)).resolves.toMatchObject({
+      limits: [{ id: 'weekly', utilizationPct: 9 }, { id: 'window', utilizationPct: 6 }],
+    });
     expect((await f.audit()).methods).toEqual(['initialize', 'initialized', 'usage/refresh']);
     await f.assertCleanedUp();
   } finally { await f.dispose(); }

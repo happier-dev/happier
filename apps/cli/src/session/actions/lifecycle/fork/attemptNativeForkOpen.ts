@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { readAgentStartupFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
 import { readProviderSessionIdSessionState } from '@happier-dev/agents';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
@@ -175,12 +175,14 @@ export async function attemptNativeForkOpen(params: Readonly<{
         if (failure.code === 'spawn_failed' && failure.launchError
             && (readTeamCredentialLaunchFailureCode(failure.launchError.code)
                 ?? readAgentStartupFailureCode(failure.launchError.code))) {
-            return { ok: false, errorCode: failure.launchError.code, errorMessage: failure.launchError.message };
+            return { ok: false, errorCode: failure.launchError.code, errorMessage: failure.launchError.message,
+                ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}) };
         }
         return {
             ok: false,
             errorCode: result.errorCode,
             errorMessage: result.errorMessage,
+            ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
         };
     }
     if (result.type !== 'success' || !result.sessionId) {
@@ -189,7 +191,6 @@ export async function attemptNativeForkOpen(params: Readonly<{
             errorCode: (result as { errorCode?: string }).errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: (result as { errorMessage?: string }).errorMessage
                 ?? 'Failed to spawn native fork session',
-            ...(result.type === 'error' && result.errorDetail ? { errorDetail: result.errorDetail } : {}),
         };
     }
     if (result.sessionId === params.parentSessionId) {
@@ -202,6 +203,7 @@ export async function attemptNativeForkOpen(params: Readonly<{
 
     const childSessionId = result.sessionId;
     let expectedTrackedRunner: ExactTrackedRunnerStopWitness | undefined;
+    let launchError: SessionSpawnLaunchErrorV1 | undefined;
     const requestId = typeof params.requestId === 'string'
         && params.requestId.trim().length > 0
         ? params.requestId.trim()
@@ -229,13 +231,14 @@ export async function attemptNativeForkOpen(params: Readonly<{
             if (openAttestation.status === 'construction_failed') expectedTrackedRunner = openAttestation.expectedTrackedRunner;
             const failure = openAttestation.status === 'construction_failed' ? openAttestation.failure : openAttestation;
             if (failure.code) {
-                throw new PluginError({ code: failure.code,
-                    ...(failure.failureCause ? { details: { failureCause: failure.failureCause } } : {}),
-                    message: readSessionStartupFailurePreview(failure.code,
-                        resolveAgentDisplayTitle(params.forkBackendResolution.agentHintAgentId))
-                        ?? (openAttestation.status === 'construction_failed'
-                            ? 'Child native Session construction failed'
-                            : 'Child runner exited before native fork open attestation') });
+                const message = readSessionStartupFailurePreview(failure.code,
+                    resolveAgentDisplayTitle(params.forkBackendResolution.agentHintAgentId), failure.failureCause)
+                    ?? (openAttestation.status === 'construction_failed'
+                        ? 'Child native Session construction failed'
+                        : 'Child runner exited before native fork open attestation');
+                launchError = { kind: 'launch_error', code: failure.code, message,
+                    ...(failure.failureCause ? { failureCause: failure.failureCause } : {}) };
+                throw new Error(message);
             }
             throw new Error('Child runner exited before native fork open attestation');
         }
@@ -312,10 +315,8 @@ export async function attemptNativeForkOpen(params: Readonly<{
         }
         return {
             ok: false,
-            errorCode: isPluginError(error)
-                ? readTeamCredentialLaunchFailureCode(error.code) ?? readAgentStartupFailureCode(error.code)
-                    ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED
-                : SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorCode: launchError?.code ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            ...(launchError ? { errorDetail: launchError } : {}),
             errorMessage: error instanceof Error
                 ? error.message
                 : 'Failed to load native fork child session metadata',

@@ -30,6 +30,10 @@ it.each([
     { entry: 'retained without installation', installationId: null, reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' },
     { entry: 'offline during delivery', installationId: 'retained-installation', reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
     { entry: 'authorization mint without installation', installationId: null, reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' },
+    ...(['agents.models.list', 'agents.config_options.list'] as const).map(inventoryActionId => ({
+        entry: `authorization mint for offline ${inventoryActionId}`, inventoryActionId,
+        installationId: 'retained-installation', reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine',
+    })),
 ])('returns a typed refusal for an unavailable Machine ($entry)', async diagnostic => {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });
     // The retained Machine exists before this Home HTTP ingress is started.
@@ -57,15 +61,17 @@ it.each([
             return { ok: false, error: 'RPC_METHOD_NOT_AVAILABLE' };
         } }) });
     try {
+        const inventoryActionId = 'inventoryActionId' in diagnostic ? diagnostic.inventoryActionId : undefined;
+        const actionId = inventoryActionId ?? 'machines.services.list';
         const envelope = { v: 1, target: { kind: 'machine', machineId: machine.id },
-            input: { serverId: homeId, machineId: machine.id } };
-        const mint = diagnostic.entry === 'authorization mint without installation';
+            input: { machineId: machine.id, ...(inventoryActionId ? { agentId: 'muse' } : { serverId: homeId }) } };
+        const mint = diagnostic.entry.startsWith('authorization mint');
         const response = await instance.inject({ method: 'POST',
-            url: mint ? bindExternalActionExecutionAuthorizationHttpPathV1('machines.services.list') : '/v1/actions/machines.services.list',
+            url: mint ? bindExternalActionExecutionAuthorizationHttpPathV1(actionId) : `/v1/actions/${actionId}`,
             headers: { authorization: `Bearer ${token}` },
             payload: mint ? { v: 1, machineId: machine.id, envelope } : envelope });
         const details = { reason: diagnostic.reason, requiredFact: diagnostic.requiredFact, remedy: diagnostic.remedy };
-        expect(response.statusCode, response.body).toBe(mint ? 409 : 200);
+        expect(response.statusCode).toBe(mint ? 409 : 200);
         if (mint) {
             expect(ExternalActionHttpErrorSchema.parse(response.json()))
                 .toMatchObject({ code: 'target_unavailable', diagnostic: details });

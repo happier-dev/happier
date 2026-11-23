@@ -47,6 +47,10 @@ export function isReviewAgentRunActionIdV1(actionId: string): boolean {
 export function isMachineAgentInventoryReadActionIdV1(actionId: string): boolean {
   return actionId === 'machines.agents.list' || actionId === 'review.engines.list';
 }
+const LIVE_AGENT_INVENTORY_ACTION_IDS_V1 = ['agents.models.list', 'agents.config_options.list'] as const;
+export function isLiveAgentInventoryActionIdV1(actionId: string): boolean {
+  return LIVE_AGENT_INVENTORY_ACTION_IDS_V1.some(id => id === actionId);
+}
 /** These start surfaces only offer read-only execution. */
 export function isReadOnlyExecutionRunStartActionIdV1(actionId: string): boolean {
   return actionId === 'review.start' || actionId === 'subagents.plan.start';
@@ -560,8 +564,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'servers.list',
     'review.engines.list',
     'agents.backends.list',
-    'agents.models.list',
-    'agents.config_options.list',
+    ...LIVE_AGENT_INVENTORY_ACTION_IDS_V1,
     'agents.session_modes.list',
     'sessions.spawn.profiles.list',
     SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1,

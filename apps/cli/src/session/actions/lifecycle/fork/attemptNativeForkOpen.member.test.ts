@@ -7,6 +7,7 @@ import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
@@ -35,6 +36,7 @@ afterEach(() => vi.restoreAllMocks());
 it.each([
     ['agent_cli_not_runnable', 'preflight'], ['agent_cli_not_runnable', 'native'],
     ['agent_isolation_unavailable', 'preflight'], ['agent_isolation_unavailable', 'native'],
+    ['agent_session_error', 'construction'],
 ] as const)('retains the %s refusal from %s native-fork launch', async (code, phase) => {
     boundary.create.mockImplementation(() => Object.assign(new EventEmitter(), {
         connected: false, connect() {}, disconnect() {}, close() {},
@@ -63,6 +65,16 @@ it.each([
             code, retryable: false, phase: 'client_start', preparationCause: { code, stage: 'dispatch' },
             failureReason: 'unclassified_provider_error',
         } } }), occurredAt: 101 });
+    if (phase === 'construction') {
+        tracked.agentRuntimeDaemonServiceAuthorityFilePath = '/fixture/authority.json';
+        tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
+            request: { kind: 'fork', sessionId: childSessionId, cwd: '/repo',
+                source: { sessionId: 'parent', providerSessionId: 'provider-parent', cwd: '/repo' } },
+            providerSessionId: null,
+            failure: { phase: 'agent_runtime_open', code,
+                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error', providerErrorCode: -32603 } },
+        };
+    }
     const spawnSession = vi.fn<ForkSpawnSession>(async () => phase === 'preflight'
         ? { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: code, agentId: 'codex' }
         : { type: 'success', sessionId: childSessionId });
@@ -80,7 +92,11 @@ it.each([
         expect(result.errorMessage).toContain(resolveAgentDisplayTitle('codex'));
         expect(result.errorMessage).toMatch(/install.*managed runtime/iu);
     } else if (phase === 'native') expect(result.errorMessage).toBe(readSessionStartupFailurePreview(code));
+    if (phase === 'construction') expect(readActionFailureEnvelope(result)).toMatchObject({
+        errorCode: code,
+        details: { errorDetail: { kind: 'launch_error', code, failureCause: { providerErrorCode: -32603 } } },
+    });
     expect(JSON.stringify(result)).not.toContain('PRIVATE_');
     expect(spawnSession).toHaveBeenCalledTimes(1);
-    expect(stopSession).toHaveBeenCalledTimes(phase === 'native' ? 1 : 0);
+    expect(stopSession).toHaveBeenCalledTimes(phase === 'preflight' ? 0 : 1);
 });

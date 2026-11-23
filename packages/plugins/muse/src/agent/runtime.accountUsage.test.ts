@@ -116,13 +116,13 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     expect(retained[0]).toMatchObject({ providerId: 'meta', observedAtMs: nativeSample.observedAtMs,
       fetchedAtMs: nativeSample.observedAtMs, staleAfterMs: 1, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
       planLabel: 'Native subscription', meters: [
-        { meterId: 'weekly', used: 1, remainingPct: 99, resetsAt: 1794787200000 },
-        { meterId: 'window', used: 5, remainingPct: 95, resetsAt: 1794232717000, windowDurationMs: 18000000 },
+        { meterId: 'weekly', used: null, limit: null, utilizationPct: 1, remainingPct: 99, resetsAt: 1794787200000 },
+        { meterId: 'window', used: null, limit: null, utilizationPct: 5, remainingPct: 95, resetsAt: 1794232717000, windowDurationMs: 18000000 },
       ],
     });
     expect(store.listSnapshots()).toHaveLength(1);
     expect(store.listSnapshots()[0]).toMatchObject({ observedAtMs: changed.observedAtMs,
-      meters: [{ meterId: 'weekly', used: 9 }, { meterId: 'window', used: 5 }] });
+      meters: [{ meterId: 'weekly', utilizationPct: 9 }, { meterId: 'window', utilizationPct: 5 }] });
     await persistence.flush(5000);
     const writes = fixture.usageWrites;
     if (selected) {
@@ -132,7 +132,7 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
         snapshot: { accountSubject: { kind: 'providerSubject', id: 'acct_native' },
           recordKey: { accountSubjectId: 'acct_native', subjectKind: 'account' },
           observedAtMs: changed.observedAtMs, fetchedAtMs: changed.observedAtMs,
-          meters: [{ meterId: 'weekly', used: 9 }, { meterId: 'window', used: 5 }] } });
+          meters: [{ meterId: 'weekly', utilizationPct: 9 }, { meterId: 'window', utilizationPct: 5 }] } });
       expect(store.resolveBySource({ serviceId, profileId: ref.accountId, bindingKind: 'profile' })).toBe(store.listSnapshots()[0]);
     } else {
       expect(writes).toEqual([]);

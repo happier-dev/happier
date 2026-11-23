@@ -34,8 +34,9 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
     // Vendor SubscriptionUsage.weekly (mint subs_usage.weekly) denotes seven days.
     const windowDurationMs = typeof window.windowDurationMins === 'number'
       ? window.windowDurationMins * 60000 : id === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : undefined;
+    // Muse reports utilization without an underlying allowance quantity.
     limits.push({ id, label: id === 'weekly' ? 'Weekly' : 'Rolling window',
-      used: window.usedPercent, limit: 100, utilizationPct: window.usedPercent,
+      status: 'ok', utilizationPct: window.usedPercent,
       remainingPct: Math.max(0, 100 - window.usedPercent), isExhausted: window.usedPercent >= 100,
       ...(timestamp(window.resetsAtMs) ? { resetsAtMs: window.resetsAtMs } : {}),
       ...(windowDurationMs === undefined ? {} : { windowDurationMs }),

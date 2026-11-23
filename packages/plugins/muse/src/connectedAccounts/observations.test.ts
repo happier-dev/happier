@@ -42,7 +42,7 @@ describe('Muse sourced observations', () => {
     expect(parseMuseUsageObservation({ usage: { observedAtMs: 1700000000000,
       weekly: { usedPercent: 5, windowDurationMins: 8640 }, window: { usedPercent: 6 },
     } })).toMatchObject({ status: 'supported', observation: { limits: [
-      { id: 'weekly', windowDurationMs: 518400000 }, { id: 'window', used: 6 },
+      { id: 'weekly', windowDurationMs: 518400000 }, { id: 'window', utilizationPct: 6 },
     ] } });
     const rolling = parseMuseUsageObservation({ usage: { observedAtMs: 1700000000000, window: { usedPercent: 6 } } });
     if (rolling.status !== 'supported') throw new Error('Expected rolling usage');
@@ -62,7 +62,10 @@ describe('Muse sourced observations', () => {
       subs_tier_name: 'Synthetic plan', subs_usage: { weekly: { used_percent: 135, resets_at: '2026-11-16T00:00:00Z' }, window: { used_percent: 40, window_duration_mins: 300 } },
     }, 1700000000000);
     expect(observation).toMatchObject({ observedAtMs: 1700000000000, fetchedAtMs: 1700000000000,
-      meters: [{ used: 135, utilizationPct: 100, resetsAt: Date.parse('2026-11-16T00:00:00Z') }, { used: 40, windowDurationMs: 18000000 }] });
+      meters: [
+        { used: null, limit: null, unit: 'unknown', utilizationPct: 100, resetsAt: Date.parse('2026-11-16T00:00:00Z') },
+        { used: null, limit: null, unit: 'unknown', utilizationPct: 40, windowDurationMs: 18000000 },
+      ] });
     expect(observation?.meters[0]).toHaveProperty('windowDurationMs', 604800000);
     expect(JSON.stringify(observation)).not.toContain('synthetic-key');
     expect(JSON.stringify(observation)).not.toContain('person@example.test');

@@ -1,6 +1,6 @@
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
-import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1, isLiveAgentInventoryActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
@@ -548,7 +548,9 @@ async function resolveExternalActionExecutionMachineAccessInTx(
             ?? (input.executionBinding ? readExternalActionBindingAuthority(input.executionBinding) : undefined),
         sessionActionOrigin: input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin,
         executionBinding: input.executionBinding, sessionSpawnAdmission,
-        ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }),
+        // These exact inventory reads need the live Agent. Refuse at mint before
+        // the requester seals credentials for an installation that cannot answer.
+        requireOnline: input.requireOnline ?? (input.carrier === 'select' && isLiveAgentInventoryActionIdV1(input.actionId)),
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced || clientCarrier ? {} : { actionId: input.actionId }) });

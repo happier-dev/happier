@@ -17,6 +17,8 @@ it.each(['released', 'failed'] as const)('configures a fork only after its nativ
     expectedMcpServers: { happier: { ...bridge, transport: 'stdio', mode: 'required' } },
   } });
   const events = createAgentSessionRuntimeHarness();
+  // Allowance refresh is independent of the fork release and reopen sequence.
+  const isForkAuditMethod = (method: string) => method !== 'usage/refresh';
   try {
     const opening = fixture.open({ kind: 'fork', sessionId: fixture.context.session.id, cwd: process.cwd(),
       source: { sessionId: 'fork-source-host', providerSessionId: recording.rows[4].message.result.session.sessionId,
@@ -25,7 +27,7 @@ it.each(['released', 'failed'] as const)('configures a fork only after its nativ
       await expect(opening).rejects.toMatchObject({ code: 'agent_startup_invalid_state', retryable: false,
         details: { failureCause: { phase: 'client_start' } } });
       expect(fixture.launchCount).toBe(1);
-      expect((await fixture.readAudit()).methods).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave']);
+      expect((await fixture.readAudit()).methods.filter(isForkAuditMethod)).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave']);
       return;
     }
     const session = await opening;
@@ -37,6 +39,6 @@ it.each(['released', 'failed'] as const)('configures a fork only after its nativ
     await fixture.closeSession();
     const audit = await fixture.readAudit();
     expect(audit.args).toContain('--trust-workspace');
-    expect(audit.methods).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave', 'session/resume']);
+    expect(audit.methods.filter(isForkAuditMethod)).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave', 'session/resume']);
   } finally { events.dispose(); await fixture.dispose(); }
 });
