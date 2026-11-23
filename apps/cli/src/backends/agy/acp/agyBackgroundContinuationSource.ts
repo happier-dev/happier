@@ -15,7 +15,10 @@ const GENERATION_PROGRESS_UPDATES = new Set([
   'user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan',
 ]);
 
-type ToolCallState = 'blocking' | 'detached' | 'settled';
+type ToolCallState = Readonly<{
+  status: SessionUpdate['status'];
+  isDaemon: boolean;
+}>;
 type ToolCalls = Map<string, ToolCallState>;
 
 type Continuation = {
@@ -43,20 +46,18 @@ function toolCallIdOf(update: SessionUpdate): string | null {
 
 function recordToolCall(toolCalls: ToolCalls, toolCallId: string, update: SessionUpdate): void {
   const previous = toolCalls.get(toolCallId);
-  if (previous === 'settled' || isAcpToolCallTerminalStatus(update.status)) {
-    toolCalls.set(toolCallId, 'settled');
-  } else if (update.status === 'pending') {
-    toolCalls.set(toolCallId, 'blocking');
-  } else {
-    const isDaemon = update.status === 'in_progress' && update.kind === 'execute'
-      && asRecord(extractToolInput(update))?.IsDaemon === true;
-    toolCalls.set(toolCallId, isDaemon || previous === 'detached' ? 'detached' : 'blocking');
-  }
+  if (isAcpToolCallTerminalStatus(previous?.status)) return;
+
+  // ACP approval updates can carry just the status. A pending approval blocks even for a known daemon.
+  const isDaemon = previous?.isDaemon === true
+    || (update.kind === 'execute' && asRecord(extractToolInput(update))?.IsDaemon === true);
+  toolCalls.set(toolCallId, { status: update.status ?? previous?.status, isDaemon });
 }
 
 function hasBlockingToolCall(toolCalls: ToolCalls): boolean {
-  for (const state of toolCalls.values()) {
-    if (state === 'blocking') return true;
+  for (const { status, isDaemon } of toolCalls.values()) {
+    if (isAcpToolCallTerminalStatus(status)) continue;
+    if (status !== 'in_progress' || !isDaemon) return true;
   }
   return false;
 }
@@ -93,8 +94,8 @@ export function createAgyBackgroundContinuationSource(
 
     /** Register still-running tool calls as tasks whose settlement can resume Agy, then release every witness. */
     const retainBackgroundTasks = (toolCalls: ToolCalls) => {
-      for (const [toolCallId, state] of toolCalls) {
-        if (state !== 'settled' && host.registerContinuation({ id: toolCallId, parentToolCallId: toolCallId })) {
+      for (const [toolCallId, { status }] of toolCalls) {
+        if (!isAcpToolCallTerminalStatus(status) && host.registerContinuation({ id: toolCallId, parentToolCallId: toolCallId })) {
           backgroundTasks.add(toolCallId);
         }
       }

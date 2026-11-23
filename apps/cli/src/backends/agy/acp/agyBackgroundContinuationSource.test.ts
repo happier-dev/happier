@@ -47,9 +47,13 @@ function agyAgent(directory: string): string {
       };
       const say = text => notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
       const usage = () => notify({ sessionUpdate: 'usage_update', used: 100, size: 1000 });
-      const runCommand = (toolCallId, onAllowed, onRefused) => {
+      const runCommand = (toolCallId, onAllowed, onRefused, statusOnly = false) => {
+        const patchStatus = status => {
+          if (statusOnly) notify({ sessionUpdate: 'tool_call_update', toolCallId, status });
+          else tool('tool_call_update', toolCallId, status);
+        };
         tool('tool_call', toolCallId, 'in_progress');
-        tool('tool_call_update', toolCallId, 'pending');
+        patchStatus('pending');
         const id = 'permission-' + permissionCount++;
         pendingPermissions.set(id, result => {
           if (result?.outcome?.outcome !== 'selected' || result.outcome.optionId !== 'allow') {
@@ -57,7 +61,7 @@ function agyAgent(directory: string): string {
             onRefused(result);
             return;
           }
-          tool('tool_call_update', toolCallId, 'in_progress');
+          patchStatus('in_progress');
           running.add(toolCallId);
           onAllowed();
         });
@@ -108,7 +112,7 @@ function agyAgent(directory: string): string {
               }, endTurn);
             }
           } else if (message.method === 'test/finish-build') {
-            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission } = message.params;
+            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission, statusOnly } = message.params;
             const followUp = chain ? 'call_tests' : 'call_verify';
             const reportPlan = () => notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
             settle('call_build', 'build ok');
@@ -122,7 +126,7 @@ function agyAgent(directory: string): string {
                 if (plan === 'last') reportPlan();
                 usage();
                 ok(message.id, { resumed: true });
-              }, permission => ok(message.id, { resumed: false, permission }));
+              }, permission => ok(message.id, { resumed: false, permission }), statusOnly);
               if (usageWhileWaitingForPermission) usage();
             };
             if (pauseAfterUsage) setTimeout(runFollowUp, ${TEST_TIMING.generationSettleMs * 3});
@@ -242,12 +246,12 @@ describe('createAgyBackgroundContinuationSource', () => {
     });
   });
 
-  it('follows background commands that a resumed conversation starts', async () => {
+  it('follows background commands a resumed conversation starts through status-only approval updates', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);
       events.length = 0;
 
-      const resumed = backend.requestExtension('test/finish-build', { chain: true });
+      const resumed = backend.requestExtension('test/finish-build', { chain: true, statusOnly: true });
       await approvePendingPermission(permissionSession);
       expect(await resumed).toEqual({ resumed: true });
       await expect.poll(() => finishedTurns(events)).toHaveLength(1);
