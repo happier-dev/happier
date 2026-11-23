@@ -73,16 +73,17 @@ export function useTeamSetupBatchProgress(
 ): TeamSetupBatchRepositoryProgress | null {
     const row = batch?.selection.repositories.find(repository => repository.source.id === sourceId);
     const dispatched = !!(batch && row && batch.dispatched.has(row.repositoryId));
+    const ownerResult = batch?.settlement?.repositories.find(repository => repository.id === row?.repositoryId)?.result ?? null;
+    const returnedOpen = ownerResult?.ok && 'kind' in ownerResult.result && ownerResult.result.kind === 'opened' ? ownerResult.result : null;
     const progress = useTeamSetupRepositoryProgress({
         serverId: batch?.selection.target.serverId ?? null,
         accountId: batch?.selection.lifetime.scope.accountId ?? null,
         machineId: dispatched ? batch?.selection.target.machineId ?? null : null,
         sourceId: row?.source.id ?? null,
         requestId: row?.requestId,
-    }, options?.observeOpen === false ? null : batch?.selection.lifetime ?? null);
-    const ownerResult = batch?.settlement?.repositories.find(repository => repository.id === row?.repositoryId)?.result ?? null;
-    const returnedOpen = ownerResult?.ok && 'kind' in ownerResult.result && ownerResult.result.kind === 'opened' ? ownerResult.result : null;
-    const opened = progress.result?.kind === 'opened' ? progress.result : returnedOpen;
+    }, options?.observeOpen === false ? null : batch?.selection.lifetime ?? null, returnedOpen);
+    const result = progress.result ?? returnedOpen;
+    const opened = result?.kind === 'opened' ? result : null;
     const openSucceeded = progress.openOperation?.snapshot.state === 'succeeded' || (!progress.openOperation && !!returnedOpen);
     const readyProject = openSucceeded && opened
         && (opened.setup === 'notRequired' || progress.setupOperation?.snapshot.state === 'succeeded') ? opened : null;

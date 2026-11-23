@@ -18,6 +18,7 @@ export type TeamSetupRepositoryProgress = Readonly<{
 export function useTeamSetupRepositoryProgress(
     query: ActionOperationProjectSourceQuery,
     lifetime: ServerAccountScopeLifetime | null,
+    acceptedOpen: Extract<OpenProjectResultV1, { kind: 'opened' }> | null = null,
 ): TeamSetupRepositoryProgress {
     const serverId = query.serverId ? resolveServerProfileScopeIdForIdentifier(query.serverId) : null;
     const selected = useProjectOpenActionOperation({ ...query, serverId });
@@ -31,7 +32,8 @@ export function useTeamSetupRepositoryProgress(
         const parsed = OpenProjectResultV1Schema.safeParse(rawResult);
         return parsed.success ? parsed.data : null;
     }, [rawResult]);
-    const workspace = result?.kind === 'opened' && 'machineId' in result.workspace ? result.workspace : null;
+    const opened = result ?? acceptedOpen;
+    const workspace = opened?.kind === 'opened' && 'machineId' in opened.workspace ? opened.workspace : null;
     const latestSetup = useProjectSetupRun(workspace, query.accountId, lifetime);
     const settledAt = latestSetup?.snapshot.settledAt;
     // The current native Open already accounts for matching past completion. An older

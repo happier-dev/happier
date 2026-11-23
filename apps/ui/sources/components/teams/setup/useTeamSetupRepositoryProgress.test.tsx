@@ -274,7 +274,10 @@ describe('selected Team batch progress', () => {
         try {
             expect(screen.findByTestId('team-setup-repository-start:source')).not.toBeNull();
             expect(screen.findByTestId('team-setup-repository-start:next')).toBeNull();
-            batch = { ...batch, dispatched: new Set(['source', 'next']), running: false };
+            batch = { ...batch, dispatched: new Set(['source', 'next']), running: false,
+                settlement: { ...batch.settlement!, repositories: [
+                    ...batch.settlement!.repositories, { id: 'next', result: { ok: true, result: second } },
+                ] } };
             await screen.update(view());
             const review = setupOperation({ createdAt: 5, startedAt: 5, setupReview: {
                 kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'effect',
@@ -282,7 +285,7 @@ describe('selected Team batch progress', () => {
             } });
             act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
                 opening({ operationId: 'second-open', requestId: 'next-request', domainRef: { kind: 'projectOpen', sourceId: 'next' },
-                    createdAt: 3, state: 'succeeded', settledAt: 4, result: second }), review,
+                    createdAt: 3, state: 'succeeded', settledAt: 4 }), review,
             ] }));
             expect(screen.findByTestId('team-setup-repository-start:next')).toBeNull();
             await screen.pressByTestIdAsync('team-setup-repository:next');
