@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
@@ -51,7 +52,8 @@ describe('Action failure presentation', () => {
 
     it('presents the deployment installation refusal from the HTTP failure envelope', () => {
         const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired-installation',
-            remedy: 'This Machine was reinstalled. Create a new Environment on the current installation and add its required secrets.' };
+            remedy: 'This Machine was reinstalled. Keep this Environment and reinstall it on the current installation.',
+            machineId: 'machine-1', actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1] };
         const refusal = projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse({
             error: 'credential_scope_denied', requestId: 'backup-run', details,
         }));

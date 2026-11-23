@@ -47,7 +47,7 @@ import { DeploymentReceiptFailureSummaryV1Schema, DeploymentReceiptInvestigation
 
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
-import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, DeploymentRuntimeReinstallV1Schema } from './deploymentFailureRecoveryV1.js';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
 export * from './deploymentBackupRestoreV1.js';
 import { DeploymentBackupActionInputSchemasV1, DeploymentBackupActionResultSchemasV1, DeploymentBackupSourceV1Schema,
@@ -642,6 +642,8 @@ export const DeploymentEnvironmentGetResultV1Schema = lazyZodSchema(() => z.unio
     backupTarget: z.optional(DeploymentBackupRunInputV1Schema), backupPolicy: z.optional(DeploymentBackupPolicyV1Schema),
     savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
     secretScope: z.optional(DeploymentEnvironmentSecretScopeV1Schema),
+    /** Present only while a runtime Machine was reinstalled since the Environment last deployed there. */
+    runtimeReinstall: z.optional(DeploymentRuntimeReinstallV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),
     targetLinks: z.array(DeploymentTargetLinkHeaderV1Schema), pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
     retainedTargetLinkCleanupCompleteIds: z.optional(z.array(DeploymentIdentifierV1Schema)),

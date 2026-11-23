@@ -332,3 +332,7 @@ export const DEPLOYMENT_PREPARE_PUBLISH_CATALOG_ACTION_ID_V1 = 'deployments.prep
 export const DEPLOYMENT_PROMOTE_ACTION_ID_V1 = 'deployments.promote';
 
 export const DEPLOYMENT_RESTART_ACTION_ID_V1 = 'deployments.restart';
+
+/** Reinstall on this Machine, in order: relink the same Machines at their current installation, save bindings again, deploy. */
+export const DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 = [DEPLOYMENT_TARGET_LINK_ACTION_ID_V1,
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1] as const;

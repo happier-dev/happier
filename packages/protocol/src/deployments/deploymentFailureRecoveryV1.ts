@@ -5,6 +5,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, type OpenProjectInputV1 } from '../projects/openProjectV1.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from './deploymentActionIdsV1.js';
 
 export const DeploymentImageResolutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('deploymentImageResolutionFailure'),
@@ -39,10 +40,11 @@ export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObj
 /** Presentation intents open existing editors/readers; they never execute or retry a mutation.
  * `source` opens the deployment's existing Source detail, including Repository and checkouts.
  * `deploy` is the Environment's own Deploy: a surface that already shows it draws no second button.
+ * `reinstall` opens the Environment's "Reinstall on this Machine" review (DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1).
  */
 export type DeploymentFailureRecoveryDestinationV1 =
     | 'source' | 'domains' | 'variables' | 'permissions' | 'settings' | 'history' | 'logs'
-    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy';
+    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy' | 'reinstall';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
     kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string; machineId?: string;
     openProject?: OpenProjectInputV1;
@@ -299,11 +301,40 @@ function recoveryDetails(details: Record<string, unknown>): Record<string, unkno
 
 export const DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 = 'machine_installation_replaced';
 
-export function readDeploymentInstallationReplacementRefusalV1(errorCode: unknown, details: unknown) {
-    if (errorCode !== 'credential_scope_denied' || !isRecord(details)
-        || details.reason !== DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1
-        || typeof details.requiredFact !== 'string' || typeof details.remedy !== 'string') return null;
-    return { reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, requiredFact: details.requiredFact, remedy: details.remedy };
+const [reinstallLink, reinstallBindings, reinstallDeploy] = DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1;
+/** The ordered existing Actions that reinstall an Environment on its Machine's current installation. */
+export const DeploymentMachineReinstallActionIdsV1Schema = lazyZodSchema(() => z.tuple([
+    z.literal(reinstallLink), z.literal(reinstallBindings), z.literal(reinstallDeploy)]));
+
+/** Placement refusal details: the same Machine id now runs a different installation than the Environment recorded. */
+export const DeploymentInstallationReplacementRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+    reason: z.literal(DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1),
+    requiredFact: z.string().check(z.minLength(1)),
+    remedy: z.string().check(z.minLength(1)),
+    machineId: DeploymentIdentifierV1Schema,
+    actionIds: DeploymentMachineReinstallActionIdsV1Schema,
+}));
+export type DeploymentInstallationReplacementRefusalV1 = z.infer<typeof DeploymentInstallationReplacementRefusalV1Schema>;
+
+/**
+ * Environment read fact from the same owner as the refusal: the runtime Machines reinstalled since their
+ * last deploy, whether this requester may reinstall the Environment on them, and which Saved Secrets the
+ * re-save re-seals by itself or needs chosen again. Environment values always re-seal from its content.
+ */
+export const DeploymentRuntimeReinstallV1Schema = lazyZodSchema(() => z.strictObject({
+    reason: z.literal(DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1),
+    machines: z.array(z.strictObject({ machineId: DeploymentIdentifierV1Schema,
+        retiredInstallationId: DeploymentIdentifierV1Schema, currentInstallationId: DeploymentIdentifierV1Schema }))
+        .check(z.minLength(1)),
+    available: z.boolean(),
+    actionIds: DeploymentMachineReinstallActionIdsV1Schema,
+    savedSecrets: z.strictObject({ reseal: z.array(DeploymentIdentifierV1Schema), reenter: z.array(DeploymentIdentifierV1Schema) }),
+}));
+export type DeploymentRuntimeReinstallV1 = z.infer<typeof DeploymentRuntimeReinstallV1Schema>;
+
+export function readDeploymentInstallationReplacementRefusalV1(errorCode: unknown, details: unknown): DeploymentInstallationReplacementRefusalV1 | null {
+    if (errorCode !== 'credential_scope_denied') return null;
+    return DeploymentInstallationReplacementRefusalV1Schema.safeParse(details).data ?? null;
 }
 
 function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, errorCode?: string): string | undefined {
@@ -319,7 +350,7 @@ const occupiedCheckoutRecovery = recovery(
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     const replacement = readDeploymentInstallationReplacementRefusalV1(errorCode, details);
-    if (replacement) return recovery(replacement.remedy, 'source', 'Open Source details');
+    if (replacement) return recovery(replacement.remedy, 'reinstall', 'Reinstall on this Machine', replacement.machineId);
     if (details.kind === 'refused') {
         if (errorCode === 'destination_exists' && details.code === errorCode && details.effectAttempted === false) {
             const input = OpenProjectInputV1Schema.safeParse(details.checkoutDraft);

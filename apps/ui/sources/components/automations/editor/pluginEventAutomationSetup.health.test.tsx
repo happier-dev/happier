@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
@@ -1172,7 +1173,8 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
         id => id === pluginId ? sourceFacts : null);
     const actionResponse = createDeferred<void>();
     const placementRefusal = { reason: 'machine_installation_replaced', requiredFact: 'installationId=previous',
-        remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' };
+        remedy: 'This Machine was reinstalled. Keep this Environment and reinstall it on the current installation.',
+        machineId, actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1] };
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
             return { protocolVersion: 1, projection, automationEligibleEvents: [event] };

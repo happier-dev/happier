@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentCheckoutDestinationOccupiedV1, projectDeploymentFailureRecoveryV1, projectDeploymentSourceCheckoutRequiredV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
+import { readDeploymentInstallationReplacementRefusalV1 } from './deploymentFailureRecoveryV1.js';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
 import { OpenProjectInputV1Schema } from '../projects/openProjectV1.js';
@@ -451,4 +453,16 @@ describe('an unconfirmed receipt with a typed cause', () => {
         expect(readDeploymentRefusalRecoveryV1('outcome_unknown', { code: 'outcome_unknown', phase: 'activate' }))
             .toEqual(readDeploymentFailureRecoveryV1('outcome_unknown'));
     });
+});
+
+it('routes a reinstalled runtime Machine to its reinstall review with the ordered Actions', () => {
+    const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired',
+        remedy: 'Reinstall it.', machineId: 'machine-1', actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1] };
+    expect(readDeploymentInstallationReplacementRefusalV1('credential_scope_denied', details)).toEqual(details);
+    expect(readDeploymentRefusalRecoveryV1('credential_scope_denied', details)?.nextAction)
+        .toEqual({ kind: 'navigate', destination: 'reinstall', label: 'Reinstall on this Machine', machineId: 'machine-1' });
+    // A bare credential refusal or an incomplete reinstall fact never selects the reinstall path.
+    const { actionIds: _actionIds, ...withoutActions } = details;
+    expect(readDeploymentInstallationReplacementRefusalV1('credential_scope_denied', withoutActions)).toBeNull();
+    expect(readDeploymentInstallationReplacementRefusalV1('machine_unavailable', details)).toBeNull();
 });

@@ -18,6 +18,9 @@ import {
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+  DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+  DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
+  DEPLOYMENT_PROMOTE_ACTION_ID_V1,
   isDeploymentDomainAddActionIdV1,
   isDeploymentDomainRemoveActionIdV1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -32,7 +35,9 @@ import {
   canTeardownDeploymentEnvironment,
   admitDeploymentMachineInTx,
   projectDeploymentControllerPlacementFailure,
+  projectDeploymentRuntimeInstallationReplacedFailure,
 } from './deploymentAdmission';
+import { readDeploymentRuntimeReinstallMembersInTx } from './deploymentTargetLinkService';
 import {
   readDeploymentReadAuthorizationInTx,
   readDeploymentTargetAuthorizationInTx,
@@ -166,6 +171,28 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
         placement: projectDeploymentControllerPlacementFailure(
           environment.row.controllerMachineId,
         ),
+      };
+    }
+  }
+  // Deploy, Rollback and Promote place work on the runtime Link: a reinstalled member
+  // is refused here, once, with its reinstall Actions instead of failing later per member.
+  if (
+    root.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ||
+    root.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ||
+    root.actionId === DEPLOYMENT_PROMOTE_ACTION_ID_V1
+  ) {
+    const link = environment.row.runtimeTargetLinkId
+      ? await tx.deploymentTargetLink.findFirst({
+          where: { id: environment.row.runtimeTargetLinkId, environmentId: environment.row.id, deletedAt: null },
+          include: { machines: true },
+        })
+      : null;
+    const [replaced] = await readDeploymentRuntimeReinstallMembersInTx(tx, link);
+    if (replaced) {
+      return {
+        ok: false,
+        phase: 'runtime_installation_replaced',
+        placement: projectDeploymentRuntimeInstallationReplacedFailure(replaced),
       };
     }
   }

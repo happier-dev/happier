@@ -179,6 +179,8 @@ import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx, loadD
 import { canDeployDeploymentEnvironment } from './deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
+import { readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
+import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
 import { readAdmittedDeploymentReadScopeInTx, readDeploymentReadAuthorizationInTx, readDeploymentTargetAuthorizationInTx } from './deploymentReadAuthorization';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from './deploymentDomainService';
@@ -197,6 +199,7 @@ import { claimAutomationRun } from '@/app/automations/automationClaimService';
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from '@/app/automations/automationAccountCurrentness';
 import { hasCurrentDeploymentWorkflowOriginInTx } from '@/app/auth/deploymentWorkflowOrigin';
 import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readProjectDeploymentDefaultsInTx } from '@/app/projects/projectDeploymentDefaultsService';
 
 describe('deployment children retain their controller Action authority', () => {
@@ -3956,7 +3959,32 @@ describe('deployment children retain their controller Action authority', () => {
             const refused = await mint(backup(currentInstallationId));
             expect(refused.json()).toMatchObject({ error: 'credential_scope_denied', details: {
                 reason: 'machine_installation_replaced', requiredFact: `installationId=${f.member.installationId}`,
-                remedy: expect.any(String),
+                remedy: expect.any(String), machineId: f.member.id, actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1],
+            } });
+            expect(refused.json()).not.toHaveProperty('token');
+        }, { authentication: 'real' });
+    });
+
+    it('refuses Deploy before the reinstalled runtime Machine is relinked, naming its reinstall Actions', async () => {
+        const f = await fixture();
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id };
+        await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+            const mint = () => {
+                const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: { kind: 'machine' as const, machineId: f.controller.id }, input };
+                return app.inject({ method: 'POST', url: `/v1/actions/${DEPLOYMENT_DEPLOY_ACTION_ID_V1}/execution-authorization`,
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: f.controller.id, envelope } });
+            };
+            const before = await mint();
+            expect(before.statusCode, before.body).toBe(200);
+            // The runtime member's own Account registers a new installation for the same Machine id.
+            await db.machine.update({ where: { accountId_id: { accountId: f.account.id, id: f.member.id } },
+                data: { installationId: crypto.randomUUID() } });
+            const refused = await mint();
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied', details: {
+                reason: 'machine_installation_replaced', requiredFact: `installationId=${f.member.installationId}`,
+                machineId: f.member.id, actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1],
             } });
             expect(refused.json()).not.toHaveProperty('token');
         }, { authentication: 'real' });
@@ -5860,6 +5888,55 @@ describe('deployment children retain their controller Action authority', () => {
                     const content = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.artifact.body)));
                     if (typeof content.body !== 'string') throw new Error('Expected authored Environment text');
                     expect(JSON.parse(content.body)).toMatchObject({ bindings: [binding] });
+                    const sealedTo = async () => (await inTx(tx => readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: f.environment.id })))
+                        .map(grant => [grant.machineId, grant.installationId]);
+                    expect(await sealedTo()).toEqual([[f.member.id, f.member.installationId]]);
+
+                    // Reinstall on this Machine: relink the runtime member at its new installation, then save the
+                    // unchanged bindings again. Nothing is edited; every grant is re-sealed to the new installation.
+                    await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+                    const reinstalledKeys = nacl.sign.keyPair();
+                    const currentInstallationId = crypto.randomUUID();
+                    await db.machine.update({ where: { id: f.member.id }, data: { installationId: currentInstallationId,
+                        installationPublicKey: new Uint8Array(reinstalledKeys.publicKey) } });
+                    const linkContent = await f.content('deployment-target-link.v1');
+                    const relinked = await inTx(tx => linkDeploymentTargetInTx(tx, f.account.id, { serverId,
+                        environmentId: f.environment.id, expectedRevision: stored.revision, requestKey: crypto.randomUUID(),
+                        targetId: 'own-server', role: 'runtime', replacesLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+                        machines: [{ machineId: f.member.id, installationId: currentInstallationId }], ...linkContent }));
+                    if (!relinked.ok) throw new Error(JSON.stringify(relinked));
+                    const unchanged = getActionSpec('deployments.bindings.set').inputSchema.parse({ serverId,
+                        environmentId: f.environment.id, expectedRevision: relinked.revision, set: [], remove: [] });
+                    const resealEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: unchanged };
+                    const resealRoot = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                        accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                        actionId: 'deployments.bindings.set', machineId: f.controller.id, target, requestId: resealEnvelope.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(resealEnvelope) }, { input: unchanged });
+                    const resealRequester = await admitRequesterAccountActionContext({ authorization: resealRoot, credentials,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                    if (!resealRequester) throw new Error('Expected admitted re-seal requester');
+                    try {
+                        const resealAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: resealRequester.authorization,
+                            serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                            installationId: identity.installationId, privateKey: identity.privateKey, rootAdmitted: true });
+                        if (!resealAuthorization?.requesterHttpProjection) throw new Error('Expected signed re-seal projection');
+                        const resealed = await createPrepareDeploymentBindingsForHost({ credentials, serverId,
+                            serverHttpBaseUrl: origin, machineId: f.controller.id,
+                            resolveRequestHeaders: (_context, effectActionId, request) =>
+                                resealAuthorization.requesterHttpProjection!.createRequestHeaders({ ...request, effectActionId }) })({
+                            input: unchanged, context: { externalActionExecutionAuthorization: resealAuthorization, signal: new AbortController().signal } });
+                        if ('ok' in resealed) throw new Error(JSON.stringify(resealed));
+                        expect(resealed.grants.map(grant => [grant.machineId, grant.installationId])).toEqual([[f.member.id, currentInstallationId]]);
+                        const resealBody = DeploymentBindingsSetStorageInputV1Schema.parse(resealed);
+                        const resealHeaders = await resealAuthorization.requesterHttpProjection.createRequestHeaders({ method: 'POST', path,
+                            body: resealBody, effectActionId: 'deployments.bindings.set' });
+                        const resaved = await app.inject({ method: 'POST', url: path, headers: {
+                            ...currentAccountStoredContentCompatibilityHeaders, ...resealHeaders }, payload: resealBody });
+                        expect(resaved.statusCode, resaved.body).toBe(200);
+                        expect(await sealedTo()).toEqual([[f.member.id, currentInstallationId]]);
+                    } finally {
+                        await resealRequester.dispose();
+                    }
                 } finally {
                     await requester?.dispose();
                 }

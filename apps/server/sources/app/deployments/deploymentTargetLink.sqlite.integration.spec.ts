@@ -29,6 +29,7 @@ import { transitionDeploymentInTx } from './deploymentService';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 function requireDomainMutationApplied(result: DeploymentDomainMutationResultV1) {
     if (!result.ok) throw new Error(result.error);
@@ -1081,6 +1082,14 @@ describe('current runtime membership replacement', () => {
             expect(stale.statusCode, stale.body).toBe(503);
             expect(stale.json()).toMatchObject({ error: 'machine_unavailable', role: 'target', machineIds: [reinstalled!.id] });
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(previous.id);
+            // The Environment read names the reinstall, whether this person may run it, and its ordered Actions.
+            const read = (accountId: string) => app.inject({ method: 'GET', headers: { 'x-test-user-id': accountId },
+                url: `/v1/deployments/environments/${environment.id}?serverId=${serverId}` });
+            const before = await read(owner.id);
+            expect(before.statusCode, before.body).toBe(200);
+            expect(before.json().runtimeReinstall).toEqual({ reason: 'machine_installation_replaced',
+                machines: [{ machineId: reinstalled!.id, retiredInstallationId: retired[0]!.installationId, currentInstallationId }],
+                available: true, actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1], savedSecrets: { reseal: [], reenter: [] } });
 
             // Reinstall on this Machine: the same Machines at their current installation, no teardown of a retired installation.
             const linked = await send(owner.id, current);
@@ -1092,6 +1101,7 @@ describe('current runtime membership replacement', () => {
                 predecessorTargetLinkId: previous.id, activeDeploymentId: serving.id,
                 members: [{ ...current[0], state: 'joining' }, { ...current[1], state: 'active' }],
             });
+            expect((await read(owner.id)).json()).not.toHaveProperty('runtimeReinstall');
             // The ordinary Deploy owner admits the Environment's serving release on the reinstalled member.
             const deploy = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${environment.id}/rollback`,
                 headers: { 'x-test-user-id': owner.id }, payload: { serverId, environmentId: environment.id,

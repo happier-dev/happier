@@ -227,7 +227,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         if (!member) return null;
         if (member.installationId !== admission.installationId) {
             if (installedMachine?.machineId !== member.machineId || installedMachine.installationId !== admission.installationId) return null;
-            return { ok: false, placement: projectDeploymentRuntimeInstallationReplacedFailure(member.installationId) };
+            return { ok: false, placement: projectDeploymentRuntimeInstallationReplacedFailure({ machineId: member.machineId, retiredInstallationId: member.installationId }) };
         }
     }
     let artifactIds = [environment.contentArtifactId, link.contentArtifactId, ...receiptContents.map(row => row.contentArtifactId)];

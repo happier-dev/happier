@@ -3,6 +3,7 @@ import type { z } from 'zod/mini';
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol';
 import type { DeploymentMachinePlacementDiagnosticV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceV1, ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveProjectSourceAccessInTx, type ProjectSourceAccess } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -38,7 +39,7 @@ export function deploymentFailure<TError extends Extract<DeploymentActionFailure
 }
 
 /** One placement refusal shape: credential_scope_denied carrying the deciding owner's next Action. */
-function projectDeploymentPlacementRefusal(details: Readonly<{ reason: string; requiredFact: string; remedy: string }>,
+function projectDeploymentPlacementRefusal(details: Readonly<{ reason: string; requiredFact: string; remedy: string; machineId?: string; actionIds?: readonly string[] }>,
     phase: string): ActionExecuteFailure {
     const error = Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
     return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details,
@@ -49,9 +50,12 @@ export function projectDeploymentControllerPlacementFailure(controllerMachineId:
     return projectDeploymentPlacementRefusal({ reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${controllerMachineId}`,
         remedy: `Run this action on Machine ${controllerMachineId}, or make that controller reachable, then retry` }, 'deployment.controller.placement');
 }
-export function projectDeploymentRuntimeInstallationReplacedFailure(installationId: string): ActionExecuteFailure {
-    return projectDeploymentPlacementRefusal({ reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, requiredFact: `installationId=${installationId}`,
-        remedy: 'This Machine was reinstalled. Keep this Environment: link its runtime target to the Machine\'s current installation, save its secrets again, then deploy.' },
+/** A runtime member recorded under a retired installation of a still-current Machine: the remedy is its reinstall Actions. */
+export function projectDeploymentRuntimeInstallationReplacedFailure(member: Readonly<{ machineId: string; retiredInstallationId: string }>): ActionExecuteFailure {
+    return projectDeploymentPlacementRefusal({ reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1,
+        requiredFact: `installationId=${member.retiredInstallationId}`, machineId: member.machineId,
+        remedy: 'This Machine was reinstalled. Keep this Environment: link its runtime target to the Machine\'s current installation, save its secrets again, then deploy.',
+        actionIds: DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 },
     'deployment.runtime.machine_installation');
 }
 /** The Source owner principal cannot use the selected Machine (admitDeploymentMachinesInTx); other Machine failures stay bare. */

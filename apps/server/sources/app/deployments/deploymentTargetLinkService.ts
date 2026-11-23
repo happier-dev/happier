@@ -25,6 +25,28 @@ export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
         : row.machines;
 }
 
+/**
+ * The one decision that an Environment's runtime Machine was reinstalled: a native member whose Machine
+ * is still current but now runs a different installation than the one recorded at link time. Only the
+ * Machine's own Account can register that installation; the Link replacement onto it is the remedy.
+ */
+export async function readDeploymentRuntimeReinstallMembersInTx(tx: Tx, link: Readonly<{
+    sourceKind: string; machines: readonly Readonly<{ machineId: string; installationId: string }>[];
+}> | null | undefined): Promise<readonly Readonly<{ machineId: string; retiredInstallationId: string; currentInstallationId: string }>[]> {
+    if (!link || link.sourceKind !== 'host' || !link.machines.length) return [];
+    const current = new Map<string, string>();
+    for (const ids of portableQueryChunks({ values: [...new Set(link.machines.map(member => member.machineId))], bindingsPerValue: 1 })) {
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] }, revokedAt: null, replacedByMachineId: null },
+            select: { id: true, installationId: true } });
+        for (const row of rows) if (row.installationId) current.set(row.id, row.installationId);
+    }
+    return link.machines.flatMap(member => {
+        const installationId = current.get(member.machineId);
+        return installationId && installationId !== member.installationId
+            ? [{ machineId: member.machineId, retiredInstallationId: member.installationId, currentInstallationId: installationId }] : [];
+    });
+}
+
 /** The server-readable relation that makes a target link a current managed data link, for every Account mode. */
 function currentManagedDataTargetLinkWhere(environmentId: string) {
     return { environmentId, role: 'data', sourceKind: 'plugin', deletedAt: null, detachedAt: null } as const;

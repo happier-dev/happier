@@ -10,12 +10,14 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
 import type { Tx } from '@/storage/inTx';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
-    canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
+    canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentDefinitionMachinesInTx, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
     readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
 import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1 } from '@happier-dev/deployments';
-import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
+import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader, readDeploymentRuntimeReinstallMembersInTx } from './deploymentTargetLinkService';
+import { DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
@@ -252,10 +254,25 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
                     : coverage.missingGrantCount ? { status: 'actionNeeded', reason: 'secret_scope_grants_required' }
                         : { status: 'ready', reason: 'secret_scope_current' }),
     };
+    // The reinstall fact comes from the owner the Deploy root refusal uses; its availability is the
+    // Link writer's own admission (Source manage plus Machine Manage at the current installation).
+    const reinstalled = await readDeploymentRuntimeReinstallMembersInTx(tx, loaded.row.runtimeTargetLinkId
+        ? targetRows.find(row => row.id === loaded.row.runtimeTargetLinkId) : null);
+    const runtimeReinstall = reinstalled.length ? {
+        reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, machines: reinstalled,
+        available: !loaded.row.deletedAt && loaded.admission.canManage && await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId,
+            loaded.admission.owner, reinstalled.map(member => ({ machineId: member.machineId, installationId: member.currentInstallationId }))) === null,
+        actionIds: DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1,
+        // Re-saving re-seals a Saved Secret at its captured revision only while the requester can still use it.
+        savedSecrets: { reseal: captures?.flatMap(capture => current.get(formatSharedSavedSecretRefV1(capture.resourceId)) === capture.revision
+            ? [capture.resourceId] : []) ?? [],
+            reenter: captures?.flatMap(capture => current.get(formatSharedSavedSecretRefV1(capture.resourceId)) === capture.revision
+                ? [] : [capture.resourceId]) ?? [] },
+    } : undefined;
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
         environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission,
             acceptedEnvironment ? acceptedRead?.manageBindings : undefined), targetLinks, controller,
-        secretScope,
+        secretScope, ...(runtimeReinstall ? { runtimeReinstall } : {}),
         ...(savedSecretRevisions === undefined ? {} : { savedSecretRevisions }),
         ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),
         ...(pending.pendingDeploy ? { pendingDeploy: pending.pendingDeploy } : {}),

@@ -6058,6 +6058,22 @@ bindings, so existing snapshots open with the same repository credential. The pr
 until it is detached. Review domain routes and private shares explicitly during
 cutover.
 
+One server owner decides that a runtime Machine was reinstalled
+(`readDeploymentRuntimeReinstallMembersInTx`). It finds a Link member whose
+Machine is still current but now runs a different installation. Deploy,
+Rollback and Promote are refused at admission with `credential_scope_denied`.
+The refusal details carry `reason: machine_installation_replaced`, the
+`machineId`, and `actionIds`, the three Actions above in order
+(`DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1`). Backup Run gets the same
+refusal. The shared recovery presenter routes it to the `reinstall`
+destination. `deployments.environments.get` carries the same fact as
+`runtimeReinstall`: the reinstalled Machines with their retired and current
+installations, and `available`, which is the Link writer's own admission
+(Source manage plus Machine Manage). It also lists which captured Saved
+Secrets re-seal by themselves (`savedSecrets.reseal`) and which must be chosen
+again (`savedSecrets.reenter`). Whether volumes survived is a fact on the
+Machine, observed by the Deploy that follows.
+
 An unavailable Saved Secret keeps its metadata-only binding notice. After withdrawal or
 deletion, Overview and Variables offer the existing Machine service controls for the
 Environment’s recorded native generations. Withdrawal leaves an admitted process running;

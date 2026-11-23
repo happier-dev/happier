@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from './normalizeActionExecuteResult';
 
@@ -14,7 +15,8 @@ describe('CLI Action failure presentation', () => {
 
   it.each(['outer', 'nested'] as const)('presents the existing reinstall remedy in an %s Action refusal', kind => {
     const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired',
-      remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' };
+      remedy: 'This Machine was reinstalled. Keep this Environment and reinstall it on the current installation.',
+      machineId: 'machine-1', actionIds: [...DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1] };
     const refusal = { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details } as const;
     const normalized = normalizeActionExecuteResult(kind === 'outer' ? refusal : { ok: true, result: refusal });
     if (normalized.ok) throw new Error('Expected refusal');
