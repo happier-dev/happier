@@ -32,6 +32,32 @@ test('owner unit tests go through the root unit lane and an empty selection runs
   assert.deepEqual(unit, { id: 'owner unit', rootUnitFiles: ['apps/server/sources/a.spec.ts'], args: [] });
 });
 
+test('sandbox journeys reach the installed provisioner and managed ingress across spawned processes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'affected-sandboxes-'));
+  try {
+    const sandbox = 'packages/tests/suites/core-e2e/machines.sandboxJourneys.composed.slow.e2e.test.ts';
+    await mkdir(join(root, sandbox, '..'), { recursive: true });
+    await writeFile(join(root, sandbox), 'export {};');
+    await cp('packages/tests/fixtures/cli-backends', join(root, 'packages/tests/fixtures/cli-backends'), { recursive: true });
+
+    const select = (file: string) => selectAffectedTests(root, [file], { journeysOnly: true });
+    for (const owner of [
+      'packages/plugins/devcontainer/src/machine/provider.ts',
+      'apps/cli/src/machines/managed/removedController.ts',
+      'apps/server/sources/app/machines/managed/managedMutations.ts',
+      'packages/tests/fixtures/machines/Dockerfile',
+    ]) {
+      const selection = await select(owner);
+      assert.deepEqual(selection.journeyFiles, [sandbox], owner);
+      assert.equal(planAffectedTestCommands(selection)[0]?.id, 'core-e2e slow');
+    }
+    const unrelated = await select('packages/plugins/devcontainer/src/machine/provider.test.ts');
+    assert.deepEqual(unrelated.journeyFiles, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // Real Vitest graph on a small repository fixture; subprocess edges use the real stub specs.
 test('Cursor plugin change selects its stub scenarios and unrelated docs select no provider journeys', async () => {
   const root = await mkdtemp(join(tmpdir(), 'affected-providers-'));

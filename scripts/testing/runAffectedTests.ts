@@ -25,6 +25,7 @@ const TESTS_DIR = 'packages/tests';
 const UI_E2E_PREFIX = `${TESTS_DIR}/suites/ui-e2e/`;
 const FIRST_OPEN_BROWSER_SPEC = `${UI_E2E_PREFIX}firstOpen.browser.spec.ts`;
 const FIRST_OPEN_WEB_SETUP_SPEC = `${UI_E2E_PREFIX}setup.onboardingWizard.web.spec.ts`;
+const SANDBOX_JOURNEY = `${TESTS_DIR}/suites/core-e2e/machines.sandboxJourneys.composed.slow.e2e.test.ts`;
 const AGENT_PREFIX = `${TESTS_DIR}/suites/agents/`;
 const MATRIX_FILE = `${AGENT_PREFIX}provider.matrix.test.ts`;
 type ProviderMatrixEntry = { preset: string; tier: 'smoke' | 'extended'; scenarios: string[] };
@@ -285,6 +286,17 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
       && runtimeChanges.some(file => file.startsWith('apps/ui/sources/components/onboarding/surfaces/'))
       && existsSync(resolve(rootDir, FIRST_OPEN_WEB_SETUP_SPEC))) {
     journeyFiles.push(FIRST_OPEN_WEB_SETUP_SPEC);
+  }
+  // The sandbox fixture enrolls installed daemons and loads Devcontainer at runtime.
+  // Vitest cannot trace those subprocess imports or the Docker build context.
+  if (!journeyFiles.includes(SANDBOX_JOURNEY) && existsSync(resolve(rootDir, SANDBOX_JOURNEY))
+      && runtimeChanges.some(file => [
+        'apps/cli/src/machines/managed/',
+        'apps/server/sources/app/machines/managed/',
+        'packages/plugins/devcontainer/',
+        `${TESTS_DIR}/fixtures/machines/`,
+      ].some(owner => file.startsWith(owner)))) {
+    journeyFiles.push(SANDBOX_JOURNEY);
   }
   // cliLaunchSpec starts src/index.ts, which dynamically loads cli/bootstrap.
   const sharedProcesses = runtimeChanges.some(file => file === 'apps/cli/src/index.ts' || [
