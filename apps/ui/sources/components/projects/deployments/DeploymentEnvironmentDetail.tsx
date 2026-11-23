@@ -103,6 +103,7 @@ import {
   useDeploymentPress,
   hasDeploymentPressAttention,
   readDeploymentActionError,
+  readDeploymentRefusal,
   type DeploymentActionOutcome,
   type DeploymentOutcomeController,
   type DeploymentRecoveryTarget,
@@ -136,6 +137,8 @@ import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
 import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets, type DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
+import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
+import type { PlatformInspectOutcome } from './platformTargetLink';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { showDeploymentRestoreSheet, type DeploymentRestoreSheetInput } from './DeploymentRestoreSheet';
 import { deploymentDataTargetOperands, isDeploymentEnvironmentSettingsSectionV1 } from '@happier-dev/deployments';
@@ -337,6 +340,13 @@ export const DeploymentEnvironmentDetail = React.memo(
         input: { ...reference, kind: 'runtime', serverId: props.serverId } };
     }, [active.snapshot.value, platform?.runtimeLogs, props.serverId]);
     const [selectedMethod, setSourceMethod] = React.useState<Readonly<{ targetLinkId: string; value: DeploymentSourceMethodV1 }> | null>(null);
+    const [methodCheck, setMethodCheck] = React.useState<Readonly<{
+      targetLinkId: string; revision: number; outcome: PlatformInspectOutcome | null;
+    }> | null>(null);
+    const runtimeContent = platform && runtime
+      ? detail?.targetLinks.find(row => row.targetLink.id === runtime.id)?.content : undefined;
+    const currentMethodCheck = methodCheck && runtime && methodCheck.targetLinkId === runtime.id
+      && methodCheck.revision === runtime.revision ? methodCheck : null;
     // This choice belongs to the next invocation, never to Environment configuration.
     const [failurePolicyDraft, setFailurePolicyDraft] = React.useState<Readonly<{
       serverId: string; accountId: string; environmentId: string; value: DeploymentOnFailureV1;
@@ -348,9 +358,10 @@ export const DeploymentEnvironmentDetail = React.memo(
       : undefined;
     const sourceMethod = platform?.sourceMethods.includes('upload')
       ? resolveDeploymentSourceMethodV1({
-        explicit: selectedMethod !== null && selectedMethod.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
+        explicit: currentMethodCheck?.outcome?.kind === 'ready' ? 'gitIntegration'
+          : selectedMethod !== null && selectedMethod.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
           ? selectedMethod.value : undefined,
-        recorded: detail?.targetLinks.find(row => row.targetLink.id === runtime?.id)?.content?.sourceMethod,
+        recorded: runtimeContent?.sourceMethod,
       })
       : undefined;
     // Its Triggers run where it is deployed (OPS-AUTOMATIONS-1102 D2), or on its controller before anything is.
@@ -730,6 +741,41 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Add a platform target: the same manage-targets capability as a machine link, through the plugin's own target.
     const platformLink = props.platformLink ?? null;
     const lifetime = props.lifetime ?? null;
+    const chooseSourceMethod = async (value: DeploymentSourceMethodV1) => {
+      if (!runtime || !platform) return;
+      if (value !== 'gitIntegration' || !runtimeContent?.preparedNative?.pages) {
+        setMethodCheck(null);
+        setSourceMethod({ targetLinkId: runtime.id, value });
+        return;
+      }
+      const coordinate = { targetLinkId: runtime.id, revision: runtime.revision };
+      const unavailable = readDeploymentRefusal('deployment_content_unavailable');
+      const principal = runtimeContent.credentialPrincipal;
+      if (!platformLink || !lifetime || principal.kind !== 'account' || principal.target.kind !== 'account') {
+        setMethodCheck({ ...coordinate, outcome: unavailable });
+        return;
+      }
+      if (currentMethodCheck?.outcome === null) return;
+      setMethodCheck({ ...coordinate, outcome: null });
+      let outcome: PlatformInspectOutcome = unavailable;
+      try {
+        const checked = await platformLink.checkPlatformTarget({
+          projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id,
+          target: { pluginId: platform.pluginId, localId: platform.targetId }, credentialRef: principal.target.account,
+          fields: { providerIdentity: runtimeContent.providerIdentity, providerEnvironment: runtimeContent.providerEnvironment,
+            preparedNative: runtimeContent.preparedNative, sourceMethod: value },
+        });
+        outcome = checked.kind === 'alreadyLinked' ? { kind: 'ready', provider: runtimeContent } : checked;
+      } catch (error) {
+        const refusal = readDeploymentActionError(error);
+        outcome = refusal.kind === 'refused' ? refusal : unavailable;
+      } finally {
+        if (lifetime.isCurrent()) {
+          setMethodCheck(current => current?.targetLinkId === coordinate.targetLinkId && current.revision === coordinate.revision
+            ? { ...coordinate, outcome } : current);
+        }
+      }
+    };
     const previewAvailability = deploymentPreviewAvailability(detail);
     const openPlatform = disposition.canLink && platformLink && lifetime ? (initialTargetKey?: string) => {
       showDeploymentPlatformTargetSheet({
@@ -1036,8 +1082,13 @@ export const DeploymentEnvironmentDetail = React.memo(
               {/* An untitled section, not header="none": it keeps one section gap below the notice slot's banner. */}
               {sourceMethod && platform && runtime ? <ItemGroup>
                 <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
-                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
-                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
+                  testID="project-deployments.environment.sourceMethod"
+                  disabled={!ready || deploying || reviewPending || currentMethodCheck?.outcome === null}
+                  onChange={(value) => { void chooseSourceMethod(value); }} />
+                {currentMethodCheck?.outcome === null ? <SurfaceStateCard size="line" kind="loading"
+                  title={t('projects.deployments.platformLink.loading')} /> : currentMethodCheck?.outcome?.kind === 'ready' ? null
+                    : <DeploymentPlatformInspectState outcome={currentMethodCheck?.outcome ?? null}
+                      {...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {})} />}
               </ItemGroup> : null}
               {/* Serving now (lab `envOv` hero, owner 22:35Z): the address, the serving version's labelled cells and the
                   last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}

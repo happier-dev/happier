@@ -1695,7 +1695,9 @@ configuring repository connections. See the [Builds API reference](https://devel
 Pages creation supports hosted GitHub and GitLab repositories. Creation and
 adoption share the same observed-source readiness result; `needsGitAccess`
 includes the Cloudflare dashboard grant link when the selected repository is
-not connected. A Pages project's source mode is final at creation. Git deployment
+not connected. Choosing Git integration on an already linked Pages Environment
+runs the same repository-access check before accepting the method.
+A Pages project's source mode is final at creation. Git deployment
 builds the latest commit on the selected branch: Review says so, the requested
 SHA remains in the receipt, and the provider-observed `builtSha` is included in
 its investigation source summary when available. Other forges use upload.

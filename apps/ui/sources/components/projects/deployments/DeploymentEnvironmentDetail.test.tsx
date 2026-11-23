@@ -2685,7 +2685,8 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it.each(['upload', undefined] as const)('reopens a protected platform method before Send (recorded=%s)', async recorded => {
+  it.each([['upload', false], [undefined, false], ['upload', true]] as const)(
+    'reopens a protected platform method before Send (recorded=%s, Pages=%s)', async (recorded, pages) => {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
@@ -2706,7 +2707,8 @@ describe('Project deployments page', () => {
         purpose: { consumer: { pluginId: authored.manifest.id, localId: 'inspect-beta' }, purpose: 'beta.manage' },
         target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'selected' } } },
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'site', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } }, ...(recorded ? { sourceMethod: recorded } : {}) },
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } }, ...(recorded ? { sourceMethod: recorded } : {}),
+        ...(pages ? { preparedNative: { projectName: 'site', pages: { projectMode: 'directUpload', productionBranch: 'main' } } } : {}) },
     })) };
     let releaseSource = () => {};
     const sourceResponse = new Promise<void>(resolve => { releaseSource = resolve; });
@@ -2722,10 +2724,17 @@ describe('Project deployments page', () => {
     const beforeRead = homes.requests.length;
     const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(context.accountLifetime) });
     const deploy = vi.fn(async () => { throw Object.assign(new Error('content unavailable'), { code: 'deployment_content_unavailable' }); });
+    const grantUrl = 'https://dash.cloudflare.com/?to=/cloud/workers-and-pages/create/pages';
+    const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
+    const checkPlatformTarget = vi.fn(async () => ({ kind: 'needsGitAccess' as const, grantUrl, provider: {
+      ...detail.targetLinks[0]!.content, sourceMethod: 'gitIntegration' as const,
+      repositoryAccess: { status: 'needsGitAccess' as const, repository, grantUrl },
+    } }));
     // The shipped Overview keeps how a platform Environment deploys above Serving now (dEnvOv KEEP, owner-approved 11-13).
     const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
       demand={shown} lifetime={context.accountLifetime} accountId={scope.accountId} serverId={scope.serverId}
-      phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />);
+      phone={false} deploy={deploy}
+      platformLink={pages ? { checkPlatformTarget, inspectPlatformTarget: vi.fn(), link: vi.fn() } : null} review={noReview} onOpenReceipt={() => {}} />);
     try {
       await waitForContent(screen, 'project-deployments.environment.sourceMethod');
       await act(async () => { screen.pressByTestId('project-deployments.environment.deploy'); });
@@ -2744,11 +2753,22 @@ describe('Project deployments page', () => {
       expect(homes.requests.slice(beforeRead).filter(request => request.path === '/v1/artifacts/read'
         && JSON.stringify(request.input).includes(detail.environment.contentArtifactId)).map(request => request.input))
         .toEqual([{ artifactIds: [detail.environment.contentArtifactId, detail.targetLinks[0]!.targetLink.contentArtifactId] }]);
+      expect(checkPlatformTarget).not.toHaveBeenCalled();
       if (recorded) {
         const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
         const method = () => screen.root.findAllByType(SegmentedChoiceItem)
           .find(node => node.props.testID === 'project-deployments.environment.sourceMethod')!;
         await act(async () => method().props.onChange('gitIntegration'));
+        if (pages) {
+          await waitForContent(screen, 'project-deployments.platform.needsGitAccess');
+          expect(checkPlatformTarget).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id,
+            target: { pluginId: authored.manifest.id, localId: 'beta' },
+            fields: expect.objectContaining({ sourceMethod: 'gitIntegration', preparedNative: detail.targetLinks[0]!.content.preparedNative }),
+          }));
+          expect(method().props.value).toBe('upload');
+          return;
+        }
         await vi.waitFor(() => expect(method().props.value).toBe('gitIntegration'));
         await screen.pressByTestIdAsync('project-deployments.environment.deploy');
         await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
