@@ -3707,3 +3707,27 @@ test('commit entry uses its two charged cores under outside CPU pressure', linux
   assert.equal(granted.admitted.cpuCores, 2);
   await granted.release();
 });
+
+test('a saturated commit entry queue leaves capacity for a source bundle head', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { cpuCores: 6,
+    readMemory: () => ({ availableMemoryKiB: 24 * gib, totalMemoryKiB: 24 * gib }),
+    admitDisk: () => ({ admitted: true }),
+  });
+  const gateClass = { className: 'gate-entry-loads', resourceClass: 'gate-entry-loads',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores };
+  const gate = await (await acquire(root, 3 * gib, t, gateClass)).admit();
+  await acquire(root, 3 * gib, t, gateClass);
+  await acquire(root, 3 * gib, t, gateClass);
+  assert.equal((await requestAdmissionSample(root)).reservedCpuCores, 2,
+    'queued gate loads must leave ordinary capacity available');
+
+  const source = await (await acquire(root, 13 * gib, t, {
+    className: 'source-bundle', resourceClass: 'source-bundle',
+    entry: 'node apps/stack/scripts/build/build_source_runtime.mjs',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['source-bundle'].cpuCores, noWait: true,
+  })).admit();
+  assert.equal(source.admitted.floorKiB, 13 * gib);
+  await source.release();
+  await gate.release();
+});

@@ -731,6 +731,10 @@ Waiters that have waited past their class’s longest recorded successful run
 are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no
 recorded duration use the existing head-reservation rules.
+The `gate-entry-loads` class has a two-core share for one entry load.
+Additional entry loads can use ordinary CPU and memory when their recorded
+run time fits the existing backfill window for a non-gate head. Waiting entry
+loads beyond the share cannot reserve capacity as head.
 The shared runtime producer (`source-bundle` running
 `apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export
 (`source-web-export` running `apps/stack/scripts/build/build_source_web_ui.mjs`)

@@ -613,13 +613,19 @@ export function createAdmissionBroker({ root,
   function hostMemoryFloorFits(item) {
     return (sample.hostAvailableMemoryKiB ?? 0) >= (item.autoHostMemoryFloorKiB ?? 0);
   }
+  function hasCommitEntry() {
+    return [...slots.values()].some(isCommitEntry);
+  }
+  function commitEntryShareTaken(item) {
+    return isCommitEntry(item) && hasCommitEntry();
+  }
   function canReserveHead(item, memoryWithinBoundKiB, now, pressure = cpu.pressure) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     const aged = now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
     // Keep the waiter's age and earned pledge while its floor cannot fit in
     // time. Non-admitted pressure cannot be recovered by releasing broker slots.
     return !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
-      && minimumFloorKiB <= sample.achievableMemoryKiB
+      && !commitEntryShareTaken(item) && minimumFloorKiB <= sample.achievableMemoryKiB
       && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores - pressure;
   }
   function status(observation = cpu) {
@@ -1077,6 +1083,7 @@ export function createAdmissionBroker({ root,
   function cpuPressureHead(now) {
     if (cpu.pressure === 0) return;
     const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
+      && !commitEntryShareTaken(item)
       && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
     if (head && (slots.size === 0 || overdue(head, now))) return head;
@@ -1120,6 +1127,7 @@ export function createAdmissionBroker({ root,
     const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
     const capacityHead = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
+      && !commitEntryShareTaken(item)
       && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
@@ -1133,7 +1141,7 @@ export function createAdmissionBroker({ root,
       ? [...hostBoundFirst, ...waiting.filter(item => !hostBoundFirst.has(item))] : [...waiting];
     // Keep a small share for one memory-ready commit entry load while it
     // waits for enough CPU for the normal grant. Never revoke live grants.
-    const commitEntry = [...slots.values()].some(isCommitEntry) ? undefined : serviceOrder.find(item =>
+    const commitEntry = hasCommitEntry() ? undefined : serviceOrder.find(item =>
       isCommitEntry(item) && !item.slot && !item.blocked && !item.socket.destroyed && !item.noWait
       && hostMemoryFloorFits(item) && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= availableMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
@@ -1177,11 +1185,12 @@ export function createAdmissionBroker({ root,
         if (item.noWait) refuse(item, backfillBlockedBy);
         continue;
       }
+      const gateBackfill = commitEntryShareTaken(item);
       const share = commitEntryShare(item);
       const ordinaryCpuCores = Math.max(0, availableCpuCores - share);
       const offerCpuCores = !hasExemption && item === commitEntry
         ? Math.min(cpuCoresWithoutPressure, availableCpuCores + COMMIT_ENTRY_CPU_SHARE)
-        : item === pressureHead && !hasExemption
+        : !gateBackfill && item === pressureHead && !hasExemption
           ? Math.max(ordinaryCpuCores, cpuCoresWithoutPressure - share) : ordinaryCpuCores;
       const fittingFor = cpuCores => item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
         && accountedCpuCores(item, option.workers) <= cpuCores);
@@ -1189,10 +1198,21 @@ export function createAdmissionBroker({ root,
         ?? (offerCpuCores > ordinaryCpuCores ? fittingFor(offerCpuCores) : undefined);
       // A job projected to finish before the head can start may borrow the
       // head's pledged memory; its release returns it before it is needed.
-      const borrowKiB = !item.floorOptions && headStartAt !== undefined
-        && item.p99DurationMs > 0 && Date.now() + item.p99DurationMs <= headStartAt
+      const finishesBeforeHead = headStartAt !== undefined
+        && item.p99DurationMs > 0 && Date.now() + item.p99DurationMs <= headStartAt;
+      const borrowKiB = !item.floorOptions && finishesBeforeHead
         && item.floorKiB > availableMemoryKiB && item.floorKiB <= availableMemoryKiB + lendableKiB
         && accountedCpuCores(item) <= ordinaryCpuCores ? item.floorKiB - availableMemoryKiB : 0;
+      const fits = item.floorOptions ? fitting !== undefined
+        : item.floorKiB <= availableMemoryKiB + borrowKiB && accountedCpuCores(item) <= offerCpuCores;
+      // Beyond the two-core share, only use a real non-gate head's backfill window.
+      // Overflow gate waiters cannot pledge capacity or stop the ordinary queue.
+      if (gateBackfill && (!finishesBeforeHead || isCommitEntry(head) || !fits)) {
+        item.waitingForMemory = item.waitingForCpu = false;
+        if (item.noWait) refuse(item, 'HSTACK_CPU_BUSY');
+        else if (item.locks.length) send(item.socket, { kind: 'capacity-wait' });
+        continue;
+      }
       // Announced to the waiter (its client logs it), so a backfill is visible in the run's log.
       const backfill = borrowKiB > 0 ? { borrowedKiB: borrowKiB, headStartInMs: Math.max(0, headStartAt - Date.now()) } : undefined;
       if (backfill) backfillCount += 1;
@@ -1203,7 +1223,7 @@ export function createAdmissionBroker({ root,
         headPledge.memoryKiB = Math.min(headPledge.memoryKiB, headReservation(head).memoryKiB) - borrowKiB;
       }
       item.waitingForMemory = minimumFloorKiB > availableMemoryKiB;
-      if (item.floorOptions ? !fitting : item.waitingForMemory || accountedCpuCores(item) > offerCpuCores) {
+      if (!fits) {
         item.waitingForCpu = !item.waitingForMemory;
         if (item.noWait) refuse(item, item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
         else {
@@ -1335,6 +1355,8 @@ export function createAdmissionBroker({ root,
           slot.judgment ??= queueJudgment(metadata.judgment);
           const key = slot.recovered ? slot.identityKey : null;
           if (slot.recovered) {
+            slot.className = metadata.className;
+            slot.resourceClass = metadata.resourceClass;
             slot.memoryWarmupMs = recordedMemoryWarmupMs(key);
             slot.monitorsDeclaration = metadata.acceptsDeclarationStall === true && DECLARATION_COMPARISON_ENTRIES.has(admissionScriptClass(metadata));
             monitorDeclarationComparison(slot);
@@ -1422,7 +1444,8 @@ export function createAdmissionBroker({ root,
         const minimumFloorKiB = probe.floorOptions?.at(-1).floorKiB ?? probe.floorKiB;
         const memoryFits = minimumFloorKiB <= available.unreservedMemoryKiB;
         const cpuCores = valid ? minimumCpuCores(probe) : 0;
-        const admitted = valid && memoryFits && cpuCores <= available.unreservedCpuCores;
+        const admitted = valid && memoryFits && cpuCores <= available.unreservedCpuCores
+          && !commitEntryShareTaken(probe);
         send(socket, { kind: admitted ? 'admitted' : 'refused',
           ...(!admitted ? { reason: !valid ? 'HSTACK_INVALID_ADMISSION'
             : minimumFloorKiB > sample.totalMemoryKiB ? 'HSTACK_MEMORY_CAPACITY'
