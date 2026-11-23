@@ -113,7 +113,10 @@ afterEach(async () => {
   storage.setState({ profile: previousProfile, profileScope: previousProfileScope });
 });
 
-async function serveResetStartHome(serverUrl: string) {
+async function serveResetStartHome(serverUrl: string, options?: Readonly<{
+  profile: ReturnType<typeof AccountProfileSchema.parse>;
+  missingSummaryFor?: Readonly<{ id: string; observedAtMs: number }>;
+}>) {
   let reading: ConnectedServiceQuotaGetResultV1 | null = null;
   const writes: Array<Readonly<{ path: string; accountId: string | null; body: unknown }>> = [];
   const baseline = createRootLayoutFeaturesResponse();
@@ -122,10 +125,19 @@ async function serveResetStartHome(serverUrl: string) {
   const settings = { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
     'session.pending.resetStart.set': { approvalRequiredSurfaces: ['ui'] },
   } }) };
-  comparisonHome = await serveAccountHomes({ homes: [{ key: 'reset', serverUrl, accountId: 'account-a', currentAccount: true, settings }],
-    route: request => {
+  comparisonHome = await serveAccountHomes({ homes: [{ key: 'reset', serverUrl, accountId: 'account-a', profile: options?.profile, currentAccount: true, settings }],
+    route: async request => {
       const path = request.url.pathname;
       if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+      if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      if (path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      if (path.endsWith('/provider-account-usage/day-summaries')) {
+        const frontier = options?.missingSummaryFor;
+        return Response.json({ summaries: [], missingDays: frontier ? [{
+          dayStartAtMs: Math.floor(frontier.observedAtMs / DAY) * DAY, coverage: { observationCount: 1, frontier },
+        }] : [] });
+      }
       if (reading?.current) {
         const record = { content: { t: 'plain', v: reading.current },
           metadata: { fetchedAt: reading.current.fetchedAtMs, staleAfterMs: reading.current.staleAfterMs, status: 'ok' }, sources: [reading.source] };
@@ -133,9 +145,18 @@ async function serveResetStartHome(serverUrl: string) {
           recordId: reading.current.recordId, providerAccountId: reading.current.recordKey.accountSubjectId,
           fetchedAt: reading.current.fetchedAtMs, staleAfterMs: reading.current.staleAfterMs });
         if (path.endsWith('/provider-account-usage/record')) return Response.json(record);
-        if (path.endsWith('/provider-account-usage/history')) return Response.json({
-          entries: (reading.history?.entries ?? []).map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs,
-            record: { ...record, content: { t: 'plain', v: entry.snapshot } } })), nextCursor: null });
+        if (path.endsWith('/provider-account-usage/history')) {
+          if (request.method === 'PUT') return Response.json({ success: true });
+          const { parseQualifiedConnectedAccountV4StructuredQueryValue } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec');
+          const { QualifiedProviderAccountUsageHistoryRequestV4Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+          const demand = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+            request.url.searchParams.get('query'));
+          if ('projection' in demand) return Response.json({ projection: null, complete: false });
+          return Response.json({ entries: (reading.history?.entries ?? []).map(entry => ({
+            id: entry.id, observedAtMs: entry.observedAtMs,
+            record: { ...record, content: { t: 'plain', v: entry.snapshot } },
+          })), nextCursor: null });
+        }
       }
       if (request.method === 'PATCH' && /^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/action$/.test(path)) {
         const body = request.body;
@@ -1977,6 +1998,63 @@ it('charts the picked window in the same chart, labels the empirical range with 
   await act(async () => picker.props.onSelect(sessionKey));
   expect(chart().props.label).toContain('Five hour');
   expect(chart()).toBe(first);
+});
+
+it('keeps the accepted reset witness and Start control on a saved whole-Session Resets placement', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [
+    { meterId: 'weekly', label: 'Weekly', usedPct: 80, resetAtMs: now + DAY, windowDurationMs: 7 * DAY },
+  ]);
+  const profile = AccountProfileSchema.parse({ id: 'account-a', connectedAccountsV4: [{
+    ref: read.source.ref, status: 'connected', authenticationModeId: 'manual',
+    revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+    configurationReady: false, configurationRevision: null, scopes: [],
+  }] });
+  // The accepted raw observation is readable before its day summary has been published.
+  const accepted = { id: 'accepted', observedAtMs: now };
+  const { server, credentials, setReading } = await serveResetStartHome('https://usage-saved-reset.test', {
+    profile, missingSummaryFor: accepted,
+  });
+  setReading(ConnectedServiceQuotaGetResultV1Schema.parse({
+    ...read, history: { nextCursor: null, entries: [{ ...accepted, snapshot: read.current }] },
+  }));
+  const previous = storage.getState().sessionPending;
+  storage.setState({
+    profileScope: { serverId: server.id, accountId: profile.id }, profile,
+    sessionPending: { ...previous, s1: { messages: [{ id: 'p1', localId: 'local-1', createdAt: now,
+      updatedAt: now, text: 'Run the follow-up', rawRecord: null }], discarded: [], isLoaded: true } },
+  });
+  try {
+    const { readBuiltinWidgetDescriptorV1, resolveWidgetBindingsV1, WidgetInstanceV1Schema } = await import('@happier-dev/protocol/widgets');
+    const { UsageWidgetBody } = await import('../UsageWidgetBody');
+    const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+    const instance = WidgetInstanceV1Schema.parse({
+      v: 1, id: 'saved-resets', definition: { kind: 'builtin', id: 'usage_resets' },
+      bindings: { session: { kind: 'value', value: 's1' }, period: { kind: 'value', value: {} },
+        costBasis: { kind: 'value', value: 'auto' } },
+    });
+    const descriptor = readBuiltinWidgetDescriptorV1(instance.definition)!;
+    const binding = resolveWidgetBindingsV1({ instance, fields: descriptor.inputs!.fields, context: {}, viewerValues: {} });
+    expect(binding.status).toBe('ready');
+    if (binding.status !== 'ready') throw new Error('Saved Resets bindings were refused');
+    const screen = await renderScreen(wrap(
+      <UsageWidgetBody id="usage_resets" input={binding.input} serverId={server.id} testID="saved-resets" />, credentials,
+    ));
+    try {
+      const props = () => screen.findAllByType(UsageResetPlannerWidget)[0]?.props;
+      await expect.poll(() => props()?.slice.quota?.[0]?.current?.fetchedAtMs).toBe(now);
+      await expect.poll(() => props()?.slice.pending).toBe(false);
+      expect.soft(props()?.slice.quota?.[0]?.pageFacts?.resetWitness?.id).toBe('accepted');
+      const picker = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'saved-resets.resetStart.local-1.pick');
+      expect(picker?.props.items).toHaveLength(1);
+      await invokePlanCommand(t('usage.board.plans.resetStartAction'));
+      expect(picker?.props.open).toBe(true);
+    } finally {
+      await screen.unmount();
+    }
+  } finally {
+    storage.setState({ sessionPending: previous });
+  }
 });
 
 it("binds one Session's pending message to a reset with the exact witnessed input, and withholds the control without a witness", async () => {

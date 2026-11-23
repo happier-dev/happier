@@ -331,7 +331,9 @@ export function resolveUsageWidgetQuery(
       // into a summary body or turn a detailed Work body into a summary.
       includeContributions: false, workProjection: 'detail',
       includeSeries: false, includeInsights: false, includeActivity: false, activityResolution: 'both',
-      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeQuotaExactHistory, includeComparison: false,
+      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
+      // Session Resets binds pending messages to the accepted observation. Daily history omits that witness.
+      includeQuotaExactHistory: includeQuotaExactHistory || widgetId === 'usage_resets' && singleSession,
       includeTranscriptEvidence: false, includeCoach: false, includeQuota: false,
       ...USAGE_WIDGET_DEMAND[widgetId],
       ...(typeof queryInput.includeQuotaHistory === 'boolean' ? { includeQuotaHistory: queryInput.includeQuotaHistory } : {}),
