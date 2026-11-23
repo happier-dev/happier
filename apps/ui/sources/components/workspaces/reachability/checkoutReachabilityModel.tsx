@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { readLastSeenRefreshAtMs } from '@/utils/sessions/sessionUtils';
 
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -82,11 +86,19 @@ export function useCheckoutReachabilityPresentation(
   presence: Parameters<typeof describeMachinePresenceSummary>[0],
 ): CheckoutReachability {
   const announcedScope = React.useContext(AnnouncedCheckoutMachine);
-  const runtime = React.useMemo(() => describeMachinePresenceSummary(presence), [presence]);
+  const baseRuntime = React.useMemo(() => describeMachinePresenceSummary(presence), [presence]);
+  const lastSeenAt = baseRuntime.showStatus ? (presence.lastSeenAt ?? null) : null;
+  const readNextRefreshAtMs = React.useCallback((nowMs: number) =>
+    baseRuntime.nativeWord || presence.presenceOnline !== false || lastSeenAt === null
+      ? null : readLastSeenRefreshAtMs(lastSeenAt, nowMs),
+  [baseRuntime.nativeWord, lastSeenAt, presence.presenceOnline]);
+  const presented = useLayoutPresentationActive();
+  const viewed = useHostActivelyViewed();
+  const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, presented && viewed);
+  const runtime = React.useMemo(() => describeMachinePresenceSummary(presence, nowMs), [presence, nowMs]);
   const unreachable = runtime.showStatus;
   // Every use of this name is inside a sentence, so a Machine still loading reads "this machine", never "Loading…".
   const machineName = presence.sentenceName ?? scope?.machineId ?? '';
-  const lastSeenAt = unreachable ? (presence.lastSeenAt ?? null) : null;
   const announced =
     unreachable &&
     scope != null &&

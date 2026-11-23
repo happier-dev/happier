@@ -53,11 +53,12 @@ function presentMachinePresence(input: Readonly<{
     presenceOnline: boolean | null;
     lastSeenAt: number | null;
     managed: ManagedPresenceOverride | null;
+    nowMs?: number;
 }>): MachineRuntimePresence {
     const online = input.reachability === 'reachable';
     const word = input.reachability === 'unknown' ? '' : online ? t('settingsOverview.machineOnline')
         : input.presenceOnline !== false ? t('settingsOverview.machineUnreachableFromHome')
-            : t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(input.lastSeenAt ?? 0) });
+            : t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(input.lastSeenAt ?? 0, false, input.nowMs) });
     const presentation = input.managed ?? resolveWorkStatusTone({ kind: 'machine', facts: {
         online: input.reachability === 'unknown' ? null : online, word, needsYouCount: 0, runningSessionCount: 0,
     } });
@@ -73,10 +74,11 @@ function presentMachinePresence(input: Readonly<{
 }
 
 /** Project/Services consume the same words as machine rows, without retaining protected inventory. */
-export function describeMachinePresenceSummary(summary: MachinePresenceSummary): MachineRuntimePresence {
+export function describeMachinePresenceSummary(summary: MachinePresenceSummary, nowMs?: number): MachineRuntimePresence {
     return presentMachinePresence({ reachability: summary.reachability,
         presenceOnline: summary.presenceOnline ?? null,
         lastSeenAt: summary.lastSeenAt ?? null,
+        nowMs,
         managed: resolveManagedMachineWorkStatus({ online: summary.reachability === 'reachable',
             nativeState: summary.nativeState, machineName: summary.name ?? '' }),
     });
@@ -97,7 +99,7 @@ export function describeMachineRuntimePresence(
         ? resolveMachineReachability(scope, machine as MachinePresenceV1 & Readonly<{ id: string }>, nowMs)
         : 'unknown');
     const nativePresence = managedPresence ?? projectMachineManagedPresence(machine);
-    return presentMachinePresence({ reachability, presenceOnline: isMachineOnline(machine, nowMs),
+    return presentMachinePresence({ reachability, presenceOnline: isMachineOnline(machine, nowMs), nowMs,
         lastSeenAt: activity.activeAt ?? null,
         managed: nativePresence?.[reachability === 'reachable' ? 'online' : 'offline'] ?? null,
     });

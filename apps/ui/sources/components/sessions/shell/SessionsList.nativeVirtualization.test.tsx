@@ -1648,6 +1648,36 @@ describe('SessionsList (native virtualization)', () => {
         expect(updatedProps?.ListFooterComponent).toBe(initialFooterComponent);
     });
 
+    it('does not render a different Session for a retired virtualized row key after membership changes', async () => {
+        const sessionC = createSessionListRenderableSessionFixture({ ...sessionB, id: 'sess_c' });
+        mockVisibleSessionListViewData = [...mockVisibleSessionListViewData, {
+            type: 'session', session: sessionC, groupKey: defaultProjectGroupKey,
+            groupKind: 'project', serverId: 'srv_server_a', serverName: 'Server A',
+        }];
+        const screen = await renderSessionsList();
+        const initialProps = expectPresent(virtualizedListState.current?.props, 'expected the mounted list');
+        const retiredId = buildSessionListIndexNodeId({ type: 'session', serverId: 'srv_server_a', sessionId: sessionA.id });
+        const index = initialProps.data.findIndex((node: { id: string }) => node.id === retiredId);
+        expect(index).toBeGreaterThanOrEqual(0);
+        const retiredNode = initialProps.data[index];
+        expect(initialProps.renderItem({ item: retiredNode, index })).not.toBeNull();
+
+        mockVisibleSessionListViewData = mockVisibleSessionListViewData.filter(item =>
+            item.type !== 'session' || item.session.id !== sessionA.id);
+        await screen.update(<SessionsList />);
+
+        const currentProps = expectPresent(virtualizedListState.current?.props, 'expected the updated list');
+        expect(currentProps.data.some((node: { id: string }) => node.id === retiredId)).toBe(false);
+        expect(currentProps.data[index]).toMatchObject({
+            kind: 'session',
+            id: buildSessionListIndexNodeId({ type: 'session', serverId: 'srv_server_a', sessionId: sessionB.id }),
+        });
+        expect(findSessionItem(screen, sessionB.id)).not.toBeNull();
+        // The list runtime can finish rendering an old cell after the new keyed membership commits.
+        // Its former index now belongs to another row; only the retired key identifies this cell.
+        expect(currentProps.renderItem({ item: retiredNode, index })).toBeNull();
+    });
+
     it('keeps native row extra data stable when an equivalent session-list refresh only replaces data objects', async () => {
         nativeBoundary.platformOs = 'android';
 

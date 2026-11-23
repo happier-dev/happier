@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -32,6 +33,77 @@ afterEach(async () => {
 });
 
 describe('checkout reachability', () => {
+
+    it('keeps mounted page and later Files pane ages current from the same offline heartbeat', async () => {
+        const { useCheckoutReachabilityPresentation } = await import('./checkoutReachabilityModel');
+        const heartbeat = Date.parse('2026-11-23T09:00:00Z');
+        const presence = { name: 'devbox', homeDir: null, reachability: 'unreachable' as const,
+            presenceOnline: false, lastSeenAt: heartbeat };
+        vi.useFakeTimers();
+        vi.setSystemTime(heartbeat + 9 * 60_000);
+        const page = await renderHook(() => useCheckoutReachabilityPresentation(null, presence));
+        let files: typeof page | undefined;
+        try {
+            expect(page.getCurrent().runtime.label).toContain(t('time.minutesAgo', { count: 9 }));
+            await act(async () => { vi.advanceTimersByTime(60_000); });
+            await act(async () => { vi.advanceTimersByTime(60_000); });
+            files = await renderHook(() => useCheckoutReachabilityPresentation(null, presence));
+            expect(page.getCurrent().runtime.label).toBe(files.getCurrent().runtime.label);
+            expect(page.getCurrent().runtime.label).toContain(t('time.minutesAgo', { count: 11 }));
+        } finally {
+            await files?.unmount();
+            await page.unmount();
+            vi.useRealTimers();
+        }
+    });
+
+    it('withdraws age wakes while hidden and resumes with the current age', async () => {
+        const { useCheckoutReachabilityPresentation } = await import('./checkoutReachabilityModel');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const heartbeat = Date.parse('2026-11-23T09:00:00Z');
+        const presence = { name: 'devbox', homeDir: null, reachability: 'unreachable' as const,
+            presenceOnline: false, lastSeenAt: heartbeat };
+        let setPresented!: React.Dispatch<React.SetStateAction<boolean>>;
+        let renders = 0;
+        function Wrapper(props: React.PropsWithChildren) {
+            const [presented, set] = React.useState(true);
+            setPresented = set;
+            return <PluginSurfaceFocusEligibilityProvider active={presented}>{props.children}</PluginSurfaceFocusEligibilityProvider>;
+        }
+        vi.useFakeTimers();
+        vi.setSystemTime(heartbeat + 9 * 60_000);
+        const page = await renderHook(() => {
+            renders += 1;
+            return useCheckoutReachabilityPresentation(null, presence);
+        }, { wrapper: Wrapper });
+        try {
+            await act(async () => { setPresented(false); });
+            renders = 0;
+            await act(async () => { vi.advanceTimersByTime(2 * 60_000); });
+            expect(renders).toBe(0);
+            await act(async () => { setPresented(true); });
+            expect(page.getCurrent().runtime.label).toContain(t('time.minutesAgo', { count: 11 }));
+        } finally {
+            await page.unmount();
+            vi.useRealTimers();
+        }
+    });
+
+    it('holds no age wake once the last-seen label has become an absolute date', async () => {
+        const { useCheckoutReachabilityPresentation } = await import('./checkoutReachabilityModel');
+        const heartbeat = Date.parse('2026-11-10T09:00:00Z');
+        const presence = { name: 'devbox', homeDir: null, reachability: 'unreachable' as const,
+            presenceOnline: false, lastSeenAt: heartbeat };
+        vi.useFakeTimers();
+        vi.setSystemTime(heartbeat + 7 * 86_400_000);
+        const page = await renderHook(() => useCheckoutReachabilityPresentation(null, presence));
+        try {
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            await page.unmount();
+            vi.useRealTimers();
+        }
+    });
 
     it('an announced wait among sibling sections is one visible line naming the Machine it shows with (owner P1 11-15)', async () => {
         const reachability = { unreachable: true, machineName: 'NLDW3-5-36-33', lastSeenAt: null, announced: true,

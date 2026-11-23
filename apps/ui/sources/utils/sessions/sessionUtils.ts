@@ -13,6 +13,7 @@ import { readSessionBotV1, readSessionBotFaceV1 } from '@happier-dev/protocol/se
 import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import * as React from 'react';
+import { readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { Message } from "@happier-dev/session-core/messages";
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import { storage, useSession, useSessionMessagesVersion, useSessionPendingMessages } from '@/sync/domains/state/storage';
@@ -817,7 +818,7 @@ export function formatOSPlatform(platform?: string | null): string {
  * @param isActive - Whether the session is currently active
  * @returns Formatted string like "Active now", "5 minutes ago", "2 hours ago", or a date
  */
-export function formatLastSeen(activeAt: number, isActive: boolean = false): string {
+export function formatLastSeen(activeAt: number, isActive: boolean = false, now = Date.now()): string {
     if (isActive) {
         return t('status.activeNow');
     }
@@ -830,7 +831,6 @@ export function formatLastSeen(activeAt: number, isActive: boolean = false): str
         return t('status.unknown');
     }
 
-    const now = Date.now();
     const diffMs = now - activeAt;
     const diffSeconds = Math.floor(diffMs / 1000);
     const diffMinutes = Math.floor(diffSeconds / 60);
@@ -851,8 +851,14 @@ export function formatLastSeen(activeAt: number, isActive: boolean = false): str
         const options: Intl.DateTimeFormatOptions = {
             month: 'short',
             day: 'numeric',
-            year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
+            year: date.getFullYear() !== new Date(now).getFullYear() ? 'numeric' : undefined
         };
         return formatWithCachedDateTimeFormatter(date, undefined, options);
     }
+}
+
+/** Last-seen labels stop aging once the formatter switches to an absolute date. */
+export function readLastSeenRefreshAtMs(activeAt: number, nowMs: number): number | null {
+    if (!Number.isFinite(activeAt) || activeAt <= 0 || nowMs - activeAt >= 7 * 86_400_000) return null;
+    return readRelativeTimeShortRefreshAtMs(activeAt, nowMs);
 }

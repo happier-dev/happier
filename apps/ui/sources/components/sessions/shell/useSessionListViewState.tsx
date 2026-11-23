@@ -2498,7 +2498,7 @@ export function useSessionListViewStateFromPaneState(
 
     const renderVirtualizedItem = React.useCallback((params: { item: SessionListVirtualizedNode; index: number }) => {
         if (params.item.kind === 'supporting_sections') return null;
-        const item = nodeByIdRef.current.get(params.item.id) ?? listItemsRef.current[params.index] ?? null;
+        const item = nodeByIdRef.current.get(params.item.id) ?? null;
         if (!item) return null;
         if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0], firstInSectionHeadersRef.current.has(item));
         // The one list-row rule (owner 2026-11-15): under a row another row of its section follows, never beside the
