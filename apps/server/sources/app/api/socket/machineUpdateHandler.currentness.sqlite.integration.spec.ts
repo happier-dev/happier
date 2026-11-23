@@ -18,6 +18,7 @@ import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
 import { db, getActivePrismaRuntime } from "@/storage/db";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { decodeMachineStoredContent } from "@/storage/sessionMachineStoredContent";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { encodeBase64, decodeBase64 } from "privacy-kit";
@@ -869,7 +870,7 @@ describe("Machine authority mutations on an established socket", () => {
             machineId: subject.machineId, [field === "metadata" ? "metadata" : "daemonState"]: nextContent,
             expectedVersion: field === "metadata" ? 3 : 4, expectedDataEncryptionKey: encodeBase64(currentEnvelope),
         })).toHaveBeenCalledWith(expect.objectContaining({ result: "success" }));
-        const stored = await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } });
+        const stored = await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } }).then(decodeMachineStoredContent);
         expect(await openSessionDataKeyBundleV0(decodeBase64(field === "metadata" ? stored.metadata : stored.daemonState!), currentKey))
             .toEqual({ status: "authenticated", value: { current: true } });
     });

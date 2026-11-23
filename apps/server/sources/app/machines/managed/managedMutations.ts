@@ -881,15 +881,20 @@ export async function reportManagedAcquire(canonical: ManagedControllerReportV1,
         const factsUpdate = configurationFacts ? { reviewedFacts: { ...configurationFacts, provisioner: declaration.provisioner } } : {};
         if (canonical.result.kind === "bound") {
             if (row.allocation !== "may-exist" && row.allocation !== "bound") throw new ManagedMachineError("intent_changed");
-            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });
-            if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
-            const projected = ManagedMachineV1Schema.parse(parsed.data);
-            if (row.resource !== null && !sameManagedInput(current.resource, projected.resource)) throw new ManagedMachineError("resource_mismatch");
+            let boundResource: ManagedMachineV1['resource'] = undefined;
+            if (row.resource === null) {
+                const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });
+                if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
+                boundResource = ManagedMachineV1Schema.parse(parsed.data).resource;
+            } else if (!sameManagedInput(current.resource, canonical.result.resource)) {
+                throw new ManagedMachineError("resource_mismatch");
+            }
             if (canonical.bootstrapInstalled && current.bootstrapInstalled && !canonical.observation) return { machine: current };
             const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: row.creationState,
                 ...(canonical.bootstrapInstalled ? { admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } } : {}),
             }, data: {
-                allocation: "bound", resource: projected.resource,
+                allocation: "bound",
+                ...(boundResource === undefined ? {} : { resource: boundResource }),
                 ...factsUpdate,
                 ...(canonical.bootstrapInstalled ? { admittedInput: markManagedBootstrapInstalled(row.admittedInput) } : {}),
                 // Binding settles acquisition custody; a late report must retain an outstanding Delete's handle.
@@ -1003,8 +1008,9 @@ export async function requireManagedEnrollmentInTx(tx: Tx, canonical: ManagedEnr
     if (!('resource' in canonical)) throw new ManagedMachineError('invalid_request');
     const declaration = await resolveManagedRowDeclarationInTx(tx, row, declarationBodies);
     if (!declaration || declaration.schemaVersion !== readManagedLaunchSnapshot(row.launch).schemaVersion) throw new ManagedMachineError("provider_unavailable");
-    const incoming = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...stored, resource: canonical.resource });
-    if (!incoming.success || !matchesManagedEnrollmentResource({ presetId: row.presetId, launch: row.launch, resource: stored.resource }, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
+    if (!matchesManagedEnrollmentResource({ presetId: row.presetId, launch: row.launch, resource: stored.resource }, canonical.resource)) {
+        throw new ManagedMachineError("resource_mismatch");
+    }
     return row;
 }
 

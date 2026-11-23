@@ -3861,6 +3861,9 @@ Protocol projection uses the original Home row; CLI hydration and UI Account
 enrollment consume it before sending those requests. Home applies one retained-row
 resource matcher to enrollment and installer admission: opaque rows omit the
 resource, while ordinary rows retain the existing resource match.
+Once a readable resource is bound, enrollment and progress reports prove its
+identity by matching the retained resource. First binding applies the
+provisioner's strict resource schema when recording the new identity.
 
 In current 0.3 development, the strict acquire schema requires the reviewed
 `enrollmentIdentity`; downstream enrollment does not repeat its presence check.

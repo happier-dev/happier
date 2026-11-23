@@ -1993,6 +1993,30 @@ describe("managed acquisition durable authority", () => {
         } finally { await app.close(); }
     });
 
+    it.each(['enrollment', 'observation'] as const)('accepts a historical native identity echoed for %s', async followUp => {
+        const { homeId, account, controller, manifest, request } = await createManagedComputeFixture(`retained-identity-${followUp}`);
+        const created = await admitManagedAcquire(request);
+        const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        const resource = { contributionRef: { pluginId: manifest.id, localId: 'compute' }, schemaVersion: 1,
+            value: { id: 'native-identity' } };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
+        const retained = { ...resource, value: { ...resource.value, futureNative: true } };
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { resource: retained } });
+
+        const observation = { observedAt: 10, availability: 'present' as const, power: 'running' as const };
+        const apply = (candidate: typeof resource) => followUp === 'enrollment'
+            ? inTx(tx => requireManagedEnrollmentInTx(tx, { ...correlation, resource: candidate }, account.id))
+            : reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource: candidate }, bootstrapInstalled: true, observation });
+        await expect(apply({ ...resource, value: { id: 'other-native-identity' } })).rejects.toMatchObject({ code: 'resource_mismatch' });
+        await apply(retained);
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).toMatchObject({
+            resource: retained,
+            ...(followUp === 'observation' ? { observation, admittedInput: { bootstrapInstalled: true } } : {}),
+        });
+    });
+
     it("creates one durable reviewed allocation through the real current provisioner declaration", async () => {
         const { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native } = await createManagedComputeFixture('first');
         const created = await admitManagedAcquire(request);
