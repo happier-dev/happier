@@ -29,6 +29,8 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { resolveCliActionCallerWorkflowTarget } from '@/session/actions/resolveCliActionCallerSession';
 import { WorkflowActionFailureV1Schema, WorkflowTargetUnavailableDetailsV1Schema, type WorkflowTargetUnavailableReasonV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { ActionStartDiagnosticV1, ActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { isAgentStartActionInvocationV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema, type ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { createExternalActionStartDiagnosticRecorder, runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
@@ -106,7 +108,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   initialStartDiagnostic?: ActionStartDiagnosticV1;
   createExecutor: (getCurrentTurnWorkDepth: (turnId?: string) => number | undefined,
     isCallerCurrent: () => Promise<boolean>, postAgentDiscussionMessage?: DiscussionAgentPublisher,
-    options?: Readonly<{ accountPluginActions: true }>) => Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
+    options?: Readonly<{ accountPluginActions: true }>) => Pick<ReturnType<typeof createActionExecutor>, 'execute'>
+    & Partial<Pick<ReturnType<typeof createActionExecutor>, 'prepare'>>;
   /** Existing Session RPC transport to the actual current client, with this operation's admitted witness. */
   postAgentDiscussionMessage?: (request: DiscussionAgentPublisherRequestV1, witness: SessionActionOperation['witness'],
     options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
@@ -351,6 +354,22 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     let sessionActionOrigin: SessionActionRpcOriginV1;
     try { sessionActionOrigin = resolveSessionRoleRpcOrigin(context); }
     catch { return refuse('session_action_origin_invalid'); }
+    // The controller of a managed acquire holds no access to this requester's
+    // private Agent-start policy. Admit here once, before Home signs: the signed
+    // origin carries the stamp and the root signs the Role-projected input, so
+    // this executor, the controller and the guest consume it without re-admitting.
+    if (requiresMachineAuthorization && operation.actionId === 'machines.managed.acquire'
+      && isAgentStartActionInvocationV1(operation.actionId, readRecord(operation.input))) {
+      const reviewer = params.createExecutor(getCurrentTurnWorkDepth, isCallerCurrent);
+      if (!reviewer.prepare) return refuse('external_authorization_preparation_failed');
+      const admitted = await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.agent_start_admission',
+        () => reviewer.prepare!(operation.actionId, operation.input, context, { reviewOnly: true }));
+      if (admitted.kind === 'settled') return admitted.result;
+      const agentStartAdmission = admitted.operation?.agentStartAdmission;
+      if (!agentStartAdmission) return refuse('external_authorization_preparation_failed');
+      operation = { ...operation, input: StrictJsonValueSchema.parse(admitted.operation!.normalizedInput) };
+      sessionActionOrigin = { ...sessionActionOrigin, agentStartAdmission };
+    }
     let external: Awaited<ReturnType<NonNullable<typeof params.prepareExternalActionAuthorization>>>;
     try {
       const credentials = params.credentials;

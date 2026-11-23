@@ -35,12 +35,24 @@ import { actionInputIssueFailure } from './actionInputValidation.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
 import { decodeLegacyReviewStartInput, ReviewEngineReviewerSelectionV1Schema, ReviewReviewerSelectionV1Schema, type ReviewReviewerSelectionInputV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
 
-/** Native Workflow leaves already admitted by materialization retain that host-stamped depth. */
-export function readAdmittedWorkflowLeafStartDepthV1(actionId: string, context: ActionExecutorContext): number | undefined {
-    return isAgentStartActionV1(actionId)
-        && context.actionCaller?.kind === 'workflowRun'
-        && context.executionRunWorkflowRunId === context.actionCaller.runId
-        ? context.agentStartWorkDepth : undefined;
+/**
+ * Agent starts admitted once upstream retain that stamp instead of admitting again:
+ * - native Workflow leaves keep the depth stamped by materialization;
+ * - a Session-origin root keeps the admission its source host decided with the
+ *   requester's policy before Home signed the origin. The stamp counts only for
+ *   the signed Action and the exact Session caller the origin names.
+ */
+export function readAdmittedAgentStartV1(actionId: string, context: ActionExecutorContext,
+    input: Readonly<Record<string, unknown>>): Readonly<{ workDepth: number; workspaceWrites?: 'allow' | 'deny' }> | undefined {
+    if (isAgentStartActionV1(actionId) && context.actionCaller?.kind === 'workflowRun'
+        && context.executionRunWorkflowRunId === context.actionCaller.runId) {
+        return context.agentStartWorkDepth === undefined ? undefined : { workDepth: context.agentStartWorkDepth };
+    }
+    const binding = context.externalActionExecutionAuthorization?.binding;
+    const origin = binding && 'authentication' in binding && binding.actionId === actionId ? binding.sessionActionOrigin : undefined;
+    return origin?.agentStartAdmission && context.actionCaller?.kind === 'session'
+        && sameStrictJsonValue(context.actionCaller, origin.caller)
+        && isAgentStartActionInvocationV1(actionId, input) ? origin.agentStartAdmission : undefined;
 }
 
 /** Only fresh Session creation admits a Profile; resume keeps its stored session selection. */

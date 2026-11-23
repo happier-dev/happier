@@ -19075,6 +19075,10 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     };
                 };
                 workspaceWrites?: "allow" | "deny" | undefined;
+                agentStartAdmission?: undefined | {
+                    workDepth: number;
+                    workspaceWrites?: "allow" | "deny" | undefined;
+                };
             };
             sessionActionSource?: undefined | {
                 machineId: string;
@@ -20395,6 +20399,10 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     };
                 };
                 workspaceWrites?: "allow" | "deny" | undefined;
+                agentStartAdmission?: undefined | {
+                    workDepth: number;
+                    workspaceWrites?: "allow" | "deny" | undefined;
+                };
             };
             sessionActionSource?: undefined | {
                 machineId: string;
@@ -21769,6 +21777,10 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     };
                 };
                 workspaceWrites?: "allow" | "deny" | undefined;
+                agentStartAdmission?: undefined | {
+                    workDepth: number;
+                    workspaceWrites?: "allow" | "deny" | undefined;
+                };
             };
             sessionActionSource?: undefined | {
                 machineId: string;

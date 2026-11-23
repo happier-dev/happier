@@ -161,6 +161,11 @@ export const SessionActionRpcOriginV1Schema = lazyZodSchema(() => z.strictObject
   causalPermissionAuthority: zMini.optional(zMini.nullable(SessionInputCausalPermissionAuthorityV1Schema)),
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
+  /** The source Session host's Agent-start admission, decided once with the requester's policy before Home signed this origin. */
+  agentStartAdmission: z.optional(z.strictObject({
+    workDepth: z.number().check(z.int(), z.nonnegative()),
+    workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
+  })),
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }));
 export type SessionActionRpcOriginV1 = Readonly<z.infer<typeof SessionActionRpcOriginV1Schema>>;

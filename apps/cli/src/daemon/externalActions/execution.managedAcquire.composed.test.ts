@@ -318,7 +318,7 @@ it.each([false, true])('continues normal UI Create confirmation without a review
   if (withSetup) expect(await readFile(marker, 'utf8')).toBe('setup\n');
 }, 120_000);
 
-it.each([false, true])('keeps delegated Session compute separate from requester-policy continuation (agentStart=%s)', async hasContinuation => {
+it.each([[false, false], [true, false], [true, true]])('keeps delegated Session compute separate from requester-policy continuation (agentStart=%s, sourceAdmitted=%s)', async (hasContinuation, sourceAdmitted) => {
   onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
   const homeId = 'srv_managed_session_identity';
   const serverUrl = 'https://session-home.test';
@@ -364,7 +364,9 @@ it.each([false, true])('keeps delegated Session compute separate from requester-
   const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'member-session-acquire', target, input });
   const sessionActionOrigin = { v: 1 as const,
     caller: { kind: 'session' as const, sessionId: 'member-session', starterDepth: 0, turnDepth: 0 },
-    sourceTurnId: 'member-turn', requestId: envelope.requestId!, callerPermissionMode: 'default' as const };
+    sourceTurnId: 'member-turn', requestId: envelope.requestId!, callerPermissionMode: 'default' as const,
+    // The member's source host admitted this Agent start with the member's policy before Home signed it.
+    ...(sourceAdmitted ? { agentStartAdmission: { workDepth: 1, workspaceWrites: 'deny' as const } } : {}) };
   const principal = { accountId: 'team-member', authority: 'account_automation' as const,
     authentication: { kind: 'account' as const, tokenEpoch: 0 }, sessionActionOrigin };
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-member-session-acquire', binding: {
@@ -409,6 +411,12 @@ it.each([false, true])('keeps delegated Session compute separate from requester-
     caller: { ...sessionActionOrigin.caller, sessionId: 'unrelated-source-session' } } }))
     .toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
   expect(await invoke(principal, authorization, false)).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+  if (sourceAdmitted) {
+    // The stamp counts only as part of the Home-signed origin, never as a caller claim.
+    const { agentStartAdmission: _stamp, ...unstamped } = sessionActionOrigin;
+    expect(await invoke({ ...principal, sessionActionOrigin: unstamped }))
+      .toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+  }
   const { managedAcquireDelegation: _delegation, ...ordinaryBinding } = root.binding;
   const ordinary = sealManagedControllerActionCodecV1({ authorization: { ...root, binding: ordinaryBinding },
     material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(41) },
@@ -418,6 +426,15 @@ it.each([false, true])('keeps delegated Session compute separate from requester-
   } } });
   expect(homePaths).not.toContain('POST /v1/machines/presets/get');
   const result = await invoke();
+  if (sourceAdmitted) {
+    // The signed source admission replaces the controller's refusal; the
+    // controller never re-admits with a read of the member's Session policy.
+    expect(result, JSON.stringify(result)).not.toMatchObject({ kind: 'response', response: { execution: {
+      errorCode: 'approval_context_unavailable' } } });
+    expect(result).toMatchObject({ kind: 'response' });
+    expect(homePaths).not.toContain('GET /v2/sessions/member-session');
+    return;
+  }
   if (hasContinuation) {
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { execution: {
       ok: false, errorCode: 'approval_context_unavailable',

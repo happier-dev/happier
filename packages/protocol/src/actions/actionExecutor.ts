@@ -607,7 +607,7 @@ import {
 } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import {
   admitActionAgentStartV1, isAgentStartActionV1, isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1, resolveProfileSkillSeedsAtAdmissionV1,
-  resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1, projectAgentStartSelectionV1, readAdmittedWorkflowLeafStartDepthV1,
+  resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1, projectAgentStartSelectionV1, readAdmittedAgentStartV1,
 } from './executor/agentStartAdmission.js';
 import { refuseAgentStartWhenNotReadyV1 } from './executor/agents/agentBackendReadiness.js';
 import {
@@ -3241,7 +3241,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && (!ctx.actionCaller || ctx.actionCaller.kind === 'host') && agentStartAction
       && roleSelected
       && Boolean(ctx.agentStartContext);
-    const admittedWorkflowLeafDepth = readAdmittedWorkflowLeafStartDepthV1(actionId, ctx);
+    // One Agent-start decision per request: an upstream admission (Workflow
+    // materialization or the source Session host before Home signed its origin)
+    // is consumed here, never re-decided with this host's credentials.
+    const admittedStart = readAdmittedAgentStartV1(actionId, ctx, readRecord(admittedInput));
+    if (admittedStart) ctx = { ...ctx, agentStartWorkDepth: admittedStart.workDepth,
+      ...(admittedStart.workspaceWrites ? { agentStartWorkspaceWrites: admittedStart.workspaceWrites } : {}) };
+    const admittedWorkflowLeafDepth = admittedStart?.workDepth;
     const admittedWorkflowLeafStart = admittedWorkflowLeafDepth !== undefined;
     if ((isAgentCaller(ctx) && (!admittedWorkflowLeafStart || actionId === 'review.start') && (agentStartAction || roleTargetAction || selectorGoalMutation)) || userRoleStart || automationRoleStart) {
       const targetSessionId = roleTargetAction || selectorGoalMutation || actionId === 'session.goal.set'

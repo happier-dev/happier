@@ -3,7 +3,7 @@ import { ACTION_ID_FAMILIES_V1, isLocalServiceStopActionIdV1, type ActionId } fr
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
-import { readAdmittedWorkflowLeafStartDepthV1 } from './agentStartAdmission.js';
+import { readAdmittedAgentStartV1 } from './agentStartAdmission.js';
 import { AgentStartSessionCallerV1Schema } from '../../account/settings/admitAgentStartV1.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { resolveWorkflowRunStartedByForActionCallerV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -315,7 +315,10 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   const executionTarget = originalAccountStop ? undefined : externalTarget
     ?? (machineId && normalizeId(params.context.defaultSessionMachineId)
       ? { kind: 'machine' as const, machineId } : undefined);
-  const admittedWorkflowLeafDepth = readAdmittedWorkflowLeafStartDepthV1(params.actionId, params.context);
+  // Approval replay restores only a Workflow leaf's depth; a Session-origin
+  // stamp travels in its own signed root, not in this approval origin.
+  const admittedWorkflowLeafDepth = params.context.actionCaller?.kind === 'workflowRun'
+    ? readAdmittedAgentStartV1(params.actionId, params.context, inputRecord)?.workDepth : undefined;
   const candidate = {
     v: 1,
     authority,

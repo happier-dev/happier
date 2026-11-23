@@ -103,7 +103,9 @@ export function projectPreparedActionOperation(actionId: ActionId, input: unknow
     summary: buildApprovalPreviewSummary(spec, normalizedInput),
     ...(classification.safety ? { safety: classification.safety } : {}), irreversible: spec.irreversible === true,
     canConfirmInFlow: isPresentUserHostInvocation(context),
-    ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) };
+    ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}),
+    ...(context.agentStartWorkDepth === undefined ? {} : { agentStartAdmission: { workDepth: context.agentStartWorkDepth,
+      ...(context.agentStartWorkspaceWrites ? { workspaceWrites: context.agentStartWorkspaceWrites } : {}) } }) };
 }
 
 export async function resolveComputerActionSelection(

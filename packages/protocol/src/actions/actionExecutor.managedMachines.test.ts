@@ -13,6 +13,8 @@ import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { MachineProvisionerContributionV1Schema } from '../plugins/contributions/machineProvisioners.js';
 import { ACTION_IDS } from './actionIds.js';
 import { createRpcCallError, RpcError } from '../rpc/errors.js';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from './externalActionApi.js';
+import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } as const;
 
@@ -700,6 +702,59 @@ describe('managed Machine Action executor', () => {
       }, modelSelection: { ref: { modelId: 'role-model' } } } },
       context: { agentStartWorkDepth: 1, agentStartWorkspaceWrites: 'deny' },
     });
+  });
+
+  it('projects the source admission stamp from a reviewed Agent-start acquire before signing', async () => {
+    const executor = createActionExecutor({ managedMachineAction: vi.fn() } as unknown as ActionExecutorDeps);
+    const prepared = await executor.prepare('machines.managed.acquire', { ...acquireInput, agentStart: {
+      creationKey: 'start-1', directory: { kind: 'path', path: '/repo' }, agentTarget, roleId: 'worker',
+    } }, { ...agentContext, actionCaller: agentContext.agentStartContext.caller, agentStartContext: { ...agentContext.agentStartContext, roles: {
+      worker: { roleId: 'worker', name: 'Worker', instructions: 'Complete the task',
+        engine: { agentTargetKey: 'agent:role.agent/worker', modelId: 'role-model' },
+        runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true },
+    } }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['agent'] } }) },
+    { reviewOnly: true });
+    expect(prepared).toMatchObject({ kind: 'ready', operation: {
+      agentStartAdmission: { workDepth: 1, workspaceWrites: 'deny' },
+      normalizedInput: { agentStart: { agentTarget: { kind: 'agent', identity: { pluginId: 'role.agent', localId: 'worker' } } } },
+    } });
+  });
+
+  it('consumes the signed Session-origin admission stamp without a second Agent-start admission', async () => {
+    const caller = { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 } as const;
+    const input = { ...acquireInput, agentStart: { creationKey: 'start-1', directory: { kind: 'path', path: '/repo' }, agentTarget } };
+    const signedRoot = (originCaller: typeof caller | Readonly<{ kind: 'session'; sessionId: string; starterDepth: number; turnDepth: number }>) => {
+      const target = { kind: 'machine', machineId: 'controller' } as const;
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'member-acquire', target, input });
+      const sessionActionOrigin = { v: 1, caller: originCaller, sourceTurnId: 'turn', requestId: 'member-acquire',
+        callerPermissionMode: 'yolo', agentStartAdmission: { workDepth: 2, workspaceWrites: 'deny' } } as const;
+      return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-member-root', binding: {
+        serverIdentityId: 'home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+        sessionActionOrigin, custodianAccountId: 'owner',
+        sessionActionSource: { machineId: 'source', installationId: 'source-installation' },
+        accountEncryptionMode: 'plain', actionId: 'machines.managed.acquire', requestId: envelope.requestId,
+        machineId: 'controller', installationId: 'installation', target, admittedMachineRole: 'use', managedAcquireDelegation: true,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      } });
+    };
+    // The controller holds no requester policy: any second admission refuses here.
+    const controllerContext = { surface: 'agent', authority: 'account_automation', callerPermissionMode: 'yolo',
+      causalPermissionAuthority: agentContext.causalPermissionAuthority, defaultSessionId: 'lead', actionCaller: caller,
+      actionRequestId: 'member-acquire', externalActionContinuation: true,
+      sessionAgentSpawnPolicyV1: { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowCrossMachine: false },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['agent'] } }),
+    } as const;
+    const managedMachineAction = vi.fn(async (_args: unknown) => ({ managedId: 'managed', operation: { operationId: 'operation' } }));
+    const executor = createActionExecutor({ managedMachineAction } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('machines.managed.acquire', input, { ...controllerContext,
+      externalActionExecutionAuthorization: signedRoot(caller) })).toMatchObject({ ok: true });
+    expect(managedMachineAction.mock.calls[0]?.[0]).toMatchObject({
+      context: { agentStartWorkDepth: 2, agentStartWorkspaceWrites: 'deny' } });
+    // Another Session's stamp is not this caller's admission.
+    managedMachineAction.mockClear();
+    expect(await executor.execute('machines.managed.acquire', input, { ...controllerContext,
+      externalActionExecutionAuthorization: signedRoot({ ...caller, sessionId: 'other-session' }) })).toMatchObject({ ok: false });
+    expect(managedMachineAction).not.toHaveBeenCalled();
   });
 
   it('fails closed for unsupported hosts and preserves typed transport refusals', async () => {

@@ -392,6 +392,8 @@ export type ActionPreparedOperation = Readonly<{
   irreversible: boolean;
   canConfirmInFlow: boolean;
   sessionTargetsV1?: import('../sessionTargetV1.js').ActionResolvedSessionTargetsV1;
+  /** Agent-start admission decided during this preparation; a signing host carries it in the Session origin. */
+  agentStartAdmission?: NonNullable<import('../../rpc/socket.js').SessionActionRpcOriginV1['agentStartAdmission']>;
 }>;
 
 /**

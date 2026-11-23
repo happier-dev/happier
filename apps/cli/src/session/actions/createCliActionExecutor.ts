@@ -176,11 +176,12 @@ export function createCliActionHost(params: CliActionExecutorParams):
       || binding.accountId === runtimeAccountId) return null;
     const effect = getActionSpec(actionId).sideEffectClass;
     if (effect === 'none' || effect === 'read') return null;
-    // Home admitted this exact compute acquire. Agent work still needs the
-    // source requester's private policy, which controller custody cannot supply.
+    // Home admitted this exact compute acquire. Agent work needs the source
+    // requester's private policy, which controller custody cannot read: only the
+    // source host's signed admission stamp carries that decision here.
     if (actionId === 'machines.managed.acquire' && binding.actionId === actionId
       && binding.managedAcquireDelegation === true
-      && !isAgentStartActionInvocationV1(actionId, readRecord(input))
+      && (!isAgentStartActionInvocationV1(actionId, readRecord(input)) || binding.sessionActionOrigin.agentStartAdmission)
       && readRetainedVerifiedExternalActionRequester(context?.externalActionExecutionAuthorization)) return null;
     // Receiving Machine admission grants effect placement, not the requester's
     // private Action policy or approval Artifact writes. The existing Account
