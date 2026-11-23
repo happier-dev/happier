@@ -115,6 +115,41 @@ describe('Save group', () => {
 });
 
 describe('a saved group in Add', () => {
+  it('places a saved Usage group with sparse overrides when the destination already supplies its child scope', async () => {
+    const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_daily' })!;
+    const candidate: WidgetCandidate = { ...descriptor, pluginName: 'Happier', sharedPluginName: false };
+    const { buildWidgetGroupInputsCandidate } = await import('./widgetGroupInputs');
+    const { readUsageWidgetPageContext, readUsageWidgetPageScope, usageWidgetSurfaceContext } =
+      await import('@/components/settings/usage/usageWidgetPageContext');
+    const { normalizeUsageQuery } = await import('@happier-dev/protocol/inputs');
+    const groupInputs = buildWidgetGroupInputsCandidate({ title: 'Saved Usage', candidates: [candidate] })!;
+    const follower = Object.fromEntries(groupInputs.inputs!.fields.map(field => [field.path,
+      { kind: 'context' as const, slot: field.path }]));
+    const period = { kind: 'value' as const, value: { relative: 'today' } };
+    const fragment: WidgetLayoutFragmentSummaryV1 = {
+      artifactId: 'saved-usage', name: 'Saved Usage', childCount: 1,
+      inputs: groupInputs.inputs!, inputSchema: groupInputs.inputSchema!,
+      group: { width: 'full', frameStyle: 'card', dividers: 'hairline', context: { period },
+        children: [{ kind: 'widget', instance: { v: 1, definition: descriptor.definition, bindings: follower } }] },
+    };
+    const query = normalizeUsageQuery({ period: { relative: '7days' } });
+    const context = usageWidgetSurfaceContext(readUsageWidgetPageContext(readUsageWidgetPageScope(query)), '7days');
+    const add = vi.fn(async () => ({ ok: true as const }));
+    const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], context,
+      scope: { ...account, owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview' } },
+      submitLabel: 'Add', add, renderGroupPreview: () => null }).setup!();
+
+    expect(setup.resolve(setup.initial)).toMatchObject({
+      status: 'ready', input: { period: { relative: 'today' }, costBasis: 'auto', session: null },
+    });
+    await setup.submit(setup.initial);
+    expect(add).toHaveBeenCalledWith(fragment, { bindings: { period }, width: 'full' });
+
+    const home = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], context: {},
+      scope: { ...account, owner: { kind: 'home' } }, submitLabel: 'Add', add, renderGroupPreview: () => null }).setup!();
+    expect(home.resolve(home.initial)).toMatchObject({ status: 'selection_required',
+      fields: expect.arrayContaining([{ path: 'costBasis', status: 'selection_required', reasonCode: 'widget_input_missing' }]) });
+  });
   it('does not ask for or retain private group pins when copying to Public profile', () => {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_parallel' })!;
     const candidate: WidgetCandidate = { ...descriptor, pluginName: 'Happier', sharedPluginName: false };

@@ -104,6 +104,44 @@ function waiveUiAction(actionId: 'session.manager.set' | 'widgets.item.remove') 
 }
 
 describe('widget semantic Actions through production UI composition', () => {
+    it('copies a Home Usage group into the content-height Project layout without changing its inputs', async () => {
+        const home = scope({ kind: 'home' });
+        const project = scope({ kind: 'project', projectId: 'project-usage' });
+        const executor = createDefaultActionExecutor();
+        setActionPolicy({ v: 1, approvalWaivedSurfaces: { 'widgets.group.add': ['ui'] } });
+        const { runCopyWidgetGroupCommandV1 } = await import('@/components/widgets/definitions/widgetLayoutFragmentCommands');
+        const { WidgetLayoutGroupV1Schema } = await import('@happier-dev/protocol/widgets');
+        const bindings = {
+            period: { kind: 'value', value: { relative: 'today' } },
+            metric: { kind: 'value', value: 'tokens' },
+            costBasis: { kind: 'value', value: 'auto' },
+            session: { kind: 'value', value: null },
+        };
+        const group = WidgetLayoutGroupV1Schema.parse({
+            kind: 'group', id: 'home-usage-group', title: 'Today summaries', width: 'full', frameStyle: 'card', dividers: 'hairline',
+            children: ['first', 'second'].map(id => ({ kind: 'widget', size: 'medium', instance: {
+                v: 1, id, definition: { kind: 'builtin', id: 'usage_period_summary' }, bindings,
+            } })),
+        });
+        expect(await executor.execute('widgets.group.add', { surface: home, group }, context())).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.group.add', { surface: project, group }, context()))
+            .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+
+        const copied = await runCopyWidgetGroupCommandV1(group, project, { area: 'main' });
+        expect(copied).toMatchObject({ kind: 'applied' });
+        const projectRead = await executor.execute('widgets.item.list', { surface: project }, context());
+        const { items } = WidgetInstanceActionOutputSchemasV1['widgets.item.list'].parse(projectRead.ok ? projectRead.result : null);
+        const placement = items?.find(item => item.kind === 'group' && item.title === group.title);
+        expect(placement).toMatchObject({ kind: 'group', area: 'main' });
+        if (placement?.kind !== 'group') throw new Error('Missing copied Usage group');
+        expect(placement.id).not.toBe(group.id);
+        expect(placement.children.map(child => [child.size, child.instance.bindings])).toEqual([[undefined, bindings], [undefined, bindings]]);
+        expect(placement.children.map(child => child.instance.id)).not.toEqual(group.children.map(child => child.instance.id));
+
+        const homeRead = await executor.execute('widgets.item.list', { surface: home }, context());
+        expect(homeRead).toMatchObject({ ok: true, result: { items: expect.arrayContaining([group]) } });
+    });
+
     it('admits snapshot item/group copies and refuses private pins through the real public-area writer', async () => {
         const surface = scope({ kind: 'corePage', pageId: 'public-profile', area: 'main', layoutId: 'minimal' });
         const executor = createDefaultActionExecutor();

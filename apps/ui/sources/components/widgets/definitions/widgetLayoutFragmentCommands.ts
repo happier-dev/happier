@@ -1,4 +1,4 @@
-import { captureWidgetLayoutFragmentGroupV1, instantiateWidgetLayoutFragmentGroupV1,
+import { captureWidgetLayoutFragmentGroupV1, getWidgetSupportedSizesV1, instantiateWidgetLayoutFragmentGroupV1,
     type WidgetLayoutFragmentDraftV1, type WidgetLayoutFragmentGroupV1, type WidgetLayoutGroupV1,
     type WidgetSurfaceRefV1, type WidgetProjectAreaV1 } from '@happier-dev/protocol/widgets';
 import { randomUUID } from '@/platform/randomUUID';
@@ -21,7 +21,11 @@ function runPreparedWidgetLayoutFragmentCommandV1(prepareGroup: () => WidgetLayo
     options: Readonly<{ toIndex?: number; area?: WidgetProjectAreaV1; signal?: AbortSignal }> = {}) {
     return runWidgetDefinitionCommand('widgets.group.add', async () => {
         const group = prepareGroup();
-        const copy = instantiateWidgetLayoutFragmentGroupV1(group, { groupId: randomUUID(), childIds: group.children.map(() => randomUUID()) });
+        const targetGroup = getWidgetSupportedSizesV1(surface.owner.kind).length === 0
+            ? { ...group, children: group.children.map(({ size: _sourceSize, ...child }) => child) }
+            : group;
+        const copy = instantiateWidgetLayoutFragmentGroupV1(targetGroup, { groupId: randomUUID(),
+            childIds: targetGroup.children.map(() => randomUUID()) });
         let placement = copy;
         if (isPublicProfileWidgetSurfaceV1(surface)) {
             const catalog = await runWidgetDefinitionCommand('widgets.catalog.list', { surface }, surface, options.signal);

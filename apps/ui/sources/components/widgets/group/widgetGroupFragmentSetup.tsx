@@ -135,6 +135,11 @@ export function buildWidgetGroupFragmentEntry(
     const firstRequired = baseFields.findIndex((entry) => entry.field.required === true);
     const fields = baseFields.map((entry, index) => (index === firstRequired ? { ...entry, neededHint: askedOnce } : entry));
     const providedContext = widgetProvidedContext(input.context);
+    const childSlots = new Set(fragment.group.children.flatMap(child =>
+      Object.values(child.instance.bindings).flatMap(binding => binding.kind === 'context' ? [binding.slot] : [])));
+    // The destination already fills these child slots. Validate the effective inputs without saving new group overrides.
+    const inheritedBindings = Object.fromEntries(fields.flatMap(({ field, follow }) =>
+      follow && childSlots.has(follow.slot) ? [[field.path, { kind: 'context' as const, slot: follow.slot }]] : []));
     const definition = fragment.group.children[0]!.instance.definition;
     const widths = resolveWidgetGroupWidthChoices(
       fragment.group.children.map((child, index) => ({
@@ -159,7 +164,7 @@ export function buildWidgetGroupFragmentEntry(
         ? { status: 'ready', input: {} }
         : { status: 'denied', fields: [{ path: 'input', status: 'denied', reasonCode: 'widget_public_profile_presentation_unavailable' }] }
         : resolveConfiguredWidgetInputs({
-          instance: { v: 1, id: 'draft', definition, bindings: draft.bindings },
+          instance: { v: 1, id: 'draft', definition, bindings: { ...inheritedBindings, ...draft.bindings } },
           descriptor,
           providedContext,
           viewerValues: NO_VIEWER_VALUES,
