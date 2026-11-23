@@ -3,6 +3,7 @@ import type { ConnectedAccountPortableReadContext, ConnectedAccountPortableRunti
 import { githubAccountCredentialRuntime, materializeGithubCredential } from './credentialMaterialization.js';
 import { githubConnectedAccountRuntime } from './connectedAccountRuntime.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { activate as activateAccount } from '../accountRuntime.js';
 import { derivePluginAccountContributionRegistrationRights } from '../../../../protocol/src/plugins/contributions/catalog.js';
 import { createPluginRegistrationScope } from '../../../../plugin-sdk/src/registration/scope.js';
@@ -14,7 +15,7 @@ function context(token: string) {
 
 describe('GitHub native Copilot material', () => {
   it('starts device authorization in the Account realm with typed missing configuration', async () => {
-    const target = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0]?.authentication.account;
+    const target = PluginConnectedAccountDescriptorContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0]).authentication.account;
     if (!target) throw new Error('GitHub Account artifact missing');
     const scope = createPluginRegistrationScope({ pluginId: PLUGIN_MANIFEST.id, target: { realm: 'account', ...target },
       rights: derivePluginAccountContributionRegistrationRights(PLUGIN_MANIFEST.contributes, target) });

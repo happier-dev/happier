@@ -50,7 +50,8 @@ it('declares the neutral pull request lifecycle source role for preview enrollme
   const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
   if (!result.ok) throw new Error('Expected the GitHub manifest to be admitted');
   const event = result.manifest.contributes.events?.find(event => event.id === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle);
-  expect(event?.automation?.source).toMatchObject({ scmPullRequestLifecycle: { providerKind: 'github' } });
+  if (event?.kind !== 'event') throw new Error('Expected the GitHub pull request Event');
+  expect(event.automation?.source).toMatchObject({ scmPullRequestLifecycle: { providerKind: 'github' } });
 });
 
 // Records the selection basis; it does not make the external source or terms immutable.
@@ -75,14 +76,13 @@ it.each([GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace, GITHUB_TRIAGE_ACTIO
 );
 it('asks only for the bound account and leaves review placement to the host without removing the agent workspace input', () => {
   const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace);
-  expect(action).toBeDefined();
+  const declaration = PluginActionContributionV2Schema.parse(action);
   // The authored field is the account the source is bound to; the host settles a complete draft that names it
   // (or the native service it offers) without a form.
-  expect(action?.inputHints?.fields).toEqual([
+  expect(declaration.inputHints?.fields).toEqual([
     expect.objectContaining({ path: 'instance.binding.account', widget: 'select', connectedAccountOptions: true }),
   ]);
-  expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
-  expect(normalizePluginActionInputHintsV2(undefined, action?.inputSchema)?.fields?.some(field => field.path === 'workspace')).toBe(true);
+  expect(normalizePluginActionInputHintsV2(undefined, declaration.inputSchema ?? undefined)?.fields?.some(field => field.path === 'workspace')).toBe(true);
 });
 it('takes the person’s own press as consent for the review workspace while agents and a saved Ask still ask', () => {
   const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace));

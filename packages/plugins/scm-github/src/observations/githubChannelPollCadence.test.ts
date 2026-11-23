@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createGithubReadCadence } from './githubChannelPollCadence.js';
-import type { GithubApiClientV1 } from './githubApiClient.js';
+import type { GithubApiClientV1, GithubApiResponseV1 } from './githubApiClient.js';
 
 // GitHub is the external boundary: an unchanged authenticated conditional GET
 // returns 304 without spending the primary rate-limit budget.
@@ -63,7 +63,7 @@ describe('GitHub demanded-read cadence', () => {
   it('retains pagination on a 304 without reusing stale response timing, and drops bodies without validators', async () => {
     let reads = 0;
     const response = githubBoundary().client;
-    const client: GithubApiClientV1 = { ...response, async request(input) {
+    const client: GithubApiClientV1 = { ...response, async request(input): Promise<GithubApiResponseV1> {
       reads += 1;
       if (reads === 1) return { status: 200,
         headers: { ETag: 'first', Link: '<https://api.github.com/next>; rel="next"', 'Retry-After': '90' },

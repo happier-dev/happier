@@ -7,7 +7,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { createStubGithubTransport, readRecordedJsonBody } from '../triage/testkit/githubTriage.test-support.js';
+import { createStubGithubTransport, readRecordedJsonBody, type StubHttpResponse } from '../triage/testkit/githubTriage.test-support.js';
 import { executeGithubCiAction } from './operations.js';
 import { ForgeCiActionResultSchemasV1 } from './contracts.js';
 import { mapGithubRun } from './mapping.js';
@@ -69,7 +69,7 @@ describe('GitHub Actions through generated activation', () => {
     let completed = false;
     const transport = createStubGithubTransport({
       nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer synthetic' } },
-      respond: request => ({ status: !completed && readTriageResponseHeaderV1(request.headers, 'if-none-match') ? 304 : 200,
+      respond: (request): StubHttpResponse => ({ status: !completed && readTriageResponseHeaderV1(request.headers, 'if-none-match') ? 304 : 200,
         headers: readTriageResponseHeaderV1(request.headers, 'if-none-match') ? { 'x-poll-interval': '45', etag: 'running' } : {
           'x-ratelimit-remaining': '2', 'x-ratelimit-reset': String(Date.now() / 1000 + 60), etag: 'running',
         },

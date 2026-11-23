@@ -697,7 +697,7 @@ describe('registered GitHub pending review parity', () => {
         // Observe the producer's typed settlement before an aborted host call discards it.
         const handler = kit.registration('actions', operation.id);
         if (!handler) throw new Error(`Missing registered Action ${operation.id}`);
-        const pending = handler(stateInput(operation.fields), stub.context);
+        const pending = Promise.resolve(handler(stateInput(operation.fields), stub.context));
         const requestSignal = await Promise.race([writeStarted, pending.then(() => {
           throw new Error('The registered Action settled before the provider received its write');
         })]);

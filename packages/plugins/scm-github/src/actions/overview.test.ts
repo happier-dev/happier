@@ -11,7 +11,7 @@ describe('GitHub Overview default-branch target', () => {
   it('preserves the credential owner remedy and phase through the Action failure carrier', async () => {
     const failure = new PluginError({ code: 'plugin_connected_account_native_unavailable',
       remediation: { kind: 'selectAccount', service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' } },
-      failureCause: { phase: 'connected_account.materialize', errorClass: 'PluginError',
+      failureCause: { phase: 'connected_account.materialize', errorClass: 'Error',
         errorCode: 'plugin_connected_account_native_unavailable', httpStatus: null } });
     const transport = createStubGithubTransport({ nativeMaterialization: () => { throw failure; },
       respond: () => { throw new Error('Credential refusal must precede provider HTTP'); } });

@@ -4,6 +4,7 @@ import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@
 
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { githubConnectedAccountRuntime } from './connectedAccountRuntime.js';
 import { beginGithubAccountRequestOccurrenceV1, getGithubAccountRequestOwnerV1 } from '../observations/githubApiClient.js';
 import * as processBoundary from '@happier-dev/cli-common/process';
@@ -103,7 +104,7 @@ describe('GitHub CLI login import', () => {
           expect(requests).toEqual([]);
         }
         if (scenario !== 'connected') expect(values.size).toBe(0);
-        expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0]?.authentication.modes).toEqual(
+        expect(PluginConnectedAccountDescriptorContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0]).authentication.modes).toEqual(
           expect.arrayContaining([expect.objectContaining({ id: 'native-import', credentialOrigin: 'native_import' })]),
         );
       } finally {

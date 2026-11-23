@@ -160,7 +160,7 @@ export function createStubGithubTransport(input: Readonly<{
   respond: (
     request: RecordedGithubRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ) => StubHttpResponse | Promise<StubHttpResponse> | undefined;
+  ) => StubHttpResponse | undefined | Promise<StubHttpResponse | undefined>;
   signal?: AbortSignal;
   /** Present only for discovery tests; absent leaves the listing unimplemented. */
   listing?: StubConnectedAccountListing | (() => never);
