@@ -100,23 +100,14 @@ function createAppServerSession(): Readonly<{
   };
 }
 
-function createConnectedAccountsFixture(input?: Readonly<{
-  bound?: boolean;
-  apiKey?: string;
-}>) {
+function createConnectedAccountsFixture() {
   let listener: (() => void | Promise<void>) | null = null;
   return {
-    getBinding: vi.fn(async () => input?.bound
-      ? {
-          purpose: 'realtime_upstream',
-          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
-          target: { kind: 'account' as const, displayName: 'Realtime' },
-        }
-      : null),
+    getBinding: vi.fn(async () => null),
     requestSelection: vi.fn(),
     materialize: vi.fn(async () => ({
       kind: 'environment' as const,
-      env: { OPENAI_API_KEY: input?.apiKey ?? 'sk-realtime' },
+      env: { OPENAI_API_KEY: 'sk-realtime' },
     })),
     watch: vi.fn((_purpose: string, next: () => void | Promise<void>) => {
       listener = next;
