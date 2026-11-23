@@ -16,6 +16,8 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { resolveAutomationTemplateRetainedSession } from '@/daemon/automation/automationRetainedSession';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import { readPublishedMachineRowWithLegacyOwnerProof } from '@/api/machine/readPublishedMachineRow';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { encodeRequesterCredentials, hasStoredSessionCredentialProvenance } from '@/persistence';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
@@ -34,6 +36,10 @@ function createCliTriggerRequesterCustody(params: Readonly<{
 }>): NonNullable<Parameters<typeof createAccountWorkflowTriggerActions>[0]['workflowRequesterCustody']> {
   const { credentials, options } = params;
   const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+  // One public refusal; its cause names which owner refused, in the existing code vocabulary.
+  const unavailable = (cause: string): never => { throw Object.assign(new Error('requester_custody_unavailable'), {
+    code: 'requester_custody_unavailable',
+    failureCause: projectActionFailureCauseV1({ code: cause }, 'workflow.trigger.add', { allowUnknownErrorCode: true }) }); };
   return {
     retain: async ({ scopeId, machineId, automationId }, { signal } = {}) => {
       const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
@@ -44,25 +50,28 @@ function createCliTriggerRequesterCustody(params: Readonly<{
       if (observed?.legacyOwnerOnly || (accountId && custodian?.accountId === accountId)) return;
       const { installationId, installationPublicKey } = observed?.row ?? {};
       if (!accountId || !custodian || !installationId || !installationPublicKey || observed?.row.id !== machineId) {
-        return refuse('requester_custody_unavailable');
+        return unavailable('admission_unavailable');
       }
       if (!hasStoredSessionCredentialProvenance(credentials)) return refuse('requester_account_material_unavailable');
       // Another person's Machine receives the sign-in as ordinary use (owner ruling 2026-11-23).
       signal?.throwIfAborted();
-      if (options.isCredentialCurrent && !await options.isCredentialCurrent()) return refuse('requester_custody_unavailable');
+      if (options.isCredentialCurrent && !await options.isCredentialCurrent()) return unavailable('not_authenticated');
       const publicKey = decodeBase64(installationPublicKey, 'base64');
-      if (encodeBase64(publicKey, 'base64') !== installationPublicKey) return refuse('requester_custody_unavailable');
+      if (encodeBase64(publicKey, 'base64') !== installationPublicKey) return unavailable('admission_unavailable');
+      // The receiving Machine has its own saved profile id for this Home; only the Home identity is shared.
+      const serverId = await resolveServerProfileHomeIdentityId(options.serverId) ?? options.serverId;
       const deliver = async (operation: 'retain' | 'retire', requestSignal?: AbortSignal) => {
         const request = sealSessionRequesterBootstrapRpcRequestV1({ installationId, installationPublicKey: publicKey,
           randomBytes: getRandomBytes, request: { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
-            input: { executionTarget: { serverId: options.serverId, machineId }, scopeId,
+            input: { executionTarget: { serverId, machineId }, scopeId,
               ...(automationId ? { automationId } : {}), operation },
             requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(credentials) } } });
         const result = await callExactMachineRpc({ credentials, serverUrl, machineId, method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
           request, requireCurrentMachine: true, requiredMachineKind: 'persistent', timeoutMs: null,
           waitForResultOnCancel: true, signal: requestSignal });
         if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) {
-          return refuse('requester_custody_unavailable');
+          const receiverCode = result && typeof result === 'object' && 'errorCode' in result ? result.errorCode : undefined;
+          return unavailable(typeof receiverCode === 'string' ? receiverCode : 'target_unavailable');
         }
       };
       await deliver('retain', signal);

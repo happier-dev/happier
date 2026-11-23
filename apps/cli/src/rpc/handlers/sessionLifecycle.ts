@@ -42,6 +42,7 @@ import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncr
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffPrepareTargetResultGetSuccessResponse } from '@happier-dev/protocol';
 import { createWorkflowRequesterCustody, retainWorkflowRequesterCredentials, retireWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
@@ -460,10 +461,14 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
             error: context.signal.aborted ? 'cancelled' : 'target_unavailable' };
         if (parsed.data.scope === 'workflow_trigger') {
             try {
-                if (parsed.data.input.executionTarget.serverId !== boundary.serverId) {
+                const admitted = custody.admitted;
+                // Same Home rule as a guest's Session: the requester names the shared Home identity,
+                // never this receiver's own saved profile id.
+                const homeServerIdentityId = admitted.homeServerIdentityId;
+                if (!areServerProfileIdentifiersEquivalent(boundary.serverId, parsed.data.input.executionTarget.serverId,
+                    identifier => identifier === boundary.serverId || identifier === homeServerIdentityId ? homeServerIdentityId : undefined)) {
                     return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
                 }
-                const admitted = custody.admitted;
                 if (parsed.data.input.operation === 'retain') {
                     await retainWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
                         automationId: parsed.data.input.automationId,

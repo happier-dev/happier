@@ -16,6 +16,8 @@ vi.mock('@/api/automations', () => ({ listAutomationDefinitions: network.list, l
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.session }));
 vi.mock('@/api/machine/readPublishedMachineRow', () => ({ readPublishedMachineRowWithLegacyOwnerProof: network.publishedMachine }));
 vi.mock('@/session/transport/rpc/machineRpc', () => ({ callExactMachineRpc: network.machineRpc }));
+// Genuine socket boundary: the receiver's live Account observation is not part of these contracts.
+vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Account socket unavailable'); } }));
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -160,6 +162,81 @@ describe('CLI workflow trigger Account codec', () => {
       expect(network.create).toHaveBeenCalledOnce();
     }
   });
+  it('arms a guest\'s recurring trigger on a Machine shared for Use, sealing only their sign-in there', async () => {
+    // The requester's and the receiver's saved profile ids differ; only the Home identity is shared.
+    network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    const [{ default: fastify }, { installAxiosFastifyAdapter }, { RpcHandlerManager }, { authorizeMachineRpcRequest },
+      { registerSessionSpawnNewRpcHandlers }, { acquireWorkflowRequesterCredentials }, { adoptServerProfileHomeConnectionDescriptor },
+      { configuration }, { mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([import('fastify'),
+      import('@/testkit/http/axiosAdapter'), import('@/api/rpc/RpcHandlerManager'), import('@/api/machine/machineRpcAuthorization'),
+      import('@/rpc/handlers/sessionLifecycle'), import('@/daemon/workflows/requesterCustody'), import('@/server/serverProfiles'),
+      import('@/configuration'), import('node:fs/promises'), import('node:os'), import('node:path')]);
+    const origin = 'http://shared-home.test';
+    const homeId = 'srv_shared_home';
+    await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: configuration.activeServerId, createIfMissing: true,
+      observation: 'exact', descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://shared-home.example.test',
+        revision: 1, endpoints: [{ kind: 'https', url: 'https://shared-home.example.test' }] } });
+    // Home HTTP is the authentication boundary for the receiver's requester admission.
+    const app = fastify();
+    app.get('/v1/account/profile', async () => ({ id: 'requester' }));
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin });
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'guest-trigger-custody-'));
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    let granted = true;
+    const receiver = new RpcHandlerManager({ scopePrefix: 'shared-machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'shared-machine',
+        resolveCustodianAccountId: async () => 'machine-owner', resolveInstallationId: () => 'installation',
+        // Home's current-grant read is the boundary: a revoked grant is refused at the next admission.
+        verifyMachineAdmission: async () => granted }) });
+    registerSessionSpawnNewRpcHandlers({ rpcHandlerManager: receiver,
+      requesterBootstrapBoundary: { serverId: 'owner-profile', serverHttpBaseUrl: origin, happyHomeDir,
+        getObservedServerIdentityId: () => homeId,
+        readInstallation: async () => ({ machineId: 'shared-machine', identity: { installationId: 'installation', version: 1, createdAt: 1,
+          publicKey: Buffer.from(installation.publicKey).toString('base64url'),
+          privateKey: Buffer.from(installation.secretKey).toString('base64url') } }),
+        spawnLifecycleHandler: async () => { throw new Error('trigger custody never launches a Session'); } } });
+    // Network transport: Home relays the guest's exact-Machine RPC with the Use admission it just checked.
+    network.machineRpc.mockImplementation(async ({ request, method }) => receiver.invokeLocal(method, request, { rpcContext: {
+      callerAuthority: 'present_user', verifyMachineAdmissionCurrent: async () => granted,
+      machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'machine-owner', machineId: 'shared-machine',
+        installationId: 'installation', role: 'use', encryptionMode: 'plain' } } }));
+    network.publishedMachine.mockResolvedValue({ row: { id: 'shared-machine', installationId: 'installation',
+      installationPublicKey: Buffer.from(installation.publicKey).toString('base64'),
+      access: { custodian: { accountId: 'machine-owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } },
+      legacyOwnerOnly: false });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.fixture`;
+    const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
+    const actions = createCliWorkflowTriggerActions({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+      serverHttpBaseUrl: origin, resolveWorkflow: async () => ({ definition }),
+      requesterCustody: { serverId: configuration.activeServerId } });
+    const add = () => actions.add({ target: { kind: 'inline', definition },
+      project: { machineId: 'shared-machine', directory: '/work' }, trigger }, { surface: 'cli', authority: 'present_user' });
+    const retained = (scopeId: string) => acquireWorkflowRequesterCredentials({ scopeId, happyHomeDir, serverId: 'owner-profile',
+      machineId: 'shared-machine', installationId: 'installation', serverHttpBaseUrl: origin });
+    try {
+      const armed = await add();
+      const custody = await retained(armed.triggerId);
+      expect(custody?.attribution).toMatchObject({ accountId: 'requester', machineId: 'shared-machine', installationId: 'installation' });
+      await custody?.release();
+      // No Use grant: Home stamps no Machine admission, and the receiver keeps nothing.
+      const [{ request: sealed, method }] = network.machineRpc.mock.calls[0]!;
+      expect(await receiver.invokeLocal(method, sealed, { rpcContext: { callerAuthority: 'present_user' } })).toMatchObject({ ok: false });
+      // Revocation applies at the next admission: nothing new is armed or retained.
+      granted = false;
+      network.create.mockClear();
+      await expect(add()).rejects.toMatchObject({ code: 'requester_custody_unavailable',
+        failureCause: { phase: 'workflow.trigger.add', errorCode: expect.any(String) } });
+      expect(network.create).not.toHaveBeenCalled();
+    } finally {
+      restore(); await app.close(); await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  }, 60_000);
   it('opens real E2EE context only while the Account mode and key witness match', async () => {
     const secret = new Uint8Array(32).fill(7);
     const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } });
