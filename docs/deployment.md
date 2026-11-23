@@ -1092,7 +1092,10 @@ the Action's canonical read/write access class.
 
 Workbench target discovery on a Machine uses the signed contributed Action to
 read the serving Own Server receipt on its current runtime installation. The
-Environment and Artifact routes apply the requester's existing access.
+Environment and Artifact routes apply the requester's existing access. A
+Database detail page scopes this discovery to its native service or managed
+Link, and requests size only for the selected native service. Environment-wide
+discovery remains available to the Workbench chooser.
 
 The existing service Exec owner supplies native container reachability to the
 shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,

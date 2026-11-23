@@ -349,17 +349,21 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         },
         async listTargets(request) {
             if (request.scope.kind !== 'environment') return { targets: [], completeness: { complete: true } };
-            const admission = await readEnvironment(request.scope, undefined, { includeDataTargetLinkContent: true, nativeMember: true });
+            const { selection } = request.scope;
+            const admission = await readEnvironment(request.scope, selection?.kind === 'managed_link' ? selection.targetLinkId : undefined,
+                { ...(selection === undefined ? { includeDataTargetLinkContent: true } : {}), nativeMember: true });
             const summary = access(admission, 'read');
             const targets: DatabaseDescriptorV1[] = [];
             let completeness: DatabaseCompletenessV1 = { complete: true };
             const runtime = admission.detail.targetLinks.find(row => row.targetLink.id === admission.detail.environment.runtimeTargetLinkId)?.targetLink;
-            if (runtime?.targetKind === 'ownServer' && runtime.activeDeploymentId && admission.detail.content.template?.data?.length) {
+            const nativeServices = (admission.detail.content.template?.data ?? []).filter(data =>
+                selection === undefined || selection.kind === 'native_service' && selection.service === data.service);
+            if (runtime?.targetKind === 'ownServer' && runtime.activeDeploymentId && nativeServices.length > 0) {
                 const { basis } = await readOwnServerDataServiceDeploymentForHost(admission.host, {
                     environmentId: admission.detail.environment.id, targetLinkId: runtime.id, deploymentId: runtime.activeDeploymentId,
                     machineId: admission.host.machineId, installationId: admission.placement.installationId,
                 }, admission.context, admission.detail);
-                for (const data of admission.detail.content.template?.data ?? []) {
+                for (const data of nativeServices) {
                     if (!basis.services.includes(data.service)) continue;
                     if (data.engine !== 'postgres' && data.engine !== 'postgresql' && data.engine !== 'mysql') continue;
                     const definition = resolveOwnServerDataQueryDefinitionForHost(admission.detail.content, data.service, basis.bindings);
@@ -372,6 +376,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 }
             }
             for (const candidate of admission.detail.targetLinks) {
+                if (selection && (selection.kind === 'native_service' || selection.targetLinkId !== candidate.targetLink.id)) continue;
                 if (admission.detail.environment.controllerMachineId !== admission.host.machineId) continue;
                 if (candidate.targetLink.role !== 'data' || candidate.targetLink.deletedAtMs !== undefined
                     || candidate.targetLink.detachedAtMs !== undefined || candidate.targetLink.source.kind !== 'plugin') continue;

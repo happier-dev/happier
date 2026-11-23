@@ -242,13 +242,21 @@ describe('managed database attachment at the deployment owner', () => {
             createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy,
         });
         try {
-            const listed = await service.listTargets({ scope: { kind: 'environment', environment } });
+            const beforeSelection = requests.length;
+            expect(await service.listTargets({ scope: { kind: 'environment', environment,
+                selection: { kind: 'managed_link', targetLinkId: 'another-link' } } }))
+                .toEqual({ targets: [], completeness: { complete: true } });
+            expect(requests).toHaveLength(beforeSelection);
+            const readsBeforeSelectedLink = stored.state.reads;
+            const listed = await service.listTargets({ scope: { kind: 'environment', environment,
+                selection: { kind: 'managed_link', targetLinkId: target.targetLinkId } } });
+            expect(requests).toHaveLength(beforeSelection + 1);
             expect(listed).toMatchObject({ targets: [{ target, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
             const automationSubject = { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                 target: { kind: 'managed_deployment', environmentId: environment.environmentId,
                     targetLinkId: target.targetLinkId, databaseName: target.database } } };
             expect(listed.targets[0]?.automationSubject).toEqual(automationSubject);
-            expect(stored.state.reads).toBe(1);
+            expect(stored.state.reads).toBe(readsBeforeSelectedLink + 1);
             expect(requests).toMatchObject([{ headers: { authorization: 'Bearer selected-provider-credential' } }]);
             const resolved = await service.resolve(read, 'read');
             expect(resolved.descriptor.target).toEqual(target);

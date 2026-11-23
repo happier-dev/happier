@@ -148,7 +148,7 @@ export function DeploymentDatabasePage(
   const detail = record.snapshot.value;
   const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
   // The size DB-SIZE-1113's read reports for this database, for the facts row; read with the page.
-  const sizes = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId });
+  const sizes = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId, database: props.database });
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,
@@ -236,7 +236,9 @@ export function DeploymentDatabasePage(
     const scope = { kind: 'environment' as const, environment: {
       serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
       environmentId: detail.environment.id,
-    } };
+    }, selection: database.kind === 'selfHosted'
+      ? { kind: 'native_service' as const, service: database.data.service }
+      : { kind: 'managed_link' as const, targetLinkId: database.link.targetLink.id } };
     const result = await actions.inspectPlatformTarget(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope }, {
       externalActionTarget: { kind: 'machine', machineId: detail.environment.controllerMachineId },
     });

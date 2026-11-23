@@ -260,7 +260,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const previous = previousById.get(environment.id);
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
                 let databaseSubjectFailure: ReturnType<typeof failure>['failure'] | undefined;
-                const data = row.content.template?.data ?? [];
+                const templateData = row.content.template?.data ?? [];
+                const data = query.database === undefined ? templateData : templateData.filter(service => service.service === query.database);
                 const runtimeLink = runtimeByEnvironment.get(environment.id);
                 const runtimeEnvironment = selectedMetadata?.environment ?? metadataEnvironments.get(environment.id);
                 const runtimeTargetLink = runtimeEnvironment ? selectDeploymentRuntimeTargetLinkV1({
@@ -285,14 +286,19 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 // Before the first deploy the authored declaration owns native identity.
                 if (selectedMetadata && !runtimeTargetLink?.activeDeploymentId) projectDeclaredDatabaseSubjects(row.content.bindings);
                 const hasManagedData = selectedMetadata?.targetLinks.some(link => link.role === 'data'
-                    && link.source.kind === 'plugin' && link.deletedAtMs === undefined && link.detachedAtMs === undefined);
-                if (selectedMetadata && (runtimeTargetLink?.activeDeploymentId || hasManagedData)) {
+                    && link.source.kind === 'plugin' && link.deletedAtMs === undefined && link.detachedAtMs === undefined
+                    && (query.database === undefined || data.length === 0 && link.id === query.database));
+                const selection = query.database === undefined ? undefined : data.length > 0
+                    ? { kind: 'native_service' as const, service: query.database }
+                    : { kind: 'managed_link' as const, targetLinkId: query.database };
+                if (selectedMetadata && (hasManagedData || runtimeTargetLink?.activeDeploymentId && (selection === undefined || data.length > 0))) {
                     if (environment.controllerMachineId) {
                         try {
                             databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
                                 action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
                                 input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
-                                    projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
+                                    projectSourceId: environment.projectSourceId, environmentId: environment.id },
+                                    ...(selection ? { selection } : {}) } },
                             }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
                         } catch (error) {
                             databaseSubjectFailure = failureFromError(error).failure;

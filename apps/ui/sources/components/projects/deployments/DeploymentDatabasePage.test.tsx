@@ -416,6 +416,7 @@ async function renderDatabase(
         ? { errorCode: 'target_unavailable', error: 'target_unavailable' } : null,
       execute: raw => {
         const operand = DeploymentActionInputSchemasV1['deployments.data.size'].parse(raw);
+        effects.push({ actionId: 'deployments.data.size', input: operand });
         return { ok: true, size: { service: operand.service, deploymentId: operand.deploymentId,
           size: { status: 'available', bytes: 4096, measurement: 'database_bytes', observedAtMs: 1 },
           growth: { status: 'unavailable', reason: 'previous_sample_required' } } };
@@ -719,6 +720,21 @@ function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatab
 }
 
 describe('Environment → Database → Workbench', () => {
+  it('reads only the selected database when the Environment declares two', async () => {
+    const view = await renderDatabase({ readDatabaseAutomations: true });
+    try {
+      await waitForHomeGovernance(async () => {
+        expect(view.screen.findByTestId('subject-triggers-add')).not.toBeNull();
+        expect(view.effects.filter(effect => effect.actionId === 'deployments.data.size').map(effect => effect.input.service))
+          .toEqual(['postgres']);
+      });
+      expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([expect.objectContaining({
+        input: expect.objectContaining({ input: { scope: { ...view.scope,
+          selection: { kind: 'native_service', service: 'postgres' } } } }),
+      })]);
+    } finally { await view.dispose(); }
+  });
+
   it.each([false, true])('retries discovery for the selected Database when size Action refused is %s', async databaseSizeActionRefused => {
     let refused = true;
     const view = await renderDatabase({ readDatabaseAutomations: true, databaseSizeActionRefused,
@@ -763,7 +779,7 @@ describe('Environment → Database → Workbench', () => {
       expectOpenedDatabaseConsole(view);
       expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([
         expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
-          kind: 'environment', environment: view.scope.environment } } }) })]);
+          kind: 'environment', environment: view.scope.environment, selection: { kind: 'native_service', service: 'postgres' } } } }) })]);
       expect(view.screen.findByTestId('project-deployments.query.sql')).toBeNull();
     } finally { await view.dispose(); }
   });

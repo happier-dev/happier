@@ -134,7 +134,13 @@ const databaseTargetsConnectScopes = [
 export const DatabaseTargetsConnectScopeV1Schema = z.discriminatedUnion('kind', databaseTargetsConnectScopes);
 export const DatabaseTargetsListInputV1Schema = z.strictObject({
     scope: z.discriminatedUnion('kind', [
-        ...databaseTargetsConnectScopes,
+        DatabaseWorktreeScopeV1Schema,
+        z.extend(databaseTargetsConnectScopes[1], {
+            selection: z.optional(z.discriminatedUnion('kind', [
+                z.strictObject({ kind: z.literal('native_service'), service: name }),
+                z.strictObject({ kind: z.literal('managed_link'), targetLinkId: name }),
+            ])),
+        }),
         z.strictObject({ kind: z.literal('project'), accountId: name, installationId: name, projectKey: name }),
     ]),
 });
