@@ -3,6 +3,7 @@ import * as React from 'react';
 import { decodeBase64 } from '@/encryption/base64';
 import { isBinaryContent, resolveFileViewerKind, type FileViewerClass } from '@/scm/utils/filePresentation';
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 
@@ -28,7 +29,7 @@ export function useCodeTextFile(scope: WorkspaceScopeBase, path: string | null, 
         if (!path || !scopeKey) return;
         const controller = new AbortController();
         setState((current) => (current.key === key && current.value.kind === 'ready' ? current : { key, value: { kind: 'loading' } }));
-        void workspaceReadFile(scope, path, { signal: controller.signal }).then((result) => {
+        void workspaceReadFile(workspaceFileSystemTargetFromScope(scope), path, { signal: controller.signal }).then((result) => {
             if (controller.signal.aborted) return;
             if (!result.success) {
                 setState({ key, value: { kind: 'error', error: result.error } });

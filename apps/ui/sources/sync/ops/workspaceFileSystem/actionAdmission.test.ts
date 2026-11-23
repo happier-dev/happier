@@ -775,6 +775,18 @@ describe('shared workspace filesystem Action admission', () => {
         expect(preview.error).toBeNull();
         expect(preview.fileContent?.content).toBe(content);
     });
+    it('reads a Code preview of an attached workspace from its guest, not from the controller (QA cut 34)', async () => {
+        // Cut 34: the managed Code README said "This file couldn't be read" because the read went to the controller's disk.
+        const { useCodeTextFile } = await import('@/components/projects/files/code/useCodeTextFile');
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId, workspaceId: 'attached-checkout', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath };
+        filesystem.fileBytes = new TextEncoder().encode('# guest readme');
+        const preview = await renderHook(() => useCodeTextFile({ serverId, machineId: target.machineId, rootPath: target.rootPath, workspace }, 'README.md'));
+        await vi.waitFor(() => expect(filesystem.calls).toContainEqual(expect.objectContaining({ method: 'daemon.filesystem.readFile' })));
+        expect(filesystem.calls).toContainEqual(expect.objectContaining({ method: 'daemon.filesystem.readFile', machineId: workspace.controller.machineId,
+            payload: expect.objectContaining({ workspace }) }));
+        await preview.unmount();
+    });
     it('keeps a cold viewer loading beyond 15 seconds and publishes the successful inline read', async () => {
         const text = 'riverglassneedle late success';
         filesystem.fileBytes = new TextEncoder().encode(text);

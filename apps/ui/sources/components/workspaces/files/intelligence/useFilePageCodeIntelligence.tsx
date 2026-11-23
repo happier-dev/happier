@@ -27,6 +27,7 @@ import { useSetting } from '@/sync/store/settingsReadHooks';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { readWorkspaceFileEditorHolder, subscribeFileEditorActionOwners } from '@/sync/ops/actions/scopeActionFamily';
 import { workspaceReadFile, workspaceStatFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { decodeWorkspaceFileText } from '@/sync/ops/workspaceFileSystem/workspaceFileTextDecoding';
 import { askCodeDiagnosticsToFix } from '@/sync/domains/workspaces/languageIntelligence/askCodeDiagnosticsToFix';
 import { useAskSelectionTargetContext } from '@/components/ui/code/selection/useAskSelection';
@@ -722,9 +723,11 @@ export function useFilePageCodeIntelligence(
         }
         // Root diagnostics can include another read-only file with no editor-action holder.
         // Read each unique target only when Ask needs its saved context.
-        const stat = await workspaceStatFile(workspaceScope, path);
+        // An attached workspace's files live on its guest: read through its managed address, never the controller's disk.
+        const fileTarget = workspaceFileSystemTargetFromScope(workspaceScope);
+        const stat = await workspaceStatFile(fileTarget, path);
         if (!lifetime?.isCurrent() || !stat.success || !stat.exists || stat.kind !== 'file' || typeof stat.sizeBytes !== 'number') return failedRead();
-        const file = await workspaceReadFile(workspaceScope, path, { maxBytes: stat.sizeBytes, knownSizeBytes: stat.sizeBytes });
+        const file = await workspaceReadFile(fileTarget, path, { maxBytes: stat.sizeBytes, knownSizeBytes: stat.sizeBytes });
         if (!file.success) return failedRead();
         const decoded = await decodeWorkspaceFileText(file.content);
         return decoded.kind === 'text' ? { savedText: decoded.text, unsaved: false } : failedRead();

@@ -34,6 +34,31 @@ describe('Project header page descriptors', () => {
         await screen.unmount();
     });
 
+    it('titles the sibling checkouts by their place, so an attached workspace sits under On servers (QA cut 34)', async () => {
+        const { t } = await import('@/text');
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
+        const screen = await renderScreen(<ProjectShellHeader projectName="Project"
+            checkout={{ machineName: 'api-dev', machineNameParts: { name: 'api-dev', hint: 'via nl3' }, machineIcon: 'terminal', branch: 'main',
+                choices: [
+                    { id: 'path:/home/coder/api', title: 'main', subtitle: '/home/coder/api', category: t('projects.checkouts.thisMachine'), checked: true },
+                    { id: 'ref:ssh', title: 'api', subtitle: 'SSH Remote Host · via nl3 · /home/qa/api', category: t('projects.checkouts.onServers') },
+                    { id: 'ref:mbp', title: 'api', subtitle: 'leeroy-mbp · /repo', category: t('projects.checkouts.otherMachines') },
+                    { id: 'open', title: t('projects.checkouts.openElsewhere'), category: 'open' },
+                ], onSelect: () => {} }}
+            pages={pages.slice(0, 1)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]} />);
+        const chipMenu = () => screen.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-shell-header.checkout.menu')!;
+        await React.act(async () => { chipMenu().props.onOpenChange(true); });
+        expect(chipMenu().props.open).toBe(true);
+        const texts = screen.root.findAll(node => typeof node.type === 'string' && typeof node.props?.children === 'string')
+            .map(node => node.props.children as string);
+        expect(texts).toContain(t('projects.checkouts.onServers'));
+        expect(texts).toContain(t('projects.checkouts.otherMachines'));
+        // The current place and the operation stay untitled: no "On this machine" over an attached workspace, no "open".
+        expect(texts).not.toContain(t('projects.checkouts.thisMachine'));
+        expect(texts).not.toContain('open');
+        await screen.unmount();
+    });
+
     it('names the project page with a level-one heading (C77)', async () => {
         // Project Dev servers at 1440 (11-17): the project's name read as level 2, so the page had no level-one heading.
         const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });

@@ -25,6 +25,7 @@ import {
 } from '@/sync/ops/machineLanguageIntelligence';
 import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { t } from '@/text';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -159,7 +160,7 @@ function useEditSetTexts(latest: React.RefObject<EditSetHost>, alive: React.RefO
       setTexts(initial);
       for (const file of files) {
         if (initial.has(file.path)) continue;
-        void workspaceReadFile(current.scope, file.path).then(
+        void workspaceReadFile(workspaceFileSystemTargetFromScope(current.scope), file.path).then(
           (response) => {
             if (!alive.current) return;
             setTexts((previous) =>

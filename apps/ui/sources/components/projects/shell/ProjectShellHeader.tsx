@@ -52,6 +52,7 @@ import type { PluginRightSidebarLabelledCount } from '@/components/appShell/righ
 
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 import { useAtmospherePictureShown } from '@/components/atmosphere/atmosphereStage';
+import { checkoutPlaceCategoryTitles } from './projectCheckoutPlace';
 
 /** One page in the header's tabs (D44): the route's page id, its glyph and an optional quiet count. */
 export type ProjectShellPage = Readonly<{
@@ -398,6 +399,8 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
   const paintColor = useHappierMaterialColorResolver();
   const [open, setOpen] = React.useState(false);
   const [focusVisible, setFocusVisible] = React.useState(false);
+  // Stable for the menu's grouping memo.
+  const categoryTitles = React.useMemo(checkoutPlaceCategoryTitles, []);
   const branch = props.checkout.branch;
   const label = branch
     ? t('projects.checkouts.chipLabel', {
@@ -423,6 +426,7 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
       }}
       placement="bottom"
       matchTriggerWidth={false}
+      categoryTitles={categoryTitles}
       trigger={({ toggle }) => (
         <Pressable
           testID={props.testID}

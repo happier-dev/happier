@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { Modal } from '@/modal';
+import { Modal, type IModal } from '@/modal';
 import { t } from '@/text';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useManagedWorkspaceForget } from '@/components/settings/machines/managed/useManagedWorkspaceForget';
@@ -57,21 +57,7 @@ export function useForgetAttachedWorkspaceAction(
     const names = [...projects.values()];
     fireAndForget(
       (async () => {
-        const confirmed = await Modal.confirm(
-          t('projects.checkouts.forgetTitle', { workspace: workspaceName }),
-          undefined,
-          {
-            messageParagraphs: [
-              `${t('projects.checkouts.forgetProjects', { projects: names.join(', '), count: names.length })} ${t('projects.checkouts.forgetStays')}`,
-              t('projects.checkouts.forgetHelper', {
-                workspace: workspaceName,
-              }),
-            ],
-            confirmText: t('projects.checkouts.forgetConfirm', {
-              workspace: workspaceName,
-            }),
-          },
-        );
+        const confirmed = await confirmForgetAttachedWorkspace(workspaceName, names);
         if (!confirmed) return;
         setPending(true);
         try {
@@ -98,6 +84,28 @@ export function useForgetAttachedWorkspaceAction(
           }
         : null,
     [onSelect, pending, workspaceName],
+  );
+}
+
+/**
+ * The Forget confirmation (lab `project-forget`): every Project that stops opening, that the remote workspace and its
+ * files stay, and where Happier's helper stays.
+ */
+export function confirmForgetAttachedWorkspace(
+  workspaceName: string,
+  projectNames: readonly string[],
+  modal: Pick<IModal, 'confirm'> = Modal,
+): Promise<boolean> {
+  return modal.confirm(
+    t('projects.checkouts.forgetTitle', { workspace: workspaceName }),
+    undefined,
+    {
+      messageParagraphs: [
+        { text: `${t('projects.checkouts.forgetProjects', { projects: projectNames.join(', '), count: projectNames.length })} ${t('projects.checkouts.forgetStays')}` },
+        { text: t('projects.checkouts.forgetHelper', { workspace: workspaceName }) },
+      ],
+      confirmText: t('projects.checkouts.forgetConfirm', { workspace: workspaceName }),
+    },
   );
 }
 

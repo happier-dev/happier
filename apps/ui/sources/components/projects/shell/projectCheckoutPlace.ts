@@ -53,3 +53,13 @@ export function describeSiblingCheckoutPlace(ref: WorkspaceRefV1, names: Readonl
   return { subtitle: [machine || null, address.rootPath].filter(Boolean).join(' · '),
     category: t('projects.checkouts.otherMachines'), icon: 'desktop' };
 }
+
+/**
+ * The chip menu's headings: the places other checkouts live, by the categories `describeSiblingCheckoutPlace` sorts them
+ * into. This checkout's own group and the Open operation stay untitled.
+ */
+export function checkoutPlaceCategoryTitles(): Readonly<Record<string, string>> {
+  const otherMachines = t('projects.checkouts.otherMachines');
+  const onServers = t('projects.checkouts.onServers');
+  return { [otherMachines]: otherMachines, [onServers]: onServers };
+}
