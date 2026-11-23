@@ -20095,6 +20095,7 @@ const es: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `No se pudo vincular: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `No se pudo compartir, así que no se vinculó nada: ${reason}`,
         reviewFailed: "No se pudo comprobar quién puede ver este flujo",
+        finishEventSetup: "Termina de configurar el evento para vincular el flujo de trabajo.",
     },
     guided: {
         title: "Configurar una automatización",

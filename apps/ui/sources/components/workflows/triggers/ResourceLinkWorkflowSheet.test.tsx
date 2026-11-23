@@ -141,6 +141,11 @@ describe('Link a workflow to a resource', () => {
       await pickWorkflow(screen, 'builtin:review-and-converge');
       const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
       await act(async () => whenSelect!.props.onSelect(eventOption.id));
+      const { Item } = await import('@/components/ui/lists/Item');
+      const setup = screen.findAllByType(Item).find(item => item.props.testID === 'resource-link-event-configure-event');
+      expect(setup?.props.subtitle).toBe(eventOption.label);
+      expect(screen.findByTestId('resource-link-blocked')).not.toBeNull();
+      expect(screen.getTextContent()).toContain('workflows.triggers.link.finishEventSetup');
       // The real Event editor's accepted configuration is the presentation owner's input.
       await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onChange(configured));
       expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.when).toMatchObject(configured);
@@ -276,6 +281,7 @@ describe('Link a workflow to a resource', () => {
       />,
     );
     await pickWorkflow(screen, 'w');
+    await act(async () => screen.findAllByType(ValueFieldSelect)[1]!.props.onSelect(option.id));
     expect(screen.findByTestId('resource-link-share')).toBeNull();
     expect(screen.getTextContent()).toContain('workflows.triggers.link.link');
     await act(async () => {

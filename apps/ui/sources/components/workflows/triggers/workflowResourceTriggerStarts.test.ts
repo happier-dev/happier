@@ -10,7 +10,7 @@ import { buildResourceWorkflowTriggerStartOptions, formatWorkflowLinkStartLabel 
 
 const subject = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
 const action = serializeActionSpec(getActionSpec('deployments.deploy'), { includeOutputSchema: false });
-const event = (localId: string, subjectKinds: readonly ('environment' | 'machine')[]) => ({
+const event = (localId: string, subjectKinds: readonly ('environment' | 'machine' | 'project')[]) => ({
   eventRef: { pluginId: 'acme.deploy', localId }, title: localId, pluginName: 'Deploy',
   automation: PluginEventAutomationDeclarationV1Schema.parse({ v: 1, eligible: true, subjectKinds,
     source: { sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
@@ -18,6 +18,18 @@ const event = (localId: string, subjectKinds: readonly ('environment' | 'machine
 });
 
 describe('resource Link When choices', () => {
+  it('offers the Project’s events and own Actions without promoting Session context into Project Actions', () => {
+    const project = { kind: 'project', serverId: 'home', projectKey: 'project-1' } as const;
+    const sessionAction = serializeActionSpec(getActionSpec('session.goal.set'), { includeOutputSchema: false });
+    const projectAction = serializeActionSpec(getActionSpec('projects.setup.set'), { includeOutputSchema: false });
+    const actions = listWorkflowStepActionSpecs(null, null, undefined, [sessionAction, projectAction], 'automation');
+    const finished = event('project-setup-finished', ['project', 'machine']);
+    const options = buildResourceWorkflowTriggerStartOptions({ subject: project, actions,
+      events: [finished, event('machine-ready', ['machine'])], machineId: 'runner' });
+    expect(options.map(option => option.id)).toEqual([
+      'action:before:projects.setup.set', 'action:after:projects.setup.set', 'event:acme.deploy/project-setup-finished',
+    ]);
+  });
   it('names each restore from the Database resource perspective while preserving the two Action phases', () => {
     const discovery = serializeActionSpec(getActionSpec(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1), { includeOutputSchema: false });
     const actions = listWorkflowStepActionSpecs(null, null, undefined, [{

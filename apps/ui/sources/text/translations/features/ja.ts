@@ -20094,6 +20094,7 @@ const ja: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `リンクできませんでした：${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `共有できなかったため、リンクしていません：${reason}`,
         reviewFailed: "このワークフローを見られる人を確認できませんでした",
+        finishEventSetup: "ワークフローをリンクするには、イベントの設定を完了してください。",
     },
     guided: {
         title: "自動化を設定",

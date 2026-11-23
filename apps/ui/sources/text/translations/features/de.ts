@@ -19653,6 +19653,7 @@ const de: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `Konnte nicht verknüpft werden: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Konnte nicht geteilt werden, daher wurde nichts verknüpft: ${reason}`,
         reviewFailed: "Konnte nicht prüfen, wer diesen Workflow sehen kann",
+        finishEventSetup: "Schließe die Einrichtung des Ereignisses ab, um den Workflow zu verknüpfen.",
     },
     guided: {
         title: "Automatisierung einrichten",

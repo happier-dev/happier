@@ -20183,6 +20183,7 @@ const pl: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `Nie udało się połączyć: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Nie udało się udostępnić, więc nic nie połączono: ${reason}`,
         reviewFailed: "Nie udało się sprawdzić, kto widzi ten przepływ pracy",
+        finishEventSetup: "Dokończ konfigurację zdarzenia, aby połączyć przepływ pracy.",
     },
     guided: {
         title: "Skonfiguruj automatyzację",

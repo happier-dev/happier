@@ -20173,6 +20173,7 @@ const ca: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `No s’ha pogut vincular: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `No s’ha pogut compartir, així que no s’ha vinculat res: ${reason}`,
         reviewFailed: "No s’ha pogut comprovar qui pot veure aquest flux",
+        finishEventSetup: "Acaba de configurar l’esdeveniment per enllaçar el flux de treball.",
     },
     guided: {
         title: "Configura una automatització",

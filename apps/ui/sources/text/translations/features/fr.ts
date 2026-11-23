@@ -20216,6 +20216,7 @@ const fr: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `Impossible de le lier : ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Impossible de le partager, rien n’a été lié : ${reason}`,
         reviewFailed: "Impossible de vérifier qui peut voir ce workflow",
+        finishEventSetup: "Terminez la configuration de l’événement pour lier le workflow.",
     },
     guided: {
         title: "Configurer une automatisation",

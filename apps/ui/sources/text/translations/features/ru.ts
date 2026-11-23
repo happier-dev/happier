@@ -20184,6 +20184,7 @@ const ru: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `Не удалось связать: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Не удалось поделиться, поэтому ничего не связано: ${reason}`,
         reviewFailed: "Не удалось проверить, кто видит этот сценарий",
+        finishEventSetup: "Завершите настройку события, чтобы привязать рабочий процесс.",
     },
     guided: {
         title: "Настроить автоматизацию",

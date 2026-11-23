@@ -144,7 +144,7 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
         } });
 }
 
-it('summarizes a Health Event list trigger without a display label using its declared Event title', async () => {
+it('keeps the Health Event sentence when the Machine catalog is present or absent', async () => {
     const accountId = 'health-trigger-summary';
     const serverIdentityId = 'srv_health_trigger_summary';
     const http = createHomeHubArtifactHttpBoundary(accountId);

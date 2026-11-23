@@ -55,8 +55,12 @@ const stylesheet = StyleSheet.create((theme) => ({
   failure: { color: theme.colors.state.danger.textForeground, flexShrink: 1 },
 }));
 
-/** Yours · Shared with you · Built-in (lab `automations-states-pick`). */
-const LINK_GROUP_ORDER = { yours: 0, shared: 1, builtin: 2 } as const;
+const LINK_GROUPS = [
+  ['yours', 'workflows.triggers.link.yours'],
+  ['shared', 'workflows.triggers.link.sharedWithYou'],
+  ['builtin', 'workflows.triggers.link.builtIn'],
+  ['plugin', 'workflows.plugins.fromPlugins'],
+] as const;
 
 /**
  * Link a workflow to this resource (05 S5 `automations:states:{pick,link,share}`): **Workflow**, **When** (the
@@ -119,13 +123,11 @@ export function ResourceLinkWorkflowSheet(
   // Pick first, then configure (lab `automations-states-pick` → `link`): the sheet opens on the workflow list itself,
   // so choosing a workflow never hangs a second menu over the sheet's own foot.
   const pickStep = React.useMemo<SelectionListStep>(() => {
-    const ordered = [...workflowOptions].sort((a, b) => LINK_GROUP_ORDER[a.origin ?? 'yours'] - LINK_GROUP_ORDER[b.origin ?? 'yours']);
-    const groups = (['yours', 'shared', 'builtin'] as const).map((origin) => ({
+    const groups = LINK_GROUPS.map(([origin, title]) => ({
       kind: 'static' as const,
       id: origin,
-      title: t(origin === 'builtin' ? 'workflows.triggers.link.builtIn'
-        : origin === 'shared' ? 'workflows.triggers.link.sharedWithYou' : 'workflows.triggers.link.yours'),
-      options: ordered.filter((option) => (option.origin ?? 'yours') === origin).map((option) => ({
+      title: t(title),
+      options: workflowOptions.filter((option) => (option.origin ?? 'yours') === origin).map((option) => ({
         id: option.ref,
         label: option.title,
         icon: <Icon name="tree-structure" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
@@ -139,22 +141,15 @@ export function ResourceLinkWorkflowSheet(
   const workflowItems = React.useMemo<ValueFieldSelectItem[]>(
     () =>
       // The menu keeps first-seen group order.
-      [...workflowOptions].sort((a, b) => LINK_GROUP_ORDER[a.origin ?? 'yours'] - LINK_GROUP_ORDER[b.origin ?? 'yours']).map((option) => ({
-        id: option.ref,
-        title: option.title,
-        category: t(option.origin === 'builtin' ? 'workflows.triggers.link.builtIn'
-          : option.origin === 'shared' ? 'workflows.triggers.link.sharedWithYou' : 'workflows.triggers.link.yours'),
-        ...(option.unavailableReason
-          ? { disabled: true, subtitle: option.unavailableReason }
-          : {}),
-        icon: (
-          <Icon
-            name="tree-structure"
-            size={ICON_SIZE.xs}
-            color={theme.colors.text.secondary}
-          />
-        ),
-      })),
+      LINK_GROUPS.flatMap(([origin, title]) => workflowOptions
+        .filter((option) => (option.origin ?? 'yours') === origin)
+        .map((option) => ({
+          id: option.ref,
+          title: option.title,
+          category: t(title),
+          ...(option.unavailableReason ? { disabled: true, subtitle: option.unavailableReason } : {}),
+          icon: <Icon name="tree-structure" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />,
+        }))),
     [theme.colors.text.secondary, workflowOptions],
   );
   const whenItems = React.useMemo<ValueFieldSelectItem[]>(
@@ -183,7 +178,13 @@ export function ResourceLinkWorkflowSheet(
   const workflowTitle =
     workflowOptions.find((option) => option.ref === workflow)?.title ?? '';
   const sharing = missing.length > 0;
-  const ready = link.draft !== null && !link.loading && link.issue == null && recipientsIdentified;
+  const whenBlock = link.whenStatus === 'unavailable' ? t('workflows.triggers.section.startsUnavailable')
+    : link.whenStatus === 'machineOffline' ? t('workflows.triggers.section.startsNeedMachineOnline')
+      : link.whenStatus !== 'ready' ? t('common.loading')
+        : !choice ? t(whenItems.length === 0 ? 'workflows.triggers.link.noStarts' : 'workflows.triggers.link.chooseWhen')
+          : choice.relation === 'event' && when?.kind === 'pluginEvent' && when.value === null
+            ? t('workflows.triggers.link.finishEventSetup') : null;
+  const ready = whenBlock === null && link.draft !== null && !link.loading && link.issue == null && recipientsIdentified;
 
   const submit = async () => {
     if (!ready || submitting) return;
@@ -317,11 +318,6 @@ export function ResourceLinkWorkflowSheet(
                     draftFor(workflow, when);
                   }}
                 />
-                {link.whenStatus === 'unavailable' ? (
-                  <SurfaceStateCard testID="resource-link-starts-unavailable" size="line" kind="unavailable"
-                    title={t('workflows.triggers.section.startsUnavailable')}
-                    action={{ label: t('common.retry'), onPress: link.retryWhen }} />
-                ) : null}
               </View>
             </TrackRow>
             {when?.kind === 'action' ? (
@@ -337,6 +333,7 @@ export function ResourceLinkWorkflowSheet(
             {choice?.relation === 'event' && when?.kind === 'pluginEvent' ? (
               <TriggerPluginEventRows
                 testID="resource-link-event"
+                eventTitle={choice.label}
                 when={when}
                 initialEventSeed={choice.eventSeed}
                 machineId={props.machineId}
@@ -380,6 +377,16 @@ export function ResourceLinkWorkflowSheet(
                 size="line"
                 kind={link.loading || names.resolving ? 'loading' : 'unavailable'}
                 title={link.loading || names.resolving ? t('common.loading') : t('workflows.triggers.link.reviewFailed')}
+              />
+            ) : null}
+            {whenBlock && !link.issue && !link.loading ? (
+              <SurfaceStateCard
+                testID={link.whenStatus === 'unavailable' ? 'resource-link-starts-unavailable' : 'resource-link-blocked'}
+                size="line"
+                kind={link.whenStatus === 'idle' || link.whenStatus === 'loading' ? 'loading'
+                  : link.whenStatus === 'ready' ? 'empty' : 'unavailable'}
+                title={whenBlock}
+                action={link.whenStatus === 'unavailable' ? { label: t('common.retry'), onPress: link.retryWhen } : undefined}
               />
             ) : null}
             {failure ? (

@@ -87,6 +87,9 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     const options: ResourceWorkflowTriggerStartOption[] = [];
     for (const action of params.actions) {
         if (!action.automation?.subjectKinds?.includes(subject.kind)) continue;
+        // Session-targeted Actions can match their containing Project at runtime.
+        // Link offers the Project's own Actions alongside its declared Events.
+        if (subject.kind === 'project' && action.operand?.kind.kind === 'session') continue;
         if (subject.kind === 'plugin' && (!action.plugin || !isPluginAutomationActionSubjectV1(subject, {
             pluginId: action.plugin.id, approvalScope: action.approvalScope,
         }))) continue;

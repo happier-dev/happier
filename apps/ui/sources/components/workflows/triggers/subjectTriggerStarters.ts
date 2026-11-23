@@ -86,7 +86,7 @@ export const SUBJECT_TRIGGER_STARTERS: Readonly<Record<TriggerSubject['kind'], r
  */
 export const SUBJECT_TRIGGER_PERSISTENT_STARTERS: Readonly<Record<TriggerSubject['kind'], readonly SubjectTriggerStarter[]>> = {
   machine: [],
-  environment: ['deployOnPush', 'scheduledJob'],
+  environment: ['deployOnPush'],
   service: ['addCheck', 'healthFailed'],
 };
 

@@ -231,13 +231,16 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
     return readEligibleEventPresentation(event, localize).title;
 }
 
-function formatOfflineEventSummary(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string {
+function readHealthEventSummary(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string | undefined {
     const health = HEALTH_CHECK_EVENT_REFS_V1;
     if (event.pluginId === health.status.pluginId) {
         if (event.localId === health.failed.localId) return t('workflows.triggers.summary.offlineHealthFailed');
         if (event.localId === health.recovered.localId) return t('workflows.triggers.summary.offlineHealthRecovered');
         if (event.localId === health.status.localId) return t('workflows.triggers.summary.offlineHealthStatus');
     }
+}
+
+function formatOfflineEventSummary(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string {
     // Older rows can retain only the declaration identity. Read descriptive identifiers without
     // showing their namespace or contract version. Opaque names keep the generic label.
     const label = event.localId.split('/').at(-1)?.replace(/[-_.]v[0-9]+$/iu, '');
@@ -311,6 +314,8 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
         case 'pluginEvent': {
             const label = trigger.displayLabel?.trim();
             if (label) return label;
+            const health = readHealthEventSummary(trigger.eventRef);
+            if (health) return health;
             const title = readDeclaredEventTitle(trigger, context);
             return title ? t('workflows.triggers.summary.event', { event: title }) : formatOfflineEventSummary(trigger.eventRef);
         }

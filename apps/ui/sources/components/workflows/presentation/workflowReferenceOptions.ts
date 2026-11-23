@@ -25,8 +25,8 @@ import { sync } from '@/sync/sync';
 export type WorkflowReferenceOption = Readonly<{
     ref: string;
     title: string;
-    /** "Built-in" for catalog workflows, "shared" for one shared with this person; absent for the person's own. */
-    origin?: 'builtin' | 'shared';
+    /** Where the workflow comes from. Omitted for the person's own workflows. */
+    origin?: 'builtin' | 'shared' | 'plugin';
     /** The built-in's own mark. */
     icon?: BuiltinWorkflowIconV1;
     unavailableReason?: string;
@@ -213,7 +213,7 @@ export function useWorkflowReferenceLibrary(options?: Readonly<{ enabled?: boole
                 ...(isSharedWithYouWorkflowDefinition(definition) ? { origin: 'shared' as const } : {}),
                 ...(definition.contentStatus === 'unavailable'
                     ? { unavailableReason: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {}) })),
-            ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title })),
+            ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title, origin: 'plugin' as const })),
         ],
         [library.definitions, library.pluginWorkflows],
     );

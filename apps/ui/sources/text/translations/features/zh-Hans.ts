@@ -20034,6 +20034,7 @@ const zhHans: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `无法关联：${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `无法共享，因此未关联任何内容：${reason}`,
         reviewFailed: "无法检查谁能看到此工作流",
+        finishEventSetup: "请完成事件设置以链接工作流。",
     },
     guided: {
         title: "设置自动化",

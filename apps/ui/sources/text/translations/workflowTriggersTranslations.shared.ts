@@ -197,6 +197,7 @@ export const en = {
         linkFailed: ({ reason }: { reason: string }) => `Couldn’t link it: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Couldn’t share it, so nothing was linked: ${reason}`,
         reviewFailed: "Couldn’t check who can see this workflow",
+        finishEventSetup: "Finish setting up the event to link this workflow.",
     },
     guided: {
         title: "Set up an automation",

@@ -8,7 +8,6 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -20,9 +19,7 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import type { TriggerWhenValue } from './sessionTriggerForm';
 
-/** Text paints no colour of its own: an element subtitle takes the row's subtitle ink here, and the test outcome reads in primary ink. */
 const styles = StyleSheet.create((theme) => ({
-    eventRef: { ...Typography.mono(), color: theme.colors.text.secondary },
     testResult: { color: theme.colors.text.primary },
 }));
 
@@ -34,6 +31,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     onChange: (next: TriggerWhenValue) => void;
     machineId: string | null;
     serverId: string | null;
+    eventTitle?: string;
     eventEdit?: Readonly<{ automationId: string; triggerId: string }>;
     activityEvent?: AutomationRunPluginEventTriggerEvidenceV1;
     editing?: boolean;
@@ -105,7 +103,7 @@ export function TriggerPluginEventRows(props: Readonly<{
                     detail: props.when.value?.displayLabel, configured: props.when.value !== null || props.eventEdit !== undefined,
                     onPress: () => setEditing(true) }) : <Item testID={`${props.testID}-configure-event`}
                 title={t(props.when.value || props.eventEdit ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.popover.configureEvent')}
-                subtitle={eventRef ? <Text style={styles.eventRef}>{`${eventRef.pluginId}/${eventRef.localId}`}</Text> : undefined}
+                subtitle={props.eventTitle}
                 detail={props.when.value?.displayLabel} onPress={() => setEditing(true)} />}
         {props.activityEvent ? <Item testID={`${props.testID}-test`} title={t('workflows.triggers.activity.test')}
             disabled={props.when.value === null || editing || testing} loading={testing} showChevron={false}

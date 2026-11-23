@@ -20159,6 +20159,7 @@ const it: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `Impossibile collegarlo: ${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `Impossibile condividerlo, quindi non è stato collegato nulla: ${reason}`,
         reviewFailed: "Impossibile verificare chi può vedere questo workflow",
+        finishEventSetup: "Completa la configurazione dell’evento per collegare il workflow.",
     },
     guided: {
         title: "Configura un’automazione",

@@ -20034,6 +20034,7 @@ const zhHant: WorkflowTriggersCopy = {
         linkFailed: ({ reason }: { reason: string }) => `無法連結：${reason}`,
         shareFailed: ({ reason }: { reason: string }) => `無法共用，因此未連結任何內容：${reason}`,
         reviewFailed: "無法檢查誰能看到此工作流程",
+        finishEventSetup: "請完成事件設定以連結工作流程。",
     },
     guided: {
         title: "設定自動化",

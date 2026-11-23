@@ -49,6 +49,7 @@ import {
   readServiceCheckSettings,
   serviceCheckAutomationExecutionContext,
   serviceCheckShownDefinition,
+  serviceCheckTitle,
   serviceCheckCauseText,
   serviceCheckKeyFlowCauseText,
   formatServiceCheckKeyFlowValue,
@@ -595,7 +596,8 @@ export function ServiceCheckDetail(
       {automationSubject ? (
         <SubjectTriggersSection
           subject={automationSubject}
-          subjectName={definition?.name ?? shown?.checkId ?? row.automationId}
+          subjectName={serviceCheckTitle(definition,
+            row.definitionFacts.kind === 'available' ? row.definitionFacts.environmentNames : undefined).title}
           executionContext={serviceCheckAutomationExecutionContext(settings)}
         />
       ) : null}
