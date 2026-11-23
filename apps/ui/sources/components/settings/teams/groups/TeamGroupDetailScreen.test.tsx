@@ -1297,6 +1297,8 @@ describe('TeamGroupDetailScreen defaults for members', () => {
         harness.answer(serverId, TEAM_POLICY_PATH, { body: team });
 
         const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-member-defaults-otherAgents:header');
+        await screen.pressByTestIdAsync('team-group-member-defaults-otherAgents:header');
         await waitForTestId(screen, 'team-group-member-defaults-agent:claude:header');
         await screen.pressByTestIdAsync('team-group-member-defaults-agent:claude:header');
         await waitForTestId(screen, 'team-group-member-defaults-agent:claude:permission');
