@@ -1928,7 +1928,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           settle: failure => persistExecutionFailure(request, failure) });
       }
       if (!originIsCurrentBeforeClaim) {
-        return await persistExecutionFailure(request, staleReason ? buildApprovalOriginFailure(staleReason) : approvalContextUnavailable());
+        const failure = staleReason ? buildApprovalOriginFailure(staleReason) : approvalContextUnavailable();
+        // A stopped source settles its own Session Action here. Shared
+        // requester consent retains its separate admission lifecycle.
+        const staleSessionAction = staleReason === 'session_changed'
+          && request.executionOriginV1.caller.kind === 'session' && !request.requesterConfirmation;
+        return await persistExecutionFailure(request, staleSessionAction ? { ...failure, effectAttempted: false } : failure);
       }
     }
     const claimExecution = async (): Promise<
