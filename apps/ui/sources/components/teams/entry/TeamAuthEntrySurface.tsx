@@ -53,6 +53,8 @@ import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { UnauthenticatedRouteStep } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { TEAM_ENTRY_LOGO_SIZE, TeamEntryIdentity, type TeamEntryLogo } from '@/components/teams/entry/TeamEntryIdentity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -537,7 +539,11 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 }
                 const requiresHomeArrival = value.outcome === 'joined'
                     && !areServerProfileIdentifiersEquivalent(accountScope.serverId, getActiveServerSnapshot().serverId);
-                setAdmissionState({ kind: 'complete', entryKey, accountScope, result: value, requiresHomeArrival });
+                runStepMove({
+                    layer: FIRST_RUN_WORKFLOW_LAYER,
+                    kind: 'step',
+                    commit: () => setAdmissionState({ kind: 'complete', entryKey, accountScope, result: value, requiresHomeArrival }),
+                });
                 // The admitted Account's profile belongs to its Home. Retain
                 // this result and shell while reaching that existing owner;
                 // a blocked arrival retries focus alone, never acceptance.
@@ -1099,7 +1105,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
     return (
         <UnauthenticatedRouteShell
             testID="team-auth-entry-shell"
-            stepId={`team-auth-entry:${loadState.kind}`}
+            stepId={`team-auth-entry:${completedAdmission ? 'admission-complete' : loadState.kind}`}
             onBack={props.onBack}
         >
             {content}
