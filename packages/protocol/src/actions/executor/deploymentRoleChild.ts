@@ -2,7 +2,7 @@ import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStric
 import { readRecord } from '../../inputs/inputRecords.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
-import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1,
+import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1, deploymentOperationForRootActionV1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
   DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -334,6 +334,8 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
   const reviewedChild = proof.reviewedChild;
   const rootActionId = proof.rootActionId;
   if (!reviewedChild || !rootActionId || !authorization || !http) return;
+  const rootOperation = deploymentOperationForRootActionV1(rootActionId, authorization.binding.deploymentPreparationAdmission);
+  const spendsRootOperation = rootOperation !== undefined && reviewedChild.actionId === `deployments.${rootOperation}`;
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
     originalAuthorization: { value: originalAuthorization },
@@ -353,7 +355,10 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
         // A writer's Artifact/currentness GET prepares its effect under the
         // admitted root; the exact child mutation retains its review proof.
         // Without an invocation envelope the issuer received a core ActionId.
-        if (!proof.envelope && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET'
+        // A child that is the root's own receipt operation (a Create or Template
+        // spending its deploy intent) keeps its effect: Home binds the root's
+        // candidate publication to that operation and its reviewed role, never to the root.
+        if (!proof.envelope && !spendsRootOperation && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET'
           && (await import('../actionSpecs.js')).getActionSpec(proof.qualifiedActionId as ActionId).sideEffectClass === 'write')
           return http.createRequestHeaders({ ...parentRequest, effectActionId: rootActionId });
         const credentialPurpose = request.effectActionId === rootActionId

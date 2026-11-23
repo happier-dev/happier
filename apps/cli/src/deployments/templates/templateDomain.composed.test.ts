@@ -9,8 +9,11 @@ import { createActionExecutor, type ActionExecutorContext, DeploymentTemplateIns
     DeploymentDomainAddAdmissionInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1,
-    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, decodeReviewedActionChildHttpProofV1,
     verifyExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -105,7 +108,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
         vi.stubGlobal('fetch', async url => Response.json(String(url).includes('/features')
             ? FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: serverId } } }) : catalog));
-        const read = async (url: string) => {
+        const read = async (url: string, headers?: unknown) => {
             const path = new URL(url).pathname;
             httpPaths.push(`GET ${path}`);
             if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
@@ -126,11 +129,17 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                 ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: [link] } };
             if (path.startsWith('/v1/artifacts/')) {
                 const row = artifacts.get(decodeURIComponent(path.split('/').at(-1)!));
+                const header = row && decodePlainArtifactStoredContent(String(row.header));
+                // Home binds a catalog Create's receipt candidate to its reviewed Deploy child,
+                // never to the Create root (deploymentCreatePreparation.sqlite.integration.spec.ts).
+                if (header && typeof header === 'object' && 'kind' in header && header.kind === DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1
+                    && readRecord(headers)[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === 'deployments.environments.create')
+                    return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'deployment_preparation' } };
                 return { status: row ? 200 : 404, data: row ?? {} };
             }
             throw new Error(`Unexpected Home read ${path}`);
         };
-        vi.spyOn(axios, 'get').mockImplementation(url => read(String(url)));
+        vi.spyOn(axios, 'get').mockImplementation((url, config) => read(String(url), config?.headers));
         vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
             const path = new URL(String(url)).pathname;
             httpPaths.push(`POST ${path}`);
@@ -178,7 +187,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             const path = new URL(request.url!).pathname;
             httpPaths.push(`${request.method} ${path}`);
-            if (request.method?.toUpperCase() === 'GET') return read(request.url!);
+            if (request.method?.toUpperCase() === 'GET') return read(request.url!, request.headers);
             if (path === '/v1/deployments/environments') {
                 const input = DeploymentActionInputSchemasV1['deployments.environments.create'].parse(request.data);
                 if (!('contentArtifactId' in input) || !input.firstTargetLink) throw new Error('Expected prepared Environment');
@@ -304,7 +313,9 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                     const deps = createDaemonDeploymentActionDeps({ credentials: admitted.credentials, serverId, machineId, serverHttpBaseUrl: origin,
                         savedSecretOperationContext: admitted.savedSecretOperationContext,
                         resolveRequesterIdentity, acquirePluginRuntimeRegistryLease: async () => mounted.lease, runtime });
-                    return createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+                    return createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                        // External admission requires the canonical Automation port; this Account selects no checks.
+                        actionAutomations: createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }) });
                 } });
             if (!requester) throw new Error('Expected original requester custody');
             const executor = requester.executor;
