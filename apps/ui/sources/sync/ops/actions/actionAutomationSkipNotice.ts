@@ -1,7 +1,6 @@
 import { readActionAutomationSkipReasonV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { formatAutomaticCheckSkipNotice } from '@/components/approvals/formatAutomaticCheckSkipNotice';
-import { readWorkflowReferenceHeaderTitles } from '@/components/workflows/presentation/workflowReferenceHeaderTitles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { Modal } from '@/modal/ModalManager';
 import { t } from '@/text';
@@ -18,7 +17,9 @@ export async function presentActionAutomationSkipNotice(
     const names = new Map<string, string>();
     if (lifetime && skipped.length > 0) {
         const ids = [...new Set(skipped.map(notice => notice.workflowId))];
-        const titles = await readWorkflowReferenceHeaderTitles(ids, lifetime).catch(() => []);
+        // Loaded only when a skip must be named: the front door stays free of the Workflow presentation graph.
+        const titles = await import('@/components/workflows/presentation/workflowReferenceHeaderTitles')
+            .then(owner => owner.readWorkflowReferenceHeaderTitles(ids, lifetime)).catch(() => []);
         if (!lifetime.isCurrent()) return;
         for (const [index, id] of ids.entries()) {
             const title = titles[index];
