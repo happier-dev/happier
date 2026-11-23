@@ -88,6 +88,14 @@ describe('plain password prelogin custody', () => {
         await expectRefusalBeforeLogin(undefined, claimedTarget);
     });
 
+    it('does not POST a password when a different contact address claims the canonical address of a saved Home with active keys', async () => {
+        await saveHomeWithKeys(target.endpointUrl, target.serverIdentityId);
+        await expectRefusalBeforeLogin(undefined, {
+            ...claimedTarget,
+            endpointUrl: 'https://another-contact.example.test',
+        });
+    });
+
     it('does not POST a password while the target Account Service has its own active content key', async () => {
         const encryption = await createEncryptionFromAuthCredentials(storedKeys);
         expect(await TokenStorage.accountDirectoryAuthCredentials.set(

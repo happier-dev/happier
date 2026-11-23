@@ -431,11 +431,12 @@ function resolveServerIdForUrl(serverUrl: string, preferredServerId?: string | n
  * Profiles that can currently derive the anonymous URL-hash scope for this URL,
  * through either their canonical routing URL or a retained legacy/manual alias.
  */
-function listProfilesClaimingUrl(normalizedUrl: string) {
-    if (!normalizedUrl) return [];
+function listProfilesClaimingUrl(...normalizedUrls: string[]) {
+    const addresses = normalizedUrls.filter(Boolean);
+    if (addresses.length === 0) return [];
     return listServerProfiles().filter((profile) => (
-        normalizeUrl(profile.serverUrl) === normalizedUrl
-        || normalizeUrl(profile.canonicalServerUrl ?? '') === normalizedUrl
+        addresses.includes(normalizeUrl(profile.serverUrl))
+        || addresses.includes(normalizeUrl(profile.canonicalServerUrl ?? ''))
     ));
 }
 
@@ -2367,6 +2368,7 @@ async function getAccountDirectoryCredentialsForTarget(
 
 export async function readEmailPasswordSignInCustody(target: Readonly<{
     endpointUrl: string;
+    canonicalServerUrl: string;
     serverIdentityId: string;
     credentialTarget?: 'account_directory';
 }>): Promise<AccountE2eeCustody> {
@@ -2380,8 +2382,8 @@ export async function readEmailPasswordSignInCustody(target: Readonly<{
     const homeCustody = credentials ? readAccountE2eeCustody(credentials) : 'absent';
     if (homeCustody === 'active') return homeCustody;
 
-    // A descriptor's claimed identity cannot clear an active pin at the contact address.
-    for (const profile of listProfilesClaimingUrl(normalizeUrl(target.endpointUrl))) {
+    // A descriptor's claimed identity cannot clear an active pin at either address.
+    for (const profile of listProfilesClaimingUrl(normalizeUrl(target.endpointUrl), normalizeUrl(target.canonicalServerUrl))) {
         if (profile.id === homeProfile?.id) continue;
         const addressCredentials = await readHomeCredentials(profile.serverUrl, {
             serverId: profile.id,

@@ -57,6 +57,7 @@ export async function loginEmailPassword(input: EmailPasswordLoginInput): Promis
         // Prelogin names no Account, so the target's active custody governs password disclosure.
         const custody = await readEmailPasswordSignInCustody({
             endpointUrl: input.target.endpointUrl,
+            canonicalServerUrl: input.target.canonicalServerUrl,
             serverIdentityId: input.target.serverIdentityId,
             credentialTarget: input.credentialTarget,
         });
