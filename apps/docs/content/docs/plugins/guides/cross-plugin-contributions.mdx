@@ -55,6 +55,19 @@ The installed SDK's [API surface](/plugins/api/surface) can confirm the contract
 before you depend on it. Use matching 0.3 development components to exercise the
 adapter through the deployed database's Workbench.
 
+### Database insight source declarations in 0.3 development source
+
+The Database Workbench development manifest publishes the insight source point.
+Use `DATABASE_INSIGHT_SOURCES_POINT_REF_V1` and
+`DatabaseInsightSourceDescriptorV1` from `@happier-dev/plugin-sdk/database` to
+inspect the contract. The descriptor names the source, its evidence schema and
+its change Resource. The `list` and `detail` operation contracts use the shared
+finding envelopes. Each source owns the selectors and lifetime of its evidence.
+The change Resource signals updates to that source.
+
+Workbench discovery and mounted use of external sources are pending in 0.3
+development. Check the installed host and SDK before depending on that flow.
+
 ### Machine access descriptors in 0.3 development source
 
 The development SDK exports `defineAccessProviderSchemas` and descriptor types
