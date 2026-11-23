@@ -38,6 +38,7 @@ import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } fro
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { Text } from '@/components/ui/text/Text';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
@@ -57,7 +58,7 @@ import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
 import { usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
-import { HappierDataRows } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataMetric, HappierDataRows } from '@happier-dev/plugin-ui/presentation';
 import * as pluginResource from '@happier-dev/plugin-ui/advanced';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
@@ -881,6 +882,46 @@ describe('mounted Usage page scope commands', () => {
             await waitForHomeGovernance(() => expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('costs'));
             expect(reader!.readCurrentUiContext()!.detail).toContain('costs');
         }
+    });
+
+    it.each([undefined, '7days'] as const)('names the admitted period on the settled Session Usage page (%s)', async period => {
+        const sessionId = 'session-usage-captions';
+        const accountingReads: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
+        currentRoute.segments = ['(app)', 'session', '[id]', 'usage'];
+        currentRoute.params = { id: sessionId, ...(period ? { period } : {}) };
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-session-captions.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') {
+                    accountingReads.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
+                    return Response.json(accounting);
+                }
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        publishAppliedActiveServerRuntimeAvailability(true);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <UsageWidgetPage sessionId={sessionId} initialFilters={resolveUsagePageInitialFilters(currentRoute.params)} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const scope = t('usage.board.page.thisSession');
+        const periodCaption = period ? `${scope} · ${t(getUsagePeriodDefinition(period).translationKey)}` : scope;
+        await waitForHomeGovernance(() => {
+            const frames = screen.findAllByType(WidgetFrame);
+            const models = frames.find(frame => frame.props.title === t('usage.board.page.dimensionModel'));
+            const sessionValue = frames.find(frame => frame.props.title === t('usage.widgets.usage_session_value'));
+            expect(models?.props.source).toBe(periodCaption);
+            const summary = sessionValue?.findAllByType(HappierDataMetric).find(metric => metric.props.label?.startsWith(scope));
+            expect(summary).toBeDefined();
+            expect(summary?.props.label).toBe(periodCaption);
+        });
+        expect(accountingReads.some(read => read.filters?.sessionIds?.[0] === sessionId
+            && (typeof read.dateRange?.startMs === 'number') === Boolean(period))).toBe(true);
     });
 
     it('says once, under the page chrome, that the Home cannot be reached while bodies have nothing to show', async () => {

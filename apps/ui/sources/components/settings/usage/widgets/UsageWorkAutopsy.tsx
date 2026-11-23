@@ -24,6 +24,7 @@ import {
   UsageShowAllRows,
   leadingUsageRows,
   usageDimensionLabel,
+  usagePeriodPhrase,
   useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -239,11 +240,11 @@ export function UsageWorkAutopsy(
               theme={theme}
               size="stat"
               showLabel
-              label={t('usage.board.work.autopsyTitle')}
+              label={usagePeriodPhrase(props.query)}
               // Unknown is never the headline: a quiet dash, with the reason in the caption.
               value={amount ?? '—'}
               valueFormatter={value => metric === 'cost' ? formatUsageCost(value, costCurrency) : format(value)}
-              // The Session is named once, by the page or frame it sits in; the fact's caption says only what qualifies it.
+              // The caption qualifies the amount with its cost basis or token provenance.
               caption={[metric === 'cost' && cost ? usagePageCostCaption(cost)
                 : accounting?.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
             />

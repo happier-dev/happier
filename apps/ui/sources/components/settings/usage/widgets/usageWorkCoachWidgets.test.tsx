@@ -952,11 +952,11 @@ describe('Work and Coach widget bodies', () => {
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={cumulativeSlice}
       id="usage_session_value" testID="value" />);
     const metrics = screen.findAllByType(HappierDataMetric);
-    const totalLabel = t(metric === 'cost' ? 'usage.board.work.autopsyTitle' : 'usage.cost');
+    const totalLabel = metric === 'cost' ? usagePeriodPhrase(sessionQuery) : t('usage.cost');
     const total = metrics.find(node => node.props.label === totalLabel);
     expect(total?.props.value).toBe(0.0013284);
     expect(total?.props.valueFormatter(total.props.value)).toContain('$0.0013');
-    if (metric === 'tokens') expect(metrics.find(node => node.props.label === t('usage.board.work.autopsyTitle'))?.props.value).toBe(3309);
+    if (metric === 'tokens') expect(metrics.find(node => node.props.label === usagePeriodPhrase(sessionQuery))?.props.value).toBe(3309);
     expect(metrics.find(node => node.props.label === t('usage.board.work.turns'))?.props.value)
       .toBe(t('usage.board.howYouWork.notRecorded'));
     await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery} slice={{ ...cumulativeSlice, work: undefined }}
@@ -1057,7 +1057,7 @@ describe('Work and Coach widget bodies', () => {
         work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
       id="usage_session_value" testID="value" />;
     const screen = await renderScreen(body([reported]));
-    const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === t('usage.board.work.autopsyTitle'));
+    const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === usagePeriodPhrase(sessionQuery));
     expect.soft(summary?.props.datum).toMatchObject({ value: expect.stringMatching(/^1\.23456 \(€1\.23\)$/), subtitle: expect.stringContaining('€1.23') });
     expect(screen.getTextContent()).toContain('€1.23');
     await screen.update(body([reported, estimated]));
