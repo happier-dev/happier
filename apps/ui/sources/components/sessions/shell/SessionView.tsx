@@ -5250,7 +5250,18 @@ function SessionViewLoaded({
             serverId: capabilityServerId,
             agentCore: getAgentCore(liveComposerState.agentId),
             armedContinuationAgent: armedContinuationAgentId
-                ? { agentId: armedContinuationAgentId, agentCore: getAgentCore(armedContinuationAgentId) }
+                ? {
+                    agentId: armedContinuationAgentId,
+                    agentCore: getAgentCore(armedContinuationAgentId),
+                    // The account is chosen before Continue and rides the armed intent; nothing
+                    // about the running session's own binding changes until the switch is sent.
+                    connectedServices: inSessionAgentPicker.armedContinuation?.selection.connectedServices ?? null,
+                    // While a submission is issued the choice is final, so the popover goes back to a
+                    // read-only preview instead of offering a pick that would be ignored.
+                    onConnectedServicesChange: inSessionAgentPicker.armedContinuationSubmission
+                        ? undefined
+                        : inSessionAgentPicker.setArmedContinuationConnectedServices,
+                }
                 : null,
             sessionMetadata: session.metadata,
             settings: {

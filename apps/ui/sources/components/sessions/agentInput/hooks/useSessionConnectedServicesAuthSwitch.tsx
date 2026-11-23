@@ -405,7 +405,17 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
     agentCore: ConnectedServicesAgentCore;
-    armedContinuationAgent?: Readonly<{ agentId: string; agentCore: ConnectedServicesAgentCore }> | null;
+    armedContinuationAgent?: Readonly<{
+        agentId: string;
+        agentCore: ConnectedServicesAgentCore;
+        /** The account the owner already chose for this Agent; absent means its account default. */
+        connectedServices?: ConnectedServiceBindingsV1 | null;
+        /**
+         * Receives the owner's choice. When provided, the popover is a real picker; the source
+         * session's own binding is never touched, because nothing switches until Continue.
+         */
+        onConnectedServicesChange?: (connectedServices: ConnectedServiceBindingsV1) => void;
+    }> | null;
     sessionMetadata: unknown;
     settings: {
         connectedServicesProfileLabelByKey: Record<string, string | undefined>;
@@ -873,8 +883,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
 
     const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (params.armedContinuationAgent) {
+            const armedAgent = params.armedContinuationAgent;
             const defaults = resolveNewSessionConnectedServicesBindingsForAgent({
-                ...params.armedContinuationAgent,
+                agentId: armedAgent.agentId,
+                agentCore: armedAgent.agentCore,
                 agentOptionState: null,
                 accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
                 settings: params.settings,
@@ -882,9 +894,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 accountGroupsFeatureEnabled,
             });
             if (defaults.supportedConnectedServiceIds.length === 0) return null;
+            // The owner's pre-Continue choice outranks the account default, per service.
+            const armedBindingsByServiceId = armedAgent.connectedServices
+                ? { ...defaults.connectedServicesBindingsByServiceId, ...armedAgent.connectedServices.bindingsByServiceId }
+                : defaults.connectedServicesBindingsByServiceId;
             const label = resolveConnectedServicesAuthLabel({
                 supportedServiceIds: defaults.supportedConnectedServiceIds,
-                bindingsByServiceId: defaults.connectedServicesBindingsByServiceId,
+                bindingsByServiceId: armedBindingsByServiceId,
                 profileOptionsByServiceId: defaults.connectedServiceProfileOptionsByServiceId,
                 accountGroupOptionsByServiceId: defaults.connectedServiceAccountGroupOptionsByServiceId,
                 accountGroupsEnabled: accountGroupsFeatureEnabled,
@@ -901,12 +917,42 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 label: label.label,
                 authSource: label.connectedCount > 0 ? 'connected' : 'native',
                 connectedCount: label.connectedCount,
-                popoverContent: () => <ActionListSection actions={[{
-                    id: 'armed-agent-auth-default',
-                    label: label.label,
-                    subtitle: warningKey ? t(warningKey) : undefined,
-                    disabled: true,
-                }]} />,
+                popoverContent: armedAgent.onConnectedServicesChange
+                    ? ({ requestClose, maxHeight }: AgentInputContentPopoverRenderArgs) => (
+                        <NewSessionConnectedServicesSelectionContent
+                            launchTarget={{ machineId: params.machineId ?? null, serverId: params.serverId ?? null, agentId: armedAgent.agentId }}
+                            supportedServiceIds={defaults.supportedConnectedServiceIds}
+                            profileOptionsByServiceId={defaults.connectedServiceProfileOptionsByServiceId}
+                            accountGroupOptionsByServiceId={defaults.connectedServiceAccountGroupOptionsByServiceId}
+                            bindingsByServiceId={armedBindingsByServiceId}
+                            setBindingForService={(serviceId, binding) => {
+                                requestClose();
+                                armedAgent.onConnectedServicesChange?.(buildSessionConnectedServicesBindings({
+                                    supportedServiceIds: defaults.supportedConnectedServiceIds,
+                                    bindingsByServiceId: { ...armedBindingsByServiceId, [serviceId]: binding },
+                                }));
+                            }}
+                            defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
+                            onOpenSettings={(serviceId) => {
+                                requestClose();
+                                router.push({
+                                    pathname: '/settings/connected-services/[serviceId]',
+                                    params: { serviceId },
+                                });
+                            }}
+                            onReconnectProfile={(serviceId, profileId) => {
+                                requestClose();
+                                router.push(resolveProfileActionRoute(serviceId, profileId));
+                            }}
+                            maxHeight={maxHeight}
+                        />
+                    )
+                    : () => <ActionListSection actions={[{
+                        id: 'armed-agent-auth-default',
+                        label: label.label,
+                        subtitle: warningKey ? t(warningKey) : undefined,
+                        disabled: true,
+                    }]} />,
                 maxHeightCap: 560,
                 maxWidthCap: 560,
             });
@@ -939,6 +985,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         connectedServicesFeatureEnabled,
         params.armedContinuationAgent?.agentId,
         params.armedContinuationAgent?.agentCore,
+        params.armedContinuationAgent?.connectedServices,
+        params.armedContinuationAgent?.onConnectedServicesChange,
+        params.machineId,
+        params.serverId,
+        resolveProfileActionRoute,
+        router,
         params.settings.connectedServicesDefaultAuthByAgentIdV1,
         params.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         params.settings.connectedServicesProfileLabelByKey,

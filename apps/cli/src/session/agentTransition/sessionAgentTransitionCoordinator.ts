@@ -13,6 +13,7 @@ import {
   readSessionAgentTransitionDividerFromStoredRecordV1,
   rejectUndispatchedSessionAgentTransition,
   sanitizeSessionUserMessageSendMeta,
+  type ConnectedServiceBindingsV1,
   type SessionAgentTransitionCurrentViewCommitted,
   type SessionAgentTransitionRequestV1,
   type SessionAgentTransitionResultV1,
@@ -20,6 +21,7 @@ import {
   type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
 import {
+  AGENTS_CORE,
   projectCurrentAgentSessionView,
   resolveAgentIdFromSessionMetadata,
   type AgentId,
@@ -254,7 +256,22 @@ async function applyTargetConnectedServiceBinding(params: Readonly<{
   targetAgentId: AgentId;
   backendTarget: BackendTargetRefV1;
   targetMetadata: Record<string, unknown>;
+  /** The account the user chose for the target before the switch; stronger than any default. */
+  explicitConnectedServices?: ConnectedServiceBindingsV1;
 }>): Promise<void> {
+  if (params.explicitConnectedServices) {
+    // An explicit choice is literal. It never falls back to the account default, because the
+    // user picked this account precisely because the default was not the one they wanted
+    // (for example an expired login). A choice of native on every service writes no binding.
+    const hasConnectedBinding = Object.values(params.explicitConnectedServices.bindingsByServiceId)
+      .some((binding) => binding.source === 'connected');
+    if (!hasConnectedBinding) return;
+    params.targetMetadata.connectedServices = params.explicitConnectedServices;
+    params.targetMetadata.connectedServicesUpdatedAt = Date.now();
+    params.targetMetadata.connectedServiceMaterializationIdentityV1 =
+      createConnectedServiceMaterializationIdentity();
+    return;
+  }
   const resolved = await resolveSessionAgentSpawnConnectedServicesDefaults({
     credentials: params.credentials,
     backendTarget: params.backendTarget,
@@ -270,6 +287,19 @@ async function applyTargetConnectedServiceBinding(params: Readonly<{
   params.targetMetadata.connectedServicesUpdatedAt = resolved.connectedServicesUpdatedAt;
   params.targetMetadata.connectedServiceMaterializationIdentityV1 =
     createConnectedServiceMaterializationIdentity();
+}
+
+/**
+ * Bindings are Agent-scoped: a binding naming a service the target Agent's catalog does not
+ * declare is exactly the failure the rebinding above exists to prevent. An explicit choice that
+ * does that is refused before any effect instead of being dropped or reinterpreted.
+ */
+function isExplicitConnectedServicesChoiceSupported(
+  targetAgentId: AgentId,
+  connectedServices: ConnectedServiceBindingsV1,
+): boolean {
+  const supported: readonly string[] = AGENTS_CORE[targetAgentId].connectedServices?.supportedServiceIds ?? [];
+  return Object.keys(connectedServices.bindingsByServiceId).every((serviceId) => supported.includes(serviceId));
 }
 
 /**
@@ -628,6 +658,10 @@ export async function runSessionAgentTransition(params: Readonly<{
   const sourceAgentId = currentAgentId;
   const targetAgentId: AgentId = resolvedTarget.targetAgentId;
   const targetBackendTarget = resolvedTarget.backendTarget;
+  if (
+    request.selection.connectedServices
+    && !isExplicitConnectedServicesChoiceSupported(targetAgentId, request.selection.connectedServices)
+  ) return effects.rejected('connected_account_unsupported');
   const configuredBackend = targetBackendTarget.kind === 'configuredAcpBackend' && accountSettings
     ? resolveConfiguredAcpBackendFromAccountSettings(accountSettings, targetBackendTarget.backendId) : null;
   if (configuredBackend && accountSettings) {
@@ -779,13 +813,19 @@ export async function runSessionAgentTransition(params: Readonly<{
   // inversion is a stated risk spot — choosing a narrower context bound and only
   // then discovering that native return is unavailable omits history the fresh
   // target needs, and nothing in the result would say so.
-  const nativeReturn = targetBackendTarget.kind === 'configuredAcpBackend' ? null : await resolveAgentNativeReturnIdentity({
-    store: localAgentNativeResumeRecordStore,
-    sessionId: request.sessionId,
-    targetAgentId,
-    sourceMetadata: stoppedMetadata,
-    accountSettings: readAccountSettings(),
-  });
+  // A record names a conversation but not the connected account that produced it, and each
+  // connected account keeps its own provider home. When the owner chose the account explicitly
+  // the record cannot be confirmed to belong to it, so it is ignored: the target starts fresh and
+  // receives the full replay rather than resuming a conversation it may not be able to see.
+  const nativeReturn = targetBackendTarget.kind === 'configuredAcpBackend' || request.selection.connectedServices
+    ? null
+    : await resolveAgentNativeReturnIdentity({
+      store: localAgentNativeResumeRecordStore,
+      sessionId: request.sessionId,
+      targetAgentId,
+      sourceMetadata: stoppedMetadata,
+      accountSettings: readAccountSettings(),
+    });
 
   // Bounded context through the existing Replay owner. The transcript head is
   // read AFTER the confirmed stop, so a late source row remains canonical
@@ -902,6 +942,7 @@ export async function runSessionAgentTransition(params: Readonly<{
       targetAgentId,
       backendTarget: targetBackendTarget,
       targetMetadata,
+      explicitConnectedServices: request.selection.connectedServices,
     });
     const outcome = await commitSessionAgentTransitionCutover({
       token: params.credentials.token,

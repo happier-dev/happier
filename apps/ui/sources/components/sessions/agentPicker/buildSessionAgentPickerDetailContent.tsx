@@ -24,6 +24,11 @@ export type SessionAgentPickerSelection = Readonly<{
     modelLabel: string | null;
     sessionModeId: string | null;
     configOverrides: Readonly<Record<string, string>>;
+    /**
+     * The connected account the owner chose for this Agent before continuing, or absent for its
+     * account default. Only the in-session continuation uses it; New Session keeps its own bindings.
+     */
+    connectedServices?: ConnectedServiceBindingsV1;
 }>;
 
 /**
@@ -84,6 +89,9 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
                 modelLabel: next.modelLabel,
                 sessionModeId: next.sessionModeId,
                 configOverrides: next.configOverrides,
+                // The detail pane owns model/mode/config only. The account chosen for the armed
+                // Agent is not its to drop, so it is carried through unchanged (absent stays absent).
+                ...(params.selection.connectedServices ? { connectedServices: params.selection.connectedServices } : {}),
             })}
         />
     );

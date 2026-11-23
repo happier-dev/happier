@@ -82,6 +82,34 @@ describe('session agent transition — portable selection', () => {
     expect(parsed.modelId).toBe('opus');
   });
 
+  it('carries an explicit connected-account choice for the target and rejects a malformed one', () => {
+    const selection = {
+      v: 1,
+      agentId: 'claude',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude1' },
+        },
+      },
+    };
+    expect(SessionAgentTransitionSelectionV1Schema.parse(selection)).toEqual(selection);
+    expect(ComposerAgentContinuationIntentV1Schema.safeParse({
+      v: 1,
+      mode: 'same_session',
+      sourceAgentId: 'codex',
+      selection,
+    }).success).toBe(true);
+    expect(SessionAgentTransitionSelectionV1Schema.safeParse({
+      ...selection,
+      connectedServices: { v: 1, bindingsByServiceId: { 'not-a-service': { source: 'native' } } },
+    }).success).toBe(false);
+    expect(SessionAgentTransitionSelectionV1Schema.safeParse({
+      ...selection,
+      connectedServices: { v: 2, bindingsByServiceId: {} },
+    }).success).toBe(false);
+  });
+
   it('does not accept a builtInAgent target carrier as the selection shape', () => {
     expect(
       SessionAgentTransitionSelectionV1Schema.safeParse({

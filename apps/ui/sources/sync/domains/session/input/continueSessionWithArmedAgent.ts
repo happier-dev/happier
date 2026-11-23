@@ -237,6 +237,10 @@ function resolveRejectedMessage(
             return t('session.agentContinuation.transition.rejected.sourceStopFailed', {
                 agent: labels.sourceAgentLabel,
             });
+        case 'connected_account_unsupported':
+            return t('session.agentContinuation.transition.rejected.connectedAccountUnsupported', {
+                agent: labels.targetAgentLabel,
+            });
     }
 }
 

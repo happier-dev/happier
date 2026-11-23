@@ -878,6 +878,97 @@ describe('runSessionAgentTransition', () => {
         expect(written.connectedServicesUpdatedAt).not.toBe(11);
       });
 
+      describe('explicit account chosen before the switch', () => {
+        const ACCOUNT_DEFAULT_SETTINGS = {
+          connectedServicesDefaultAuthByAgentIdV1: {
+            v: 1,
+            bindingsByAgentId: {
+              codex: {
+                v: 1,
+                bindingsByServiceId: {
+                  'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+                },
+              },
+            },
+          },
+        };
+
+        it('continues under the chosen account instead of the account default', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: ACCOUNT_DEFAULT_SETTINGS });
+
+          await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: {
+                  v: 1,
+                  bindingsByServiceId: {
+                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'codex2' },
+                  },
+                },
+              },
+            }),
+          });
+
+          const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+          const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+          const bindings = (written.connectedServices as { bindingsByServiceId: Record<string, unknown> })
+            .bindingsByServiceId;
+          expect(bindings['openai-codex']).toEqual({ source: 'connected', selection: 'profile', profileId: 'codex2' });
+          expect(bindings['claude-subscription']).toBeUndefined();
+          expect(written.connectedServiceMaterializationIdentityV1).toBeDefined();
+          expect(written.connectedServiceMaterializationIdentityV1).not.toMatchObject({ id: 'csm_source' });
+        });
+
+        it('honors an explicit native choice even when the account has a connected default', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: ACCOUNT_DEFAULT_SETTINGS });
+
+          await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'native' } } },
+              },
+            }),
+          });
+
+          const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+          const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+          expect(written.connectedServices).toBeUndefined();
+          expect(written.connectedServiceMaterializationIdentityV1).toBeUndefined();
+        });
+
+        it('rejects before any effect when the choice names a service the target Agent does not support', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: {
+                  v: 1,
+                  bindingsByServiceId: {
+                    'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'team' },
+                  },
+                },
+              },
+            }),
+          });
+
+          expect(result).toEqual({ type: 'rejected', code: 'connected_account_unsupported', sourceEffect: 'none' });
+          expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+          expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+        });
+      });
+
       it('leaves the target on native auth when the account configures no default for it', async () => {
         primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
         mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
@@ -1800,6 +1891,40 @@ describe('runSessionAgentTransition', () => {
       // a flat resume key: exactly one Agent's key may be present.
       expect(written.claudeSessionId).toBe('claude-native-9');
       expect(written.codexSessionId).toBeUndefined();
+    });
+
+    it('starts a fresh conversation with the full replay when the owner chose an explicit account', async () => {
+      // The record names a conversation but not the account that produced it, and a connected
+      // account keeps its own provider home. Reusing it under an account the owner picked
+      // deliberately could resume a conversation that account cannot see, or silently start an
+      // empty one while the brief is bounded to the away delta. An unconfirmable record is ignored.
+      primeHappyPath(codexSourceMetadata());
+      mocks.readAgentNativeResumeRecord.mockResolvedValue({
+        identity: { v: 1, vendorResumeId: 'claude-native-9' },
+        departureSeqInclusive: 55,
+      });
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({
+          expectedCurrentAgentId: 'codex',
+          selection: {
+            v: 1,
+            agentId: 'claude',
+            connectedServices: {
+              v: 1,
+              bindingsByServiceId: {
+                'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude1' },
+              },
+            },
+          },
+        }),
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
+      expect(readCommittedDivider()).not.toHaveProperty('returningAgentLastSeenSeqInclusive');
+      expect(readCommittedTargetView().claudeSessionId).toBeUndefined();
     });
 
     it('refuses a recorded id the shared eligibility owner will not resume', async () => {

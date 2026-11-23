@@ -232,6 +232,22 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         }
     });
 
+    it('names the chosen account when the target Agent cannot use it, and keeps the armed switch', () => {
+        const disposition = resolveArmedAgentContinuationDisposition(
+            { type: 'rejected', code: 'connected_account_unsupported', sourceEffect: 'none' },
+            LABELS,
+        );
+
+        expect(disposition).toEqual(expect.objectContaining({ draft: 'preserve', arm: 'keep', send: 'allow' }));
+        expect(disposition.notice?.message).toBe(t('session.agentContinuation.transition.rejected.connectedAccountUnsupported', {
+            agent: LABELS.targetAgentLabel,
+        }));
+        // A generic "not available on this machine" would send the owner looking at the wrong thing.
+        expect(disposition.notice?.message).not.toBe(t('session.agentContinuation.transition.rejected.targetUnavailable', {
+            agent: LABELS.targetAgentLabel,
+        }));
+    });
+
     it('says nothing at all when the switch completed and the message landed', () => {
         expect(resolveArmedAgentContinuationDisposition({ type: 'accepted', localId: 'local-1' }, LABELS)).toEqual({
             draft: 'clear',
