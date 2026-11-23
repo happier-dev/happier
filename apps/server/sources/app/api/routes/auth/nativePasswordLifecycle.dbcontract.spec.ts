@@ -12,6 +12,9 @@ import {
     createPasswordMutationChallengeSigningInputV1,
     encodePasswordCredentialFieldV1,
     normalizeVerifiedEmail,
+    createKeyChallengeV2SigningInput,
+    KeyChallengeV2IssueResponseSchema,
+    signAccountContentKeyBindingV1,
     type AccountPasswordCredentialV1,
     type E2eeAccountPasswordCredentialV1,
     type PasswordCredentialMutationV1,
@@ -30,6 +33,7 @@ import { createTeamInvitationForActorInTx } from "@/app/teams/invitations/invita
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 import { registerAccountSecurityRoutes } from "./registerAccountSecurityRoutes";
+import { registerKeyChallengeAuthRoute } from "./registerKeyChallengeAuthRoute";
 import { db, initDbMysql, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createEnvPatcher } from "@/testkit/env";
@@ -63,6 +67,7 @@ function createApp(): FastifyInstance {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     enableAuthentication(app);
+    registerKeyChallengeAuthRoute(app);
     const delivery: AuthEmailDelivery = {
         isReady: async () => true,
         deliver: async () => ({ status: "sent" }),
@@ -523,6 +528,50 @@ describe("native password public-owner provider contract", () => {
             // spendable and the credential it proposed was never installed.
             expect(await db.keyChallengeV2.findUnique({ where: { id: loser.challengeId } }))
                 .toMatchObject({ consumedAt: null });
+        } finally {
+            await app.close();
+        }
+    }, 120_000);
+
+    providerIt("creates a fresh keyed Account and consumes its invitation with an existing Team audience", async () => {
+        const inviter = await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
+        createdAccountIds.add(inviter.id);
+        const team = await db.team.create({ data: { name: `Key invitation ${randomUUID()}`, admissionMode: "invite_only" } });
+        createdTeamIds.add(team.id);
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: inviter.id, role: "owner" } });
+        const invitation = await inTx(tx => createTeamInvitationForActorInTx(tx, {
+            teamId: team.id, actorAccountId: inviter.id, role: "member", historyAccess: "from_membership",
+            recipientEmailNormalized: null, emailDeliveryAvailable: false, requestKey: randomUUID(),
+        }));
+        if (!invitation.ok || !invitation.value.token) throw new Error("Invitation setup failed");
+        const signing = tweetnacl.sign.keyPair();
+        const content = tweetnacl.box.keyPair();
+        const publicKey = privacyKit.encodeHex(new Uint8Array(signing.publicKey));
+        const app = createApp();
+        await app.ready();
+        try {
+            const issued = await app.inject({ method: "POST", url: "/v1/auth/challenge", payload: {} });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const challenge = KeyChallengeV2IssueResponseSchema.parse(issued.json());
+            const response = await app.inject({ method: "POST", url: "/v1/auth", payload: {
+                publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)),
+                challengeId: challenge.challengeId,
+                signature: privacyKit.encodeBase64(tweetnacl.sign.detached(createKeyChallengeV2SigningInput(challenge), signing.secretKey)),
+                contentPublicKey: privacyKit.encodeBase64(new Uint8Array(content.publicKey)),
+                contentPublicKeySig: privacyKit.encodeBase64(signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: new Uint8Array(signing.secretKey), contentPublicKey: new Uint8Array(content.publicKey),
+                })),
+                admission: { kind: "team_invitation", token: invitation.value.token },
+            } });
+            const account = await db.account.findUnique({ where: { publicKey } });
+            if (account) createdAccountIds.add(account.id);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ success: true, token: expect.any(String) });
+            expect(account).not.toBeNull();
+            expect(await db.teamMembership.findUnique({ where: { teamId_accountId: { teamId: team.id, accountId: account!.id } } }))
+                .toMatchObject({ role: "member", status: "active" });
+            expect(await db.teamInvitation.findUniqueOrThrow({ where: { id: invitation.value.invitation.id } }))
+                .toMatchObject({ acceptedByAccountId: account!.id, acceptedAt: expect.any(Date) });
         } finally {
             await app.close();
         }

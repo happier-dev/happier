@@ -41,6 +41,7 @@ import {
 } from "@/app/teams/invitations/accept";
 import {
     requireTeamInvitationFreshAccountAdmissionInTx,
+    resolveTeamInvitationFreshAccountAdmissionReferenceInTx,
     TeamInvitationFreshAccountAdmissionAbort,
 } from "@/app/teams/invitations/freshAccountAdmission";
 import { isTeamMembershipAdmissionEnabled } from "@/app/teams/memberships/membershipService";
@@ -569,6 +570,10 @@ function registerKeyChallengeAuthRoutesForPurpose(
                         if (freshEncryptionMode === "e2ee" && !contentKeyBinding) {
                             throw new Error("content_public_key_required");
                         }
+                        const invitation = teamInvitationAdmission
+                            ? await resolveTeamInvitationFreshAccountAdmissionReferenceInTx(tx, teamInvitationAdmission)
+                            : null;
+                        if (teamInvitationAdmission && !invitation) throw new TeamInvitationFreshAccountAdmissionAbort();
                         const account = await provisionFreshAccountInTx(tx, {
                             insertSemantics: {
                                 kind: "idempotent_verified_signing_identity",
@@ -577,6 +582,7 @@ function registerKeyChallengeAuthRoutesForPurpose(
                             encryptionMode: freshEncryptionMode,
                             contentKeyBinding,
                             directoryPreparation: sameServiceBootstrapPreparation,
+                            ...(invitation ? { teamInvitationTeamId: invitation.teamId } : {}),
                         });
                         if (teamInvitationAdmission) {
                             await requireTeamInvitationFreshAccountAdmissionInTx(tx, {

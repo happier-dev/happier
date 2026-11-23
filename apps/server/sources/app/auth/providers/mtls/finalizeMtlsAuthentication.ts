@@ -142,6 +142,7 @@ export async function finalizeMtlsAuthenticationInTx(
             insertSemantics: { kind: "must_create", accountId },
             publicKey: null,
             encryptionMode: eligibility.encryptionMode,
+            ...(invitation ? { teamInvitationTeamId: invitation.teamId } : {}),
             identityConnection: {
                 connectInTx: async (identityTx) => await linkIdentityInTx(identityTx, {
                     accountId,

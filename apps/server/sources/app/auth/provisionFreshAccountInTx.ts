@@ -21,6 +21,7 @@ import type { ProviderReference } from "@/app/auth/providers/providerReference";
 import type { TeamOAuthAdmissionSource } from "@/app/teams/memberships/teamOAuthAdmissionSource";
 import { acceptTeamInvitationAdmissionReferenceInTx } from "@/app/teams/invitations/accept";
 import { changeUsernameInTx, type UsernameChange } from "@/app/social/usernameUpdate";
+import { acquireTeamMutationAccountAdmissionInTx } from "@/app/teams/memberships/sessionAccessEffects";
 
 export type FreshAccountInsertSemantics =
     | Readonly<{ kind: "must_create"; accountId: string }>
@@ -54,6 +55,8 @@ export interface PreparedFreshAccount {
     verifiedMailbox?: NormalizedVerifiedEmail;
     /** Only deliberate Directory-purpose authentication supplies this effect. */
     directoryPreparation?: SameServiceHomeEntryPreparation | null;
+    /** Qualified invitation audience; the caller still consumes the invitation in this transaction. */
+    teamInvitationTeamId?: string;
     teamOAuthAdmission?: Readonly<{
         env: NodeJS.ProcessEnv;
         provider: ProviderReference | null | undefined;
@@ -84,13 +87,19 @@ export async function provisionFreshAccountInTx(tx: Tx, prepared: PreparedFreshA
     };
     const existing = prepared.insertSemantics.kind === "idempotent_verified_signing_identity"
         ? await tx.account.findUnique({ where: { publicKey: prepared.insertSemantics.publicKey }, select: { id: true } }) : null;
-    const recheckAdmission = await acquireTeamOAuthAdmissionAccountsInTx(tx, {
-        accountIds: [existing?.id ?? data.id],
-        provider: prepared.teamOAuthAdmission?.provider,
-        connection: prepared.teamOAuthAdmission?.connection,
-        admission: prepared.teamOAuthAdmission?.source,
-        intent: "exclusive",
-    });
+    const accountIds = [existing?.id ?? data.id];
+    const recheckAdmission = prepared.teamInvitationTeamId
+        ? await acquireTeamMutationAccountAdmissionInTx(tx, {
+            teamId: prepared.teamInvitationTeamId, accountIds, affectedAccountIds: accountIds,
+            membershipChange: { kind: "teamMembership", teamId: prepared.teamInvitationTeamId }, intent: "exclusive",
+        })
+        : await acquireTeamOAuthAdmissionAccountsInTx(tx, {
+            accountIds,
+            provider: prepared.teamOAuthAdmission?.provider,
+            connection: prepared.teamOAuthAdmission?.connection,
+            admission: prepared.teamOAuthAdmission?.source,
+            intent: "exclusive",
+        });
     // Only the already-verified Key Challenge retry contract may select this
     // idempotent arm. Native/OAuth/mTLS/JIT/directory admission must explicitly
     // create a new Account even when a submitted signing key already exists.
