@@ -75,7 +75,6 @@ import { admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState
   type SessionListDocumentAdmission } from '@/sync/domains/session/sessionDocumentAdmission';
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { parsePlainSessionAgentStateResult } from './parsePlainSessionPayload';
-import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { readSessionByIdHttp } from './sessionByIdHttp';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -996,11 +995,8 @@ export async function fetchAndApplySessionById(params: Readonly<{
   const layout1SharedMetadata = strictSharedMetadata?.success
     ? strictSharedMetadata.data
     : null;
-  if (
-    metadataLayoutVersion === 1
-    && (metadata === null || !layout1SharedMetadata)
-  ) {
-    params.log.log(`[sessionById] Shared metadata unavailable for ${sessionId}`);
+  if (metadata === null || (metadataLayoutVersion === 1 && !layout1SharedMetadata)) {
+    params.log.log(`[sessionById] Metadata unavailable for ${sessionId}`);
     return { ok: false, session: null, errorCode: 'metadata_unavailable' };
   }
   const ownerProjection = metadataLayoutVersion === 1 && layout1SharedMetadata
@@ -1205,8 +1201,6 @@ export async function fetchAndApplySessionById(params: Readonly<{
       admitOpenedSessionListDisplayMetadata(documentAdmission, nextSession), agentStateVersion),
       params.getExistingSession?.(sessionId)?.[SESSION_LIST_DOCUMENT_ADMISSION]);
   }
-
-  if (!hasAuthoritativeSessionRouteData(nextSession)) return staleResult();
 
   await ensureAccountCurrentness();
   if (!isStoredSessionInResponseScope(previousSession, nextSession)) return staleResult();

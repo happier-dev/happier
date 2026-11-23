@@ -671,7 +671,7 @@ describe('fetchAndApplySessionById locked continuity', () => {
             })]);
         } else {
             // An authenticated non-Metadata payload is not an opened full document.
-            expect(result).toMatchObject({ ok: false, errorCode: 'stale_response', session: null });
+            expect(result).toMatchObject({ ok: false, errorCode: 'metadata_unavailable', session: null });
             expect(applied).toEqual([]);
         }
         const snapshotApplied: Session[] = [];

@@ -24,6 +24,8 @@ import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fak
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
+import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { createCapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -37,6 +39,7 @@ const runtimeFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/system/runtimeFetch', () => {
     // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
     const mocked = { runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    resetRuntimeFetch: () => runtimeFetch.mockReset(),
     get runtimeFetchManualResponse() { return this.runtimeFetch; },
 };
     return mocked;
@@ -2750,6 +2753,77 @@ describe('fetchAndApplySessionById', () => {
   });
 });
 
+
+it('publishes acquired turns beside a newer admitted Session tuple in the real store', async () => {
+  const initialState = storage.getState();
+  const session = createSessionFixture({ id: 'turn-publication', serverId: 'server-a',
+    metadataVersion: 38, agentStateVersion: 28 });
+  // Captured 2026-11-23 03:39:29.887 turn-demand-live-network.private.jsonl; identifiers redacted.
+  const turns = SessionTurnsProjectionV1Schema.parse({ v: 1, sessionId: session.id,
+    latestTurnId: 'native-turn-1', updatedAt: 1795404941916, turns: [{
+      turnId: 'native-turn-1', agentId: 'claude', status: 'completed', initiator: 'user', workDepth: 0,
+      automationLifecycleFacts: { launchProfileId: null, changedFiles: true },
+      startedAt: 1795363985942, updatedAt: 1795363992588, terminalAt: 1795363992588,
+      lastRuntimeIssue: null, transcriptAnchors: { startUserMessageSeq: 2, userMessageSeqs: [2],
+        startSeqInclusive: 2, endSeqInclusive: 12, finalAssistantMessageSeq: 9 },
+      lastMutationId: 'session-turn-mutation-1',
+    }] });
+  const hydrate = (metadataVersion: number, agentStateVersion: number, includeTurnsProjection: boolean) => fetchAndApplySessionById({
+    sessionId: session.id, serverId: 'server-a', credentials: { token: 'fixture-token' },
+    accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+    encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(), includeTurnsProjection,
+    request: async path => Response.json(path.endsWith('/turns') ? turns
+      : createPlainSessionByIdResponseFixture({ ...session, metadataVersion, agentStateVersion })),
+    applySessions: values => storage.getState().applySessions(values),
+    getExistingSession: id => storage.getState().sessions[id], log: { log() {} },
+  });
+  try {
+    storage.setState(storage.getInitialState(), true);
+    expect((await hydrate(38, 28, false)).ok).toBe(true);
+    const admitted = storage.getState().sessions[session.id]!;
+    expect(hasAuthoritativeSessionRouteData(admitted)).toBe(true);
+    expect(admitted.sessionTurns).toBeUndefined();
+    const result = await hydrate(37, 27, true);
+    expect(result.ok).toBe(true);
+    const stored = storage.getState().sessions[session.id]!;
+    expect(stored).toMatchObject({ metadataVersion: 38, agentStateVersion: 28, sessionTurns: turns });
+    expect(hasAuthoritativeSessionRouteData(stored)).toBe(true);
+    expect(result.session).toBe(stored);
+  } finally {
+    storage.setState(initialState, true);
+  }
+});
+
+it('refuses missing legacy metadata without publishing over an admitted Session', async () => {
+  const initialState = storage.getState();
+  const session = createSessionFixture({ id: 'missing-legacy-metadata', serverId: 'server-a' });
+  let missingMetadata = false;
+  const hydrate = () => fetchAndApplySessionById({
+    sessionId: session.id, serverId: 'server-a', credentials: { token: 'fixture-token' },
+    accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+    encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(), includeTurnsProjection: false,
+    request: async () => {
+      const response = createPlainSessionByIdResponseFixture(session);
+      // Malformed historical ingress: a legacy metadata document must still be opened.
+      const { ownerMetadata: _ownerMetadata, ...legacy } = response.session;
+      return Response.json(missingMetadata ? { session: { ...legacy,
+        metadataLayoutVersion: 0, metadata: 'null', metadataVersion: 2 } } : response);
+    },
+    applySessions: values => storage.getState().applySessions(values),
+    getExistingSession: id => storage.getState().sessions[id], log: { log() {} },
+  });
+  try {
+    storage.setState(storage.getInitialState(), true);
+    expect((await hydrate()).ok).toBe(true);
+    const admitted = storage.getState().sessions[session.id];
+    expect(hasAuthoritativeSessionRouteData(admitted)).toBe(true);
+    missingMetadata = true;
+    expect(await hydrate()).toMatchObject({ ok: false, errorCode: 'metadata_unavailable' });
+    expect(storage.getState().sessions[session.id]).toBe(admitted);
+  } finally {
+    storage.setState(initialState, true);
+  }
+});
 
 it('keeps identical by-ID hydration silent in a thousand-Session store', async () => {
   const initialState = storage.getState();

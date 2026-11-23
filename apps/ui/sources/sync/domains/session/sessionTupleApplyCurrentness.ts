@@ -1,6 +1,10 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { SESSION_OWNER_METADATA_PROJECTION } from './readSessionOwnerMetadataView';
+import {
+    SESSION_LIST_DOCUMENT_ADMISSION, admitOpenedSessionListAgentState,
+    areSessionListDocumentAdmissionsEqual, mergeSessionListDocumentObservations,
+} from './sessionDocumentAdmission';
 import type { CollectionSessionRequestIdentity } from '@/components/ui/lists/collection/collectionRequestRef';
 
 export type SessionTupleApplyCurrentness = Readonly<{
@@ -139,7 +143,7 @@ export const sessionTupleProjectionFields = [
 
 type SessionTupleProjection = SessionRequestProjection & Partial<Pick<Session,
     | 'metadataProjection' | 'ownerMetadataView' | 'composerOptionsInput'
-    | typeof SESSION_OWNER_METADATA_PROJECTION
+    | typeof SESSION_OWNER_METADATA_PROJECTION | typeof SESSION_LIST_DOCUMENT_ADMISSION
 >> & { metadata?: unknown };
 
 /** Merge independently versioned tuple fields before any queue can discard a newer snapshot. */
@@ -148,13 +152,35 @@ export function reconcileSessionTupleProjection<T extends SessionTupleProjection
     incoming: T,
 ): T {
     let next = reconcileSessionRequestProjection(previous, incoming);
-    if (!previous || classifySessionTupleApplyCurrentness(previous, incoming).metadataCurrent) return next;
-    for (const key of [
-        'metadataLayoutVersion', 'metadataProjection', 'metadata', 'metadataVersion',
-        'ownerMetadataView', SESSION_OWNER_METADATA_PROJECTION, 'composerOptionsInput',
-    ] as const) {
-        if ((key in previous || key in next) && next[key] !== previous[key]) {
-            next = { ...next, [key]: previous[key] };
+    if (!previous) return next;
+    const currentness = classifySessionTupleApplyCurrentness(previous, incoming);
+    if (!currentness.metadataCurrent) {
+        for (const key of [
+            'metadataLayoutVersion', 'metadataProjection', 'metadata', 'metadataVersion',
+            'ownerMetadataView', SESSION_OWNER_METADATA_PROJECTION, 'composerOptionsInput',
+        ] as const) {
+            if ((key in previous || key in next) && next[key] !== previous[key]) {
+                next = { ...next, [key]: previous[key] };
+            }
+        }
+    }
+    const previousAdmission = previous[SESSION_LIST_DOCUMENT_ADMISSION];
+    const incomingAdmission = incoming[SESSION_LIST_DOCUMENT_ADMISSION];
+    if (previousAdmission && incomingAdmission
+        && areSessionListDocumentAdmissionsEqual(previousAdmission, incomingAdmission)) {
+        // Custody follows each selected document, independently of the enclosing response.
+        let admission = mergeSessionListDocumentObservations(
+            currentness.metadataCurrent ? incomingAdmission : previousAdmission,
+            currentness.metadataCurrent ? previousAdmission : incomingAdmission,
+        );
+        const openedAgentStateVersion = (currentness.agentStateCurrent ? incomingAdmission : previousAdmission).openedAgentStateVersion;
+        if (admission.openedAgentStateVersion !== openedAgentStateVersion) {
+            admission = openedAgentStateVersion === undefined
+                ? Object.freeze({ ...admission, openedAgentStateVersion })
+                : admitOpenedSessionListAgentState(admission, openedAgentStateVersion);
+        }
+        if (next[SESSION_LIST_DOCUMENT_ADMISSION] !== admission) {
+            next = { ...next, [SESSION_LIST_DOCUMENT_ADMISSION]: admission };
         }
     }
     return next;
