@@ -8610,9 +8610,11 @@ For execution Run model/config/Connected option lookup, set
 `draftInput.backendTargetKey` to the selected backend choice's string `value`;
 the start input's `backendTarget` object alone does not select an inventory.
 Execution Run `configOptions` maps option ids directly to scalar values.
-Inline Workflow definitions put model selection and effort on `defaults.engine`
-or a step's `execution.engine`; use `effort`, rather than a
-`reasoning_effort` entry in `sessionConfigOptionOverrides`. Run
+Inline Workflow definitions choose who runs on `defaults` or a step's
+`execution` with the flat `agentTarget` and optional `modelSelection`, or with
+`roleId` for a Role; effort is the `reasoning_effort` entry in
+`sessionConfigOptionOverrides`. `engine` only binds that choice to a declared
+input or the current item and never carries a literal Agent, model or effort. Run
 `workflow.validate` before starting an authored definition. These
 contracts share discovery and admission owners with UI, CLI and external plugins.
 With an origin Session, Workflow leaves resolving to that same Agent inherit
