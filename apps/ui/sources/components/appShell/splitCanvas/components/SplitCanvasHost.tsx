@@ -529,7 +529,7 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
         props.onLeafLayout(props.leaf.id, event);
     }, [props.leaf.id, props.onLeafLayout]);
 
-    const contentSlotRef = React.useCallback((slot: React.ComponentRef<typeof View> | null) => {
+    const contentSlotRef = React.useCallback((slot: unknown) => {
         // A hidden desktop webview can lay out the slot before it delivers onLayout.
         if (typeof HTMLElement === 'undefined' || !(slot instanceof HTMLElement) || !slot.ownerDocument.hidden) return;
         if (slot.offsetParent !== slot.parentElement || slot.offsetWidth === 0 || slot.offsetHeight === 0) return;
