@@ -99,7 +99,9 @@ last. Detaching shared setup preserves your personal overrides and checkout file
 
 One update decision can accept the reviewed copy and approve its lifecycle
 **This time** or **Until it changes**. Keeping the existing copy changes neither
-content nor consent. Approval covers setup, teardown and executable autostart
+content nor consent. If Team setup flags a change to a repository’s shared
+setup, open that repository’s review to see what would change on your checkout.
+Approval covers setup, teardown and executable autostart
 effects together; a teardown-only change still needs review during acceptance.
 Setup approval does not run teardown. An Agent can request acceptance but cannot
 create remembered execution consent. Integrated validation is still in progress.
@@ -223,8 +225,9 @@ slot. Deliberate Project environment values take precedence. A script or Compose
 publication with a fixed literal port still needs to be parameterized; allocation
 does not rewrite repository files or reserve an OS socket until the app binds.
 
-Stopping a service retains its numbers. Successful worktree removal releases
-them after teardown; failed teardown retains the worktree and its assignments.
+Stopping a service retains its numbers. Happier releases the assignment when
+worktree removal succeeds, including when Storage retires a live worktree. A
+failed teardown that stops removal leaves the assignment in place.
 An unrelated app can occupy a retained number while stopped. That failure is
 visible on Start; choosing replacement numbers requires the worktree's affected
 executions to be stopped.

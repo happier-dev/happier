@@ -53,6 +53,10 @@ Check each repository's status if some steps still need attention. Once a
 repository is ready, you can start a Session there. A Team's suggested first
 task opens in the ordinary composer, where you can edit it before sending.
 
+If you manage the Team, open **What new members get** to review the defaults,
+shared repositories, keys and suggested tasks people start with. **Preview as a
+member** shows the setup page without running anything.
+
 An agent can request the same setup batch. Review it on an open Happier App
 signed in to your Account before setup starts.
 
@@ -83,7 +87,7 @@ administration and can defeat operating-system isolation.
 
 In unreleased 0.3 development, Machine **Can use** also permits Workflows and
 schedules. Use your own Connected Account credentials and review the
-[sign-in lifetime and private Run boundaries](/accounts/session-sharing).
+[sign-in and trust boundaries for a shared Machine](/accounts/session-sharing).
 
 Shared-machine execution is incomplete, unreleased 0.3 development work. Its
 first isolation step uses one shared Agent operating-system user for members and
@@ -181,8 +185,12 @@ instead — invite people, choose how members sign in, share a session — until
 someone else joins or is invited. **Invite people** at the top of the page opens
 the invitation for that Team.
 
-In unreleased 0.3 development source, the overview also lists Workflows shared
-with this Team. Open a Workflow and choose **History** on a Team-visible
+In unreleased 0.3 development, open **Shared with this Team** on the Team
+overview and choose a resource kind to see the items you can access. If a count
+is unavailable, you can open the list to see its status and retry. Manage sharing
+from the resource itself.
+
+Open a shared Workflow and choose **History** on a Team-visible
 schedule row to see History filtered to that trigger, with **Edited by**
 attribution on its occurrences. The owner's private Runs stay excluded; a
 personal Workflow share alone does not expose their history. See
@@ -360,6 +368,9 @@ shared default can only tighten your approvals until you deliberately select a
 profile, even if you select the same one. Project defaults apply to everyone
 admitted to the project; its owner manages them for a personal project, and Team
 administrators manage them for a Team-owned project.
+
+In New Session, check the suggested values before you start. You can choose
+a different value where policy allows it.
 
 Your explicit choice takes priority over Group and Team preferences. An agreeing
 Group preference comes before the Team preference; conflicting Groups fall back

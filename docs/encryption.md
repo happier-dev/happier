@@ -6362,18 +6362,13 @@ and authority across the child carrier.
 Plain Accounts remain keyless. This admission extension is development-only and
 does not establish loaded-runtime or released verification for these flows.
 
-These seals carry the requester's full sign-in, and the requester confirmed
-that disclosure only for the first-hop Machine's custodian. So the sending
-daemon seals a reviewed finite child (Move, second-opinion creation, Setup Plan,
-deployment, readiness), a child's private Session bootstrap, or Sync
-preparation only when Home's custodian for the receiving Machine is the
-requester or that first-hop custodian (`assertRequesterCredentialRecipient`).
-Otherwise it refuses with `requester_credential_disclosure_required` before
-sealing or sending. A `session.stop` child of Session delete or Section archive
-is exempt: it reaches only the Machine holding that Session's requester
-AccessKey, which only the requester can create. Another person's
-shared Machine is therefore not yet a target for these children; no consent
-path exists for a later hop (unreleased 0.3).
+These seals carry the requester’s Account-wide sign-in to the admitted
+Machine installation. Home vouches for the receiving key. The 2026-11-23
+owner rule allows the use of an admitted Machine held by another person without
+a separate confirmation for sign-in delivery. The first-use notice called for
+by that rule still needs verification across callers. Existing target, action
+and Account custody checks continue to govern admission. The Machine’s
+custodian can inspect sign-in material delivered there.
 
 The installed terminal runtime consumes these same admitted original requester
 ports for an accepted Project standalone shell and an exact own local Session

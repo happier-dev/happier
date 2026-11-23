@@ -490,6 +490,12 @@ configuration skips optional defaults reads. An unreadable layer is skipped inde
 the creation context retains typed `unavailableDefaults` notes while the remaining layers
 resolve and creation continues. Already captured creation defaults are retained.
 
+Shared Project Session defaults are an exception to content E2EE. Home stores
+the selected Source’s validated choices and references as readable metadata in
+both Account modes. Only admitted Source detail reads include the defaults.
+Protected setup bodies and secret values stay with their existing owners. The
+private **For me** row follows the Account’s ordinary Plain or E2EE envelope.
+
 Saved New Session drafts retain authored choices rather than resolved managed values, so reopening
 an untouched draft reads current defaults and a policy lock preserves the person's underlying choice.
 A target picked in a draft or supplied by a route, deep link or exact-target seed is explicit,
