@@ -1,6 +1,6 @@
 import type { CliActionDepsParams } from './types';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { readProjectAccountRows, ProjectAccountRowsInput, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
 import { createCliMachineActionServerScopeCurrent } from './machineTransport';
@@ -11,7 +11,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { logger } from '@/ui/logger';
-export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
 type CliProjectRowsAdmission = CliProjectAdmissionFailure | Readonly<{ ok: true; input: ProjectAccountRowsInput; assertCurrent: () => Promise<void> }>;
 type RequesterArtifactReadOptions = Omit<NonNullable<Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[1]>, 'authorization'>;
 export type CliProjectAdmission = Readonly<{
@@ -53,9 +53,12 @@ export function createCliProjectAdmission(
   };
   // The four fixed reasons share one public refusal code.
   const refuseRequester = (reason: 'signed_root_projection' | 'external_credential_without_root'
-    | 'rpc_session_without_account' | 'runtime_account_mismatch') => {
+    | 'rpc_session_without_account' | 'runtime_account_mismatch'): CliProjectAdmissionFailure => {
     logger.warnLocalFile('[ProjectAdmission] requester authority refused', { reason });
-    return executionRunActionFailure('project_requester_authority_unavailable', undefined, { reason });
+    const code = 'project_requester_authority_unavailable';
+    // Approval history keeps only the closed cause, never this details bag.
+    return { ...executionRunActionFailure(code, undefined, { reason }),
+      failureCause: { phase: 'project.requester_admission', errorClass: 'Error', errorCode: code, httpStatus: null, nativeErrorReason: reason } };
   };
   const projectAccountAdmission = async (serverId?: string, context?: ActionExecutorContext) => {
     const homeDenied = await projectHomeAdmission(serverId, context);
@@ -110,7 +113,8 @@ export function createCliProjectAdmission(
     if (!context?.externalActionExecutionAuthorization) return;
     const denied = await projectAccountAdmission(projectHomeId, context);
     if (denied) {
-      throw createActionExecuteFailureError(executionRunActionFailure('project_requester_authority_unavailable', undefined, denied.details));
+      throw createActionExecuteFailureError({ ...executionRunActionFailure('project_requester_authority_unavailable', undefined, denied.details),
+        ...(denied.failureCause ? { failureCause: denied.failureCause } : {}) });
     }
     await assertProjectRequesterCustodyCurrent(context);
   };

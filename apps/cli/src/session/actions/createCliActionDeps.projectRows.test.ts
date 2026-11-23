@@ -412,7 +412,15 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
         actionId: 'projects.workspace.forget', requestId: 'request-a', requestEnvelopeDigest: 'a'.repeat(43),
         target: { kind: 'machine', machineId: 'machine-a' },
       } },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'signed_root_projection' } });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'signed_root_projection' },
+      // Approval history and the managed operation keep only the closed cause (L12 r197/r199).
+      failureCause: { phase: 'project.requester_admission', errorCode: 'project_requester_authority_unavailable',
+        nativeErrorReason: 'signed_root_projection' } });
+    // The core executor result, which approval history records, keeps that cause.
+    expect(await createActionExecutor(actions).execute(ActionIdSchema.parse('projects.workspace.forget'),
+      { serverId: 'home-a', workspaceId: ref.id }, { surface: 'cli', bypassApprovals: true, runtimeAccountId: 'foreign-account' }))
+      .toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable',
+        failureCause: { nativeErrorReason: 'runtime_account_mismatch' } });
     await expect(actions.projectsVisibilitySet!({ target: { serverId: 'home-a', projectKey: 'anchor-a' }, expectedRevision: 'absent', hidden: true },
       { runtimeAccountId: 'foreign-account' })).resolves.toMatchObject({ ok: false, errorCode: 'project_visibility_access_denied' });
     const contextInput = { target: { serverId: 'home-a', projectKey: 'anchor-a' }, expectedRevision: 'absent' as const,
