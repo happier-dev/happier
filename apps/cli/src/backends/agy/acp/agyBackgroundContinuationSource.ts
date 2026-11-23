@@ -82,9 +82,12 @@ export function createAgyBackgroundContinuationSource(
   return async (host) => {
     const foregroundToolCalls: ToolCalls = new Map();
     const backgroundTasks = new Set<string>();
-    // A settled task's update, and what follows it, while another turn or prompt RPC still owns the session.
+    // Live activity waiting for the ACP host to admit it.
     const unadmittedUpdates: SessionUpdate[] = [];
     let continuation: Continuation | null = null;
+    // ACP v1 provides no finality or parent ID for resumed work. Once established, that ambiguity
+    // lasts until the host closes or reloads this provider source.
+    let observedBackgroundWork = false;
     let continuationCount = 0;
     let deliveryTail = Promise.resolve();
     let disposed = false;
@@ -97,6 +100,7 @@ export function createAgyBackgroundContinuationSource(
       for (const [toolCallId, { status }] of toolCalls) {
         if (!isAcpToolCallTerminalStatus(status) && host.registerContinuation({ id: toolCallId, parentToolCallId: toolCallId })) {
           backgroundTasks.add(toolCallId);
+          observedBackgroundWork = true;
         }
       }
       host.releaseToolCalls([...toolCalls.keys()]);
@@ -189,9 +193,12 @@ export function createAgyBackgroundContinuationSource(
     };
 
     const admitContinuation = () => {
-      if (continuation || unadmittedUpdates.length === 0) return;
+      const first = unadmittedUpdates[0];
+      if (continuation || !first) return;
+      const toolCallId = toolCallIdOf(first);
+      const id = toolCallId && backgroundTasks.has(toolCallId) ? toolCallId : undefined;
       const turnId = `agy-continuation-${continuationCount + 1}`;
-      const sink = host.beginContinuation({ id: toolCallIdOf(unadmittedUpdates[0]!)!, turnId });
+      const sink = host.beginContinuation({ id, turnId });
       if (!sink) return;
       continuationCount += 1;
       logger.debug(`[AgyContinuation] Agy resumed on its own as ${turnId}`);
@@ -251,11 +258,16 @@ export function createAgyBackgroundContinuationSource(
         }
         const toolCallId = toolCallIdOf(update);
         const settlesTask = toolCallId !== null && backgroundTasks.has(toolCallId) && isAcpToolCallTerminalStatus(update.status);
-        if (!settlesTask && unadmittedUpdates.length === 0) return false;
+        const startsLiveWork = observedBackgroundWork && (
+          update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'agent_message_chunk'
+          || update.sessionUpdate === 'agent_thought_chunk'
+        );
+        if (!settlesTask && !startsLiveWork && unadmittedUpdates.length === 0) return false;
         unadmittedUpdates.push(update);
         admitContinuation();
         return true;
       },
+      hasUnattributedWork: () => observedBackgroundWork,
       dispose() {
         disposed = true;
         if (continuation) clearTimers(continuation);

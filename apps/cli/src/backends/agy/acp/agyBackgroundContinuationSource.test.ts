@@ -28,16 +28,17 @@ function agyAgent(directory: string): string {
       let closes = 0;
       let loads = 0;
       let permissionCount = 0;
+      let finishForeground;
       let killedByClose = [];
       const running = new Set();
       const pendingPermissions = new Map();
-      const COMMANDS = { call_build: 'npm run build', call_verify: 'cat build.log', call_tests: 'npm test' };
+      const COMMANDS = { call_build: 'npm run build', call_verify: 'cat build.log', call_tests: 'npm test', call_hook: 'echo hook' };
       const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
       const ok = (id, result) => send({ jsonrpc: '2.0', id, result });
       const notify = update => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: '${SESSION_ID}', update } });
       const tool = (sessionUpdate, toolCallId, status, extra = {}) => notify({
         sessionUpdate, toolCallId, name: 'run_command', kind: 'execute', title: COMMANDS[toolCallId], status,
-        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 500, IsDaemon: toolCallId !== 'call_verify' }, ...extra,
+        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 500, IsDaemon: toolCallId === 'call_build' || toolCallId === 'call_tests' }, ...extra,
       });
       const settle = (toolCallId, output) => {
         running.delete(toolCallId);
@@ -100,7 +101,10 @@ function agyAgent(directory: string): string {
           } else if (message.method === 'session/prompt') {
             const text = message.params.prompt.map(block => block.text ?? '').join('');
             const endTurn = () => { usage(); ok(message.id, { stopReason: 'end_turn' }); };
-            if (text === 'check the build') {
+            if (text === 'hold the foreground prompt') {
+              finishForeground = endTurn;
+              say('The foreground prompt started.');
+            } else if (text === 'check the build') {
               settle('call_build', 'build ok');
               say('The build finished.');
               endTurn();
@@ -137,6 +141,21 @@ function agyAgent(directory: string): string {
             say('All tests passed.');
             usage();
             ok(message.id, {});
+          } else if (message.method === 'test/late-work') {
+            usage();
+            runCommand('call_hook', () => {
+              settle('call_hook', 'hook done');
+              say('The deferred hook finished.');
+              usage();
+              ok(message.id, { resumed: true });
+            }, permission => ok(message.id, { resumed: false, permission }));
+          } else if (message.method === 'test/repeat-build-status') {
+            settle('call_build', 'build ok');
+            usage();
+            ok(message.id, {});
+          } else if (message.method === 'test/finish-foreground') {
+            finishForeground();
+            ok(message.id, {});
           } else if (message.method === 'test/status') ok(message.id, { pid: process.pid, closes, loads, running: [...running] });
           else if (message.id !== undefined) ok(message.id, {});
         }
@@ -150,14 +169,14 @@ async function fixture(run: (input: {
   events: AgentMessage[];
   permissionSession: FakePermissionSession;
   agentPid: number;
-}) => Promise<void>): Promise<void> {
+}) => Promise<void>, getPermissionMode: () => 'default' | 'yolo' = () => 'default'): Promise<void> {
   await withTempDir('agy-background-continuation-', async (directory) => {
     const permissionSession = new FakePermissionSession();
     const permissionHandler = new ProviderEnforcedPermissionHandler(permissionSession.asApiSessionClient(), { logPrefix: '[fixture]' });
     const events: AgentMessage[] = [];
     const backend = createAcpBackend({
       agentName: 'agy-fixture', cwd: directory, command: process.execPath, args: [agyAgent(directory)],
-      permissionHandler, getPermissionMode: () => 'default',
+      permissionHandler, getPermissionMode,
       providerTurnSource: createAgyBackgroundContinuationSource(TEST_TIMING),
     });
     backend.onMessage((event) => { events.push(event); });
@@ -265,6 +284,51 @@ describe('createAgyBackgroundContinuationSource', () => {
     });
   });
 
+  it('admits fresh live work after the continuation went idle, with explicit approval', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const resumed = backend.requestExtension('test/finish-build', {});
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+
+      const late = backend.requestExtension('test/late-work', {});
+      await expect.poll(() => pendingPermissionIds(permissionSession)).toEqual(['call_hook']);
+      await approvePendingPermission(permissionSession);
+      expect(await late).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(3);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The deferred hook finished.',
+      }));
+    });
+  });
+
+  it('requires explicit approval for unattributed work during a full-access successor prompt', async () => {
+    let mode: 'default' | 'yolo' = 'default';
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const resumed = backend.requestExtension('test/finish-build', {});
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+
+      mode = 'yolo';
+      const successor = backend.sendPrompt(SESSION_ID, 'hold the foreground prompt');
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The foreground prompt started.',
+      }));
+      const late = backend.requestExtension('test/late-work', {});
+      try {
+        await expect.poll(() => pendingPermissionIds(permissionSession)).toEqual(['call_hook']);
+        await approvePendingPermission(permissionSession);
+        expect(await late).toEqual({ resumed: true });
+      } finally {
+        await backend.requestExtension('test/finish-foreground', {});
+        await successor;
+      }
+    }, () => mode);
+  });
+
   it('keeps a finishing continuation open for a background command that settles while its output drains', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);
@@ -313,9 +377,8 @@ describe('createAgyBackgroundContinuationSource', () => {
       expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'The build finished.' }));
       events.length = 0;
 
-      expect(await backend.requestExtension('test/finish-build', {})).toEqual({
-        resumed: false, permission: { outcome: { outcome: 'cancelled' } },
-      });
+      await backend.requestExtension('test/repeat-build-status', {});
+      expect(pendingPermissionIds(permissionSession)).toEqual([]);
       expect(events.filter((event) => event.type === 'status')).toEqual([]);
     });
   });

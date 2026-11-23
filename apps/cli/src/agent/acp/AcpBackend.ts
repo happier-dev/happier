@@ -352,7 +352,9 @@ export type SessionConfigOption = Readonly<{
   options?: ReadonlyArray<Readonly<{ value: SessionConfigOptionValueId; name: string; description?: string }>>;
 }>;
 
-export type AcpPermissionCallContext = Readonly<{ permissionMode?: PermissionMode }>;
+const EXPLICIT_PROVIDER_PERMISSION_CONTEXT = { permissionMode: 'default', requiresExplicitDecision: true } as const;
+
+export type AcpPermissionCallContext = Readonly<{ permissionMode?: PermissionMode; requiresExplicitDecision?: boolean }>;
 
 /**
  * Permission handler interface for ACP backends
@@ -698,6 +700,14 @@ export function createAcpClientFsMethods(params: {
     const reqRecord = asRecord(req) ?? {};
     const meta = asRecord(reqRecord._meta) ?? {};
     const toolCallId = typeof meta.toolCallId === 'string' ? meta.toolCallId : `acp-fs-write:${randomUUID()}`;
+
+    if (permissionContext?.requiresExplicitDecision && !params.permissionHandler) {
+      throw new (requireLoadedAcpSdk().RequestError)(
+        ACP_FS_WRITE_DENIED_ERROR_CODE,
+        `Permission denied: writing ${targetPath} requires approval`,
+        { path: targetPath, toolCallId },
+      );
+    }
 
     if (params.permissionHandler) {
       const result = await params.permissionHandler.handleToolCall(toolCallId, 'writeTextFile', {
@@ -1153,8 +1163,14 @@ export class AcpBackend implements AgentBackend {
     this.providerToolContexts.set(toolCallId, this.activePermissionContext);
   }
 
+  private getLivePermissionContext(): AcpPermissionCallContext | undefined {
+    return this.providerSource?.hasUnattributedWork?.() === true
+      ? EXPLICIT_PROVIDER_PERMISSION_CONTEXT
+      : this.activePermissionContext;
+  }
+
   /**
-   * Attach one source to the native session and admit only descendants of witnessed tool calls.
+   * Attach one source to the native session. Only witnessed descendants can inherit an originating policy.
    * Every callback is bound to this lifetime; source failure retires the native connection.
    */
   private async startProviderTurnSource(): Promise<void> {
@@ -1184,10 +1200,10 @@ export class AcpBackend implements AgentBackend {
         }
       },
       beginContinuation: ({ id, turnId }): AcpProviderTurnSink | null => {
-        const context = this.providerContinuations.get(id);
+        const context = id === undefined ? EXPLICIT_PROVIDER_PERMISSION_CONTEXT : this.providerContinuations.get(id);
         if (!current() || !context || !readNonBlankOpaqueIdentifier(turnId)
           || this.waitingForResponse || this.activePromptRpc || this.providerTurn) return null;
-        this.providerContinuations.set(id, null);
+        if (id !== undefined) this.providerContinuations.set(id, null);
         this.beginResponseTurn(context);
         const turn = { generation: this.turnGeneration, turnId, lifetime };
         this.providerTurn = turn;
@@ -1828,7 +1844,7 @@ export class AcpBackend implements AgentBackend {
             return { outcome: { outcome: 'cancelled' } };
           }
         }
-        const permissionContext = this.activePermissionContext;
+        const permissionContext = this.getLivePermissionContext();
         const permissionTurnGeneration = this.turnGeneration;
         const tracksForeground = this.transport.getPermissionRequestScope?.() !== 'session';
         const hasSessionPolicy = !tracksForeground && this.options.permissionHandler !== undefined;
@@ -1844,7 +1860,9 @@ export class AcpBackend implements AgentBackend {
           });
           return { outcome: { outcome: 'cancelled' } };
         };
-        if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
+        if (!isCurrentPermissionRequest() || (permissionContext?.requiresExplicitDecision && !this.options.permissionHandler)) {
+          return withdrawPermissionRequest();
+        }
         if (tracksForeground) {
           this.observeProviderTurnEvent(requestSessionId);
         }
@@ -2054,7 +2072,7 @@ export class AcpBackend implements AgentBackend {
       const clientFs = createAcpClientFsMethods({
         cwd: this.options.cwd,
         permissionHandler: this.options.permissionHandler,
-        getPermissionContext: () => this.activePermissionContext,
+        getPermissionContext: () => this.getLivePermissionContext(),
         captureRequestGuard: sessionId => this.captureClientFsRequestOwnership(sessionId),
       });
       Object.assign(clientHandlers, {

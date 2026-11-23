@@ -139,6 +139,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     })) {
       return { decision: 'denied' };
     }
+    if (context?.requiresExplicitDecision) return null;
     if (isFullAccessPermissionMode(context?.permissionMode ?? this.currentPermissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
       return { decision: 'approved' };
     }
@@ -159,8 +160,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       return await this.requestPermissionDecision(toolCallId, toolName, input);
     }
     // Provider continuations retain the policy of their admitted input.
-    const permissionMode = context?.permissionMode;
-    const admittedContext = permissionMode === undefined ? undefined : Object.freeze({ permissionMode });
+    const admittedContext = context ? Object.freeze({ ...context }) : undefined;
     const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input, admittedContext);
     if (immediateDecision) {
       this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision);
@@ -169,7 +169,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     }
 
     // Respect user "don't ask again for session" choices captured via our permission UI.
-    if (this.isAllowedForSession(toolName, input)) {
+    if (!admittedContext?.requiresExplicitDecision && this.isAllowedForSession(toolName, input)) {
       logger.debug(`${this.getLogPrefix()} Auto-approving (allowed for session) tool ${toolName} (${toolCallId})`);
       this.recordAutoDecision(toolCallId, toolName, input, 'approved_for_session');
       return { decision: 'approved_for_session' };
@@ -180,6 +180,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       toolName,
       input,
       admittedContext ? () => this.getImmediateDecision(toolCallId, toolName, input, admittedContext) : undefined,
+      admittedContext?.requiresExplicitDecision,
     );
     logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId})`);
     return await pending;

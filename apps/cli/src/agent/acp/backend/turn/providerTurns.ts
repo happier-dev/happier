@@ -12,7 +12,7 @@ export type AcpProviderTurnSourceHost = Readonly<{
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
   registerContinuation(input: Readonly<{ id: string; parentToolCallId: string }>): boolean;
-  beginContinuation(input: Readonly<{ id: string; turnId: string }>): AcpProviderTurnSink | null;
+  beginContinuation(input: Readonly<{ id?: string; turnId: string }>): AcpProviderTurnSink | null;
   /** The native journal has crossed the parent terminal and all task registrations. */
   releaseToolCalls(toolCallIds: readonly string[]): void;
   /** Return claimed live updates that no continuation will publish to generic handling, in arrival order. */
@@ -28,6 +28,8 @@ export type AcpProviderTurnSource = Readonly<{
    * or hand it back with `releaseClaimedUpdates`.
    */
   claimLiveUpdate?(update: SessionUpdate, context: Readonly<{ foregroundActive: boolean }>): boolean;
+  /** Live provider work can overlap a prompt without identifying which input produced a request. */
+  hasUnattributedWork?(): boolean;
   dispose(): void | Promise<void>;
 }>;
 
