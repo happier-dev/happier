@@ -109,11 +109,21 @@ export function useHydrateSession(
     const subscribeHydration = React.useCallback((listener: () => void) => storage.subscribe(listener, {
         sessions: [normalizedSessionId], sessionListRowsByServerId: true,
     }), [normalizedSessionId]);
-    const hasHydratedSession = React.useSyncExternalStore(
+    // Metadata can stay authoritative while content becomes readable or its turn part is withdrawn.
+    // Follow that existing turn demand in the same scoped subscription, not just metadata readiness.
+    const readHydrationSnapshot = () => {
+        if (!readRouteSnapshot()) return 'missing';
+        const session = storage.getState().sessions[normalizedSessionId];
+        return includeTurnsProjection === true && session !== undefined
+            && isSessionContentReadable(readSessionContentAvailability(session))
+            && !hasCurrentSessionTurnsProjection(session) ? 'turns-needed' : 'available';
+    };
+    const hydrationSnapshot = React.useSyncExternalStore(
         subscribeHydration,
-        readRouteSnapshot,
-        readRouteSnapshot,
+        readHydrationSnapshot,
+        readHydrationSnapshot,
     );
+    const hasHydratedSession = hydrationSnapshot !== 'missing';
     const [routeStateRecord, setRouteStateRecord] = React.useState<SessionRouteHydrationStateRecord>(() => ({
         routeKey,
         state: !normalizedSessionId
@@ -145,11 +155,7 @@ export function useHydrateSession(
                 publishRouteState({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
                 return;
             }
-            const session = storage.getState().sessions[normalizedSessionId];
-            const needsTurnsProjection = turnsDemanded
-                && session !== undefined
-                && !hasCurrentSessionTurnsProjection(session)
-                && isSessionContentReadable(readSessionContentAvailability(session));
+            const needsTurnsProjection = turnsDemanded && hydrationSnapshot === 'turns-needed';
             const alreadyAvailable = !forceRefresh && hasHydratedSession && !needsTurnsProjection;
             // An update can leave an already-shown Session briefly behind its observed documents (an owner
             // view still at the previous metadata revision). Re-reading it is revalidation, not loading:
@@ -274,7 +280,7 @@ export function useHydrateSession(
                 }
             };
         });
-    }, [forceRefresh, hasHydratedSession, hydrateMessages, includeTurnsProjection, normalizedSessionId, publishRouteState, routeKey, routeServerId, tag, turnsDemand]);
+    }, [forceRefresh, hasHydratedSession, hydrationSnapshot, hydrateMessages, includeTurnsProjection, normalizedSessionId, publishRouteState, routeKey, routeServerId, tag, turnsDemand]);
 
     const routeState = routeStateRecord.routeKey === routeKey
         ? routeStateRecord.state

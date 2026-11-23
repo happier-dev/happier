@@ -72,6 +72,32 @@ describe('Session route Home alias resolution', () => {
 });
 
 describe('Session route full-document readiness', () => {
+    it.each(['withdrawn-turns', 'content-becomes-readable'] as const)(
+        'satisfies visible turn demand when route metadata stays available (%s)', async mode => {
+            const projection = { v: 1 as const, sessionId: 'own-session', updatedAt: 10,
+                latestTurnId: 'changed-turn', turns: [{ turnId: 'changed-turn', initiator: 'user' as const,
+                    status: 'completed' as const, startedAt: 1, updatedAt: 10,
+                    automationLifecycleFacts: { launchProfileId: null, changedFiles: true },
+                    transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 2 } }] };
+            const ready = installSessionActionFixture({ homes, storage, serverId,
+                session: { ...storage.getState().sessions['own-session']!, sessionTurns: projection } });
+            if (mode === 'content-becomes-readable') storage.getState().applySessions([{ ...ready,
+                metadata: null, encryptedContentAvailability: 'encrypted_content_unavailable', sessionTurns: undefined }]);
+            const turnReads = () => homes.requests.filter(request =>
+                new URL(request.path, request.serverUrl).pathname === '/v1/sessions/own-session/turns').length;
+            hook = await renderHook(() => useHydrateSessionForRoute('own-session', 'visible-turn-demand', {
+                serverId, hydrateMessages: false, includeTurnsProjection: true,
+            }));
+            expect(hook.getCurrent().kind).toBe('available');
+            expect(turnReads()).toBe(0);
+
+            await act(async () => storage.getState().applySessions([{ ...ready, sessionTurns: undefined }]));
+
+            await vi.waitFor(() => expect(storage.getState().sessions['own-session']?.sessionTurns).toEqual(projection));
+            expect(hook.getCurrent().kind).toBe('available');
+            expect(turnReads()).toBe(1);
+        });
+
     it.each(['failed-state', 'stale-full', 'pending-display', 'changed-key', 'persisted-display', 'current-full'] as const)(
         'acquires full route documents without promoting a partial display (%s)', async mode => {
             await connection.dispose();
