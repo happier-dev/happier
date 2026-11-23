@@ -536,7 +536,7 @@ describe('mounted GitLab Review publication controls', () => {
     it('keeps every finding unchecked when the next page of proposals loads', async () => {
       const detail = await mountControl('merge-request', { input: INPUT, proposals: THREE, pages: [
         THREE.proposals,
-        [finding('review-comment-4', 'nit', 'Comment repeats the function name', 9)],
+        [finding('review-comment-4', 'blocker', 'A delayed reconnect drops the active timer', 9)],
       ] });
       for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect']) {
         await act(async () => detail.press(await detail.getByRole('checkbox', { name })));
@@ -545,7 +545,7 @@ describe('mounted GitLab Review publication controls', () => {
       // Reading more proposals republishes the ready list with the next page appended.
       await act(async () => detail.press(await detail.getByRole('button', { name: 'Read more' })));
       await expect(detail.getByText('0 of 4 · ignored ones are never posted')).resolves.toBeDefined();
-      for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect', 'Comment repeats the function name']) {
+      for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect', 'A delayed reconnect drops the active timer']) {
         await expect(detail.getByRole('checkbox', { name })).resolves.toMatchObject({ state: { checked: false } });
       }
       expect(detail.controls.presentation('Publish 0 comments')?.disabled).toBe(true);
