@@ -50,6 +50,10 @@ const runtimeFetch = vi.hoisted(() => vi.fn(async (_url: unknown, _options: unkn
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch,
+    runtimeFetchManualResponse: (input: unknown, init: unknown, onIssued?: () => void) => {
+        onIssued?.();
+        return runtimeFetch(input, init);
+    },
 }));
 
 // Warm the real graph during collection; individual cases still reset domain state.
@@ -225,7 +229,7 @@ describe('supplied Home admission before shell mount', () => {
         const { Modal } = await import('@/modal');
         let confirmAddress!: (accepted: boolean) => void;
         const confirmation = new Promise<boolean>((resolve) => { confirmAddress = resolve; });
-        const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue(confirmation);
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false).mockReturnValueOnce(confirmation);
         runtimeFetch.mockImplementation(async (rawUrl) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/health') return Response.json({ status: 'ok' });

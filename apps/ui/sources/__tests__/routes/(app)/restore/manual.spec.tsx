@@ -131,10 +131,10 @@ describe('/restore/manual', () => {
         expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
     });
 
-    it('does not auto-capitalize the case-sensitive Secret Key input', async () => {
+    it('uses character capitalization for the printed recovery-key cells', async () => {
         const screen = await renderManualRestoreScreen();
         expect(screen.findByTestId('restore-manual-wizard')).toBeTruthy();
-        expect(screen.findByTestId('restore-manual-secret-input')?.props.autoCapitalize).toBe('none');
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.autoCapitalize).toBe('characters');
         expect(screen.findByTestId('restore-manual-secret-input')?.props.accessibilityLabel).toBe('connect.secretKeyInputLabel');
     });
 
@@ -146,7 +146,7 @@ describe('/restore/manual', () => {
         expect(screen.findByTestId('restore-manual-wizard-progress')).toBeNull();
     });
 
-    it('persists the restored Secret Key and dismisses to Home without dispatching a nested replace', async () => {
+    it('preserves the case of a pasted legacy Base64 key in storage and dismisses to Home without a nested replace', async () => {
         let pendingAtDismissal = false;
         navigation.dismissTo.mockImplementationOnce(() => { pendingAtDismissal = isHomeArrivalMotionPending(); });
         const token = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature';
@@ -172,6 +172,7 @@ describe('/restore/manual', () => {
         expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
         const screen = await renderManualRestoreScreen();
         await act(async () => { screen.changeTextByTestId('restore-manual-secret-input', '  ' + secret + '  '); });
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.value?.trim()).toBe(secret);
         await screen.pressByTestIdAsync('restore-manual-submit');
         // The host press starts an async action without returning its promise. Wait for
         // durable browser custody and completion, rather than treating the press as login.

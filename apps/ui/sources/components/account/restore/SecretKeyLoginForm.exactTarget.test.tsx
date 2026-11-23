@@ -128,6 +128,7 @@ it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before 
             serverIdentity: { serverIdentityId: 'srv_home_b' }, server: { canonicalServerUrl: homeB.serverUrl } },
     }));
     boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        if (endpoint === homeA.serverUrl && path === '/v1/auth/ping') return Response.json({});
         if (endpoint !== homeB.serverUrl) throw new Error(`Wrong authentication destination: ${endpoint}`);
         if (path === '/v1/features') return new Response(JSON.stringify(features), { headers: { 'Content-Type': 'application/json' } });
         if (path === '/v1/auth/challenge') {
@@ -163,8 +164,18 @@ it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before 
     expect(getActiveServerId()).toBe(activeHomeA);
     expect(getCurrentAuth()?.credentials).toEqual(credentialsA);
     expect(await TokenStorage.getCredentialsForServerUrl(homeA.serverUrl, { serverId: 'srv_home_a' })).toEqual(credentialsA);
-    expect(boundary.request.mock.calls.length).toBeGreaterThan(0);
-    expect(boundary.request.mock.calls.every(([origin]) => origin === new URL(homeB.serverUrl).origin)).toBe(true);
+    const homeBPaths: string[] = [];
+    for (const [origin, path, init] of boundary.request.mock.calls) {
+        if (origin === homeB.serverUrl) {
+            homeBPaths.push(path);
+        } else {
+            // Mount refresh can reuse a probe or retry it. Only Home A's authenticated ping is allowed off target.
+            expect([origin, path, new Headers(init?.headers).get('Authorization')]).toEqual([
+                homeA.serverUrl, '/v1/auth/ping', `Bearer ${credentialsA.token}`,
+            ]);
+        }
+    }
+    expect(homeBPaths).toEqual(expect.arrayContaining(['/v1/auth/challenge', '/v1/auth']));
 });
 
 it.each([
