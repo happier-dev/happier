@@ -87,7 +87,7 @@ describe('daemon state publication cost contract', () => {
     } finally { await boundary.client.shutdown(); }
   });
 
-  it('publishes settled attachments from Apply even when there are no recipe plans', async () => {
+  it('pushes the settled Apply revision when retained Setup includes an Agent item', async () => {
     const boundary = createPublicationBoundary(write => ({ result: 'success',
       version: write.expectedVersion + 1, daemonState: write.daemonState }));
     const desired = createEmptyMachineSetupDesiredV1();
@@ -95,13 +95,17 @@ describe('daemon state publication cost contract', () => {
       homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier', setup: desired };
     try {
       await boundary.client.publishMachineSetupUpdates({ status: 'satisfied', pendingAll: 4 });
-      const settled = { ...desired, revision: desired.revision + 1, sources: [{ kind: 'accountPreset' as const,
-        presetId: 'build', presetRevision: 8, setupRevision: 2, setup: {} }] };
+      const settled = { ...desired, revision: desired.revision + 1, sources: [
+        { kind: 'direct' as const, setup: { items: [{ kind: 'agent' as const, agentId: 'codex' }] } },
+        { kind: 'accountPreset' as const, presetId: 'build', presetRevision: 8, setupRevision: 2, setup: {} },
+      ] };
       boundary.machine.metadata = { ...boundary.machine.metadata, setup: settled };
       await boundary.client.publishMachineSetupApplied([]);
-      expect(boundary.machine.daemonState?.setup).toMatchObject({ desiredRevision: settled.revision,
+      expect(boundary.machine.daemonState?.setup).toMatchObject({ desiredRevision: settled.revision, recipes: [],
         attachedPresets: [{ kind: 'accountPreset', presetId: 'build', presetRevision: 8, setupRevision: 2 }],
         updates: { status: 'satisfied', pendingAll: 4 } });
+      expect(boundary.attempts).toHaveLength(2);
+      expect(await boundary.client.publishMachineSetupApplied([])).toBe('unchanged');
       expect(boundary.attempts).toHaveLength(2);
     } finally { await boundary.client.shutdown(); }
   });

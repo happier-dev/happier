@@ -2,6 +2,7 @@ import type { MachineSetupObservationV1 } from '@happier-dev/protocol';
 import type { MachineMetadata } from '../types';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isMachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 function projectAttachedPresets(metadata: MachineMetadata): NonNullable<MachineSetupObservationV1['attachedPresets']> {
     const attachedPresets: NonNullable<MachineSetupObservationV1['attachedPresets']> = [];
@@ -24,7 +25,7 @@ export function projectMachineSetupAppliedObservation(
 ): MachineSetupObservationV1 {
     const recipes: MachineSetupObservationV1['recipes'] = [];
     for (const source of metadata?.setup?.sources ?? []) for (const item of source.setup.items ?? []) {
-        if (item.kind === 'app' || recipes.some(recipe => sameStrictJsonValue(recipe.ref, item.selection.ref))) continue;
+        if (!isMachineSetupRecipeItemV1(item) || recipes.some(recipe => sameStrictJsonValue(recipe.ref, item.selection.ref))) continue;
         const plan = plans.find(plan => plan.basis.kind === 'setup' && sameStrictJsonValue(plan.basis.selection, item.selection));
         // Reboot Apply proves dispatch only; its reconnect owner establishes readiness.
         const status = plan && !plan.steps.some(step => step.kind === 'reboot') ? 'satisfied' : 'unverifiable';
