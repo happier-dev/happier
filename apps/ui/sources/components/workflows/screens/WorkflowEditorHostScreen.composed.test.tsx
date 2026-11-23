@@ -2647,6 +2647,46 @@ describe('WorkflowEditorHostScreen composition', () => {
         }
     });
 
+    it('settles each Deploy trigger Save after exactly one persisted write', async () => {
+        const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const boundary = await serveMountedDraftActionHome();
+        getStorage().getState().applyAuthoringMemory({ workflowProjectTargetsByDefinitionId: {
+            [SAVED_TRIGGER_WORKFLOW_ID]: { machineId: 'machine-a', directory: '/repo' },
+        } });
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const writes = () => boundary.requests.filter(({ path, method }) => path.startsWith('/v3/automations')
+            && path !== '/v3/automations/query' && method !== 'GET');
+        const draft = () => readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const actionIds = [DEPLOYMENT_DEPLOY_ACTION_ID_V1];
+
+        const whens = [
+            { kind: 'action', phase: 'after', actionIds,
+                filter: { v: 1, all: [{ op: 'eq', field: '/outcome', value: 'failed' }] } },
+            { kind: 'action', phase: 'before', actionIds, mode: 'wait',
+                subject: { kind: 'environment', serverId: boundary.scope.serverId, environmentId: 'deploy-environment' } },
+        ] satisfies import('../triggers/sessionTriggerForm').TriggerWhenValue[];
+        for (const [index, when] of whens.entries()) {
+            await act(async () => {
+                expect(await readBodyProps()!.onAddTriggerWhen!(when)).toBeTruthy();
+            });
+            expect(draft().dirty).toBe(true);
+            await screen.pressByTestIdAsync('workflow-editor-save');
+            await vi.waitFor(() => {
+                expect(writes()).toHaveLength(index + 1);
+                expect(readBodyProps()!.savePending).toBe(false);
+            });
+            expect(boundary.creates).toHaveLength(0);
+            expect(boundary.updates).toHaveLength(0);
+            const settled = draft();
+            expect(settled.dirty, when.phase).toBe(false);
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+            expect(settled.settings.triggers.rows).toHaveLength(index + 1);
+            expect(settled.settings.triggers.rows[index]).toMatchObject({
+                identity: { triggerId: expect.any(String) }, trigger: { ...when, enabled: true },
+            });
+        }
+    });
+
     it('decoded mounted trigger settings retain Save identity through Undo/Redo without another trigger write', async () => {
         const boundary = await serveMountedDraftActionHome();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');

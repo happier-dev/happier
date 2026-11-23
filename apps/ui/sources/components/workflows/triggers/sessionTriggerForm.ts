@@ -436,7 +436,9 @@ export function readTriggerWhen(
     if (trigger.kind === 'schedule') return readScheduleWhen(trigger.schedule);
     if (trigger.kind === 'runLifecycle') return { kind: 'runLifecycle', source: trigger.source, condition: trigger.condition };
     if (trigger.kind === 'action' && !('consentFor' in trigger)) {
-        const { id: _id, revision: _revision, enabled: _enabled, createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = trigger;
+        // Home derives reach on admission. The editor compares only the authored definition.
+        const { id: _id, revision: _revision, enabled: _enabled, createdAt: _createdAt, updatedAt: _updatedAt,
+            reachesOthers: _reachesOthers, ...definition } = trigger;
         return definition;
     }
     if (trigger.kind === 'sessionLifecycle') {

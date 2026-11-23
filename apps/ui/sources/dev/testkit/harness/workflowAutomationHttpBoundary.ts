@@ -37,7 +37,7 @@ export function createWorkflowAutomationTriggerDetailFixture(automationId: strin
             status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(envelope) });
     }
     if (trigger.kind === 'action' && 'triggerDefinitionEnvelope' in trigger) return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
-        revision: revision ?? 0, createdAt: 1, updatedAt: 1,
+        revision: revision ?? 0, createdAt: 1, updatedAt: 1, reachesOthers: trigger.reachesOthers ?? false,
         triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) });
     if (trigger.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
         revision: revision ?? 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
@@ -203,11 +203,15 @@ export function createWorkflowAutomationHttpBoundary(): {
                 const current = rows.get(id);
                 if (!current) return Response.json({ error: 'not-found' }, { status: 404 });
                 if (current.templateVersion !== input.expectedTemplateVersion) return Response.json({ error: 'version-conflict' }, { status: 409 });
+                const templateVersion = current.templateVersion + 1;
+                // A trigger-only reconcile advances the stored recipe's revision and retains its content.
+                const executionRecipe = input.executionRecipe
+                    ?? (current.executionRecipe ? { ...current.executionRecipe, templateVersion } : undefined);
                 const detail = AutomationDefinitionDetailSchema.parse({ ...current, name: input.name, description: input.description,
                     enabled: input.enabled, workflowDefinitionId: input.workflowDefinitionId ?? null,
-                    scopeSessionId: input.scopeSessionId ?? null, templateVersion: current.templateVersion + 1,
-                    ...(current.observationOnly ? { observationOnly: { ...current.observationOnly, templateVersion: current.templateVersion + 1 } } : {}),
-                    executionRecipe: input.executionRecipe,
+                    scopeSessionId: input.scopeSessionId ?? null, templateVersion,
+                    ...(current.observationOnly ? { observationOnly: { ...current.observationOnly, templateVersion } } : {}),
+                    executionRecipe,
                     ...(input.executionRecipe?.v === 2 && input.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: input.executionRecipe.managedTarget } : {}),
                     assignments: input.assignments.map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),

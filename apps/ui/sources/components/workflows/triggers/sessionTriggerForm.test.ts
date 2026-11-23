@@ -4,6 +4,8 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readPluginEventAutomationFilterDraft } from '@/components/automations/editor/pluginEventAutomationFilterBuilder';
 
 import {
@@ -22,6 +24,16 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it('keeps saved Action reach out of the editable definition', () => {
+        const definition = AutomationActionTriggerSchema.parse({
+            kind: 'action', phase: 'before', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], mode: 'wait',
+            subject: { kind: 'environment', serverId: 'home', environmentId: 'deployment' },
+        });
+        const when = readTriggerWhen({ ...definition, id: AutomationTriggerIdSchema.parse('saved-deploy'),
+            revision: 0, enabled: true, createdAt: 1, updatedAt: 1, reachesOthers: true });
+        if (!when) throw new Error('Expected the saved Action When');
+        expect(buildTriggerDefinition({ when, enabled: true, sessionId: null })).toEqual({ ...definition, enabled: true });
+    });
     it('keeps an unfinished lifecycle filter unsaveable in both existing and new Sessions', () => {
         const when = { kind: 'turnEnds' as const, filterInvalid: true as const };
         expect(buildTriggerDefinition({ when, enabled: true, sessionId: null })).toBeNull();
