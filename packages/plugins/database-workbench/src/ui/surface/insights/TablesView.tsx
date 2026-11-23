@@ -80,11 +80,10 @@ function tableByline(row: TableRow, translate: PluginTranslate): string {
 }
 
 function vacuumText(row: TableRow, translate: PluginTranslate): string {
-  // Autovacuum timestamps join here when the PostgreSQL stats producer reports them (D27 #6, DBW-ADDNOW).
-  return (
-    formatAgo(translate, row.lastVacuum) ??
-    translate('plugins.database.insights.never', 'never')
-  );
+  const manual = Date.parse(row.lastVacuum ?? '');
+  const automatic = Date.parse(row.lastAutovacuum ?? '');
+  const latest = manual > automatic || !Number.isFinite(automatic) ? manual : automatic;
+  return formatAgo(translate, latest) ?? translate('plugins.database.insights.never', 'never');
 }
 
 function TablesCollection(

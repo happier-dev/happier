@@ -215,6 +215,52 @@ describe('Database Insights surfaces', () => {
     }
   });
 
+  it('shows the latest vacuum for automatically maintained PostgreSQL tables', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1440);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+    const now = Date.now();
+    const snapshot: DatabaseStatsObservationV1 = {
+      v: 1, observedAtMs: now, engineId: 'postgresql', scope: { database: 'billing_dev' },
+      intervalBasis: basis, status: 'available', group: 'tables',
+      coverage: { status: 'complete' }, completeness: { complete: true },
+      data: [
+        { relation: { schema: 'public', name: 'invoices' }, lastAutovacuum: new Date(now - 120_000).toISOString() },
+        { relation: { schema: 'public', name: 'invoice_lines' }, lastVacuum: new Date(now - 600_000).toISOString(),
+          lastAutovacuum: new Date(now - 180_000).toISOString() },
+      ],
+    };
+    const execute = daemon(statements);
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'vacuum', mountNonce: 'vacuum' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: pageContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(),
+        executeAction: request => request.action === databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1)
+          && (request.input as { request?: { group?: string } }).request?.group === 'tables'
+          ? projectNativeJsonValueForTransport({ ok: true, operation: 'stats.read', observation: snapshot })
+          : execute(request),
+        replacePageLocation: async ({ subPath }) => subPath,
+      },
+    });
+    try {
+      await settle();
+      await page.press(await page.getByRole('tab', { name: 'Tables and indexes' }));
+      await settle();
+      expect(await page.queryByText('invoices')).toBeTruthy();
+      expect(await page.queryByText('2 min ago')).toBeTruthy();
+      expect(await page.queryByText('3 min ago')).toBeTruthy();
+    } finally {
+      await page.dispose();
+      width.mockRestore();
+      height.mockRestore();
+    }
+  });
+
   it('shows the one diagnosed setup state with the producer’s setting when statement statistics are off', async () => {
     const page = await createPluginUiTestkit({
       identity: { instanceId: 'setup', mountNonce: 'setup' },

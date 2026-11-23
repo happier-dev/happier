@@ -72,11 +72,9 @@ export function formatMoment(ms: number, now = Date.now()): string {
 /** "3 h ago", "19 h ago", "4 days ago"; producer timestamps are ISO strings. */
 export function formatAgo(
   translate: (key: string, fallback: string, values?: Readonly<Record<string, string>>) => string,
-  iso: string | undefined,
+  at: number,
   now = Date.now(),
 ): string | null {
-  if (!iso) return null;
-  const at = Date.parse(iso);
   if (!Number.isFinite(at)) return null;
   const minutes = Math.max(0, Math.round((now - at) / 60_000));
   if (minutes < 1) return translate('plugins.database.time.justNow', 'just now');
