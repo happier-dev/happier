@@ -65,9 +65,7 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
 }>): MachineVoiceInferenceTransferRpcRegistration {
   const voiceInferencePaths = resolveVoiceInferencePaths();
   const voiceInferenceTransfersRoot = join(voiceInferencePaths.tempDir, 'transfers');
-  const sessionTtlMs = Number.isFinite(configuration.filesTransferSessionTtlMs)
-    ? Math.max(1_000, Math.trunc(configuration.filesTransferSessionTtlMs))
-    : 60_000;
+  const sessionTtlMs = configuration.filesTransferSessionTtlMs;
   const uploadStore = new TransferSessionStore({
     ttlMs: sessionTtlMs,
     tempRoot: voiceInferenceTransfersRoot,

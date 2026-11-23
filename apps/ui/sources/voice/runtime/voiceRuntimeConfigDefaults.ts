@@ -5,7 +5,6 @@ import {
 } from '@happier-dev/protocol/voice/runtimeConfig';
 
 export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
-    realtimeConversationHandleReadyTimeoutMs: 500,
     realtimeStartAbortGraceMs: 1_000,
     /** Realtime connection and transient-drop reconnect policy. */
     realtime: {
