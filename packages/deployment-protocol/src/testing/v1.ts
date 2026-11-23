@@ -32,7 +32,7 @@ export function createDeploymentSecretVariableBindingV1(input: Readonly<{
 }
 
 export function createDeploymentEnvironmentHeaderV1(overrides: Partial<DeploymentEnvironmentHeaderV1> = {}): DeploymentEnvironmentHeaderV1 {
-    return ProtocolDeploymentEnvironmentHeaderV1Schema.parse({
+    return ProtocolDeploymentEnvironmentHeaderV1Schema.parse(withoutUndefined({
         v: 1, id: 'environment-staging', serverId: 'home', projectSourceId: 'source-app', revision: 1,
         owner: { kind: 'account', accountId: 'account-owner' }, protection: 'nonProduction', purpose: 'standard',
         deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'read', runtimeTargetLinkId: 'target-link',
@@ -40,7 +40,7 @@ export function createDeploymentEnvironmentHeaderV1(overrides: Partial<Deploymen
         capabilities: { role: 'manager', read: true, deploy: true, editData: false, manage: true, manageBindings: true, manageTargets: true, delete: true },
         createdByAccountId: 'account-owner', createdAtMs: 1000, updatedAtMs: 1000,
         contentArtifactId: 'artifact-environment', contentHeaderVersion: 1, contentBodyVersion: 1, ...overrides,
-    });
+    }));
 }
 
 export function createDeploymentReceiptHeaderV1(overrides: Partial<DeploymentReceiptHeaderV1> = {}): DeploymentReceiptHeaderV1 {
@@ -52,7 +52,7 @@ export function createDeploymentReceiptHeaderV1(overrides: Partial<DeploymentRec
     }));
 }
 
-/** An override set to `undefined` removes that default (a queued receipt has no start); protocol input is strict JSON. */
+/** An override set to `undefined` removes the default from the strict JSON fixture. */
 function withoutUndefined<T extends object>(value: T): T {
     return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
