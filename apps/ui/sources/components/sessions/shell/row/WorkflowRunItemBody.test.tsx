@@ -19,6 +19,7 @@ import { t } from '@/text';
 import { formatOnceScheduleStateLabel } from '@/components/workflows/triggers/triggerSchedule';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
@@ -168,7 +169,7 @@ describe('opened habit History result', () => {
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="missed-once" set={set}
             draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-history');
+        await chooseDropdownMenuItem(screen, 'missed-once-trigger:saved:timer-more', 'history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.findHostByTestId('session-work-trigger-history:auto-1-once')).not.toBeNull();
         expect(screen.getTextContent()).toContain(formatOnceScheduleStateLabel('missed'));
@@ -193,10 +194,8 @@ describe('opened habit History result', () => {
         await flushHookEffects();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
-        // History is available beside the saved start, but reads only when opened.
-        expect(screen.findHostByTestId('saved-workflow-trigger:saved:timer-history')).not.toBeNull();
-        expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
+        // The saved trigger's menu offers History without reading it until selection.
+        await chooseDropdownMenuItem(screen, 'saved-workflow-trigger:saved:timer-more', 'history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
         // Attribution takes its own line, so a long progress or result line never clips it.
@@ -206,7 +205,7 @@ describe('opened habit History result', () => {
         expect(reads.length).toBeGreaterThan(0);
         for (const request of reads) expect(request.input).toMatchObject({ request: { triggerId: 'timer' } });
         const beforeSibling = http.requests.length;
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-history');
+        await chooseDropdownMenuItem(screen, 'saved-workflow-trigger:saved:sibling-timer-more', 'history');
         await waitForHomeGovernance(() => expect(http.requests.slice(beforeSibling).some(request => request.path === route)).toBe(true));
         await flushHookEffects();
         const siblingReads = http.requests.slice(beforeSibling).filter(request => request.path === route
@@ -215,7 +214,7 @@ describe('opened habit History result', () => {
         expect(siblingReads.length).toBeGreaterThan(0);
         for (const request of siblingReads) expect(request.input).toMatchObject({ request: { triggerId: 'sibling-timer' } });
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
+        await chooseDropdownMenuItem(screen, 'saved-workflow-trigger:saved:timer-more', 'history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
     });
@@ -236,12 +235,27 @@ describe('opened habit History result', () => {
                 {editor.popover}
             </>;
         }
-        const screen = await renderScreen(<InlineAccountWorkflow />);
+        const overlayContent = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 280, height: 640 }) };
+        const historyRowTestId = 'session-work-trigger-history-row:habit-run';
+        // The inline renderer has no layout engine. Give the real overlay tracker a measurable scroller and row.
+        const screen = await renderScreen(<InlineAccountWorkflow />, { createNodeMock: element => {
+            if (element.props.testID === historyRowTestId) {
+                return { getBoundingClientRect: () => ({ left: 0, top: 120, width: 280, height: 56 }) };
+            }
+            if (element.props.scrollEventThrottle === 32) return { getInnerViewRef: () => overlayContent };
+            return null;
+        } });
         const before = http.requests.length;
         await screen.pressByTestIdAsync('inline-workflow-settings');
         expect(screen.findHostByTestId('workflows-column-trigger-popover-history')).not.toBeNull();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         await screen.pressByTestIdAsync('workflows-column-trigger-popover-history');
+        expect(screen.findHostByTestId('session-work-trigger-history:auto-1')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId(historyRowTestId)).not.toBeNull());
+        await act(async () => {
+            const row = screen.findHostByTestId(historyRowTestId)!;
+            invokeTestInstanceHandler(row, 'onLayout', { nativeEvent: { layout: { x: 0, y: 120, width: 280, height: 56 } } });
+        });
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
     });
