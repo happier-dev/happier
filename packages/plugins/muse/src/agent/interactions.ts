@@ -8,7 +8,7 @@ import { protocolError, questionInput, readMuseNativeJson, readMuseRecord, requi
 import type { MuseMsp, MuseMspOpenOptions } from './msp.js';
 
 type NativeRecord = ReturnType<typeof readMuseRecord>;
-type Occurrence = { params: NativeRecord; signature: string; controller: AbortController; applying?: boolean; nextStage?: NativeRecord };
+type Occurrence = { requestId: string; params: NativeRecord; signature: string; controller: AbortController; applying?: boolean; nextStage?: NativeRecord };
 type NativeMessage = Readonly<{ method: string; params?: JsonValue }>;
 const QUESTION_SOURCE = 'muse.userInput';
 
@@ -29,7 +29,33 @@ function toolInput(params: NativeRecord): Record<string, JsonValue> {
     }
     return {};
 }
-function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagentId: string) => Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined): NativePermissionChoicesV1 {
+function approvalPresentation(params: NativeRecord) {
+    const subject = readMuseRecord(params.subject);
+    if (params.toolName === 'network') {
+        const localRule = Array.isArray(params.availableChoices)
+            ? params.availableChoices.map(readMuseRecord).find(choice => choice.choiceId === 'allow_local_network')
+            : undefined;
+        const destination = typeof localRule?.rulePreview === 'string' ? localRule.rulePreview.trim() : '';
+        return {
+            label: 'Allow network once',
+            description: destination ? `Allow network access to ${destination}` : 'Allow network access for this command',
+        };
+    }
+    if (subject.kind !== 'shell' || !Array.isArray(subject.stages)) return undefined;
+    const current = readMuseRecord(params.currentRequirementId);
+    const stage = subject.stages.map(readMuseRecord).find(candidate => {
+        const requirement = readMuseRecord(candidate.requirementId);
+        return requirement.approvalId === current.approvalId && requirement.sourceIndex === current.sourceIndex;
+    });
+    if (!stage || typeof stage.position !== 'number' || typeof stage.totalStages !== 'number' || stage.totalStages <= 1) return undefined;
+    const executable = Array.isArray(stage.argv) && typeof stage.argv[0] === 'string' ? stage.argv[0] : undefined;
+    return {
+        label: `Run ${executable || 'command'} once (${stage.position}/${stage.totalStages})`,
+        description: `Run command ${stage.position} of ${stage.totalStages}${executable ? ` (${executable})` : ''}`,
+    };
+}
+
+function approvalChoices(params: NativeRecord, presentation: ReturnType<typeof approvalPresentation>, readNativeChildOrigin?: (subagentId: string) => Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined): NativePermissionChoicesV1 {
     const toolName = typeof params.toolName === 'string' ? params.toolName : undefined;
     // MSP formats tool identities as inline code; host choice labels/previews
     // are plain text. Preserve literal backticks in commands and other operands.
@@ -47,8 +73,9 @@ function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagent
         }
         const id = requiredString(choice, 'choiceId');
         const nativeLabel = requiredString(choice, 'label');
-        const label = id === 'allow_local_mcp_tool' ? 'Always allow in Muse' : plainToolLabel(nativeLabel);
-        const rulePreview = typeof choice.rulePreview === 'string' ? plainToolLabel(choice.rulePreview) : undefined;
+        const oncePresentation = id === 'allow_once' ? presentation : undefined;
+        const label = oncePresentation?.label ?? (id === 'allow_local_mcp_tool' ? 'Always allow in Muse' : plainToolLabel(nativeLabel));
+        const rulePreview = oncePresentation?.description ?? (typeof choice.rulePreview === 'string' ? plainToolLabel(choice.rulePreview) : undefined);
         return { id, label, decision, scope,
             ...(rulePreview !== undefined && rulePreview !== redundantToolPreview ? { rulePreview } : {}),
             ...(choice.acceptsFeedback === true ? { allowsFeedback: true } : {}),
@@ -100,23 +127,33 @@ export function createMuseInteractions(options: Readonly<{
         const map = kind === 'approval' ? approvals : questions;
         const previous = map.get(id);
         const merged = { ...previous?.params, ...params };
-        const nativeChoices = kind === 'approval' ? approvalChoices(merged, options.readNativeChildOrigin) : undefined;
+        const presentation = kind === 'approval' ? approvalPresentation(merged) : undefined;
+        const nativeChoices = kind === 'approval' ? approvalChoices(merged, presentation, options.readNativeChildOrigin) : undefined;
+        const toolCallId = requiredString(merged, 'toolCallId');
+        // A shell call can have multiple stages and a separate network approval.
+        // Other interactions retain their transcript correlation.
+        const shellApproval = nativeChoices && (readMuseRecord(merged.subject).kind === 'shell'
+            || merged.toolName === 'network' || (typeof merged.toolName === 'string' && merged.toolName.toLowerCase() === 'bash'));
+        const requestId = shellApproval ? `muse:${nativeChoices.requirementId}` : toolCallId;
         const signature = JSON.stringify(kind === 'approval' ? nativeChoices : merged.questions);
         if (previous?.signature === signature) { previous.params = merged; return; }
         // Native stage updates can precede the decision command ACK. Publish the
-        // next stage after the host settles this answer, or that settlement
-        // retires the new offer under the same transcript call identity.
+        // next stage after the host settles this answer.
         if (previous?.applying) { previous.nextStage = merged; return; }
-        const occurrence: Occurrence = { params: merged, signature, controller: previous?.controller ?? new AbortController() };
+        const sameRequest = previous?.requestId === requestId;
+        if (!sameRequest) previous?.controller.abort();
+        const occurrence: Occurrence = { requestId, params: merged, signature,
+            controller: (sameRequest ? previous?.controller : undefined) ?? new AbortController() };
         map.set(id, occurrence);
         const signal = AbortSignal.any([options.context.signal, occurrence.controller.signal]);
         let catalogGrant: { choiceId: string; nativeChoiceId: string } | undefined;
-        // The host occurrence shares the transcript call identity; MSP commands
-        // still route by the distinct native approval/user-input identity.
-        void permissions!.requestDecision({ requestId: requiredString(merged, 'toolCallId'),
+        void permissions!.requestDecision({ requestId,
             toolName: kind === 'approval' && typeof merged.toolName === 'string' ? merged.toolName : kind === 'question' ? 'AskUserQuestion' : 'native_tool',
             source: kind === 'approval' ? NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE : QUESTION_SOURCE,
-            input: kind === 'approval' ? toolInput(merged) : questionInput(merged),
+            input: kind === 'approval' ? {
+                ...toolInput(merged),
+                ...(presentation ? { description: presentation.description } : {}),
+            } : questionInput(merged),
             ...(nativeChoices ? { nativeChoices } : {}),
         }, { signal,
             ...(nativeChoices ? { buildNativeChoices: ({ mcpTool }: Readonly<{ mcpTool: Parameters<typeof createMcpCatalogPermissionChoiceV1>[0]['mcpTool'] }>) => {
@@ -184,7 +221,7 @@ export function createMuseInteractions(options: Readonly<{
                     ...(typeof answer.note === 'string' ? { note: answer.note } : {}) };
             }
         }
-        void permissions!.settleObservedDecision!({ requestId: requiredString(occurrence.params, 'toolCallId'),
+        void permissions!.settleObservedDecision!({ requestId: occurrence.requestId,
             source: kind === 'approval' ? NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE : QUESTION_SOURCE,
             decision: decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment' ? 'approved' : decision,
             ...(kind === 'question' ? { answers, answerDetails } : {}),

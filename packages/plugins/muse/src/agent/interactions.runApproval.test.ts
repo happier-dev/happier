@@ -50,7 +50,8 @@ it.each(['approved', 'denied', 'policy-denied', 'ceiling-denied', 'native-observ
                 { choiceId: 'abort', label: 'Abort', decision: 'abort', scope: 'once' },
             ],
         } });
-        const requestId = buildRunScopedExecutionPermissionRequestId({ runId: 'run', controllerOccurrenceId: 'occurrence', providerRequestId: 'call' });
+        const providerRequestId = 'muse:{"approvalId":"approval","sourceIndex":0}';
+        const requestId = buildRunScopedExecutionPermissionRequestId({ runId: 'run', controllerOccurrenceId: 'occurrence', providerRequestId });
         if (outcome !== 'policy-denied' && outcome !== 'ceiling-denied') {
             await vi.waitFor(() => expect(state.requests?.[requestId]?.nativeChoices).toBeDefined());
             const choice = outcome === 'approved' ? 'allow_once' : 'abort';
@@ -61,7 +62,7 @@ it.each(['approved', 'denied', 'policy-denied', 'ceiling-denied', 'native-observ
                 expect(command).not.toHaveBeenCalled();
                 return;
             }
-            await scope.respondToPermissionRequest('call', { decision: outcome,
+            await scope.respondToPermissionRequest(providerRequestId, { decision: outcome,
                 nativeChoice: { requirementId: state.requests![requestId]!.nativeChoices!.requirementId, choiceId: choice } });
         }
         await vi.waitFor(() => expect(command).toHaveBeenCalledOnce());

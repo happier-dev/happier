@@ -55,6 +55,12 @@ effective decision or grant payload. The permission response owner resolves the
 stored offer, refuses missing or stale native answers, and applies the native
 decision before reporting success. Application failure leaves the occurrence pending.
 
+In 0.3 development, Muse shell and network approvals use the native approval
+ID and requirement index as the host request identity. A compound shell command
+can offer a separate approval for each command stage, and a network grant can
+arrive for the same tool call. The approval card and Session status Action read
+the same native choice labels and scope from the permission occurrence.
+
 In 0.3 development, native Review runs can ask structured clarification questions
 through their existing execution-run response target, including detached runs.
 The interaction policy distinguishes questions from tool permission requests:

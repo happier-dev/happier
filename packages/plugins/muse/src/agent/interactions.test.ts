@@ -7,6 +7,10 @@ import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testin
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createActionExecutor, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions';
+import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { listPendingRequests, projectSessionStatusPendingRequestsV1 } from '@happier-dev/session-core/pending';
+import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { assignMcpWireNames } from '@/mcp/runtime/assignMcpWireNames';
 import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -39,8 +43,25 @@ async function expectNativeApprovalApplied(
         .toEqual({ response: undefined, decisionCount: 1, released: true });
 }
 
-it('receipts a native approval without applying it, then applies the exact offered abort through the host', async () => {
-    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-abort' } });
+it.each(['single', 'staged'] as const)('applies the offered abort to a %s shell approval without asking again', async (shape) => {
+    const scratch = await mkdtemp(join(tmpdir(), 'muse-approval-abort-'));
+    let recordingPath: string | undefined;
+    if (shape === 'staged') {
+        const recording = JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8'));
+        const initial = recording.rows[21].message.params;
+        const stages = ['grep', 'printf'].map((program, sourceIndex) => ({
+            requirementId: { approvalId: initial.approvalId, sourceIndex },
+            argv: [program, 'fixture'], argvComplete: true, position: sourceIndex + 1, totalStages: 2,
+            resolution: { kind: 'unresolved' },
+        }));
+        for (const row of recording.rows) {
+            const params = row.message?.params;
+            if (params?.approvalId === initial.approvalId && params.subject) params.subject.stages = stages;
+        }
+        recordingPath = join(scratch, 'abort-first-stage.json');
+        await writeFile(recordingPath, JSON.stringify(recording));
+    }
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-abort', recordingPath } });
     const events = createAgentSessionRuntimeHarness();
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
@@ -50,14 +71,19 @@ it('receipts a native approval without applying it, then applies the exact offer
         const before = await fixture.waitForAudit(audit => audit.nativeResponseCount > 0);
         expect(before).toMatchObject({ receiptCount: 1, decisionCount: 0, released: false });
         expect(events.canonicalEvents().filter(event => event.kind === 'tool-result' || event.kind === 'turn-complete')).toEqual([]);
-        const requestId = 'call_01a1bf8b6e2c72b8bdfdca70e4c64263';
+        const requestId = await vi.waitFor(() => {
+            const [id] = Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {});
+            expect(id).toBeDefined();
+            return id;
+        });
         await vi.waitFor(() => {
             expect(events.canonicalEvents().filter(event => event.kind === 'tool-progress'
                 && JSON.stringify(event.progress).includes('"nativeInteraction"'))).toEqual([]);
             expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[requestId]).toBeUndefined();
             expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId])
             .toMatchObject({ kind: 'permission', nativeChoices: { choices: [
-            { id: 'allow_once', decision: 'approved', scope: 'once' },
+            { id: 'allow_once', label: shape === 'single' ? 'Allow once' : expect.stringContaining('grep'),
+                decision: 'approved', scope: 'once' },
             { id: 'abort', decision: 'abort', scope: 'once', allowsFeedback: true },
         ] } });
         });
@@ -70,14 +96,14 @@ it('receipts a native approval without applying it, then applies the exact offer
         const after = await fixture.waitForAudit(audit => audit.decisionCount === 1);
         expect(after.released).toBe(true);
         await events.until('turn-complete');
-        expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toBeUndefined();
+        expect(Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {})).toEqual([]);
         expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[requestId]).toMatchObject({ decision: 'abort' });
         events.expectExactlyOneTerminalEvent({ turnId: 'approval-turn' });
         await fixture.closeSession();
         const audit = await fixture.readAudit();
         expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(1);
         expect(audit.methods.filter(method => method === 'turn/start')).toHaveLength(1);
-    } finally { events.dispose(); await fixture.dispose(); }
+    } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
 it('retains Allow once only after the native ACK even when the turn completes first', async () => {
@@ -367,15 +393,17 @@ it('applies an updated native requirement through the same pending owner and rej
     const nativeNotificationPath = join(scratch, 'native-notification.json');
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-abort', nativeNotificationPath } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = 'call_01a1bf8b6e2c72b8bdfdca70e4c64263';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
         session.watch(events.recordRuntimeEvent);
         await session.send({ inputIds: ['stage-input'], input: { text: 'Run the retained controlled write.' },
             delivery: { kind: 'newTurn', turnId: 'stage-turn' } });
         await fixture.waitForAudit(audit => audit.receiptCount === 1);
-        await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]?.nativeChoices).toBeDefined());
-        const oldRequirementId = fixture.host.getAgentStateSnapshot()!.requests![requestId]!.nativeChoices!.requirementId;
+        const [oldId, oldOffer] = await vi.waitFor(() => {
+            const [entry] = Object.entries(fixture.host.getAgentStateSnapshot()?.requests ?? {});
+            expect(entry?.[1].nativeChoices).toBeDefined();
+            return entry;
+        });
         const recording = JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8'));
         const params = recording.rows[21].message.params;
         const requirement = { ...params.currentRequirementId, sourceIndex: 1 };
@@ -383,12 +411,17 @@ it('applies an updated native requirement through the same pending owner and rej
         await writeFile(nativeNotificationPath + '.tmp', JSON.stringify({ jsonrpc: '2.0', method: 'approval/updated',
             params: { ...params, currentRequirementId: requirement } }));
         await rename(nativeNotificationPath + '.tmp', nativeNotificationPath);
-        await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]?.nativeChoices?.requirementId)
-            .toBe(requirementId));
+        const requestId = await vi.waitFor(() => {
+            const pending = fixture.host.getAgentStateSnapshot()?.requests ?? {};
+            expect(pending[oldId]).toBeUndefined();
+            const [id, offer] = Object.entries(pending)[0] ?? [];
+            expect(offer?.nativeChoices?.requirementId).toBe(requirementId);
+            return id!;
+        });
         expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
-            id: requestId, approved: false, decision: 'abort',
-            nativeChoice: { requirementId: oldRequirementId, choiceId: 'abort' },
-        })).toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+            id: oldId, approved: false, decision: 'abort',
+            nativeChoice: { requirementId: oldOffer.nativeChoices!.requirementId, choiceId: 'abort' },
+        })).toMatchObject({ ok: false });
         expect((await fixture.readAudit()).decisionCount).toBe(0);
         expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toBeDefined();
         await expectNativeApprovalApplied(fixture, {
@@ -438,7 +471,11 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
                     delivery: { kind: 'newTurn', turnId: sessionId + '-turn' } });
                 if (!restarted) {
                     await fixture.waitForAudit(audit => audit.receiptCount === 1);
-                    const requestId = lifecycle.rows[22].message.params.toolCallId;
+                    const requestId = await vi.waitFor(() => {
+                        const [id] = Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {});
+                        expect(id).toBeDefined();
+                        return id;
+                    });
                     await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]?.nativeChoices)
                         .toMatchObject({ choices: expect.arrayContaining([{
                             id: 'allow_local_prefix', label: 'Always allow in this workspace: printf NORMAL ...',
@@ -533,7 +570,6 @@ it('keeps a captured child approval actionable after its parent turn completes a
     const fixture = await createAdmittedMuseSessionFixture({ systemRecords: true,
         sessionId: 'host-muse-late-child-approval', native: { scenario: 'approval-late-child' } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = 'call_01a1bf90601e7207b75b60382afaabc2';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-muse-late-child-approval', cwd: process.cwd() });
         session.watch(events.recordRuntimeEvent);
@@ -543,6 +579,11 @@ it('keeps a captured child approval actionable after its parent turn completes a
             .toMatchObject({ decisionCount: 0, released: false });
         await events.until('turn-complete');
         events.expectExactlyOneTerminalEvent({ turnId: 'late-child-approval-turn' });
+        const requestId = await vi.waitFor(() => {
+            const [id] = Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {});
+            expect(id).toBeDefined();
+            return id;
+        });
         await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toMatchObject({
             kind: 'permission', nativeChoices: {
                 origin: { sessionId: '57eb5081-f640-7bd6-8b7f-19602770febe',
@@ -622,7 +663,7 @@ it('interrupts the owning Muse turn for a pending input through the active-input
         expect(binding).not.toBeNull();
         expect(await binding!.interruptPendingInputAndRun({ localId: 'queued-input' }))
             .toMatchObject({ ok: true, status: 'interrupted' });
-        const audit = await fixture.readAudit();
+        const audit = await fixture.waitForAudit(audit => audit.commandTargets.some(target => target.method === 'turn/interrupt'));
         expect(audit.commandTargets.find(target => target.method === 'turn/interrupt'))
             .toMatchObject({ sessionId: session.runtimeDescriptorV1!.agent.providerSessionId,
                 turnId: expect.any(String) });
@@ -630,7 +671,8 @@ it('interrupts the owning Muse turn for a pending input through the active-input
 });
 
 
-it('keeps each remaining shell requirement answerable after a nonterminal native decision', async () => {
+it.each(['shell stages', 'shell then network', 'three shell stages'] as const)(
+    'publishes separate, described approvals for %s and applies each exact native requirement', async flow => {
     const scratch = await mkdtemp(join(tmpdir(), 'muse-shell-stages-'));
     const recordingPath = join(scratch, 'recording.json');
     // Reuse the create handshake composition of the MCP catalog test above;
@@ -652,9 +694,58 @@ it('keeps each remaining shell requirement answerable after a nonterminal native
         .replaceAll(observed.approvalId, decision.approvalId)
         .replaceAll(observed.commandId, decision.commandId)
         .replaceAll(wire[3].frame.params.toolCallId, initial.toolCallId));
-    // The diagnostic allowlist omits display labels; restore harmless fixture labels.
-    for (const row of stageTransition) for (const choice of row.frame.params?.availableChoices ?? []) choice.label = choice.choiceId;
-    await writeFile(recordingPath, JSON.stringify({ rows, stageTransition }));
+    // Cut 34's projected approval had two shell stages. The wire capture
+    // supplies the ordering and requirement shape; these argv values are harmless.
+    const programs = flow === 'three shell stages' ? ['grep', 'printf', 'cat'] : ['grep', 'printf'];
+    const stages = programs.map((program, sourceIndex) => ({
+        requirementId: { approvalId: initial.approvalId, sourceIndex },
+        argv: [program, 'fixture'], argvComplete: true, position: sourceIndex + 1, totalStages: programs.length,
+        resolution: { kind: 'unresolved' },
+    }));
+    const network = flow === 'shell then network';
+    const subject = network ? initial.subject : { ...initial.subject, command: programs.map(program => `${program} fixture`).join(' && '), stages };
+    const requirement2 = network ? { approvalId: 'network-fixture', sourceIndex: 0 } : stages[1].requirementId;
+    const destination = 'example.test:443 (https)';
+    for (const row of rows) {
+        if (row.message?.params?.approvalId === initial.approvalId && row.message.params.subject) {
+            row.message.params.subject = subject;
+            if (!network && row.message.params.rawArgs) {
+                row.message.params.rawArgs = JSON.stringify({ command: subject.command });
+            }
+        }
+    }
+    for (const row of stageTransition) {
+        if (!row.frame.params?.availableChoices) continue;
+        row.frame.params.subject = subject;
+        for (const choice of row.frame.params.availableChoices) {
+            choice.label = choice.choiceId === 'allow_once' ? 'Allow once' : choice.choiceId;
+        }
+    }
+    if (network) {
+        // The journey captured a separate network approval on the same tool call.
+        // Deliver it before the old shell ACK to exercise overlapping settlement.
+        const next = stageTransition.find((row: { frame: { method?: string } }) => row.frame.method === 'approval/request');
+        next.frame.params = { ...next.frame.params, approvalId: requirement2.approvalId, currentRequirementId: requirement2,
+            toolName: 'network', subject: { kind: 'network' }, rawArgs: initial.rawArgs,
+            availableChoices: [
+                { choiceId: 'allow_once', label: 'Allow once', scope: 'once', decision: 'approved' },
+                { choiceId: 'allow_session', label: 'Allow for this session', scope: 'session',
+                    decision: 'approvedForSession', rulePreview: destination },
+                { choiceId: 'allow_local_network', label: 'Always allow this network destination', scope: 'localPersistent',
+                    decision: 'approvedPolicyAmendment', rulePreview: destination },
+            ],
+        };
+        const ack = stageTransition.find((row: { frame: { method?: string } }) => row.frame.method === undefined);
+        stageTransition.splice(0, stageTransition.length, next, ack);
+    }
+    const stageTransitions = [stageTransition];
+    if (flow === 'three shell stages') {
+        stageTransitions.push(stageTransition.map((row: { frame: { params?: { currentRequirementId?: unknown } } }) => (
+            row.frame.params?.currentRequirementId ? { ...row, frame: { ...row.frame,
+                params: { ...row.frame.params, currentRequirementId: stages[2].requirementId } } } : row
+        )));
+    }
+    await writeFile(recordingPath, JSON.stringify({ rows, stageTransitions }));
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-stages', recordingPath } });
     const events = createAgentSessionRuntimeHarness();
     try {
@@ -663,24 +754,74 @@ it('keeps each remaining shell requirement answerable after a nonterminal native
         await session.send({ inputIds: ['staged-shell'], input: { text: 'Run the controlled shell.' },
             delivery: { kind: 'newTurn', turnId: 'staged-shell-turn' } });
         await fixture.waitForAudit(audit => audit.receiptCount === 1);
-        const pendingId = () => Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {})[0];
-        await vi.waitFor(() => expect(pendingId()).toBeDefined());
-        const id = pendingId()!;
-        for (let sourceIndex = 0; sourceIndex < 3; sourceIndex++) {
-            await vi.waitFor(() => {
-                const offer = fixture.host.getAgentStateSnapshot()?.requests?.[id]?.nativeChoices;
-                expect(offer).toBeDefined();
-                expect(JSON.parse(offer!.requirementId).sourceIndex).toBe(sourceIndex);
+        const readStatus = async () => ({
+            session: { id: fixture.host.sessionId, createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null },
+            pendingRequests: projectSessionStatusPendingRequestsV1(listPendingRequests({
+                sessionId: fixture.host.sessionId, active: true,
+                agentState: AgentStateSchema.parse(fixture.host.getAgentStateSnapshot()), permissionRelationship: 'owner',
+                actionConfirmations: null, presentationCompletedRequests: null, projected: null,
+            })),
+        });
+        const permissionActionId = RPC_METHODS.SESSION_PERMISSION_RESPOND;
+        const actions = createActionExecutor({
+            sessionStatusGet: readStatus,
+            async sessionPermissionRespond(args) {
+                // The Action's RPC transport ends at the real authenticated ingress.
+                return (await invokeHomeRpc(fixture, permissionActionId, buildSessionPermissionRespondRpcParamsV1({
+                    id: args.requestId ?? '', ...(args.turnId ? { turnId: args.turnId } : {}),
+                    ...(args.nativeChoice ? { nativeChoice: args.nativeChoice } : {}),
+                }))) ?? { ok: true };
+            },
+        });
+        const seenIds: string[] = [];
+        const descriptions = network ? ['Print NORMAL', destination] : programs;
+        for (const [sourceIndex, description] of descriptions.entries()) {
+            const expectedRequirement = network && sourceIndex === 1 ? requirement2 : stages[sourceIndex].requirementId;
+            const offer = await vi.waitFor(async () => {
+                const { pendingRequests } = await readStatus();
+                expect(pendingRequests).toHaveLength(1);
+                const [request] = pendingRequests;
+                expect(request.nativeChoices?.requirementId).toBe(JSON.stringify(expectedRequirement));
+                return request;
             });
-            const offer = fixture.host.getAgentStateSnapshot()!.requests![id]!.nativeChoices!;
-            expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
-                id, approved: true, decision: 'approved',
-                nativeChoice: { requirementId: offer.requirementId, choiceId: 'allow_once' },
-            })).toBeUndefined();
-            if (sourceIndex < 2) expect(events.canonicalEvents().some(event => event.kind === 'turn-complete')).toBe(false);
+            const { requestId, nativeChoices } = offer;
+            expect(seenIds).not.toContain(requestId);
+            seenIds.push(requestId);
+            expect(offer.arguments).toMatchObject({ description: expect.stringContaining(description) });
+            const once = nativeChoices!.choices.find(choice => choice.id === 'allow_once');
+            expect(once?.label).toContain(network ? (sourceIndex === 0 ? 'Allow once' : 'network') : description);
+            if (network && sourceIndex === 1) expect(nativeChoices!.choices).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'allow_session', label: 'Allow for this session', scope: 'session', rulePreview: destination }),
+            ]));
+            if (sourceIndex === 1) {
+                // A transport retry of the completed answer never reaches Muse.
+                await invokeHomeRpc(fixture, permissionActionId, {
+                    id: seenIds[0], nativeChoice: { requirementId: JSON.stringify(stages[0].requirementId), choiceId: 'allow_once' },
+                });
+                expect((await fixture.readAudit()).decisionCount).toBe(1);
+            }
+            const nativeChoice = { requirementId: nativeChoices!.requirementId, choiceId: 'allow_once' };
+            if (network) {
+                expect(await actions.execute(permissionActionId, {
+                    sessionId: fixture.host.sessionId, requestId, turnId: offer.turnId, nativeChoice,
+                }, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+                    actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [permissionActionId]: ['mcp'] } }),
+                })).toMatchObject({ ok: true });
+            } else {
+                expect(await invokeHomeRpc(fixture, permissionActionId, {
+                    id: requestId, approved: true, decision: 'approved', nativeChoice,
+                })).toBeUndefined();
+            }
+            if (sourceIndex < descriptions.length - 1) {
+                expect(events.canonicalEvents().some(event => event.kind === 'turn-complete')).toBe(false);
+            }
         }
         await events.until('turn-complete');
-        expect(await fixture.waitForAudit(audit => audit.released)).toMatchObject({ decisionCount: 3 });
+        const audit = await fixture.waitForAudit(audit => audit.released);
+        expect(audit.decisionCount).toBe(descriptions.length);
+        expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(descriptions.length);
+        expect((await readStatus()).pendingRequests).toEqual([]);
+        expect(Object.keys(fixture.host.getAgentStateSnapshot()?.completedRequests ?? {})).toEqual(expect.arrayContaining(seenIds));
         events.expectExactlyOneTerminalEvent({ turnId: 'staged-shell-turn' });
         await fixture.closeSession();
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }

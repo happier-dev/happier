@@ -123,20 +123,28 @@ function createDecisionPlayback(recording, scenario) {
             }
             identities.set(expected.commandId, params.commandId);
             decisionCount++;
-            // Replay the captured updated -> ACK -> request ordering. Repeat its
-            // shape for the original READY137 call's third requirement.
-            if (scenario === 'approval-stages' && decisionCount < 3) {
-                const requirement = { ...expected.requirementId, sourceIndex: decisionCount };
-                expected = { ...expected, requirementId: requirement };
-                return recording.stageTransition.map(row => {
-                    const value = remap(row.frame);
-                    if (value.params?.currentRequirementId) value.params.currentRequirementId = requirement;
-                    if (!value.method) value.id = message.id;
-                    return value;
-                });
+            const stageTransitions = scenario === 'approval-stages' ? recording.stageTransitions : [];
+            const stage = stageTransitions[decisionCount - 1];
+            if (stage) {
+                const transition = stage.map(row => remap(row.frame));
+                const next = transition.find(value => value.method === 'approval/request').params;
+                expected = { ...expected, approvalId: next.approvalId, requirementId: next.currentRequirementId };
+                offeredChoices = next.availableChoices;
+                return transition.map(value => value.method ? value : { ...value, id: message.id });
             }
             released = true;
             const received = capturedRange(selected.decide + 1, selected.terminal + 1, recordedDecision.id, message.id);
+            const lastStage = stageTransitions.at(-1)?.find(row => row.frame.method === 'approval/request').frame.params;
+            if (lastStage) for (const value of received) {
+                if (value.method === 'approval/resolved' || value.method === 'approval/updated') {
+                    value.params.approvalId = expected.approvalId;
+                    if (value.params.currentRequirementId) {
+                        value.params.currentRequirementId = expected.requirementId;
+                        value.params.availableChoices = offeredChoices;
+                        value.params.subject = lastStage.subject;
+                    }
+                }
+            }
             if (process.env.MUSE_TEST_DECISION_ACK_PATH) {
                 pendingAcknowledgements = received.filter(value => !value.method && value.id === message.id);
                 return received.filter(value => value.method || value.id !== message.id);
