@@ -159,4 +159,37 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         expect(screen.findAllByTestId('git-stopped-action')).toHaveLength(0);
         expect(home.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(0);
     });
+    it('while its controller goes away, says nothing of its own over the kept changes until Offline arrives (QA cut 4ef4110 u5)', async () => {
+        const homeId = 'srv_controller_leaving';
+        const serverId = await home.addHome({ name: 'Compute', serverUrl: 'https://controller-leaving.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
+            managedId: 'attached', controller, rootPath: '/home/coder/api' } as const;
+        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const machine = ManagedMachinePublicFullV1Schema.parse({
+            id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
+            launch: { provider, schemaVersion: 1, name: 'api-dev', choices: { existingWorkspaceId: 'native-id' } },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { workspaceId: 'native-id' } },
+            workspaceAttachment: { os: 'linux', arch: 'x64', home: '/home/coder' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'running' },
+        });
+        home.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+            [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
+        const scope = { serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace };
+        const screen = await renderScreen(<>
+            {/* A stopping daemon unregisters its methods before its socket closes and presence says Offline. */}
+            <SourceControlStaleSnapshotNotice testID="git-leaving" onRetry={vi.fn()}
+                error={{ errorCode: 'RPC_METHOD_NOT_AVAILABLE' }} workspaceScope={scope} />
+            {/* A real Git failure on the same workspace keeps its stale line and Retry. */}
+            <SourceControlStaleSnapshotNotice testID="git-failed" onRetry={vi.fn()}
+                error={{ errorCode: 'scm_command_failed' }} workspaceScope={scope} />
+        </>);
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('git-failed-action')).not.toHaveLength(0));
+        expect(screen.findAllByTestId('git-leaving-text')).toHaveLength(0);
+        expect(screen.findAllByTestId('git-leaving-action')).toHaveLength(0);
+    });
 });

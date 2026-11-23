@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
@@ -80,6 +82,9 @@ function ManagedWorkspaceRefreshNotice(props: Readonly<{ testID: string; errorCo
     workspaceScope: WorkspaceScopeBase }>) {
     const starting = useManagedWorkspaceStart(props.workspaceScope)?.pending === true;
     if (starting) return <StoppedWorkspaceLine testID={`${props.testID}-stopped`} workspaceScope={props.workspaceScope} />;
+    // A stopping controller unregisters its methods before its socket closes: the kept changes wait quietly
+    // for the reachability line to say Offline, and the managed recovery rereads them when it is back.
+    if (props.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return null;
     return <StaleRefreshLine testID={props.testID} errorCode={props.errorCode} onRetry={props.onRetry} />;
 }
 
