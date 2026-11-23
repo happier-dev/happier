@@ -173,6 +173,56 @@ it('adopts a preauth terminal Home address and opens its sign-in without changin
     await screen.unmount();
 });
 
+it('prepares the exact same-origin Home for sign-in from a bound web terminal link', async () => {
+    const address = 'https://terminal-self-host.example.test';
+    const serverIdentityId = 'srv_terminal_self_host';
+    const request = terminalRequest(address, serverIdentityId);
+    const descriptor = {
+        v: 1 as const,
+        homeServerIdentityId: serverIdentityId,
+        canonicalServerUrl: address,
+        revision: 1,
+        endpoints: [{ kind: 'https' as const, url: address }],
+    };
+    const features = {
+        ...createRootLayoutFeaturesResponse({
+            capabilities: { server: { canonicalServerUrl: address }, serverIdentity: { serverIdentityId } },
+        }),
+        homeConnectionDescriptor: descriptor,
+    };
+    runtimeFetchSpy.mockClear();
+    runtimeFetchSpy.mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === `${address}/health`) return Response.json({ status: 'ok' });
+        if (url === `${address}/v1/features`) return Response.json(features);
+        return new Response('', { status: 404 });
+    });
+    vi.stubGlobal('localStorage', createStorage());
+    vi.stubGlobal('sessionStorage', createStorage());
+    vi.stubGlobal('window', {
+        location: new URL(`${address}${buildTerminalConnectWebHref(request)}`),
+        history: { replaceState: vi.fn() },
+        sessionStorage: globalThis.sessionStorage,
+    });
+    vi.stubGlobal('document', { getElementById: () => null });
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    profiles.resetServerProfilesRuntimeForTests();
+    const { resolveReverseQrTargetProfileId } = await import('@/components/onboarding/restore/loginWays');
+    const { getPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+    expect(profiles.getActiveServerUrl()).toBe(address);
+    expect(resolveReverseQrTargetProfileId(profiles.getActiveServerId())).toBeNull();
+
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
+    await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(address)}`));
+
+    const targetProfileId = resolveReverseQrTargetProfileId(profiles.getActiveServerId());
+    expect(targetProfileId).not.toBeNull();
+    expect(profiles.getServerProfileById(targetProfileId ?? '')).toMatchObject({ serverIdentityId, serverUrl: address });
+    expect(getPendingTerminalConnect()).toMatchObject(request);
+    expect(runtimeFetchSpy.mock.calls.some(([url]) => String(url).endsWith('/v1/auth/response'))).toBe(false);
+    await screen.unmount();
+});
+
 it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
     'opens descriptor Home sign-in while keeping canonical pairing custody and established routing (%s)',
     async (entryPoint) => {

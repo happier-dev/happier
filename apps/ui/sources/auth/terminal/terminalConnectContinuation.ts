@@ -104,11 +104,14 @@ export async function focusTerminalConnectTarget(params: Readonly<{
         captureTerminalConnect(params.request, profile.serverUrl);
         return profile.serverUrl;
     }
-    if (!shouldSwitchToServerUrl({ targetServerUrl: params.serverUrl, activeServerUrl: getActiveServerUrl() })) {
+    const alreadyFocused = !shouldSwitchToServerUrl({ targetServerUrl: params.serverUrl, activeServerUrl: getActiveServerUrl() });
+    let profile = resolveUniqueServerProfileByUrl(params.serverUrl);
+    // A fresh browser can already point at this origin without having observed the Home.
+    // Run normal address admission before handing a bound request to sign-in on that Home.
+    if (alreadyFocused && (!params.request.serverIdentityId || profile?.serverIdentityId)) {
         return params.serverUrl;
     }
-    let profile = resolveUniqueServerProfileByUrl(params.serverUrl);
-    if (!profile) {
+    if (!profile || alreadyFocused) {
         const connected = await connectHomeAtAddress({
             serverUrl: params.serverUrl, source: 'url',
             confirmInsecureHttp: confirmInsecureHomeHttp, confirmCanonicalUrl: confirmCanonicalHomeUrl,
