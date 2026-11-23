@@ -64,9 +64,30 @@ vi.mock('node:child_process', async original => {
   return { ...actual, spawn: (command: string, args: readonly string[] = [], options: SpawnOptions = {}) =>
     nativeOs.spawn?.(command, args, options) ?? actual.spawn(command, args, options) };
 });
+/** The production `retire_operation` frame of a run-as `agent-launch`, or null. */
+function readNativeRetirementFrame(args: readonly unknown[]): { runtimeHome: string } | null {
+  const argv = JSON.stringify([args[0], args[1]]);
+  const input = (args[2] as { inputBytes?: Uint8Array } | undefined)?.inputBytes;
+  if (!argv.includes('sudo') || !argv.includes('agent-launch') || !input) return null;
+  const bytes = Buffer.from(input);
+  if (bytes.subarray(0, 8).toString() !== 'HAPAGT1\n') return null;
+  const frame: unknown = JSON.parse(bytes.subarray(12, 12 + bytes.readUInt32BE(8)).toString('utf8'));
+  return frame && typeof frame === 'object' && 'action' in frame && frame.action === 'retire_operation'
+    && 'runtimeHome' in frame && typeof frame.runtimeHome === 'string' ? { runtimeHome: frame.runtimeHome } : null;
+}
 vi.mock('@happier-dev/cli-common/process', async original => {
   const actual = await original<typeof import('@happier-dev/cli-common/process')>();
   return { ...actual, execFileWithDeadline: async (...args: Parameters<typeof actual.execFileWithDeadline>) => {
+    // Lease release retires the member's operation runtime through the run-as
+    // launcher (directly or inside a host process scope). Model that OS boundary
+    // from the exact production frame, on the modeled native home.
+    const retirement = readNativeRetirementFrame(args);
+    if (retirement && nativeOs.home) {
+      const { retireAgentLaunchOperationRuntime } = await import('@/daemon/agentIsolation/agentLaunchRuntime');
+      await retireAgentLaunchOperationRuntime(nativeOs.home.backing,
+        retirement.runtimeHome.split(nativeOs.home.path).join(nativeOs.home.backing));
+      return { stdout: '', stderr: '' };
+    }
     if (args[0] === 'getent' && JSON.stringify(args[1]) === JSON.stringify(['--service=files', 'passwd', 'happier-agent'])
       && nativeOs.sharedHome) return { stdout: `happier-agent:x:2402:2402::${nativeOs.sharedHome}:/usr/sbin/nologin\n`, stderr: '' };
     const readiness = await runAgentIsolationMemberReadinessBoundary({ request: args,
