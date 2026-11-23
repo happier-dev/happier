@@ -34,7 +34,10 @@ import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
+import { TeamUpdateInputV1Schema } from '../teams/team.js';
 import { TEAM_GROUP_UPDATE_ACTION_ID_V1, TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { HomeSettingsSetInputV1Schema } from '../home/governance/settings.js';
+import { SERVER_CONFIG_REGISTRY_BASE } from '../serverConfig/registry.js';
 import {
   PluginChangePendingReviewResultSchema,
   type PluginChangePendingReviewResult,
@@ -173,6 +176,8 @@ export type ApprovalStructuredValueEntry = Readonly<{
   technical?: true;
   /** An epoch-millisecond moment (`archivedAt`): the client reads it as a localized time. */
   valueFormat?: 'timestamp';
+  /** A Home override uses the registry's name, including when the stored value is cleared. */
+  homeSetting?: Readonly<{ key: string; cleared: boolean }>;
 }>;
 
 export type ApprovalActionFieldRow =
@@ -767,6 +772,24 @@ function appendApprovalStructuredMembers(value: unknown, depth: number, output: 
     references ? { ...references, path: `${references.path}.${key ?? '[]'}` } : undefined);
 }
 
+function describeHomeSettingsApprovalEntries(values: Record<string, unknown>): readonly ApprovalStructuredValueEntry[] {
+  const entries: ApprovalStructuredValueEntry[] = [];
+  for (const [key, setting] of Object.entries(values)) {
+    const declaration = Object.hasOwn(SERVER_CONFIG_REGISTRY_BASE, key) ? SERVER_CONFIG_REGISTRY_BASE[key] : undefined;
+    const homeSetting = declaration?.editable === 'home' && declaration.sensitivity === 'plain'
+      ? { key, cleared: setting === null } : undefined;
+    if (homeSetting?.cleared) {
+      entries.push({ label: key, value: 'null', depth: 0, homeSetting });
+      continue;
+    }
+    const index = entries.length;
+    appendApprovalStructuredEntries(key, humanizeApprovalKey(key), setting, 0, entries);
+    const first = entries[index];
+    if (homeSetting && first) entries[index] = { ...first, homeSetting };
+  }
+  return entries;
+}
+
 /**
  * The connected services a session is created with, one line per bound Account or pool; the client names it.
  * The ids stay in Technical details beside it. A binding that names no Account (native sign-in) has no line.
@@ -1100,7 +1123,7 @@ export function describeApprovalActionFields(input: Readonly<{
     }
     if (values.length === 1 && values[0] === null) {
       const choice = field.path === 'primaryTeamId' ? { label: 'Private', labelKey: 'session.access.private' }
-        : field.path === 'description' && (input.actionId === 'teams.update' || input.actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1)
+        : field.path === 'description' && (spec.inputSchema === TeamUpdateInputV1Schema || input.actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1)
           ? { label: '—', labelKey: 'common.none' } : undefined;
       if (choice) {
         rows.push({ kind: 'value', path: field.path, title: field.title, value: 'null', selectedOptions: [choice] });
@@ -1113,7 +1136,9 @@ export function describeApprovalActionFields(input: Readonly<{
     const kindValue = field.widget === 'json' && !reference && !referenceFields.has(field.path) && !place?.success && values.length === 1
       ? readApprovalKindValue(values[0]) : null;
     // A typed reference already reads by its name; entries are for values nothing else can read.
-    let entries = (rulesAction && field.path === 'change.rules' || field.path === 'where.rules') ? describeApprovalRuleEntries(values)
+    let entries = spec.inputSchema === HomeSettingsSetInputV1Schema && field.path === 'values' && isRecord(values[0])
+      ? describeHomeSettingsApprovalEntries(values[0])
+      : (rulesAction && field.path === 'change.rules' || field.path === 'where.rules') ? describeApprovalRuleEntries(values)
       : (rulesAction && field.path.startsWith('items.') || referenceFields.get(field.path)) && values.length > 1 ? values.map(value => ({
         label: field.title, value: String(value), depth: 0,
         reference: describeApprovalReference(input.actionId, field, [value], presentationInput, review?.referenceForField),

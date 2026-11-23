@@ -21,6 +21,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Text } from '@/components/ui/text/Text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { Typography } from '@/constants/Typography';
 import { getTranslationValue, t, tLoose } from '@/text';
@@ -32,6 +33,14 @@ import { useDestinationRouter } from '@/components/appShell/workspace/Destinatio
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { SessionHistoryAccessV1Schema, TeamPolicySetInputV1Schema, TeamRoleV1Schema } from '@happier-dev/protocol/teams';
+import { isSessionAccessActionId, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { HomeAdmissionModeV1Schema, HomeAuthenticationPolicyV1Schema, HomeRoleV1Schema, TeamCreationPolicyV1Schema } from '@happier-dev/protocol/home/governance';
+import { externalSharingLabel, historyLabel, sessionCreationLabel, teamAdmissionModeLabel } from '@/components/settings/teams/teamPolicyPresentation';
+import { teamRoleLabel } from '@/components/settings/teams/teamLabels';
+import { homeAdmissionModeLabel, homeRoleLabel, homeStoragePolicyLabel, teamCreationPolicyLabel } from '@/components/settings/home/governance/homeGovernanceLabels';
+import { homeServerSettingTitle } from '@/components/settings/home/governance/homeServerSettingLabels';
 import { MachineGuardCeilingApprovalFields } from './MachineGuardCeilingApprovalFields';
 import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
 import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
@@ -131,7 +140,9 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: R
     );
     const serverId = props.serverId ?? null;
     const exactRead = props.exactSessionReads === true;
-    const fieldRows = React.useMemo(() => rows.map(row => toSharedFieldRow(row, serverId, exactRead)), [exactRead, rows, serverId]);
+    const actionId = props.request?.actionId;
+    const language = usePreferredLanguage();
+    const fieldRows = React.useMemo(() => rows.map(row => toSharedFieldRow(row, serverId, exactRead, actionId)), [actionId, exactRead, language, rows, serverId]);
     const cardRows = React.useMemo(() => fieldRows.map((row, index) => foldApprovalFieldExtras(row, rows[index]!)), [fieldRows, rows]);
     // A phone reads each label over its value; anything wider sets the labels in one column beside the values.
     const { width, height } = useWindowDimensions();
@@ -237,7 +248,7 @@ const ApprovalReferenceResolve: HappierApprovalFieldResolve<ApprovalValueSource>
 };
 
 /** The protocol's row in the shared fields' words: literal values formatted and localized here, references left to `Resolve`. */
-function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactRead: boolean): HappierApprovalFieldRow<ApprovalValueSource> {
+function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactRead: boolean, actionId?: string): HappierApprovalFieldRow<ApprovalValueSource> {
     if (row.kind === 'unrepresentable') {
         return { kind: 'notice', key: row.path, label: row.title, title: t('approvals.unsafeDetailsTitle'),
             body: t('approvals.unsafeDetailsBody'), testID: 'approvals.unrepresentable-details' };
@@ -245,18 +256,87 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
     if (row.kind === 'structuredAnswers') {
         return { kind: 'answers', key: row.path, label: row.title, answers: row.answers.map(answer => ({ question: answer.question, values: answer.values })) };
     }
+    const governance = actionId !== undefined && (actionId.startsWith('teams.') || actionId.startsWith('home.')
+        || isSessionAccessActionId(actionId) || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1);
     if (row.entries) {
         // Structured entries read their references without the page's exact read, as Protocol lays them out.
         return { kind: 'entries', key: row.path, label: row.title, entries: readableApprovalEntries(row.entries).map((entry): HappierApprovalFieldEntry<ApprovalValueSource> => ({
-            label: entry.label,
+            label: entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key) : entry.label,
             depth: entry.depth,
-            value: entry.value === null ? null : entry.valueFormat === 'timestamp' ? formatApprovalTimestamp(entry.value) : entry.value,
+            value: entry.homeSetting?.cleared ? t('homeSettings.row.notSet')
+                : entry.value === null ? null : entry.valueFormat === 'timestamp' ? formatApprovalTimestamp(entry.value)
+                : governance && isGovernancePrincipal(entry.reference) ? t('common.unavailable') : entry.value,
             ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
         })) };
     }
     const label = row.path === 'primaryTeamId' ? t('session.access.context') : row.title;
-    return { kind: 'value', key: row.path, label, value: literalApprovalValue(row),
+    const value = governance && isGovernancePrincipal(row.reference)
+        ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
+    return { kind: 'value', key: row.path, label, value,
         ...(row.reference ? { source: { reference: row.reference, serverId, exactRead } } : {}) };
+}
+
+function isGovernancePrincipal(reference: ApprovalReference | undefined): boolean {
+    return reference?.kind === 'account' || reference?.kind === 'team'
+        || reference?.kind === 'group' || reference?.kind === 'teamMembership';
+}
+
+function readGovernanceChoice(row: ApprovalValueRow, actionId: string | undefined): string | undefined {
+    if (actionId === TEAM_POLICY_SET_ACTION_ID_V1) return readTeamPolicyChoice(row);
+    if (actionId?.startsWith('teams.')) {
+        if (row.path === 'role') {
+            const choice = TeamRoleV1Schema.safeParse(row.value);
+            if (choice.success) return teamRoleLabel(choice.data);
+        }
+        if (row.path === 'historyAccess') {
+            const choice = SessionHistoryAccessV1Schema.safeParse(row.value);
+            if (choice.success) return historyLabel(choice.data);
+        }
+    }
+    if (actionId?.startsWith('home.')) {
+        if (row.path === 'homeRole') {
+            const choice = HomeRoleV1Schema.safeParse(row.value);
+            if (choice.success) return homeRoleLabel(choice.data);
+        }
+        if (row.path === 'teamCreationPolicy') {
+            const choice = TeamCreationPolicyV1Schema.safeParse(row.value);
+            if (choice.success) return teamCreationPolicyLabel(choice.data);
+        }
+        if (row.path === 'authenticationPolicy.admission') {
+            const choice = HomeAdmissionModeV1Schema.safeParse(row.value);
+            if (choice.success) return homeAdmissionModeLabel(choice.data);
+        }
+        if (row.path === 'authenticationPolicy.storagePolicy') {
+            const choice = HomeAuthenticationPolicyV1Schema.shape.storagePolicy.safeParse(row.value);
+            if (choice.success && choice.data !== undefined) return homeStoragePolicyLabel(choice.data);
+        }
+    }
+}
+
+function readTeamPolicyChoice(row: ApprovalValueRow): string | undefined {
+    switch (row.path) {
+        case 'sessionCreationPolicy':
+        case 'reviewCreationPolicy': {
+            const choice = TeamPolicySetInputV1Schema.shape[row.path].safeParse(row.value);
+            if (choice.success && choice.data !== undefined) return sessionCreationLabel(choice.data);
+            break;
+        }
+        case 'externalSharingPolicy': {
+            const choice = TeamPolicySetInputV1Schema.shape.externalSharingPolicy.safeParse(row.value);
+            if (choice.success && choice.data !== undefined) return externalSharingLabel(choice.data);
+            break;
+        }
+        case 'defaultSessionHistoryAccess': {
+            const choice = TeamPolicySetInputV1Schema.shape.defaultSessionHistoryAccess.safeParse(row.value);
+            if (choice.success && choice.data !== undefined) return historyLabel(choice.data);
+            break;
+        }
+        case 'admissionMode': {
+            const choice = TeamPolicySetInputV1Schema.shape.admissionMode.safeParse(row.value);
+            if (choice.success && choice.data !== undefined) return teamAdmissionModeLabel(choice.data);
+            break;
+        }
+    }
 }
 
 /** A card has no chips or second line: its value reads as the names, then the note on the next line. */
