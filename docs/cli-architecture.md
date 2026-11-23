@@ -4371,8 +4371,9 @@ private runner transport; the public Exec request cannot supply either authority
 In 0.3 development, Separate users publishes the current installed CLI payload,
 including companion files, to a root-owned, read-only runtime on Linux. The
 reviewed Apply and existing member setup use the same publisher. Readiness,
-RunAs, Session launch and finite operations use that runtime while the owner's
-home keeps its existing permissions. The shared Agent also uses the protected
+RunAs, Session launch, and finite operations use that runtime while the owner's
+home keeps its existing permissions. Terminal open and restart also use the
+published runtime for Happier CLI commands placed under a member account. The shared Agent also uses the protected
 runtime when its installed CLI lives under a private daemon or user home. A
 reviewed Apply can replace its exact legacy RunAs rule in place. A reviewed Off
 can remove either known version of that rule after checking its bytes, ownership

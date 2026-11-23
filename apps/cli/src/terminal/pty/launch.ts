@@ -29,11 +29,16 @@ export async function resolveDaemonTerminalLaunch(
     buildLaunchSpec?: typeof buildHappyCliSubprocessLaunchSpec;
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
-    /** A member-placed sign-in resolves the Agent CLI as that member, never from the daemon environment. */
+    /** Admitted native launch material for a separated member. */
     memberLaunch?: MemberAgentCliLaunchContext;
   }> = {},
 ): Promise<TerminalLaunchProcess> {
   const buildLaunchSpec = deps.buildLaunchSpec ?? buildHappyCliSubprocessLaunchSpec;
+  const resolveHappierCli = (args: string[]): TerminalLaunchProcess => {
+    if (deps.memberLaunch) return { file: deps.memberLaunch.managedHappierBinaryPath, args };
+    const launch = buildLaunchSpec(args);
+    return { file: launch.filePath, args: launch.args, env: launch.env };
+  };
   switch (launchRequest.kind) {
     case 'shell_command': {
       const command = launchRequest.command;
@@ -74,8 +79,7 @@ export async function resolveDaemonTerminalLaunch(
       }
       const initialInput = declaration.initialInput ? { initialInput: declaration.initialInput } : {};
       if (declaration.target === 'agent_acp') {
-        const launch = buildLaunchSpec(['agents', 'auth', 'login', launchRequest.agentId]);
-        return { file: launch.filePath, args: launch.args, env: launch.env, ...initialInput };
+        return { ...resolveHappierCli(['agents', 'auth', 'login', launchRequest.agentId]), ...initialInput };
       }
       const runtimeSpec = agent?.runtimeSpec;
       const launch = !runtimeSpec ? null : deps.memberLaunch
@@ -89,21 +93,9 @@ export async function resolveDaemonTerminalLaunch(
       if (!launch) throw new AgentLoginLaunchError('agent_cli_missing');
       return { file: launch.command, args: [...launch.args, ...declaration.args], ...initialInput };
     }
-    case 'session_attach': {
-      const launch = buildLaunchSpec(['attach', launchRequest.sessionId]);
-      return {
-        file: launch.filePath,
-        args: launch.args,
-        env: launch.env,
-      };
-    }
-    case 'happier_cli': {
-      const launch = buildLaunchSpec(launchRequest.args);
-      return {
-        file: launch.filePath,
-        args: launch.args,
-        env: launch.env,
-      };
-    }
+    case 'session_attach':
+      return resolveHappierCli(['attach', launchRequest.sessionId]);
+    case 'happier_cli':
+      return resolveHappierCli(launchRequest.args);
   }
 }

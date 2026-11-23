@@ -3,6 +3,7 @@ import axios from 'axios';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -77,7 +78,7 @@ import { buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/pr
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
-import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
@@ -477,7 +478,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); await h.dispose(); }
   });
 
-  it.skipIf(process.platform !== 'linux')('opens a Use member own-Project Shell with the bound member OS identity', async () => {
+  it.skipIf(process.platform !== 'linux')('opens Use member Project shells and typed CLI terminals with member-native executables', async () => {
     const h = await finiteHarness({ observeInteractiveStop: true });
     const context: RpcHandlerContext = { ...h.ingress,
       machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian', role: 'use' } };
@@ -504,11 +505,28 @@ describe('registerMachineTerminalRpcHandlers', () => {
       if (!result) throw new Error('Unexpected native command');
       return result;
     });
+    const publishedCli = native.effects.installedCli;
+    let publishedCliCanExec = true;
     class MemberPty extends FakeInteractivePty {
       accepted = false;
       override kill(): void { this.exit(0); }
       override write(data: string) {
-        if (!this.accepted) { this.accepted = true; queueMicrotask(() => this.emitBytes(AGENT_LAUNCH_TERMINAL_ACCEPTED)); return; }
+        if (!this.accepted) {
+          this.accepted = true;
+          void readAgentLaunchFrame(Readable.from([Buffer.from(data, 'base64')], { objectMode: false })).then(frame => {
+            if (frame.executable.startsWith('/bin/') || publishedCliCanExec && frame.executable === publishedCli && frame.args.join(' ') === 'codex') {
+              this.emitBytes(AGENT_LAUNCH_TERMINAL_ACCEPTED);
+            } else {
+              // The guest's daemon-private CLI cannot be executed under the member UID.
+              this.emitBytes('agent_launch_failed stage=exec errno=EACCES\r\n');
+              this.exit(1);
+            }
+          }, () => {
+            this.emitBytes('agent_launch_frame_invalid\r\n');
+            this.exit(1);
+          });
+          return;
+        }
         super.write(data);
       }
     }
@@ -546,20 +564,41 @@ describe('registerMachineTerminalRpcHandlers', () => {
       const input = { terminalKey: 'member-project', workspace: {
         serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
       const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, context);
-      expect(opened).toMatchObject({ ok: true, reused: false });
+      expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, reused: false });
       const terminalId = h.sessionManager.list()[0]!.terminalId;
       expect(h.provider.spawned[0]!.params).toMatchObject({ file: 'sudo',
-        args: ['-n', '-u', member.username, '--', native.effects.installedCli, 'agent-launch'] });
+        args: ['-n', '-u', member.username, '--', publishedCli, 'agent-launch'] });
       expect(h.sessionManager.getNativeExecutionIdentity?.(terminalId)).toEqual(member);
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'member-command\n' }, context))
         .resolves.toMatchObject({ ok: true });
       expect(h.provider.spawned[0]!.pty.writes).toEqual(['member-command\n']);
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, context)).resolves.toMatchObject({ ok: true, reused: false });
       expect(h.provider.spawned).toHaveLength(2);
-      expect(h.provider.spawned[1]!.params.args).toEqual(['-n', '-u', member.username, '--', native.effects.installedCli, 'agent-launch']);
+      expect(h.provider.spawned[1]!.params.args).toEqual(['-n', '-u', member.username, '--', publishedCli, 'agent-launch']);
       expect(h.sessionManager.list()).toHaveLength(1);
       expect(h.sessionManager.getNativeExecutionIdentity?.(h.sessionManager.list()[0]!.terminalId)).toEqual(member);
       expect(native.mutations).toEqual([]);
+
+      const machineShell = { terminalKey: 'member-machine-shell', launch: { kind: 'shell_command', command: 'printf control' } };
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(machineShell, context))
+        .resolves.toMatchObject({ ok: true, reused: false });
+      const entrypoint = join(h.root, 'private-cli.mjs');
+      await writeFile(entrypoint, '');
+      const launcherEnvironment = createEnvKeyScope(['HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', 'HAPPIER_CLI_SUBPROCESS_RUNTIME',
+        'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', 'HAPPIER_CLI_SUBPROCESS_PREFER_TSX']);
+      launcherEnvironment.patch({ HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint, HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined, HAPPIER_CLI_SUBPROCESS_PREFER_TSX: 'false' });
+      try {
+        const cli = { terminalKey: 'member-foreground', launch: { kind: 'happier_cli', args: ['codex'] }, cols: 100, rows: 30 };
+        publishedCliCanExec = false;
+        const refused = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, context);
+        expect.soft(refused).toMatchObject({ ok: false, errorCode: 'agent_launch_failed', details: { phase: 'exec', errno: 'EACCES' } });
+        publishedCliCanExec = true;
+        const openedCli = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, context);
+        expect(openedCli, JSON.stringify(openedCli)).toMatchObject({ ok: true, reused: false });
+        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(cli, context))
+          .resolves.toMatchObject({ ok: true, reused: false });
+      } finally { launcherEnvironment.restore(); }
     } finally { registration.dispose(); await h.dispose(); }
   });
 

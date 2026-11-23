@@ -181,14 +181,16 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const resolveLaunch = params.deps?.resolveLaunch
     ?? ((launch, memberLaunch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform,
       ...(memberLaunch ? { memberLaunch } : {}) }));
-  /** A member-placed sign-in resolves its Agent CLI in that member's prepared native operation. */
   const resolveRequestedLaunch = async (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined,
     member?: Readonly<{ agentIsolation: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext; signal: AbortSignal }>) => {
+    if (!launch) return { ok: true as const, launchProcess: undefined };
     try {
-      const memberLaunch = member ? readMemberAgentCliLaunchContext(member.agentIsolation, 'terminal_agent_login') : undefined;
-      return { ok: true as const, launchProcess: launch
-        ? await resolveLaunch(launch, memberLaunch && { ...memberLaunch, signal: member!.signal }) : undefined };
+      const admitted = member && launch.kind !== 'shell_command'
+        ? readMemberAgentCliLaunchContext(member.agentIsolation, 'terminal_launch') : undefined;
+      const memberLaunch = admitted && member ? { ...admitted, signal: member.signal } : undefined;
+      return { ok: true as const, launchProcess: await resolveLaunch(launch, memberLaunch) };
     } catch (error) {
+      if (isPluginError(error)) return { ok: false as const, ...normalizeActionExecutorThrownError(error) };
       return err(error instanceof AgentLoginLaunchError ? error.code : 'terminal_spawn_failed');
     }
   };
@@ -835,10 +837,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
-    // Member sign-in waits for the member's prepared native operation below.
-    const memberSignIn = parsed.data.launch?.kind === 'agent_login' && placement === 'member';
-    const launch = await resolveRequestedLaunch(memberSignIn ? undefined : parsed.data.launch);
-    if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
@@ -847,27 +845,27 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       && sameTerminalCustody(getSessionManager().getCustody(terminal.terminalId), cwd.custody!));
     if (projectCustody && !warm && params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+    let launchProcess: TerminalLaunchProcess | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
-      if (!warm) launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
-        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
-        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.open' });
       if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }
-        if (memberSignIn && !warm) {
-          const resolved = await resolveRequestedLaunch(parsed.data.launch,
-            { agentIsolation: nativeOperation.agentIsolation, signal: context.signal });
-          if (!resolved.ok) { await nativeOperation.dispose(); return resolved; }
-          launch.launchProcess = resolved.launchProcess;
-        }
       }
+      const member = nativeOperation?.memberIdentity && context
+        ? { agentIsolation: nativeOperation.agentIsolation, signal: context.signal } : undefined;
+      const launch = await resolveRequestedLaunch(warm && member && parsed.data.launch?.kind === 'agent_login' ? undefined : parsed.data.launch, member);
+      if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
+      launchProcess = launch.launchProcess;
+      if (!warm) launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,
+        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.open' });
       const preparation = projectCustody && !warm
-        ? await prepareProjectShell(projectCustody, launch.launchProcess, context, requesterIdentity, nativeOperation)
-        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launch.launchProcess, context, requesterIdentity, nativeOperation) : undefined;
+        ? await prepareProjectShell(projectCustody, launchProcess, context, requesterIdentity, nativeOperation)
+        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launchProcess, context, requesterIdentity, nativeOperation) : undefined;
       if (preparation && !preparation.ok) { await nativeOperation?.dispose(); return preparation; }
       if (preparation) prepared = { ...preparation, release: async () => {
         try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
@@ -889,7 +887,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
       cols: parsed.data.cols,
       rows: parsed.data.rows,
-      ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
+      ...(launchProcess ? { launchProcess } : {}),
       ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
       ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
       ...(sessionId ? { sessionId } : {}),
@@ -1036,35 +1034,32 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
     if (params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
-    const memberSignIn = parsed.data.launch?.kind === 'agent_login' && placement === 'member';
-    const launch = await resolveRequestedLaunch(memberSignIn ? undefined : parsed.data.launch);
-    if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
 
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+    let launchProcess: TerminalLaunchProcess | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
-      launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
-        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
-        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.restart' });
       if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }
-        if (memberSignIn) {
-          const resolved = await resolveRequestedLaunch(parsed.data.launch,
-            { agentIsolation: nativeOperation.agentIsolation, signal: context.signal });
-          if (!resolved.ok) { await nativeOperation.dispose(); return resolved; }
-          launch.launchProcess = resolved.launchProcess;
-        }
       }
+      const member = nativeOperation?.memberIdentity && context
+        ? { agentIsolation: nativeOperation.agentIsolation, signal: context.signal } : undefined;
+      const launch = await resolveRequestedLaunch(parsed.data.launch, member);
+      if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
+      launchProcess = launch.launchProcess;
+      launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,
+        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.restart' });
       const preparation = projectCustody
-        ? await prepareProjectShell(projectCustody, launch.launchProcess, context, requesterIdentity, nativeOperation)
-        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launch.launchProcess, context, requesterIdentity, nativeOperation) : undefined;
+        ? await prepareProjectShell(projectCustody, launchProcess, context, requesterIdentity, nativeOperation)
+        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launchProcess, context, requesterIdentity, nativeOperation) : undefined;
       if (preparation && !preparation.ok) { await nativeOperation?.dispose(); return preparation; }
       if (preparation) prepared = { ...preparation, release: async () => {
         try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
@@ -1126,7 +1121,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
         cols: parsed.data.cols,
         rows: parsed.data.rows,
-        ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
+        ...(launchProcess ? { launchProcess } : {}),
         ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
         ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
         ...(sessionId ? { sessionId } : {}),

@@ -40,6 +40,7 @@ import type { TerminalLaunchProcess } from './launch';
 import type { HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { resolveTerminalShell } from './shells';
 import { createTerminalNativeLaunch } from './nativeLaunch';
+import { readAgentLaunchTerminalExecFailure } from '@/daemon/agentIsolation/agentLaunchDiagnostics';
 import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { createTerminalUrlDetector, type DetectedTerminalUrl } from './urlDetection';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -60,6 +61,7 @@ type ErrorResult = Readonly<{
 }>;
 
 type EnsureOk = Readonly<{ ok: true; terminalId: string; reused: boolean }>;
+type EnsureResult = EnsureOk | ErrorResult | NonNullable<ReturnType<typeof readAgentLaunchTerminalExecFailure>>;
 type ReadOk = Readonly<{ ok: true; terminalId: string; events: readonly DaemonTerminalStreamEvent[]; nextCursor: number; done: boolean }>;
 type SimpleOk = Readonly<{ ok: true }>;
 
@@ -225,7 +227,7 @@ export type TerminalPtySessionManager = Readonly<{
   /** Born as admitted finite work (`holdUntilExit`); fixed for the terminal's life, unlike the settling hold. */
   isFiniteRun: (terminalId: string) => boolean;
   isServiceOwned: (terminalId: string) => boolean;
-  ensure: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
+  ensure: (input: TerminalPtyEnsureInput) => Promise<EnsureResult>;
   spawnManagedService(input: Readonly<{ terminalKey: string; custody: TerminalPtyProjectCustody;
     launch: HostAuthorizedPluginExecLaunch; signal?: AbortSignal }>): Promise<ReturnType<typeof createTerminalServiceProcess> & Readonly<{ terminalId: string; cwd: string; windowsJobName?: string }>>;
   waitForExit: (input: Readonly<{ terminalId: string; signal?: AbortSignal; onOutcomeUncertain?: () => void }>) => Promise<TerminalProcessExitObservation>;
@@ -246,7 +248,7 @@ export type TerminalPtySessionManager = Readonly<{
   forgetViewer: (input: Readonly<{ terminalId: string; viewerId: string }>) => void;
   close: (input: Readonly<{ terminalId: string }>) => SimpleOk | ErrorResult;
   dispose: () => void;
-  restart: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
+  restart: (input: TerminalPtyEnsureInput) => Promise<EnsureResult>;
   metrics: () => ReturnType<TerminalPtyMetrics['snapshot']>;
 }>;
 
@@ -643,7 +645,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true };
   };
 
-  const ensure = async (input: TerminalPtyEnsureInput): Promise<EnsureOk | ErrorResult> => {
+  const ensure = async (input: TerminalPtyEnsureInput): Promise<EnsureResult> => {
     const requesterAccountId = input.custody?.requesterAccountId ?? input.requesterAccountId;
     // Interactive Project terminals start at the accepted root. Finite host
     // admission supplies the already-reviewed final cwd, which may be a script
@@ -1013,8 +1015,15 @@ export function createTerminalPtySessionManager(params: Readonly<{
       if (!accepted || input.signal?.aborted) {
         const stopped = await requestStop({ terminalId });
         if (stopped.kind === 'requested') await waitForExit({ terminalId });
+        const forbidden = input.signal?.aborted;
+        // Finite work already owns native launch settlement and refusal recovery.
+        const failure = !forbidden && !input.holdUntilExit
+          ? readAgentLaunchTerminalExecFailure(Buffer.concat(session.byteRing.read({
+            byteOffset: 0, maxBytes: config.bufferMaxBytes, maxChunks: config.bufferMaxEvents,
+          }).chunks.map(chunk => chunk.bytes)).toString('utf8'))
+          : undefined;
         if (stopped.kind !== 'unconfirmed') closeById(terminalId);
-        return okDisabled(input.signal?.aborted ? 'terminal_forbidden' : 'terminal_spawn_failed');
+        return failure ?? okDisabled(forbidden ? 'terminal_forbidden' : 'terminal_spawn_failed');
       }
     }
     if (input.launchProcess?.initialInput) {
@@ -1027,7 +1036,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true, terminalId, reused: false };
   };
 
-  const restart = async (input: TerminalPtyEnsureInput): Promise<EnsureOk | ErrorResult> => {
+  const restart = async (input: TerminalPtyEnsureInput): Promise<EnsureResult> => {
     if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
     // Retain the predecessor's own unqualified restart only for one unambiguous
     // legacy record. It cannot select a Project/requester-attributed terminal.

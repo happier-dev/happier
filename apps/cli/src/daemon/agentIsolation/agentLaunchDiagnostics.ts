@@ -46,6 +46,14 @@ export class AgentLaunchDiagnosticError extends Error {
   }
 }
 
+/** Only the pre-acceptance shim's fixed exec failure line is projected from PTY output. */
+export function readAgentLaunchTerminalExecFailure(output: string) {
+  const match = /^agent_launch_failed stage=exec(?: errno=(E[A-Z0-9_]+))?\r?$/mu.exec(output);
+  if (!match) return undefined;
+  return { ok: false as const, errorCode: 'agent_launch_failed' as const, error: 'agent_launch_failed',
+    details: { phase: 'exec' as const, ...(match[1] ? { errno: match[1] } : {}) } };
+}
+
 export function createAgentLaunchStderr(payload: AgentLaunchPayload) {
   // The frame is the selected material owner; never put it or an OS exception
   // (which can contain argv) in a diagnostic. Protect exact values even when
