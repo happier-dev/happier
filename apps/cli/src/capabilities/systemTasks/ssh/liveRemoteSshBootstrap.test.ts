@@ -1527,29 +1527,41 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
   });
 
   it.each([
-    { name: 'SSH transport failure', status: 255, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
-    { name: 'unexpected process failure', status: 2, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
-    { name: 'unavailable auth', status: 0, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
-    { name: 'missing auth envelope', status: 0, value: { authenticated: false } },
-    { name: 'malformed auth success', status: 0, value: { v: 1, ok: true, kind: 'auth_status', data: {} } },
-    { name: 'signed-out response to server selection', status: 1, match: 'server set', value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    { name: 'SSH transport failure', status: 255, code: 'ssh_command_failed', value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    { name: 'unexpected process failure', status: 2, code: 'ssh_command_failed', value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    { name: 'unavailable auth', status: 1, code: 'auth_status_unavailable', value: { v: 1, ok: false, kind: 'auth_status',
+      error: { code: 'auth_status_unavailable', reason: 'http_error', message: 'private guest diagnostic' } } },
+    { name: 'missing auth envelope', status: 0, code: 'invalid_cli_response', value: { authenticated: false } },
+    { name: 'malformed auth success', status: 0, code: 'invalid_cli_response', value: { v: 1, ok: true, kind: 'auth_status', data: {} } },
+    { name: 'signed-out response to server selection', status: 1, code: 'ssh_command_failed', match: 'server set', value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
   ])('refuses $name before remote pairing', async ({ status, value, ...scenario }) => {
+    // The selected Home advertises the source payload already on this controller.
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async request => {
+      expect(String(request)).toBe('https://relay.example.test/v1/features');
+      return Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'preview' } } });
+    });
     const previousImplementation = spawnSync.getMockImplementation();
     if (!previousImplementation) throw new Error('Missing spawnSync mock implementation');
     spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-      if (command === 'ssh' && String(args.at(-1) ?? '').includes(scenario.match ?? 'auth status --json')) {
-        return { status, stdout: `${JSON.stringify(value)}\n`, stderr: '' };
+      if (command === 'ssh') {
+        const remoteCommand = String(args.at(-1) ?? '');
+        if (remoteCommand.includes('managed_guest_cli_absent')) return { status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
+        if (remoteCommand.includes(scenario.match ?? 'auth status --json')) {
+          return { status, stdout: `${JSON.stringify(value)}\n`, stderr: '' };
+        }
       }
       return previousImplementation(command, args);
     });
-    await expect(createLiveRemoteSshBootstrapTaskKind().run({
+    const failure = await createLiveRemoteSshBootstrapTaskKind().run({
       params: {
         ssh: { target: 'dev@example.test', auth: 'agent' }, relay: { relayUrl: 'https://relay.example.test' },
         channel: 'preview', knownHostsMode: 'system', serviceMode: 'none',
       },
       emit: () => undefined,
       prompt: async () => ({ approved: true }),
-    })).rejects.toThrow();
+    }).catch((error: unknown) => error).finally(() => fetch.mockRestore());
+    expect(failure).toMatchObject({ code: scenario.code });
+    expect(String(failure)).not.toContain('private guest diagnostic');
     expect(approveTerminalAuthRequest).not.toHaveBeenCalled();
     expect(remoteEnrollmentCompleted).toBe(false);
   });

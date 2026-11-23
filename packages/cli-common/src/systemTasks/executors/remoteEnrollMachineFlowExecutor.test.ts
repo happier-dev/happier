@@ -8,9 +8,9 @@ describe('remote bootstrap CLI envelope admission', () => {
       v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated', serverId: 'cloud' },
     }, true)).toEqual({ ok: true, data: { authenticated: false } });
 
-    expect(normalizeRemoteBootstrapCliJsonResult({
+    expect(() => normalizeRemoteBootstrapCliJsonResult({
       v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' },
-    }, true).ok).toBe(false);
+    }, true)).toThrow(expect.objectContaining({ code: 'auth_status_unavailable' }));
   });
 
   it.each([

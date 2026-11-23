@@ -36,7 +36,7 @@ export {
   buildRemoteHappierInvocationCommand,
   type RemoteBootstrapCommandLabel,
 } from './ssh/remoteBootstrapCommandBuilder.js';
-export { isRemoteBootstrapUnauthenticatedCliResult, normalizeRemoteBootstrapCliJsonResult } from './executors/remoteEnrollMachineFlowExecutor.js';
+export { normalizeRemoteBootstrapCliJsonResult, readRemoteBootstrapAuthStatusRefusal } from './executors/remoteEnrollMachineFlowExecutor.js';
 export { installRemoteFirstPartyComponentPayload } from './kinds/remoteFirstPartyPayloadInstaller.js';
 export { createOpenSshRemoteCliTransport } from './ssh/openSshRemoteCliTransport.js';
 export { sshCommandError, sshCommandFailure } from './ssh/sshCommandFailure.js';

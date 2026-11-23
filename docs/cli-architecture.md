@@ -10617,6 +10617,8 @@ Doctor repair's auth context uses the process's selected Home unless an explicit
 `--server` target is supplied; reading a scoped report does not change the terminal's
 saved selection. It probes only that Home's API endpoint and renders other stored
 credentials as unverified. Successful `auth status --json` includes `serverId`.
+SSH enrollment carries `auth_status_unavailable` from the guest to the task result. Pairing
+continues on the separate signed-out result when the guest reports missing credentials.
 The identity-free env-derived-profile adoption path carries the credential's machine,
 account and reconnect-cursor maps into an empty named profile. It leaves existing
 destination state alone and remains disabled after a Home identity is observed;

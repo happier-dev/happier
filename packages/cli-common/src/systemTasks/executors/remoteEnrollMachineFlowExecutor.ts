@@ -17,15 +17,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** When inspecting a failed process, only the CLI's expected signed-out exit is admissible. */
-export function isRemoteBootstrapUnauthenticatedCliResult(value: unknown, exitStatus?: number): boolean {
-  return (exitStatus === undefined || exitStatus === 1)
-    && isRecord(value)
-    && value.v === 1
-    && value.ok === false
-    && value.kind === 'auth_status'
-    && isRecord(value.error)
-    && value.error.code === 'not_authenticated';
+/** Recognize an expected guest auth response without exposing guest diagnostics. */
+export function readRemoteBootstrapAuthStatusRefusal(value: unknown, exitStatus = 1) {
+  if (exitStatus !== 1 || !isRecord(value) || value.v !== 1 || value.ok !== false
+    || value.kind !== 'auth_status' || !isRecord(value.error)) return null;
+  const { code, credentialState } = value.error;
+  if (code !== 'not_authenticated' && code !== 'auth_status_unavailable') return null;
+  return { code, credentialState };
 }
 
 /** The ordinary CLI envelope has the same meaning on every bootstrap transport. */
@@ -40,9 +38,12 @@ export function normalizeRemoteBootstrapCliJsonResult(value: unknown, authStatus
         : !isRecord(value.error) || typeof value.error.code !== 'string' || !value.error.code.trim())) {
       throw new SystemTaskExecutionError('invalid_cli_response', 'Remote bootstrap command returned an invalid auth status envelope.');
     }
-    if (isRemoteBootstrapUnauthenticatedCliResult(value)) {
-      return { ok: true, data: { authenticated: false,
-        credentialState: isRecord(value.error) ? value.error.credentialState : undefined } };
+    const refusal = readRemoteBootstrapAuthStatusRefusal(value);
+    if (refusal?.code === 'not_authenticated') {
+      return { ok: true, data: { authenticated: false, credentialState: refusal.credentialState } };
+    }
+    if (refusal?.code === 'auth_status_unavailable') {
+      throw new SystemTaskExecutionError(refusal.code, 'Could not determine authentication status for the selected Relay.');
     }
   }
   // Daemon and service commands also produce plain JSON objects, not CLI envelopes.

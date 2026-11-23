@@ -348,7 +348,7 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
   const stdout = result.stdout;
   const parsed = parseJsonLinesBestEffort<T>(stdout);
   if (parsed && (result.status === 0
-    || (params.authStatus === true && systemTasks.isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status)))) {
+    || (params.authStatus === true && systemTasks.readRemoteBootstrapAuthStatusRefusal(parsed, result.status)))) {
     return parsed;
   }
   if (result.status === 0) {
