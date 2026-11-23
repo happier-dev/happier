@@ -5,10 +5,14 @@ import { BROWSER_HISTORY_NAVIGATION_CHANGED, readBrowserHistoryIndex, readBrowse
 
 let browserWindow: Window | null = null;
 let releaseBrowserHistoryNavigation: (() => void) | null = null;
-let acceptWorkspacePopState: ((state: unknown, event: PopStateEvent) => boolean) | null = null;
+type WorkspaceBrowserHistoryBinding = Readonly<{
+    acceptPopState?: (state: unknown, event: PopStateEvent) => boolean;
+    projectReplaceUrl: (url: string | URL) => string | URL;
+}>;
+let workspaceHistoryBinding: WorkspaceBrowserHistoryBinding | null = null;
 
 function onWorkspacePopState(event: PopStateEvent): void {
-    if (acceptWorkspacePopState?.(event.state, event)) {
+    if (workspaceHistoryBinding?.acceptPopState?.(event.state, event)) {
         event.stopImmediatePropagation();
         return;
     }
@@ -24,15 +28,16 @@ export function installWorkspaceBrowserHistory(): void {
     browserWindow = window;
     const target = window;
     releaseBrowserHistoryNavigation = trackBrowserHistoryNavigation(target.history,
-        () => target.dispatchEvent(new Event(BROWSER_HISTORY_NAVIGATION_CHANGED)));
+        () => target.dispatchEvent(new Event(BROWSER_HISTORY_NAVIGATION_CHANGED)),
+        url => workspaceHistoryBinding?.projectReplaceUrl(url) ?? url);
     window.addEventListener('popstate', onWorkspacePopState, true);
 }
 
 /** Bind the mounted workspace transport to the already-installed browser owner. */
-export function bindWorkspaceBrowserHistory(accept: (state: unknown, event: PopStateEvent) => boolean): () => void {
+export function bindWorkspaceBrowserHistory(binding: WorkspaceBrowserHistoryBinding): () => void {
     installWorkspaceBrowserHistory();
-    acceptWorkspacePopState = accept;
-    return () => { if (acceptWorkspacePopState === accept) acceptWorkspacePopState = null; };
+    workspaceHistoryBinding = binding;
+    return () => { if (workspaceHistoryBinding === binding) workspaceHistoryBinding = null; };
 }
 
 type BrowserHistoryBoundary = Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;

@@ -1914,12 +1914,19 @@ describe('consumed workspace navigation owner', () => {
         boundary.pathname = admittedRecovery ? '/server' : '/join/invitation';
         boundary.params = {};
         boundary.dataReady = ready;
-        const location = { pathname: boundary.pathname, search: '', hash: '' };
+        const location = {
+            origin: 'https://workspace.test', pathname: boundary.pathname, search: '', hash: '',
+            get href() { return this.origin + this.pathname + this.search + this.hash; },
+        };
+        const navigations: string[] = [];
         const history = { state: null as unknown,
             replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
                 history.state = state;
                 if (!href) return;
                 const next = new URL(href, 'https://workspace.test');
+                if (next.pathname + next.search !== location.pathname + location.search) {
+                    navigations.push(next.pathname + next.search);
+                }
                 location.pathname = next.pathname; location.search = next.search;
             },
             pushState: (state: unknown, unused: string, href: string) => history.replaceState(state, unused, href),
@@ -1970,6 +1977,12 @@ describe('consumed workspace navigation owner', () => {
         const target = state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
         expect(hrefForDestinationRef(catalog, target)).toBe(href);
         expect(location.pathname).toBe(href);
+
+        if (admittedRecovery) {
+            expect(navigations).toEqual([href]);
+            await act(async () => { expect(navigation().openHref('/settings', { replace: true })).toBe(true); });
+            expect(location.pathname).toBe('/settings');
+        }
 
         // A deliberate workspace action supersedes that pending child even
         // before Expo acknowledges it; the mirror repair must not trap people.

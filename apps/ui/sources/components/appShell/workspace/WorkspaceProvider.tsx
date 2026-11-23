@@ -253,7 +253,6 @@ export function WorkspaceProvider(props: Readonly<{
         const mirror = (href: string, entry?: WorkspaceNavigationEntry) => {
             // Native owns this window's boot URL. Its workspace history is entirely local.
             if (props.appWindow) return;
-            if (entry) admittedEntryHref.current = null;
             const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
             mounted.projectedHref = projected;
             // The browser transport has already written the URL, and hosted bodies read their tab's params, not
@@ -351,7 +350,13 @@ export function WorkspaceProvider(props: Readonly<{
                 if (mounted.initialized) owner.dispatch(action);
                 else owner.restoreAction(action);
             },
-            transport: browser ?? { commit: mirror },
+            transport: browser ? {
+                ...browser,
+                commit(href, entry, replace, position) {
+                    admittedEntryHref.current = null;
+                    browser.commit(href, entry, replace, position);
+                },
+            } : { commit: mirror },
             createId: randomUUID, onChange: changed,
             resolveOpenHref: (href: string) => {
                 const facts = latest.current;
@@ -511,7 +516,7 @@ export function WorkspaceProvider(props: Readonly<{
         if (runtime.browser && projectedHref) {
             const projectedPath = projectedHref.split(/[?#]/)[0]!;
             const currentPath = routeHref.split(/[?#]/)[0]!;
-            if (routeHref !== projectedHref && (currentPath === '/' || projectedPath.startsWith(`${currentPath}/`))) {
+            if (!entryHref && routeHref !== projectedHref && (currentPath === '/' || projectedPath.startsWith(`${currentPath}/`))) {
                 runtime.browser.enterHref(projectedHref, true);
                 return;
             }
@@ -553,8 +558,20 @@ export function WorkspaceProvider(props: Readonly<{
     }, [eligible, owner.isReady, hostsRoute, initialTab, pathname, routeHref, runtime]);
 
     React.useLayoutEffect(() => {
-        if (!hostsRoute || !owner.isReady || !runtime.browser || typeof window === 'undefined') return;
-        return bindWorkspaceBrowserHistory(runtime.browser.acceptPopState);
+        if (!runtime.browser) return;
+        return bindWorkspaceBrowserHistory({
+            acceptPopState: hostsRoute && owner.isReady ? runtime.browser.acceptPopState : undefined,
+            projectReplaceUrl(url) {
+                const entryHref = admittedEntryHref.current;
+                if (!entryHref || readBrowserHref() !== entryHref) return url;
+                const candidate = new URL(url, window.location.href);
+                if (candidate.origin !== window.location.origin) return url;
+                // Expo may publish a navigator's index as its child mounts. Its
+                // history state still belongs to Expo, while our admitted leaf owns the address.
+                const path = candidate.pathname;
+                return path === '/' || entryHref.split(/[?#]/)[0]!.startsWith(`${path}/`) ? entryHref : url;
+            },
+        });
     }, [owner.isReady, hostsRoute, runtime]);
 
     // The phone records what is on screen as its one preview (or the tab it already is). It never
@@ -626,8 +643,10 @@ export function WorkspaceProvider(props: Readonly<{
             // admits that URL once ready, without lending it to Expo's index.
             runNavigation(() => {
                 if (!canEnter()) return;
-                if (!latest.current.owner.isReady) runtime.browser?.enterHref(href, options?.replace === true);
-                else {
+                if (!latest.current.owner.isReady) {
+                    admittedEntryHref.current = null;
+                    runtime.browser?.enterHref(href, options?.replace === true);
+                } else {
                     runtime.initialized = true;
                     runtime.adapter.openHref(href, options);
                 }

@@ -44,7 +44,11 @@ export function readBrowserHistoryIndex(history: Pick<History, 'state'>): number
  * This is the former sidebar hook's tracking, now independent of a chrome consumer's lifetime.
  * The existing state key and entry ids are preserved; the browser still owns chronology.
  */
-export function trackBrowserHistoryNavigation(history: Pick<History, 'state' | 'pushState' | 'replaceState'>, changed: () => void): () => void {
+export function trackBrowserHistoryNavigation(
+    history: Pick<History, 'state' | 'pushState' | 'replaceState'>,
+    changed: () => void,
+    projectReplaceUrl?: (url: string | URL) => string | URL,
+): () => void {
     const originalPushState = history.pushState.bind(history);
     const originalReplaceState = history.replaceState.bind(history);
     originalReplaceState(attachHistoryPosition(history.state, readHistoryPosition(history) ?? DEFAULT_POSITION), '');
@@ -56,7 +60,8 @@ export function trackBrowserHistoryNavigation(history: Pick<History, 'state' | '
         changed();
     };
     history.replaceState = (state: unknown, unused: string, url?: string | URL | null) => {
-        originalReplaceState(attachHistoryPosition(state, readHistoryPosition(history) ?? DEFAULT_POSITION), unused, url ?? undefined);
+        originalReplaceState(attachHistoryPosition(state, readHistoryPosition(history) ?? DEFAULT_POSITION), unused,
+            url == null ? undefined : projectReplaceUrl?.(url) ?? url);
         changed();
     };
     return () => {
