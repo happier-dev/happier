@@ -31,6 +31,7 @@ import { createDiscussion } from '@/app/discussions/mutations';
 import { inviteDiscussionParticipant } from '@/app/discussions/accessService';
 import { registerDiscussionRoutes } from '../discussions/registerDiscussionRoutes';
 import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
+import { registerAutomationActionIndexRoutes } from '../automations/registerAutomationActionIndexRoutes';
 import { featuresRoutes } from '../features/featuresRoutes';
 import { accessKeysRoutes } from '../accessKeys/accessKeysRoutes';
 import { sessionPendingRoutes } from '../session/pendingRoutes';
@@ -51,7 +52,7 @@ import { machinesRoutes } from '../machines/machinesRoutes';
 
 export async function createSignedDiscussionHttpFixture(allowedActionId?: ActionId, allowedSessionIds: readonly string[] = [], candidateDirectories = false, machineCustodianAccountId?: string,
     options?: Readonly<{ allowedActionIds?: readonly ActionId[]; pending?: true; dataKeyEnvelopes?: true; sessionReads?: true; artifactReads?: true; templateCatalogs?: true; machineReads?: true;
-        sessionLookup?: true; sessionOrganization?: true; sessionDetail?: true; signedInLinks?: true; publicShares?: true }>) {
+        sessionLookup?: true; sessionOrganization?: true; sessionDetail?: true; signedInLinks?: true; publicShares?: true; actionAutomationIndex?: true }>) {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const credential: AccountPasswordCredentialV1 = { v: 1, kind: 'plain_password_hash', hash: {
         v: 1, algorithm: 'scrypt', parameters: { n: 16_384, r: 8, p: 5, keyLength: 32 },
@@ -93,6 +94,7 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
     if (options?.sessionDetail) registerSessionPatchRoute(app);
     registerDiscussionRoutes(app);
     registerAccountEncryptionRoutes(app);
+    if (options?.actionAutomationIndex) registerAutomationActionIndexRoutes(app);
     featuresRoutes(app);
     accessKeysRoutes(app);
     if (options?.pending) sessionPendingRoutes(app);

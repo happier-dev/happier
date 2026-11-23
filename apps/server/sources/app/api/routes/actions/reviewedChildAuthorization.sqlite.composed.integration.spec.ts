@@ -6,7 +6,8 @@ import axios from 'axios';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     DeploymentDomainMutationResultV1Schema, DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1,
     DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentGetInputV1Schema,
-    DeploymentTransitionInputV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol';
+    DeploymentTransitionInputV1Schema, DeploymentBindingsSetResultV1Schema,
+    computeDeploymentTransitionRequestDigestV1, signMachineInstallationProof } from '@happier-dev/protocol';
 import { createActionExecutor, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
@@ -28,7 +29,7 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
-import { createReviewedChildAuthorizationFixture, prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
+import { createReviewedChildAuthorizationFixture } from './reviewedChildAuthorization.composed.testkit';
 import { auth } from '@/app/auth/auth';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveMachineAdmission, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
@@ -69,7 +70,6 @@ import { createNativeSessionTeamCredentialFixture } from '@/app/teams/credential
 import { machinesRoutes } from '../machines/machinesRoutes';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '../../../../../../cli/src/api/clientCompatibility/cliClientCompatibility';
 import { createDaemonDeploymentActionDeps } from '../../../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
-import { createActionOperationStore } from '../../../../../../cli/src/daemon/actionOperations/actionOperationStore';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '../../../../../../cli/src/plugins/testkit/admittedRuntime';
 import { createConnectedAccountPurposeBindingOwner } from '../../../../../../cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -745,7 +745,7 @@ describe('public roots through real reviewed-child packet producers', () => {
         child: HostReviewedChildV1, execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) {
         if (!input.preview) throw new Error('Expected preview Create');
         const content = reviewedPreviewContent(input.preview);
-        const prepared = await prepareReviewedChildAuthorization({ actionId: 'deployments.environments.create', input,
+        const prepared = await f.prepareChild({ actionId: 'deployments.environments.create', input,
             context: f.context(root), child, execute, deps: (invoke, executeAdmittedChild) => {
                 // Home storage is the boundary. The real fork preparation and review run before the observed child.
                 const storage: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['deploymentAction']> = async (actionId, _operand, context) => {
@@ -866,7 +866,7 @@ describe('public roots through real reviewed-child packet producers', () => {
             const effectActionId = formatQualifiedPluginActionId(action);
             const childInput = { v: 1, serverId: f.serverId, environmentId: f.environment.id, previewChildren: true };
             const prepare = (child: HostReviewedChildV1,
-                execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) => prepareReviewedChildAuthorization({
+                execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) => f.prepareChild({
                 actionId: 'deployments.environments.update', input, context: f.context(root), child,
                 deps: invoke => ({
                     deploymentAction: async (actionId, value, context) => actionId === 'deployments.environments.get'
@@ -937,7 +937,7 @@ describe('public roots through real reviewed-child packet producers', () => {
             const effectActionId = formatQualifiedPluginActionId(action);
             const childInput = { v: 1, serverId: f.serverId, environmentId: f.environment.id,
                 targetLinkId: linked.json().targetLinkId };
-            const prepared = await prepareReviewedChildAuthorization({ actionId: 'deployments.targets.link', input,
+            const prepared = await f.prepareChild({ actionId: 'deployments.targets.link', input,
                 context: f.context(root), child: { action, role: 'platform-failure.setup', input: childInput },
                 deps: invoke => {
                     const storage: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['deploymentAction']> = async (actionId, _input, context) => {
@@ -1037,7 +1037,7 @@ describe('public roots through real reviewed-child packet producers', () => {
                 ...await f.artifact('deployment-target-link.v1') };
             const root = await f.root('deployments.targets.link', input);
             let transported = false;
-            const prepared = await prepareReviewedChildAuthorization({ actionId: 'deployments.targets.link', input,
+            const prepared = await f.prepareChild({ actionId: 'deployments.targets.link', input,
                 context: f.context(root), child: { action: 'machines.managed.retention.update',
                     role: `target-retention:${f.machine.id}`, input: { homeId: f.serverId, managedId: 'unselected',
                         expectedIntentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
@@ -1197,7 +1197,7 @@ describe('public roots through real reviewed-child packet producers', () => {
                 createdAt: 1, installationId: f.machine.installationId!, publicKey: Buffer.from(f.keyPair.publicKey).toString('base64url'),
                 privateKey: Buffer.from(f.keyPair.secretKey).toString('base64url') });
             try {
-                const prepared = await prepareReviewedChildAuthorization({ actionId: 'deployments.backups.configure', input,
+                const prepared = await f.prepareChild({ actionId: 'deployments.backups.configure', input,
                     context: f.context(root), child: { action: 'deployments.bindings.set', role: 'backup.bindings', input: childInput },
                     deps: (invoke, executeAdmittedChild) => {
                         const native = createDaemonDeploymentActionDeps({ credentials: { token: f.presentUserToken, encryption: null },
@@ -1274,37 +1274,32 @@ describe('public roots through real reviewed-child packet producers', () => {
                             headers: await f.headers(childAuthorization, read) });
                         expect(observed.statusCode, `GET ${read.path} (${read.effectActionId}): ${observed.body}`).toBe(status);
                     }
-                    // The installed operation owner reports a failed native
-                    // attempt. Recovery invokes the production private transition
-                    // writer, including its installation proof and HTTP producer.
-                    const scope = { accountId: f.account.id, machineId: f.machine.id };
-                    const operations = createActionOperationStore();
-                    operations.create({ operationId: body.actionOperationId, actionId: 'deployments.deploy', scope,
-                        title: 'Native failure', cancellation: 'supported', inputIdentity: JSON.stringify(f.deployInput) });
-                    operations.fail(body.actionOperationId, { errorCode: 'deployment_failed', error: 'Native attempt failed' });
-                    const restoreHttp = installAxiosFastifyAdapter({ app: f.resourceApp, origin: f.origin });
-                    const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
-                        createdAt: 1, installationId: f.machine.installationId!, publicKey: Buffer.from(f.keyPair.publicKey).toString('base64url'),
+                    // The installed controller settles its admitted receipt. A retry of the
+                    // same request cannot drive interrupted-receipt recovery.
+                    const receipt = await db.deployment.findFirstOrThrow({ where: {
+                        environmentId: f.environment.id, actionOperationId: body.actionOperationId } });
+                    const settlement = { serverId: f.serverId, environmentId: f.environment.id, deploymentId: receipt.id,
+                        expectedRevision: receipt.revision, actionOperationId: body.actionOperationId, machineId: f.machine.id,
+                        installationId: f.machine.installationId!, kind: 'settle', state: 'failed' } as const;
+                    const proof = signMachineInstallationProof({ payload: { version: 1, accountId: f.account.id,
+                        machineId: settlement.machineId, installationId: settlement.installationId,
+                        deploymentTransition: { serverId: settlement.serverId, environmentId: settlement.environmentId,
+                            deploymentId: settlement.deploymentId, actionOperationId: settlement.actionOperationId,
+                            expectedRevision: settlement.expectedRevision,
+                            requestBodyDigest: computeDeploymentTransitionRequestDigestV1(settlement) } },
                         privateKey: Buffer.from(f.keyPair.secretKey).toString('base64url') });
-                    try {
-                        const deps = createDaemonDeploymentActionDeps({ credentials: { token: f.presentUserToken, encryption: null },
-                            serverId: f.serverId, serverHttpBaseUrl: f.origin, machineId: f.machine.id,
-                            resolveRequesterIdentity: async () => { throw new Error('Recovery does not execute workspace access'); },
-                            runtime: { async acquire() { throw new Error('Recovery does not execute native deployment'); } },
-                            readOperation: async id => operations.get(scope, id) });
-                        // Later preparation may refuse this deliberately minimal
-                        // content; only the completed recovery transition is under test.
-                        await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: f.deployInput, context });
-                        expect(f.transitions).toHaveLength(1);
-                        expect(f.transitions[0].status, `POST ${f.transitions[0].path} (native recovery)`).toBe(200);
-                        const transition = DeploymentTransitionInputV1Schema.parse(f.transitions[0].body);
-                        expect(await db.deployment.findUnique({ where: { id: transition.deploymentId } })).toMatchObject({ state: 'failed' });
-                        const foreignPath = `/v1/deployments/environments/${f.environment.id}/deployments/${crypto.randomUUID()}/transitions`;
-                        const refused = await f.resourceApp.inject({ method: 'POST', url: foreignPath, payload: transition,
-                            headers: await f.headers(childAuthorization, { effectActionId: 'deployments.deploy', method: 'POST',
-                                path: foreignPath, body: transition }) });
-                        expect(refused.statusCode, `POST ${foreignPath} (deployments.deploy): ${refused.body}`).toBe(401);
-                    } finally { identity.mockRestore(); restoreHttp(); }
+                    const transition = DeploymentTransitionInputV1Schema.parse({ ...settlement, proof });
+                    const transitionPath = `/v1/deployments/environments/${f.environment.id}/deployments/${receipt.id}/transitions`;
+                    const settled = await f.resourceApp.inject({ method: 'POST', url: transitionPath, payload: transition,
+                        headers: await f.headers(childAuthorization, { effectActionId: 'deployments.deploy', method: 'POST',
+                            path: transitionPath, body: transition }) });
+                    expect(settled.statusCode).toBe(200);
+                    expect(await db.deployment.findUnique({ where: { id: receipt.id } })).toMatchObject({ state: 'failed' });
+                    const foreignPath = transitionPath.replace(receipt.id, crypto.randomUUID());
+                    const refused = await f.resourceApp.inject({ method: 'POST', url: foreignPath, payload: transition,
+                        headers: await f.headers(childAuthorization, { effectActionId: 'deployments.deploy', method: 'POST',
+                            path: foreignPath, body: transition }) });
+                    expect(refused.statusCode).toBe(401);
                     return { ok: true, result: response.json() };
                 });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true });

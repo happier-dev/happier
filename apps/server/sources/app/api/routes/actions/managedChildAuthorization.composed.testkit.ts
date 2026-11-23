@@ -33,7 +33,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createExternalActionMachineRpcExecution, createExternalActionSourceMachineRpcExecution,
     dispatchManagedMachineAgentIsolation, projectExternalActionRequesterHttpAuthorization } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { createMachineContentCodec } from '../../../../../../cli/src/api/machine/machineStoredContent';
-import { createReviewedChildAuthorizationFixture, prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
+import { createReviewedChildAuthorizationFixture } from './reviewedChildAuthorization.composed.testkit';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
 
 /** Register under the caller's real disposable SQLite/Auth harness. */
@@ -158,7 +158,7 @@ export function registerManagedChildAuthorizationCharacterization(): void {
                 async () => ({ ok: true, result: null }), admitted.machine.id)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
             const homeTarget = resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: { v: 1,
                 homeServerIdentityId: serverId, canonicalServerUrl: origin, revision: 1, endpoints: [{ kind: 'https', url: origin }] } });
-            const prepared = await prepareReviewedChildAuthorization({ actionId: 'machines.managed.acquire',
+            const prepared = await f.prepareChild({ actionId: 'machines.managed.acquire',
                 input, context: f.context(root), managedId: admitted.machine.id,
                 child: { action: 'machines.agentIsolation.preview', role: 'machines.agentIsolation.preview', input: childInput }, execute: async context =>
                     dispatchManagedMachineAgentIsolation({ context, actionId: 'machines.agentIsolation.preview', input: childInput,
@@ -183,7 +183,9 @@ export function registerManagedChildAuthorizationCharacterization(): void {
         const intent = SessionTeamCredentialBindingIntentV1Schema.parse({ ...native.intent,
             providerModelSelection: { ...native.intent.providerModelSelection, executionMachineId: f.machine.id } });
         await db.teamMembership.update({ where: { id: native.membership.id }, data: { accountId: f.account.id } });
+        // Native credential installation uses a bound one-off launch. Saved preset launch content is opaque to Home.
         await db.managedMachine.update({ where: { id: native.row.id }, data: { homeId, enrolledMachineId: f.machine.id,
+            presetId: null, presetRevision: null, launch: native.launch,
             admittedInput: { enrollmentAccountId: f.account.id } } });
         await db.pluginMachineMaterialization.updateMany({ where: { machineId: native.controller.id }, data: { serverIdentityId: homeId } });
         await db.machine.update({ where: { id: native.controller.id }, data: { installationPublicKey: new Uint8Array(controllerKeys.publicKey),

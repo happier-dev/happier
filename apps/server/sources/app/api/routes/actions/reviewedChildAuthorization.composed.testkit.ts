@@ -3,6 +3,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutor, readHostAdmittedReviewedParentV1, type ActionExecutorContext, type ActionExecuteResult,
     type HostReviewedChildV1, type HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,6 +17,7 @@ export async function prepareReviewedChildAuthorization(params: Readonly<{
     input: unknown;
     context: ActionExecutorContext;
     managedId?: string;
+    actionAutomations?: ActionExecutorDeps['actionAutomations'];
     child: HostReviewedChildV1;
     deps?: ActionExecutorDeps | ((invokeAdmittedChild: (context: ActionExecutorContext) => Promise<ActionExecuteResult>,
         executeAdmittedChild: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) => ActionExecutorDeps);
@@ -36,6 +38,7 @@ export async function prepareReviewedChildAuthorization(params: Readonly<{
         return execution;
     };
     const executor = createActionExecutor({
+        actionAutomations: params.actionAutomations,
         ...(typeof params.deps === 'function' ? params.deps(observeParent, executeChild) : params.deps),
         // The native person confirmation and child transport are system boundaries.
         presentUserActionConfirmation: async () => true,
@@ -65,15 +68,27 @@ export async function prepareReviewedChildAuthorization(params: Readonly<{
 
 /** Public Home issuance and the production private child/header/packet issuers; no synthetic binding or proof. */
 export async function createReviewedChildAuthorizationFixture(options?: Parameters<typeof createSignedDiscussionHttpFixture>[4]) {
-    const fixture = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, options);
+    const fixture = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, { ...options, actionAutomationIndex: true });
+    const actionAutomations = createActionAutomationHttpPortV1({
+        accountId: fixture.account.id,
+        request: async (url, { method, body }) => {
+            const response = await fixture.app.inject({ method, url,
+                headers: { authorization: `Bearer ${fixture.presentUserToken}` },
+                ...(body === undefined ? {} : { payload: body }) });
+            if (response.statusCode !== 200) throw new Error(`Action automation request failed (${response.statusCode})`);
+            return response.json();
+        },
+    });
+    const prepareChild = (params: Omit<Parameters<typeof prepareReviewedChildAuthorization>[0], 'actionAutomations'>) =>
+        prepareReviewedChildAuthorization({ ...params, actionAutomations });
     const currentnessRequests: Array<{ method: string | undefined; path: string | undefined; status: number }> = [];
     fixture.app.server.on('request', (request, response) => {
         response.once('finish', () => currentnessRequests.push({ method: request.method, path: request.url, status: response.statusCode }));
     });
     const origin = await fixture.app.listen({ host: '127.0.0.1', port: 0 });
 
-    async function root(actionId: ActionId, input: unknown) {
-        const issued = await fixture.mint(actionId, input, true);
+    async function root(actionId: ActionId, input: unknown, credential: 'person' | 'api_token' = 'person') {
+        const issued = await fixture.mint(actionId, input, credential === 'person');
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: issued,
             serverId: issued.binding.serverIdentityId, serverIdentityId: issued.binding.serverIdentityId,
             serverHttpBaseUrl: origin, target: issued.binding.target, installationId: fixture.machine.installationId!,
@@ -119,7 +134,7 @@ export async function createReviewedChildAuthorizationFixture(options?: Paramete
     async function preparedChild(authorization: ExternalActionExecutionAuthorizationV1, input: unknown,
         selected: HostReviewedChildV1, execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>, managedId?: string,
         deps?: ActionExecutorDeps) {
-        const prepared = await prepareReviewedChildAuthorization({ actionId: authorization.binding.actionId,
+        const prepared = await prepareChild({ actionId: authorization.binding.actionId,
             input, context: context(authorization), child: selected, execute, managedId, deps });
         return prepared.execution;
     }
@@ -132,5 +147,5 @@ export async function createReviewedChildAuthorizationFixture(options?: Paramete
         return { execution, request: { method, requestId, params } };
     }
 
-    return { ...fixture, root, withAccountProjection, context, headers, preparedChild, rpc, currentnessRequests, origin };
+    return { ...fixture, root, withAccountProjection, context, headers, prepareChild, preparedChild, rpc, currentnessRequests, origin };
 }

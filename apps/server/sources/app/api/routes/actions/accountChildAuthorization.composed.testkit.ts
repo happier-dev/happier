@@ -8,6 +8,9 @@ import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
+import { createCliTeamCredentialUsageExportAction } from '../../../../../../cli/src/session/actions/teamCredentialUsageExportAction';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -47,7 +50,8 @@ async function discussion(f: Fixture) {
 /** Post-refactor characterization using the private host or native sibling issuer and real CLI signatures. */
 export function registerAccountChildAuthorizationComposedTests(): void {
     it('exports Team credential usage through its native query sibling and refuses a freshly signed Account read', async () => {
-        const f = await createReviewedChildAuthorizationFixture();
+        // Export builds its CSV on the client. A scoped API token exercises the signed sibling without claiming a person-originated Account root.
+        const f = await createReviewedChildAuthorizationFixture({ allowedActionIds: ['teams.credentials.usage.export'] });
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         registerTeamCredentialResourceRoutes(app);
         await app.ready();
@@ -55,19 +59,22 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const team = await db.team.create({ data: { name: 'Reviewed usage export' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: f.account.id, role: 'admin' } });
             const resource = await db.teamCredentialResource.create({ data: { teamId: team.id,
-                custodianAccountId: f.account.id, displayName: 'Reviewed model', disclosureCeiling: 'brokered_only',
+                custodianAccountId: f.account.id, displayName: storedPlainPrivateLabel('Reviewed model'), disclosureCeiling: 'brokered_only',
                 sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}', allMembersDeliveryMode: 'brokered' } });
             const input = { query: { resourceId: resource.id, startMs: 0, endMs: Date.now(),
-                granularity: 'day', costMode: 'auto' }, resourceName: resource.displayName };
-            const root = await f.root('teams.credentials.usage.export', input);
-            const executor = createActionExecutor({ homeDomainAction: async ({ actionId, input: body, context }) => {
+                granularity: 'day', costMode: 'auto' } };
+            const root = await f.root('teams.credentials.usage.export', input, 'api_token');
+            const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async ({ actionId, input: body, context }) => {
                 const path = homeDomainActionPathForMethod(actionId, 'POST');
                 const response = await app.inject({ method: 'POST', url: path, payload: body,
                     headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: actionId, method: 'POST', path, body }) });
                 expect(response.statusCode, response.body).toBe(200);
                 expect(response.json()).toMatchObject({ v: 1, totals: { tokens: { total: 0 } } });
                 return response.json();
-            } });
+            };
+            const executor = createActionExecutor({ teamCredentialUsageExport: createCliTeamCredentialUsageExportAction({
+                credentials: { token: f.pat.token, encryption: null }, homeDomainAction,
+            }) });
             const exported = await executor.execute('teams.credentials.usage.export', input, f.context(root));
             expect(exported, JSON.stringify(exported)).toMatchObject({ ok: true, result: { mediaType: 'text/csv' } });
             const path = '/v1/account/encryption/currentness';
