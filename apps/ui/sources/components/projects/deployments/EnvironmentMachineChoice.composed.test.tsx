@@ -31,6 +31,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { SoftwareInputFields } = await import('@/components/store/StoreSoftwareInputs');
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
 const { DEPLOY_HOST_DOCKER_ITEM } = await import('@happier-dev/protocol/deployments/deployHostReadiness');
+const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 
 it.each(['absent', 'present'] as const)('renders the inspected repository Compose fact in Where (%s)', async compose => {
   const serverIdentityId = `srv_${'6'.repeat(32)}`;
@@ -176,15 +177,20 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
       id: 'host', installationId: 'host-installation', activeAt: Date.now(),
     })]);
-    const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null}
-      definitionKind="compose" phone={false} actions={null} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    const retainDraftAndOpenSetup = vi.fn();
+    const screen = await renderScreen(<DestinationInstanceHost tabId="deploy-draft" ref={{ kind: 'plugins', params: {} }}
+      pathname="/plugins" focused visible navigation={{ push: vi.fn(), pushRetainingCurrent: retainDraftAndOpenSetup,
+        replace: () => {}, back: () => {} }}>
+      <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null}
+        definitionKind="compose" phone={false} actions={null} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />
+    </DestinationInstanceHost>);
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.hostUnchecked')).not.toBeNull());
       expect(screen.findAllByType(MachineSetupRecipeInputs)).toHaveLength(0);
       expect(screen.findAllByType(SoftwareInputFields)).toHaveLength(0);
       expect(screen.findByTestId('project-deployments.draft.hostSetup.prepare')?.props.disabled).toBe(false);
       await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
-      expect(router.spies.push).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
+      expect(retainDraftAndOpenSetup).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
         target: { machineId: 'host', serverId: serverIdentityId }, tab: { id: 'setup' } }));
       expect(modes).toEqual(outcome === 'unknown' ? [undefined] : []);
     } finally { await screen.unmount(); }

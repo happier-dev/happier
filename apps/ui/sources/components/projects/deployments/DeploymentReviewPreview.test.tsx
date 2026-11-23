@@ -22,7 +22,7 @@ const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: '
 const shown = { mounted: true, visible: true, focused: true } as const;
 
 /** The network boundary only: the shared read controller, receipt projection and live-address owner run for real. */
-function previewController(input: Readonly<{ attachedDomain: boolean; health: 'up' | 'down'; purpose?: 'preview' | 'standard' }>) {
+function previewController(input: Readonly<{ attachedDomain: boolean; health: 'up' | 'down' | null; purpose?: 'preview' | 'standard' }>) {
   const base = createDeploymentEnvironmentDetailV1();
   const linkId = base.environment.runtimeTargetLinkId!;
   const servingId = base.targetLinks.find((row) => row.targetLink.id === linkId)!.targetLink.activeDeploymentId!;
@@ -31,10 +31,11 @@ function previewController(input: Readonly<{ attachedDomain: boolean; health: 'u
   const relations = purpose === 'preview' ? { previewTemplateEnvironmentId: 'environment-production', previewRepositoryId: scope.projectSourceId,
     previewPullRequestId: 'pr:12', previewTargetLinkId: linkId } : {};
   const detail = { ...base, environment: createDeploymentEnvironmentHeaderV1({ ...base.environment, serverId: scope.serverId, purpose, ...relations }),
-    healthAggregate: { v: 1 as const, environmentId: base.environment.id, targetLinkId: linkId, protection: base.environment.protection,
+    ...(input.health === null ? {} : { healthAggregate: { v: 1 as const, environmentId: base.environment.id, targetLinkId: linkId, protection: base.environment.protection,
       status: input.health, n: 1, down: input.health === 'down' ? 1 : 0, degraded: 0, unknown: 0, members: [],
-      affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false } };
-  const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId }) });
+      affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false } }) };
+  const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId,
+    ...(input.health === null ? { state: 'running_unverified' as const } : {}) }) });
   const domain = { domain: { v: 1 as const, id: 'preview-domain', environmentId: detail.environment.id, targetLinkId: linkId, revision: 1,
     state: 'active' as const, contentArtifactId: 'content-preview-domain', contentHeaderVersion: 1, contentBodyVersion: 1,
     createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1 },
@@ -66,7 +67,7 @@ describe('Review preview (deploy auto-mode U9)', () => {
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
   });
 
-  it('says a preview that serves no address is not live, and a failing check as failing, never as healthy', async () => {
+  it('shows an observed failure independently of address availability', async () => {
     const { controller, environmentId } = previewController({ attachedDomain: false, health: 'down' });
     const open = vi.fn();
     const screen = await renderScreen(<DeploymentReviewPreview controller={controller} environmentId={environmentId}
@@ -74,9 +75,20 @@ describe('Review preview (deploy auto-mode U9)', () => {
     try {
       await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.health'),
         (node) => node?.props.title === t('projects.deployments.healthDown'));
-      expect(row(screen, 'project-deployments.review.preview.address')?.props.title).toBe(t('projects.deployments.review.previewNotLive'));
       await screen.pressByTestIdAsync('project-deployments.review.preview.address').catch(() => {});
       expect(open).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
+  });
+
+  it('shows no address or health check for an unverified preview without a domain', async () => {
+    const { controller, environmentId } = previewController({ attachedDomain: false, health: null });
+    const screen = await renderScreen(<DeploymentReviewPreview controller={controller} environmentId={environmentId}
+      demand={shown} onOpenAddress={vi.fn()} />);
+    try {
+      await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.health'),
+        (node) => node?.props.title === t('projects.deployments.review.noHealthCheck'));
+      await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.address'),
+        (node) => node?.props.title === t('projects.sources.noAddress'));
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
   });
 

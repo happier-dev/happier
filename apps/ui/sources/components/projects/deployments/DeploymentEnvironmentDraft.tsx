@@ -932,7 +932,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               action={{ label: t('projects.deployments.platformLink.hostReviewShort'),
                 onPress: () => {
                   if (host.setup) void host.review();
-                  else if (props.lifetime) router.push(machinePageHref({ door: 'rail',
+                  else if (props.lifetime) router.pushRetainingCurrent(machinePageHref({ door: 'rail',
                     target: { machineId: chosen.id, serverId: props.lifetime.scope.serverId }, tab: { id: 'setup' } }));
                 }, loading: host.reviewing,
                 disabled: hostApply.pending || (host.setup ? !host.canReview : !props.lifetime),

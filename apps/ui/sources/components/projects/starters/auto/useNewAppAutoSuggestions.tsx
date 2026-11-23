@@ -191,7 +191,7 @@ export function useNewAppAutoSuggestions(
   const openMachineSetup = React.useCallback(
     (machineId: string) => {
       if (!params.serverId) return;
-      router.push(
+      router.pushRetainingCurrent(
         machinePageHref({
           door: 'rail',
           target: { machineId, serverId: params.serverId },

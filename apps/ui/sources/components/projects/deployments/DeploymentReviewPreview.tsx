@@ -9,7 +9,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
-import { formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentHealthFact } from './deploymentPresentation';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentHealthRecord, useReceiptRead } from './useDeploymentReads';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
@@ -40,13 +40,18 @@ export const DeploymentReviewPreview = React.memo(function DeploymentReviewPrevi
   const toneColor = health.tone === 'danger' ? theme.colors.state.danger.textForeground
     : health.tone === 'attention' ? theme.colors.state.warning.textForeground : undefined;
   const url = address?.url ?? null;
+  const noAddress = !url && active?.content && deploymentLiveAddressDemand(active, true)
+    && (domains.result.status === 'empty' || domains.result.status === 'ready')
+    && !deploymentAddressExpected(active, domains.result.items, true);
+  const addressTitle = url ? formatDeploymentLiveAddress(url)
+    : t(noAddress ? 'projects.sources.noAddress' : 'projects.deployments.review.previewNotLive');
   return (
     <ItemGroup testID="project-deployments.review.preview" title={t('projects.deployments.review.previewTitle')}
       description={t('projects.deployments.review.previewDescription')}>
       <Item
         testID="project-deployments.review.preview.address"
         icon={<Icon name="globe" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
-        title={url ? formatDeploymentLiveAddress(url) : t('projects.deployments.review.previewNotLive')}
+        title={addressTitle}
         subtitle={t('projects.deployments.review.previewAddressNote')}
         showChevron={false}
         {...(url ? { onPress: () => props.onOpenAddress(url) } : {})}
