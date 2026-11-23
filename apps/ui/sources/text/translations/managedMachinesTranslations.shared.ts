@@ -939,6 +939,7 @@ export const managedMachinesEn = {
         signInPurposes: ({ purposes }: { purposes: string }) => `They can also read the sign-ins used for this session: ${purposes}, and this session’s Happier access.`,
         nativeSignInPurpose: ({ service }: { service: string }) => `${service} (native sign-in)`,
         howShared: "How shared machines work",
+        toldOnce: "Your Happier sign-in is stored on this machine while you work on it. Anyone with terminal or agent access could use your account and see your sessions’ files there.",
         loading: ({ machine }: { machine: string }) => `Checking ${machine} before starting your session.`,
         launching: ({ machine }: { machine: string }) => `Starting your session on ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} is offline. Your draft is kept here.`,

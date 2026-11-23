@@ -1559,6 +1559,7 @@ export const pt: TranslationStructure = {
       make: "Tornar coordenadora…",
       makeAlready: "Já é uma",
       openAsBoard: "Abrir como quadro",
+      openAsBoardSubtitle: "Tudo o que está abaixo dela, por estado",
       edit: "Editar o que segue",
       editSubtitle: "Abre o painel Pessoas",
       answers: "Responde perguntas",

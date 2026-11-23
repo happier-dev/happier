@@ -1491,6 +1491,7 @@ export const ca: TranslationStructure = {
       make: "Converteix en coordinadora…",
       makeAlready: "Ja ho és",
       openAsBoard: "Obre com a tauler",
+      openAsBoardSubtitle: "Tot el que té a sota, per estat",
       edit: "Edita què segueix",
       editSubtitle: "Obre el seu panell Persones",
       answers: "Respon preguntes",

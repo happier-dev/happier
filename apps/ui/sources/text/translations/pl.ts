@@ -1537,6 +1537,7 @@ export const pl: TranslationStructure = {
       make: "Ustaw jako koordynatora…",
       makeAlready: "Już nim jest",
       openAsBoard: "Otwórz jako tablicę",
+      openAsBoardSubtitle: "Wszystko pod nim, według stanu",
       edit: "Edytuj, co śledzi",
       editSubtitle: "Otwiera panel Osoby",
       answers: "Odpowiada na pytania",

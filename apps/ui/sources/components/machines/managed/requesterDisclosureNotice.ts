@@ -80,17 +80,18 @@ export function tellRequesterMachineUseOnce(
       ),
     ) ?? params.machineId,
   );
-  const copy = formatRequesterDisclosureCopy({
+  // The glance, not the badge popover's full account: whose Machine (the badge's own "Runs on" words), then what
+  // that means in two sentences. It is told when the Machine is first used, before any one Session runs.
+  const title = t('machineRequester.runsOn', {
     owner: params.owner.displayName || t('shareSheet.person'),
     machine,
-    signIn: 'full',
   });
   publishPresentationNotice({
     key,
     severity: 'info',
     sticky: true,
-    emphasis: copy.title,
+    emphasis: title,
     // No action beside it: the text keeps the notice's full width; the Runs-on badge links the help page.
-    message: `${copy.title}\n${copy.description}`,
+    message: `${title}\n${t('machineRequester.toldOnce')}`,
   });
 }

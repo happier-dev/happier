@@ -103,11 +103,15 @@ describe('session action availability', () => {
         const managing = createSessionActionTarget({ session: createOwnedRawSession({ receivedRuleCount: 0, managedSessions: { total: 3 } } as Partial<Session>),
             serverId: 'home', isConnected: true });
         expect(listVisibleSessionActionIds({ target: managing, surface: 'sessionHeader' }).filter((id) => id.startsWith('ui.session.coordinator.')))
-            .toEqual(['ui.session.coordinator.make', 'ui.session.coordinator.edit', 'ui.session.coordinator.answers', 'ui.session.coordinator.stop',
-                'ui.session.coordinator.board']);
+            // What it manages opens first; Stop coordinating stays the group's last, removing entry.
+            .toEqual(['ui.session.coordinator.make', 'ui.session.coordinator.board', 'ui.session.coordinator.edit',
+                'ui.session.coordinator.answers', 'ui.session.coordinator.stop']);
         // "Answers its workers' questions" is the coordinator's one toggle, on unless the session turned it off.
         expect(createSessionActionDropdownItem({ actionId: 'ui.session.coordinator.answers', target: managing, iconColor: '#000' }))
             .toMatchObject({ checked: true });
+        // Open as Board says what it holds, so it never reads as this session's own Board entry.
+        expect(createSessionActionDropdownItem({ actionId: 'ui.session.coordinator.board', target: managing, iconColor: '#000' })?.subtitle)
+            .toEqual(expect.any(String));
         const item = (actionId: 'ui.session.coordinator.make' | 'ui.session.coordinator.stop') =>
             createSessionActionDropdownItem({ actionId, target: managing, iconColor: '#000' });
         expect(item('ui.session.coordinator.make')).toMatchObject({ disabled: true });

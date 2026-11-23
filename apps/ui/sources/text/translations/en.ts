@@ -24981,6 +24981,7 @@ export const en: TranslationStructure = {
             make: "Make coordinator…",
             makeAlready: "It already is one",
             openAsBoard: "Open as Board",
+            openAsBoardSubtitle: "Everything under it, by status",
             edit: "Edit what it follows",
             editSubtitle: "Opens its People pane",
             answers: "Answers questions",
@@ -26000,6 +26001,7 @@ type EnglishNamespaces27 = TranslationOverlay<
         readonly make: string;
         readonly makeAlready: string;
         readonly openAsBoard: string;
+        readonly openAsBoardSubtitle: string;
         readonly edit: string;
         readonly editSubtitle: string;
         readonly stop: string;

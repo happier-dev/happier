@@ -1522,6 +1522,7 @@ export const zhHans: TranslationStructure = {
       make: "设为协调者…",
       makeAlready: "已经是协调者",
       openAsBoard: "以看板打开",
+      openAsBoardSubtitle: "其下的全部内容，按状态",
       edit: "编辑关注内容",
       editSubtitle: "打开其“人员”面板",
       answers: "回答问题",

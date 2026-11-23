@@ -931,6 +931,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Twoje logowanie do Happier jest przechowywane na ${machine}, ${retention === 'trigger' ? 'dopóki istnieje wyzwalacz' : retention === 'run' ? 'dopóki trwa ten workflow' : 'dopóki trwa ta sesja'}. Osoby z dostępem do terminala lub agenta mogą go tam użyć, aby uzyskać dostęp do Twojego konta Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} i każdy, kto może zalogować się na ${machine}, widzi tam pliki i wyniki tej sesji.`,
         howShared: "Jak działają udostępnione maszyny",
+        toldOnce: "Twoje logowanie do Happier jest przechowywane na tej maszynie, gdy na niej pracujesz. Każdy z dostępem do terminala lub agenta mógłby użyć Twojego konta i zobaczyć tam pliki Twoich sesji.",
         loading: ({ machine }: { machine: string }) => `Sprawdzanie ${machine} przed rozpoczęciem Twojej sesji.`,
         launching: ({ machine }: { machine: string }) => `Rozpoczynanie Twojej sesji na ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} jest offline. Twoja wersja robocza zostaje tutaj.`,

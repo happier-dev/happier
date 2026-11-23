@@ -35,6 +35,7 @@ import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowR
 import { storage } from '@/sync/domains/state/storage';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { BoardByStatus } from './byStatus/BoardByStatus';
@@ -106,8 +107,15 @@ export const FilteredBoardScreen = React.memo(function FilteredBoardScreen(props
     const opener = useOpenBoardCard();
     const onOpen = opener.open;
     useLoadPickedRuns(cards);
+    // A Board of everything under one Session (a coordinator's "Open as Board") is about that Session: it opens
+    // with its name, and says what the Board holds; any other filter keeps the generic title.
+    const { underSessionId, homeServerIds } = props.filter;
+    const underAddress = React.useMemo(() => underSessionId
+        ? [{ sessionId: underSessionId, serverId: homeServerIds[0] ?? null }] : [], [underSessionId, homeServerIds]);
+    const underTitle = useSessionDisplayTitles(underAddress)[0] ?? null;
     return <BoardCardDetailsHost opener={opener}><BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}><View style={styles.root} testID="board-filter-view">
-        <PageHeader title={board.name} alwaysShowTitle columnWidth="pane" />
+        <PageHeader title={underTitle ?? board.name} alwaysShowTitle columnWidth="pane"
+            description={underSessionId ? t('sessionCoordinator.menu.openAsBoardSubtitle') : undefined} />
         <BoardByStatus cards={cards} onOpen={onOpen} onAction={onOpen} stacked={phone} active={routeFocused} />
     </View></BoardTaskRefreshContext.Provider></BoardCardDetailsHost>;
 });

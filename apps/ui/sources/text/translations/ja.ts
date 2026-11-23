@@ -1506,6 +1506,7 @@ export const ja: TranslationStructure = {
       make: "コーディネーターにする…",
       makeAlready: "すでにコーディネーターです",
       openAsBoard: "ボードとして開く",
+      openAsBoardSubtitle: "配下のすべてを状態別に",
       edit: "フォロー対象を編集",
       editSubtitle: "ピープルペインを開きます",
       answers: "質問に答える",

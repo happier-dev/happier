@@ -97,6 +97,8 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     },
     [SESSION_ACTION_COORDINATOR_BOARD_ID]: {
         titleKey: 'sessionCoordinator.menu.openAsBoard',
+        // Says what the Board holds, so it never reads as this session's own Board above it.
+        subtitleKey: 'sessionCoordinator.menu.openAsBoardSubtitle',
         icon: 'kanban', group: 'work',
     },
     [SESSION_ACTION_COORDINATOR_STOP_ID]: {

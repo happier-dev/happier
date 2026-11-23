@@ -930,6 +930,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Ta connexion Happier est stockée sur ${machine} ${retention === 'trigger' ? 'tant que le déclencheur existe' : retention === 'run' ? 'pendant ce workflow' : 'pendant cette session'}. Les personnes ayant un accès terminal ou agent sur cette machine peuvent l’utiliser pour accéder à ton compte Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} et toute personne pouvant se connecter à ${machine} peuvent y voir les fichiers et la sortie de cette session.`,
         howShared: "Fonctionnement des machines partagées",
+        toldOnce: "Votre connexion Happier est enregistrée sur cette machine pendant que vous y travaillez. Toute personne y ayant un accès terminal ou agent pourrait utiliser votre compte et voir les fichiers de vos sessions.",
         loading: ({ machine }: { machine: string }) => `Vérification de ${machine} avant de démarrer ta session.`,
         launching: ({ machine }: { machine: string }) => `Démarrage de ta session sur ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Ton brouillon est conservé ici.`,

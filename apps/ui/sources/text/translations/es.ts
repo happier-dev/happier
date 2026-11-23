@@ -1524,6 +1524,7 @@ export const es: TranslationStructure = {
       make: "Convertir en coordinadora…",
       makeAlready: "Ya lo es",
       openAsBoard: "Abrir como tablero",
+      openAsBoardSubtitle: "Todo lo que tiene debajo, por estado",
       edit: "Editar lo que sigue",
       editSubtitle: "Abre su panel Personas",
       answers: "Responde preguntas",

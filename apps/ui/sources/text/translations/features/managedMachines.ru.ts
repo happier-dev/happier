@@ -931,6 +931,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Ваш вход в Happier хранится на ${machine}, ${retention === 'trigger' ? 'пока существует триггер' : retention === 'run' ? 'пока выполняется этот workflow' : 'пока идёт этот сеанс'}. Люди с доступом к терминалу или агенту там могут использовать его для доступа к вашему аккаунту Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} и все, кто может войти на ${machine}, видят там файлы и вывод этого сеанса.`,
         howShared: "Как работают общие машины",
+        toldOnce: "Ваш вход в Happier хранится на этой машине, пока вы на ней работаете. Любой с доступом к терминалу или агенту может воспользоваться вашим аккаунтом и увидеть там файлы ваших сессий.",
         loading: ({ machine }: { machine: string }) => `Проверка ${machine} перед запуском вашего сеанса.`,
         launching: ({ machine }: { machine: string }) => `Запуск вашего сеанса на ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} не в сети. Ваш черновик сохранён здесь.`,

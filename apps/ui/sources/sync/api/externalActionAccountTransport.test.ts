@@ -421,7 +421,7 @@ describe('captured Account Action response decoding', () => {
             const told = recipient === 'shared' ? row.id : 'private-controller';
             expect(notices).toEqual([`machine-requester-use:${binding.serverIdentityId}:${told}`]);
             expect(readPresentationNotice()).toMatchObject({ severity: 'info', sticky: true,
-                message: expect.stringContaining(t('machineRequester.osVisibility', { owner: 'Custodian', machine: keepHyphenatedNameTogether(told) })) });
+                message: expect.stringContaining(t('machineRequester.runsOn', { owner: 'Custodian', machine: keepHyphenatedNameTogether(told) })) });
             retirePresentationNotice();
             // A second use of the same Machine on this device proceeds and says nothing.
             expect(await run()).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });

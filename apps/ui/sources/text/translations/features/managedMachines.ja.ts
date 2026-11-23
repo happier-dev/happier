@@ -930,6 +930,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `${retention === 'trigger' ? 'トリガーが存在する間' : retention === 'run' ? 'このワークフローの実行中' : 'このセッションの実行中'}、Happier のサインイン情報は ${machine} に保存されます。そこでターミナルやエージェントにアクセスできる人が、あなたの Happier アカウントにアクセスするためにそれを使用する可能性があります。`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} さんと ${machine} にサインインできる人は誰でも、このセッションのファイルと出力をそこで見ることができます。`,
         howShared: "共有マシンのしくみ",
+        toldOnce: "作業中、あなたの Happier のサインイン情報はこのマシンに保存されます。ターミナルやエージェントにアクセスできる人は、あなたのアカウントを使い、そこでセッションのファイルを見られる可能性があります。",
         loading: ({ machine }: { machine: string }) => `セッションを開始する前に ${machine} を確認しています。`,
         launching: ({ machine }: { machine: string }) => `${machine} でセッションを開始しています。`,
         offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。下書きはここに保持されます。`,

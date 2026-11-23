@@ -1538,6 +1538,7 @@ export const ru: TranslationStructure = {
       make: "Сделать координатором…",
       makeAlready: "Уже координатор",
       openAsBoard: "Открыть как доску",
+      openAsBoardSubtitle: "Всё, что под ним, по статусу",
       edit: "Изменить, за чем следит",
       editSubtitle: "Открывает панель «Люди»",
       answers: "Отвечает на вопросы",

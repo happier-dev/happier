@@ -156,9 +156,9 @@ export function listVisibleSessionActionIds(params: Readonly<{
         const coordinator = resolveSessionCoordinatorMenuControls(target);
         if (coordinator && coordinator.make !== 'unavailable') ids.push(SESSION_ACTION_COORDINATOR_MAKE_ID);
         if (coordinator?.coordinator === true) {
-            ids.push(SESSION_ACTION_COORDINATOR_EDIT_ID, SESSION_ACTION_COORDINATOR_ANSWERS_ID);
+            // What it manages opens first; Stop coordinating stays the group's last, removing entry.
+            ids.push(SESSION_ACTION_COORDINATOR_BOARD_ID, SESSION_ACTION_COORDINATOR_EDIT_ID, SESSION_ACTION_COORDINATOR_ANSWERS_ID);
             if (coordinator.stop !== 'unavailable') ids.push(SESSION_ACTION_COORDINATOR_STOP_ID);
-            ids.push(SESSION_ACTION_COORDINATOR_BOARD_ID);
         }
     }
 

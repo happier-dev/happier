@@ -930,6 +930,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `El teu inici de sessió de Happier es desa a ${machine} ${retention === 'trigger' ? 'mentre existeixi l’activador' : retention === 'run' ? 'mentre s’executa aquest workflow' : 'mentre s’executa aquesta sessió'}. Les persones amb accés al terminal o a l’agent d’allà poden fer-lo servir per accedir al teu compte de Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} i qualsevol persona que pugui iniciar sessió a ${machine} poden veure-hi els fitxers i la sortida d’aquesta sessió.`,
         howShared: "Com funcionen les màquines compartides",
+        toldOnce: "El teu inici de sessió de Happier es desa en aquesta màquina mentre hi treballes. Qualsevol amb accés de terminal o d’agent hi podria fer servir el teu compte i veure-hi els fitxers de les teves sessions.",
         loading: ({ machine }: { machine: string }) => `Comprovant ${machine} abans d’iniciar la teva sessió.`,
         launching: ({ machine }: { machine: string }) => `Iniciant la teva sessió a ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} està fora de línia. El teu esborrany es conserva aquí.`,

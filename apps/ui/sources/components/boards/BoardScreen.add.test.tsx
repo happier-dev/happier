@@ -19,7 +19,8 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { BoardScreen } from './BoardScreen';
+import { BoardScreen, FilteredBoardScreen } from './BoardScreen';
+import { readFilteredBoardRoute } from './boardsRoutes';
 
 const viewport = vi.hoisted(() => ({ width: 390, height: 844, scale: 1, fontScale: 1 }));
 vi.mock('react-native', async () => ({
@@ -298,4 +299,31 @@ describe('Board phone Add entry points', () => {
             await dispose();
         }
     });
+});
+
+it('names a Board of everything under a coordinator after that coordinator', async () => {
+    home = await createPlainArtifactHomeFixture('https://board-phone.test', { accountId: 'owner' });
+    const serverId = home.home.id;
+    storage.setState({ sessionListRowsByServerId: { [serverId]: { coordinator: createSessionFixture({ id: 'coordinator', serverId, active: true,
+        metadata: { ...createSessionFixture().metadata!, name: 'Payments coordinator' } }) } } });
+    // The coordinator menu's route shape ("Open as Board"): the Home, everything under that Session.
+    const filter = readFilteredBoardRoute(JSON.stringify({ show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any',
+        underSessionId: 'coordinator', homeServerIds: [serverId], audiences: [], tagIds: [], source: 'all' }))!;
+    const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => root.render(<InjectedAuthProvider credentials={credentials}>
+        <AppPaneProvider><DestinationInstanceHost tabId="board" ref={{ kind: 'boards', params: {} }} pathname="/boards" focused visible phone
+            navigation={{ push: vi.fn(), replace: vi.fn(), back: vi.fn() }}>
+            <FilteredBoardScreen filter={filter} />
+        </DestinationInstanceHost></AppPaneProvider>
+    </InjectedAuthProvider>));
+    try {
+        await waitForHomeGovernance(async () => {
+            await act(async () => {});
+            const view = document.querySelector('[data-testid="board-filter-view"]');
+            expect(view?.textContent, document.body.textContent).toContain('Payments coordinator');
+        });
+    } finally { await act(async () => root.unmount()); container.remove(); }
 });

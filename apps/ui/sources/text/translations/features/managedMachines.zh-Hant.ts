@@ -930,6 +930,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `${retention === 'trigger' ? '觸發器存在期間' : retention === 'run' ? '此工作流程執行期間' : '此工作階段執行期間'}，你的 Happier 登入憑證會儲存在 ${machine} 上。在那裡擁有終端機或代理程式存取權限的人可能會用它存取你的 Happier 帳號。`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} 以及任何能登入 ${machine} 的人都可以在那裡看到此工作階段的檔案和輸出。`,
         howShared: "共用機器如何運作",
+        toldOnce: "你在這台機器上工作時，你的 Happier 登入資訊會儲存在這裡。任何擁有終端機或代理存取權限的人都可能使用你的帳戶，並看到你工作階段的檔案。",
         loading: ({ machine }: { machine: string }) => `啟動工作階段前正在檢查 ${machine}。`,
         launching: ({ machine }: { machine: string }) => `正在 ${machine} 上啟動你的工作階段。`,
         offline: ({ machine }: { machine: string }) => `${machine} 已離線。你的草稿保留在這裡。`,

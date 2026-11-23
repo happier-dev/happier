@@ -1523,6 +1523,7 @@ export const it: TranslationStructure = {
       make: "Rendi coordinatore…",
       makeAlready: "Lo è già",
       openAsBoard: "Apri come bacheca",
+      openAsBoardSubtitle: "Tutto ciò che ha sotto, per stato",
       edit: "Modifica cosa segue",
       editSubtitle: "Apre il suo pannello Persone",
       answers: "Risponde alle domande",

@@ -1473,6 +1473,7 @@ export const fr: TranslationStructure = {
       make: "Faire coordinateur…",
       makeAlready: "C’en est déjà un",
       openAsBoard: "Ouvrir en tableau",
+      openAsBoardSubtitle: "Tout ce qui est sous elle, par statut",
       edit: "Modifier ce qu’elle suit",
       editSubtitle: "Ouvre son volet Personnes",
       answers: "Répond aux questions",

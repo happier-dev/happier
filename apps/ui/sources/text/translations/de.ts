@@ -1303,6 +1303,7 @@ export const de: TranslationStructure = {
       make: "Zum Koordinator machen…",
       makeAlready: "Ist bereits einer",
       openAsBoard: "Als Board öffnen",
+      openAsBoardSubtitle: "Alles darunter, nach Status",
       edit: "Bearbeiten, was sie verfolgt",
       editSubtitle: "Öffnet ihren Bereich Personen",
       answers: "Beantwortet Fragen",
