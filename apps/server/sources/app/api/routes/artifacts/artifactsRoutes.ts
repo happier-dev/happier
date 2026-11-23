@@ -33,6 +33,7 @@ import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
 import { listArtifactBodyRevisions, listArtifactRevisionHeaders, restoreArtifactBodyRevision, trimArtifactRevisions } from "@/app/artifacts/artifactRevisionService";
 import { ArtifactStorageSizeUnavailableError, InvalidStorageInventoryCursorError, readArtifactStorageUsageInTx, readStorageInventoryInTx } from "@/app/artifacts/artifactStorageService";
+import { readDiscussionStorageInventoryInTx } from "@/app/artifacts/discussionStorageInventory";
 import { resolveDiscussionContextInTx } from '@/app/discussions/access';
 import { readArtifactBlob } from '@/app/artifacts/artifactBlobService';
 import { ARTIFACT_REVISIONS_TRIM_ACTION_ID_V1 } from '@happier-dev/protocol/artifacts/artifactActionIdsV1';
@@ -201,15 +202,13 @@ export function artifactsRoutes(app: Fastify) {
             const scoped = query.discussionId;
             const paged = query.paged === 'true' || scoped !== undefined;
             const result = await inReadSnapshot(async tx => {
-                if (scoped) {
-                    if (!await isServerFeatureEnabledForHome('sessions.conversations', { tx })) return null;
-                    const discussion = await resolveDiscussionContextInTx(tx, { discussionId: scoped, accountId: request.userId,
-                        authentication: readSessionAccessAuthenticationFromRequest(request) });
-                    if (!discussion?.keyReadiness) return null;
-                }
-                return readStorageInventoryInTx(tx, request.userId, paged ? {
-                    discussionId: scoped, kinds: query.kinds === undefined ? undefined : kinds.data, cursor: query.cursor,
-                } : undefined);
+                const selection = { kinds: query.kinds === undefined ? undefined : kinds.data, cursor: query.cursor };
+                if (!scoped) return readStorageInventoryInTx(tx, request.userId, paged ? selection : undefined);
+                if (!await isServerFeatureEnabledForHome('sessions.conversations', { tx })) return null;
+                const authentication = readSessionAccessAuthenticationFromRequest(request);
+                const discussion = await resolveDiscussionContextInTx(tx, { discussionId: scoped, accountId: request.userId, authentication });
+                if (!discussion?.keyReadiness) return null;
+                return readDiscussionStorageInventoryInTx(tx, { accountId: request.userId, authentication, discussion, ...selection });
             });
             return result ? reply.send(result) : reply.code(404).send({ error: 'discussion_not_found' });
         }

@@ -85,7 +85,7 @@ export async function readArtifactStorageUsageInTx(tx: Tx, accountId: string): P
 }
 
 type InventorySelection = Readonly<{
-    discussionId?: string;
+    discussion?: Readonly<{ id: string; withheldMessageIds: readonly string[] }>;
     kinds?: readonly StorageInventoryKindV1[];
     cursor?: string;
 }>;
@@ -146,7 +146,19 @@ function projectInventoryItem(row: InventoryItemRow, viewerAccountId: string): S
 export async function readStorageInventoryInTx(tx: Tx, accountId: string, selection?: InventorySelection): Promise<StorageInventoryV1> {
     const { sql, identifier: name, mysql } = storageSql();
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
-    const discussionId = selection?.discussionId;
+    const discussionId = selection?.discussion?.id;
+    const withheldMessageIds = selection?.discussion?.withheldMessageIds ?? [];
+    let readable = sql.empty;
+    if (withheldMessageIds.length > 0) {
+        // The scope may contain more withheld messages than SQL can bind individually.
+        const ids = JSON.stringify(withheldMessageIds);
+        const provider = getDbProviderFromEnv(process.env, "postgres");
+        const withheld = provider === "sqlite" ? sql.sql`SELECT value FROM json_each(${ids})`
+            : mysql ? sql.sql`SELECT hidden.id COLLATE utf8mb4_unicode_ci
+                FROM JSON_TABLE(${ids}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) hidden`
+            : sql.sql`SELECT jsonb_array_elements_text(${ids}::jsonb)`;
+        readable = sql.sql`AND m.${name("id")} NOT IN (${withheld})`;
+    }
     const discussionRows = sql.sql`
         SELECT 'discussionAttachments' AS kind, att.${name("blobId")} AS ${name("itemId")},
             d.${name("id")} AS ${name("parentKey")}, m.${name("id")} AS ${name("parentItemId")},
@@ -157,7 +169,7 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         FROM ${name("Discussion")} d JOIN ${name("DiscussionMessage")} m ON m.${name("discussionId")} = d.${name("id")}
         JOIN ${name("DiscussionAttachment")} att ON att.${name("messageId")} = m.${name("id")}
         WHERE ${discussionId ? sql.sql`d.${name("id")} = ${discussionId}`
-            : sql.sql`d.${name("ownerAccountId")} = ${accountId}`} AND att.${name("removedByAccountId")} IS NULL`;
+            : sql.sql`d.${name("ownerAccountId")} = ${accountId}`} AND att.${name("removedByAccountId")} IS NULL ${readable}`;
     const accountRows = sql.sql`
         WITH artifactUsage AS (
             SELECT ${name("artifactId")}, SUM(${name("contentBytes")}) AS total,

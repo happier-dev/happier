@@ -5805,9 +5805,10 @@ the restored body. Historical rows are never rewritten. Revision reads use
 the same current grants, Account mode and recipient key as the document.
 `storage.inventory.read` defaults to the authenticated Account. To read one
 Discussion, pass `scope: { kind: 'discussion', discussionId }`. Home checks
-current Discussion read access. The Discussion scope reports the thread's
-attachments and has no Artifact limit. An Account's inventory charges
-Discussion attachments to the current Discussion owner.
+current Discussion read access. A participant's Discussion inventory counts
+attachments on messages they can read. The Discussion owner sees all attachments
+billed to them in both Discussion and Account inventories. Discussion scope has
+no Artifact limit.
 
 The summary includes the measured total, per-kind sizes, and the nullable
 Artifact limit. Paged inventory also reports `kinds[kind].itemCount` for

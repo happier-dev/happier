@@ -13,7 +13,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { resolveDiscussionDocSourcesInTx, type DiscussionDocSource } from './docPassages';
 import type { AdmittedDiscussionMessageRow, DiscussionRow } from './projection';
-import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
+import { discussionFailure, discussionSuccess, type DiscussionFailureCode, type DiscussionResult } from './serviceTypes';
 
 export type DiscussionQuoteSource = Readonly<{ kind: 'doc'; doc: DiscussionDocSource }>
     | Readonly<{ kind: 'session'; sessionId: string; messageId: string }>;
@@ -22,16 +22,23 @@ export function discussionQuoteSourceKey(source: DiscussionQuoteSource): string 
     return source.kind === 'doc' ? `doc:${source.doc.ref.artifactId}` : `session:${source.sessionId}:${source.messageId}`;
 }
 
-/** One ancestry owner classifies quoted roots and inherited replies; unquoted chat stays independent. */
-export async function resolveDiscussionQuoteSourcesInTx(tx: Tx, groups: readonly Readonly<{
-    discussionId: string; rows: readonly AdmittedDiscussionMessageRow[];
+type QuoteTarget = Pick<AdmittedDiscussionMessageRow, 'id' | 'replyTargetV1'>;
+type QuoteGroup = Readonly<{
+    discussionId: string;
     discussion?: Pick<DiscussionRow, 'anchorV1'>;
-}>[]): Promise<DiscussionResult<ReadonlyMap<string, ReadonlyMap<string, DiscussionQuoteSource | null>>>> {
+}> & (
+    | Readonly<{ rows: readonly QuoteTarget[]; storedTargets?: never }>
+    | Readonly<{ storedTargets: readonly Readonly<{ id: string; replyTargetV1: unknown }>[]; rows?: never }>
+);
+
+/** One ancestry owner classifies quoted roots and inherited replies; unquoted chat stays independent. */
+export async function resolveDiscussionQuoteSourcesInTx(tx: Tx, groups: readonly QuoteGroup[]):
+    Promise<DiscussionResult<ReadonlyMap<string, ReadonlyMap<string, DiscussionQuoteSource | null>>>> {
     const anchors = new Map<string, { source: Extract<DiscussionQuoteSource, { kind: 'session' }>; rootId: string }>();
     // List, history, attention and Follow already hold the parent. Only quoted
     // Session anchors need their first-message identity; Docs use reply ancestry.
     const candidates = groups.filter(group => {
-        if (!group.rows.length) return false;
+        if (!(group.rows ?? group.storedTargets).length) return false;
         if (!group.discussion) return true;
         const anchor = DiscussionAnchorV1Schema.safeParse(group.discussion.anchorV1);
         return anchor.success && anchor.data.kind === 'session' && Boolean(anchor.data.messageId);
@@ -51,7 +58,8 @@ export async function resolveDiscussionQuoteSourcesInTx(tx: Tx, groups: readonly
     const result = new Map<string, ReadonlyMap<string, DiscussionQuoteSource | null>>();
     for (const group of groups) {
         const roots = new Map<string, string>();
-        const docs = await resolveDiscussionDocSourcesInTx(tx, { discussionId: group.discussionId, admittedMessages: group.rows, rootMessageIds: roots });
+        const docs = await resolveDiscussionDocSourcesInTx(tx, { discussionId: group.discussionId, rootMessageIds: roots,
+            ...(group.rows ? { admittedMessages: group.rows } : { messages: group.storedTargets }) });
         if (!docs.ok) return docs;
         const anchor = anchors.get(group.discussionId);
         result.set(group.discussionId, new Map<string, DiscussionQuoteSource | null>([...docs.value].map(([id, doc]) => [id, doc ? { kind: 'doc', doc }
@@ -103,4 +111,27 @@ export async function admitDiscussionQuoteSourcesInTx(tx: Tx, input: Readonly<{
         }
         input.admissions.set(key, admission);
     }
+}
+
+/** Resolve the same quote-read failures for history and its attachment inventory. */
+export async function resolveDiscussionQuoteReadabilityInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string;
+    authentication: SessionAccessAuthentication;
+    groups: readonly QuoteGroup[];
+    admissions?: Map<string, DiscussionResult<void>>;
+}>) {
+    const quotes = await resolveDiscussionQuoteSourcesInTx(tx, input.groups);
+    if (!quotes.ok) return quotes;
+    const admissions = input.admissions ?? new Map();
+    const groups = [...quotes.value.values()];
+    await admitDiscussionQuoteSourcesInTx(tx, { ...input, sources: groups.flatMap(group => [...group.values()]), admissions });
+    const failures = new Map<string, DiscussionFailureCode>();
+    for (const group of groups) {
+        for (const [id, source] of group) {
+            if (!source) continue;
+            const admission = admissions.get(discussionQuoteSourceKey(source))!;
+            if (!admission.ok) failures.set(id, admission.error);
+        }
+    }
+    return discussionSuccess({ sources: quotes.value, failures });
 }

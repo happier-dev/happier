@@ -2,7 +2,7 @@ import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, Discussio
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionSummaryV1, DiscussionMessageV1 } from '@happier-dev/protocol/discussions/models';
 import { validateDiscussionDocContentSource, type DiscussionDocSource } from './docPassages';
-import { admitDiscussionQuoteSourcesInTx, discussionQuoteSourceKey, resolveDiscussionQuoteSourcesInTx, type DiscussionQuoteSource } from './quoteReadAdmission';
+import { admitDiscussionQuoteSourcesInTx, discussionQuoteSourceKey, resolveDiscussionQuoteReadabilityInTx, resolveDiscussionQuoteSourcesInTx, type DiscussionQuoteSource } from './quoteReadAdmission';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveDiscussionContextInTx, resolveDiscussionContextsInTx, discussionCandidateWhere, discussionCandidateSql,
@@ -185,24 +185,16 @@ export async function projectReadableMessageGroupsInTx(tx: Tx, input: Reader & R
         }
         groups.push({ discussionId: group.discussionId, rows: admittedRows, discussion: group.discussion });
     }
-    const quoteSources = await resolveDiscussionQuoteSourcesInTx(tx, groups);
-    if (!quoteSources.ok) return quoteSources;
-    for (const [discussionId, sources] of quoteSources.value) sourcesByDiscussion.set(discussionId,
-        new Map([...sources].map(([id, source]) => [id, source?.kind === 'doc' ? source.doc : null])));
-    const admissions: DiscussionDocSourceAdmissions = input.docSourceAdmissions ?? new Map();
-    const sources = [...quoteSources.value.values()].flatMap(group => [...group.values()]);
-    await admitDiscussionQuoteSourcesInTx(tx, { ...input, sources, admissions });
-    for (const source of sources) {
-        if (!source) continue;
-        const access = admissions.get(discussionQuoteSourceKey(source))!;
-        // Human history can omit unavailable quoted rows. An executable disclosure
-        // must report refusal, not silently return a partial protected context.
-        if (!access.ok && (destination || input.unavailableDocSources !== 'omit')) return access;
-    }
-    const readable = input.groups.flatMap(group => group.rows.filter(row => {
-        const source = quoteSources.value.get(group.discussionId)!.get(row.id);
-        return !source || admissions.get(discussionQuoteSourceKey(source))!.ok;
-    }).map(row => messageAdmissions.get(row.id)!));
+    const quotes = await resolveDiscussionQuoteReadabilityInTx(tx, { ...input, groups, admissions: input.docSourceAdmissions });
+    if (!quotes.ok) return quotes;
+    const { sources, failures } = quotes.value;
+    for (const [discussionId, group] of sources) sourcesByDiscussion.set(discussionId,
+        new Map([...group].map(([id, source]) => [id, source?.kind === 'doc' ? source.doc : null])));
+    // Human history can omit unavailable quoted rows. Executable disclosure must report the refusal.
+    const firstFailure = failures.values().next().value;
+    if (firstFailure && (destination || input.unavailableDocSources !== 'omit')) return discussionFailure(firstFailure);
+    const readable = input.groups.flatMap(group => group.rows
+        .filter(row => !failures.has(row.id)).map(row => messageAdmissions.get(row.id)!));
     const actorAudiences = new Map(input.groups.flatMap(group => group.context.audienceAccountIds
         ? [[group.discussionId, group.context.audienceAccountIds] as const] : []));
     const actors = await projectDiscussionAccountActorsInTx(tx, readable, [], actorAudiences);

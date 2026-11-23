@@ -23,6 +23,8 @@ import { signDiscussionAttachmentAgentUploadV1, DiscussionAttachmentUploadReques
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { createSecondOpinionSourceFixture } from '@/app/discussions/secondOpinionSecurity.testkit';
+import { StorageInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { registerAccountEncryptionMigrateRoutes } from '@/app/api/routes/account/registerAccountEncryptionMigrateRoutes';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { publicShareRoutes } from '@/app/api/routes/share/publicShareRoutes';
@@ -55,6 +57,73 @@ export function createAttachmentApp(actorAccountId: () => string, options?: Read
 
 /** Identical storage/HTTP contracts run against both admitted disposable providers. */
 export function discussionAttachmentContracts(): void {
+    it('counts quoted attachments in the Discussion only for readers of the source and the billed owner', async () => {
+        const { owner, reader, source, answer, request } = await createSecondOpinionSourceFixture();
+        const sourceGrant = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
+        const bytes = Buffer.from('file on the quoted message');
+        const blobId = randomUUID();
+        const attachment = { blobId, t: 'plain' as const };
+        const content = DiscussionMessageContentV1Schema.parse({ v: 1, parts: [
+            { t: 'text', text: 'Private answer' },
+            { t: 'attachment', attachment: { kind: 'file', id: blobId, name: 'source.txt',
+                file: { blobId, mime: 'text/plain', sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } } },
+        ] });
+        const metadata = DiscussionAttachmentUploadRequestV1Schema.parse({ operation: 'create',
+            input: { ...request, firstMessage: { ...request.firstMessage, attachments: [attachment],
+                content: { t: 'plain', v: content } } },
+            attachments: [{ ...attachment, storedSizeBytes: bytes.length }] });
+
+        let actorAccountId = owner.id;
+        const { app, restoreEnvironment } = createAttachmentApp(() => actorAccountId);
+        artifactsRoutes(app);
+        try {
+            const created = await app.inject({ method: 'POST', url: '/v1/discussions/upload',
+                headers: { 'content-type': 'application/vnd.happier.discussion-upload-v1' },
+                payload: Buffer.concat([Buffer.from(JSON.stringify(metadata) + '\n'), bytes]) });
+            expect(created.statusCode, created.body).toBe(200);
+            const { discussion, firstMessage } = created.json();
+            const inventoryUrl = '/v1/artifacts/storage/usage?inventory=true&paged=true&discussionId=' + discussion.id;
+            const readInventory = async () => {
+                const response = await app.inject({ url: inventoryUrl });
+                expect(response.statusCode, response.body).toBe(200);
+                return StorageInventoryV1Schema.parse(response.json());
+            };
+            // Storage billing uses the bytes of the persisted attachment envelope.
+            const stored = await db.discussionAttachment.findFirstOrThrow({ where: { messageId: firstMessage.id, blobId },
+                select: { storedSizeBytes: true } });
+            const storedSizeBytes = Number(stored.storedSizeBytes);
+            expect(storedSizeBytes).toBeGreaterThan(0);
+            const visible = {
+                totalBytes: storedSizeBytes,
+                byKind: { discussionAttachments: storedSizeBytes },
+                kinds: { discussionAttachments: { itemCount: 1, storedSizeBytes } },
+                page: { items: [{ id: blobId, storedSizeBytes,
+                    location: { kind: 'discussion', discussionId: discussion.id, messageId: firstMessage.id, attachmentId: blobId } }] },
+            };
+            actorAccountId = reader.id;
+            expect(await readInventory()).toMatchObject(visible);
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: sourceGrant.id } });
+
+            const history = await app.inject({ url: '/v1/discussions/' + discussion.id + '/messages' });
+            expect(history.statusCode, history.body).toBe(200);
+            expect(history.json().messages).toEqual([]);
+            expect(await readInventory()).toMatchObject({
+                totalBytes: 0, byKind: { discussionAttachments: 0 },
+                kinds: { discussionAttachments: { itemCount: 0, storedSizeBytes: 0 } },
+                page: { items: [] },
+            });
+
+            // Billing retains the file even when the Discussion owner loses the source itself.
+            await db.sessionMessage.delete({ where: { id: answer.id } });
+            actorAccountId = owner.id;
+            expect(await readInventory()).toMatchObject(visible);
+        } finally {
+            await app.close();
+            restoreEnvironment();
+        }
+    });
+
     it.each(['author', 'owner'] as const)('lets the %s remove a committed attachment, while other readers cannot', async remover => {
         const [owner, author, participant, teamReader, unrelated] = await Promise.all(Array.from({ length: 5 }, () =>
             db.account.create({ data: { encryptionMode: 'plain' } })));
