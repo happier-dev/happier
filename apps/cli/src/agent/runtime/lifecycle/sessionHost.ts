@@ -11,7 +11,6 @@ import {
   type SessionHostLaunchRecordV1,
   type LocalSessionHostEndResult,
 } from '@/session/transport/rpc/localSessionRpcChannel';
-import { handOverSessionHolderClients, pauseSessionHolderDelivery } from '@/subprocess/supervision/sessionHolder';
 import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpdatesSocket';
 
 import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
@@ -146,6 +145,7 @@ export async function startSessionHost(params: Readonly<{
     closing = true;
     void (async () => {
       await retireEndpoint?.();
+      const { handOverSessionHolderClients, pauseSessionHolderDelivery } = await import('@/subprocess/supervision/sessionHolder');
       // Agent output this host took is already acknowledged, so the newer host never replays it:
       // stop taking more (it stays in the holders for the newer host), then save what was taken.
       pauseSessionHolderDelivery();

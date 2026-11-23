@@ -1,5 +1,5 @@
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
-import { readGithubManagedRepositoryHookSource, writeGithubManagedRepositoryWebhook } from '@happier-dev/plugins-scm-github';
+import type { readGithubManagedRepositoryHookSource } from '@happier-dev/plugins-scm-github';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { ManagedPluginWebhookRequestV1, ManagedPluginWebhookResultV1 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { GITHUB_BROKER_WATCHER_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -730,6 +730,8 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             const diagnostic = { pluginId, occurrenceId: registration.occurrenceId, correlationId: request.operationId };
             try {
                 if (!bound || !isCurrent()) return unavailable;
+                const { writeGithubManagedRepositoryWebhook } = await import('@happier-dev/plugins-scm-github');
+                if (!isCurrent()) return unavailable;
                 if (request.kind === 'register') {
                     params.beginDiagnosticScope?.(diagnostic, signal, { signingSecret: request.signingSecret }, ['signingSecret']);
                 }

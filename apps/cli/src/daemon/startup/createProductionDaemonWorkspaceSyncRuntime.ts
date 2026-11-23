@@ -1,5 +1,5 @@
 import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed, type CallWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
-import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeWorkspaceSyncPolicyDigest, createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,6 @@ import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1, isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import { readReviewedExternalActionInput } from '@/api/externalActionExecutionAuthorization';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { requireExecutingWorkspaceActionReceipt } from './workspaceActionReceipt';

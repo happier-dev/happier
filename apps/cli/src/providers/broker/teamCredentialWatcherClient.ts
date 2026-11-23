@@ -1,7 +1,8 @@
 import { createFetchPluginHttpRuntime, raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS, type QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
+import { ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS } from '@happier-dev/protocol/auth/accountDirectory';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   encodeProviderBrokerAuthorityV1,

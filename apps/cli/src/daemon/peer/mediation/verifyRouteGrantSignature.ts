@@ -1,4 +1,4 @@
-import { ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS } from '@happier-dev/protocol';
+import { ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS } from '@happier-dev/protocol/auth/accountDirectory';
 import tweetnacl from 'tweetnacl';
 
 export type DirectRouteGrantTrustRoot = Readonly<{

@@ -12,8 +12,8 @@ const sourceRoot = resolve(cliRoot, 'src');
 
 // This is a package evaluation boundary, not a spelling rule: follow every
 // static CLI dependency, excluding type edges and demand-driven imports.
-function startupImports() {
-  const queue = [resolve(sourceRoot, 'index.ts'), resolve(sourceRoot, 'daemon/startDaemon.ts')];
+function startupImports(...entries) {
+  const queue = entries.map(entry => resolve(sourceRoot, entry));
   const seen = new Set(queue);
   const imports = [];
   for (let index = 0; index < queue.length; index += 1) {
@@ -46,7 +46,7 @@ function startupImports() {
   return imports;
 }
 
-const imports = startupImports();
+const imports = startupImports('index.ts', 'daemon/startDaemon.ts');
 
 test('daemon startup reaches Protocol through domain exports', () => {
   assert.deepEqual(imports.filter(edge => edge.specifier === '@happier-dev/protocol'), []);
@@ -54,4 +54,18 @@ test('daemon startup reaches Protocol through domain exports', () => {
 
 test('daemon startup does not evaluate the MCP SDK before an MCP operation', () => {
   assert.deepEqual(imports.filter(edge => edge.specifier.startsWith('@modelcontextprotocol/sdk/')), []);
+});
+
+test('daemon startup keeps GitHub management code and database drivers behind invocation', () => {
+  const deferred = new Set([
+    '@happier-dev/plugins-scm-github',
+    '@happier-dev/databases/connection/mysql',
+    '@happier-dev/databases/connection/postgresql',
+  ]);
+  assert.deepEqual(imports.filter(edge => deferred.has(edge.specifier)), []);
+});
+
+test('Session host startup does not evaluate the holder implementation before a Session or handover', () => {
+  const imports = startupImports('cli/commands/sessionHost.ts', 'agent/runtime/lifecycle/sessionHost.ts');
+  assert.deepEqual(imports.filter(edge => edge.specifier === '@/subprocess/supervision/sessionHolder'), []);
 });

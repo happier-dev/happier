@@ -1,4 +1,5 @@
-import { DeploymentTemplateInstantiateResultV1Schema, type ActionExecutorContext, type WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
+import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import {
   MachineSetupApplyInputV1Schema,

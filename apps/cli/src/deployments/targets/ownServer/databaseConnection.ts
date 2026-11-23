@@ -6,8 +6,7 @@ import type {
     DatabaseReadStatementInputV1,
     DatabaseStatsOperationInputV1,
 } from '@happier-dev/plugin-sdk/database';
-import { openPostgresqlConnection, type PostgresqlConnection } from '@happier-dev/databases/connection/postgresql';
-import { openMysqlConnection } from '@happier-dev/databases/connection/mysql';
+import type { PostgresqlConnection } from '@happier-dev/databases/connection/postgresql';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -65,6 +64,10 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                     throw error;
                 }) : null;
             if (!endpoint && !docker.openStream) return refuse('database_transport_unavailable');
+            const isPostgresql = scope.definition.engine === 'postgresql';
+            const openConnection = isPostgresql
+                ? (await import('@happier-dev/databases/connection/postgresql')).openPostgresqlConnection
+                : (await import('@happier-dev/databases/connection/mysql')).openMysqlConnection;
             const admission = await readEnvironmentDataRoleLaunchAdmissionForHost({ credentials: host.credentials, serverId: host.serverId,
                 serverHttpBaseUrl: host.serverHttpBaseUrl, environmentId: target.environment.environmentId,
                 targetLinkId: target.targetLinkId, machineId: host.machineId, installationId: input.installationId,
@@ -91,10 +94,10 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                             + 'cat <&3 & reader=$!; cat <&0 >&3 & writer=$!; '
                             + 'wait -n "$reader" "$writer"; kill "$reader" "$writer" 2>/dev/null; wait',
                         ], scope.handle.retirementSignal) };
-                    return await machineNativeEffectAdmission.runStage(effect, () => scope.definition.engine === 'postgresql'
-                        ? openPostgresqlConnection(url.toString(), signal, { ...transport, runOperation,
-                            sessionGuardSql: write ? postgresqlWriteRoleGuardSql : ownServerReadOnlyRoleGuardSql('postgresql') })
-                        : openMysqlConnection(url.toString(), signal, { ...transport, runOperation })).catch((error: unknown) => {
+                    return await machineNativeEffectAdmission.runStage(effect, () => openConnection(url.toString(), signal, {
+                        ...transport, runOperation,
+                        ...(isPostgresql ? { sessionGuardSql: write ? postgresqlWriteRoleGuardSql : ownServerReadOnlyRoleGuardSql('postgresql') } : {}),
+                    })).catch((error: unknown) => {
                             if (error && typeof error === 'object' && 'code' in error && error.code === '42501') return refuse(write ? 'write_role_unavailable' : 'read_role_unavailable');
                             throw error;
                         });
