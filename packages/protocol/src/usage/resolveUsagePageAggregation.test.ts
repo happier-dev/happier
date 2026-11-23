@@ -1664,6 +1664,47 @@ describe('resolveUsagePageAggregation', () => {
     } }] }).success).toBe(false);
   });
 
+  it('delivers the previous whole-Session intervals as pending when accounting advances first', () => {
+    const query = normalizeUsageQuery({ session: ['session'], period: { relative: 'all' },
+      includeCoach: false, includeSessionEvidence: true, includeWorkEvidence: true });
+    const firstEnd = 1_000;
+    const nextEnd = 2_000;
+    const readAccounting = (endMs: number, eventCount: number) => ({
+      query, period: { endMs }, status: 'available' as const,
+      value: UsageAnalyticsQueryResponseSchema.parse({ ...accounting, totals: { ...accounting.totals, eventCount },
+        coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [], sources: [],
+          range: { endMs, complete: false } },
+      }),
+    });
+    const detail = { status: 'available' as const, facts: [{ workId: 'session', evidenceId: 'turn',
+      agentId: null, machineId: null, kind: 'busy' as const, startMs: 100, endMs: 400 }] };
+    const previous = resolveUsagePageAggregation({ queries: [query], nowMs: firstEnd,
+      accounting: [readAccounting(firstEnd, 1)], howYouWork: [{ query, detail, asOfMs: firstEnd + 10 }],
+    }, bundledUsageModelPriceCatalog);
+    const inProgress = resolveUsagePageAggregation({ queries: [query], previous, nowMs: nextEnd,
+      accounting: [readAccounting(nextEnd, 2)], sources: [{ source: 'how_you_work', status: 'pending', asOfMs: firstEnd + 10 }],
+    }, bundledUsageModelPriceCatalog);
+    const slice = inProgress.results[0]!;
+    expect(slice).toMatchObject({ pending: true, accounting: { totals: { eventCount: 2 }, coverage: { range: { endMs: nextEnd } } },
+      howYouWork: { intervals: { period: { startMs: 0, endMs: firstEnd }, elapsedBusyMs: 300 } } });
+    expect(slice.sources).toContainEqual({ source: 'how_you_work', status: 'pending', asOfMs: firstEnd + 10 });
+    expect(UsageQueryBatchResultSchema.safeParse(inProgress)).toMatchObject({ success: true });
+    for (const status of ['available', 'stale'] as const) {
+      expect(UsageQueryBatchResultSchema.safeParse({ ...inProgress, results: [{ ...slice,
+        sources: slice.sources.map(source => source.source === 'how_you_work' ? { ...source, status } : source),
+      }] }).success).toBe(false);
+    }
+    expect(UsageQueryBatchResultSchema.safeParse({ ...inProgress, results: [{ ...slice,
+      sources: slice.sources.map(source => source.source === 'how_you_work' ? { ...source, asOfMs: firstEnd - 1 } : source),
+    }] }).success).toBe(false);
+    const settled = resolveUsagePageAggregation({ queries: [query], previous: inProgress, nowMs: nextEnd,
+      accounting: [readAccounting(nextEnd, 2)], howYouWork: [{ query, detail, asOfMs: nextEnd + 10 }],
+    }, bundledUsageModelPriceCatalog);
+    expect(settled.results[0]?.howYouWork?.intervals?.period).toEqual({ startMs: 0, endMs: nextEnd });
+    expect(settled.results[0]?.sources).toContainEqual({ source: 'how_you_work', status: 'available', asOfMs: nextEnd + 10 });
+    expect(UsageQueryBatchResultSchema.safeParse(settled).success).toBe(true);
+  });
+
   it('delivers merged outcomes for an all-time Session with a witnessed end and no lower bound', () => {
     const nowMs = Date.parse('2026-10-23T07:00:00Z');
     const query = normalizeUsageQuery({ session: ['session'], period: { relative: 'all' },

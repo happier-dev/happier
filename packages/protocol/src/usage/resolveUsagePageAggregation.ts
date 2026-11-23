@@ -212,21 +212,32 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
     context.addIssue({ code: 'custom', path: ['work'], message: 'Unavailable Work sources cannot disclose private evidence' });
   }
   const intervals = slice.howYouWork?.intervals;
+  // A pending detail read may carry the same rolling query's previously
+  // witnessed window while accounting has already advanced.
+  const retainedDetailPeriod = intervals && 'relative' in slice.shownQuery.period
+    && witnessedPeriod?.endMs !== undefined && intervals.period.endMs < witnessedPeriod.endMs
+    && intervals.period.startMs === (resolveUsageQueryPeriod(slice.shownQuery, intervals.period.endMs).startMs ?? 0)
+    && slice.sources.some(source => source.status === 'pending'
+      && isUsageDetailSourceReadable(source) && source.asOfMs !== undefined && intervals.period.endMs <= source.asOfMs)
+    ? intervals.period : undefined;
+  const detailPeriod = retainedDetailPeriod ?? witnessedPeriod;
   if (intervals && (intervals.timeZoneOffsetMinutes !== slice.shownQuery.timeZoneOffsetMinutes
-    || (witnessedPeriod?.startMs !== undefined && intervals.period.startMs !== witnessedPeriod.startMs)
-    || (witnessedPeriod?.endMs !== undefined && intervals.period.endMs !== witnessedPeriod.endMs))) {
+    || (detailPeriod?.startMs !== undefined && intervals.period.startMs !== detailPeriod.startMs)
+    || (detailPeriod?.endMs !== undefined && intervals.period.endMs !== detailPeriod.endMs))) {
     context.addIssue({ code: 'custom', path: ['howYouWork'], message: 'Intervals must identify the shown period and calendar' });
   }
   if (intervals && !slice.sources.some(isUsageDetailSourceReadable)) {
     context.addIssue({ code: 'custom', path: ['howYouWork'], message: 'Unavailable detail cannot disclose private intervals' });
   }
   const agentCalendar = slice.howYouWork?.agentCalendar;
+  const calendarPeriod = retainedDetailPeriod?.endMs === agentCalendar?.period.endMs
+    ? detailPeriod : witnessedPeriod;
   const calendarRequestedPeriod = agentCalendar && resolveUsageQueryPeriod(slice.shownQuery,
-    witnessedPeriod?.endMs ?? agentCalendar.period.endMs);
+    calendarPeriod?.endMs ?? agentCalendar.period.endMs);
   if (agentCalendar && (agentCalendar.timeZoneOffsetMinutes !== slice.shownQuery.timeZoneOffsetMinutes
     || agentCalendar.period.startMs > agentCalendar.period.endMs
-    || calendarRequestedPeriod?.startMs !== undefined && witnessedPeriod?.startMs !== undefined && agentCalendar.period.startMs !== witnessedPeriod.startMs
-    || witnessedPeriod?.endMs !== undefined && agentCalendar.period.endMs !== witnessedPeriod.endMs)) {
+    || calendarRequestedPeriod?.startMs !== undefined && calendarPeriod?.startMs !== undefined && agentCalendar.period.startMs !== calendarPeriod.startMs
+    || calendarPeriod?.endMs !== undefined && agentCalendar.period.endMs !== calendarPeriod.endMs)) {
     context.addIssue({ code: 'custom', path: ['howYouWork', 'agentCalendar'], message: 'Agent calendar must identify the shown period and fixed offset' });
   }
   if (slice.coach && (slice.coach.queryKey !== slice.key
