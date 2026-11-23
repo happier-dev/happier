@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 import { projectAutomationSubjectPickerActionPage, resolveAutomationSubjectPickerListRead } from './automationSubjectPicker';
@@ -106,6 +107,20 @@ describe('automation subject picker read ownership', () => {
             environment: { serverId: 'home-a', environmentId: 'environment-a', projectSourceId: 'source-a' } };
         expect(resolveAutomationSubjectPickerListRead({ kind: { kind: 'database' }, serverId: 'home-a', databaseScope: scope }))
             .toEqual({ kind: 'database', actionId: DATABASE_TARGETS_LIST_ACTION_ID_V1, input: { scope } });
+    });
+
+    it('offers only the Database subjects published by the scoped targets read', () => {
+        const descriptor = createDatabaseDescriptorV1Fixture();
+        const subject = { kind: 'database', serverId: 'home-a', target: {
+            kind: 'environment', environmentId: 'environment-a', service: 'data', database: 'app',
+        } } as const;
+        expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'database' }, serverId: 'home-a', result: {
+            targets: [
+                { ...descriptor, label: 'Published Database', automationSubject: { ok: true, subject } },
+                { ...descriptor, label: 'Unavailable identity', automationSubject: { ok: false, code: 'subject_kind_unavailable' } },
+            ],
+            completeness: { complete: true },
+        } })).toEqual({ items: [{ subject, label: 'Published Database' }], nextCursor: null, coverage: 'partial' });
     });
 
     it('does not pass Home or paging keys into the profile owner’s strict profiles request', () => {

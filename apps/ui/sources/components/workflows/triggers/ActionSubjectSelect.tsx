@@ -11,21 +11,29 @@ import {
 } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { WorkflowActionOperand } from '@/components/workflows/presentation/workflowActionCatalog';
-import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeStates } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
   useAutomationSubjectPicker,
   type AutomationSubjectPickerInput,
 } from '@/sync/domains/workflows/useAutomationSubjectPicker';
-import { readAutomationSubjectPickerSelection } from '@/sync/domains/workflows/automationSubjectPicker';
-import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { readAutomationSubjectPickerSelection, type DatabaseSubjectPickerLocation } from '@/sync/domains/workflows/automationSubjectPicker';
+import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { useActiveServerAccountScopeLifetime, useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 const ANY = 'subject:any';
 const MORE = 'subject:more';
 const RETRY = 'subject:retry';
 const LOADING = 'subject:loading';
-const KEEPS_OPEN = (id: string) => id === MORE || id === RETRY;
+const DATABASE_LOCATIONS = 'subject:database-locations';
+const DATABASE_WORKTREE = 'subject:database-worktree';
+const DATABASE_LOCATION_PREFIX = 'subject:database-location:';
+const KEEPS_OPEN = (id: string) => id === MORE || id === RETRY || id === DATABASE_LOCATIONS || id === DATABASE_WORKTREE || id.startsWith(DATABASE_LOCATION_PREFIX);
 
 type CoreKind = Exclude<WorkflowActionOperand['kind']['kind'], 'plugin'>;
 
@@ -85,6 +93,7 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     subject: AutomationSubjectV1 | undefined;
     machineId: string | null;
     serverId: string | null;
+    workspaceRefId?: string;
     onChange: (subject: AutomationSubjectV1 | undefined) => void;
     onSubjectNamed?: (subject: Readonly<{ key: string; label: string }> | null) => void;
   }>,
@@ -112,26 +121,54 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     () => (binding ? readServerAccountScopeOwnerLifetime(binding) : null),
     [binding],
   );
+  const kind = operand.kind;
+  const database = kind.kind === 'database';
+  const [location, setLocation] = React.useState<DatabaseSubjectPickerLocation | null>();
+  const savedWorktree = props.subject?.kind === 'database' && props.subject.target.kind === 'worktree' ? props.subject.target : null;
+  const workspaceRefId = database && open ? props.workspaceRefId : undefined;
+  const checkout = useProjectAccountRows(rows => {
+    if (!rows || !lifetime || !workspaceRefId || !areServerAccountScopesEqual(rows.scope, lifetime.scope)) return null;
+    const resolved = resolveWorkspaceRefById(rows.workspaceRefs, workspaceRefId, lifetime.scope.serverId);
+    return resolved.kind === 'resolved' ? resolved.ref : null;
+  }, workspaceRefId !== undefined);
+  const checkoutMachineId = checkout === null ? null : isManagedWorkspaceRefV2(checkout) ? checkout.controller.machineId : checkout.machineId;
+  const installationId = useServerScopedMachine(serverId, checkoutMachineId, machine => machine?.installationId ?? null);
+  const worktreeLocation = React.useMemo((): DatabaseSubjectPickerLocation | null => {
+    if (lifetime === null) return null;
+    if (savedWorktree && savedWorktree.accountId === lifetime.scope.accountId
+        && areServerProfileIdentifiersEquivalent(savedWorktree.workspace.serverId, lifetime.scope.serverId)) {
+      const { source: _source, ...scope } = savedWorktree;
+      return { scope, machineId: 'controller' in scope.workspace ? scope.workspace.controller.machineId : scope.workspace.machineId };
+    }
+    if (checkout === null || checkoutMachineId === null || !installationId) return null;
+    return { machineId: checkoutMachineId, scope: { kind: 'worktree', accountId: lifetime.scope.accountId,
+      projectKey: projectWorkspaceRefV1(checkout).projectKey, workspace: workspaceAddressFromRefV2(checkout), installationId } };
+  }, [savedWorktree, checkout, checkoutMachineId, installationId, lifetime]);
+  const databaseLocation = database ? location === undefined && savedWorktree !== null ? worktreeLocation : location ?? null : null;
+  const choosingDatabaseLocation = database && databaseLocation === null;
+  const targetMachineId = database ? databaseLocation?.machineId : props.machineId;
   const context = React.useMemo(
     () =>
-      props.machineId
+      targetMachineId
         ? {
             externalActionTarget: {
               kind: 'machine' as const,
-              machineId: props.machineId,
+              machineId: targetMachineId,
             },
           }
         : undefined,
-    [props.machineId],
+    [targetMachineId],
   );
-  const kind = operand.kind;
   const declaration = operand.declaration;
   const input = React.useMemo((): AutomationSubjectPickerInput => {
     const common = { lifetime, demanded: open, ...(context === undefined ? {} : { context }) };
     if (kind.kind === 'plugin') return { ...common, kind, page: {}, subjectKinds: declaration === undefined ? [] : [declaration] };
     if (kind.kind === 'healthCheck') return { ...common, kind, page: {} };
+    if (kind.kind === 'database') return databaseLocation === null
+      ? { ...common, kind: { kind: 'environment' } }
+      : { ...common, kind, databaseScope: databaseLocation.scope };
     return { ...common, kind } as AutomationSubjectPickerInput;
-  }, [lifetime, open, context, kind, declaration]);
+  }, [lifetime, open, context, kind, declaration, databaseLocation]);
   const read = useAutomationSubjectPicker(input);
   const savedRef = React.useRef(saved);
   savedRef.current = saved;
@@ -158,7 +195,7 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     const listed = read.items.map((item) => {
       const key = automationSubjectKeyV1(item.subject);
       return {
-        id: key,
+        id: choosingDatabaseLocation ? DATABASE_LOCATION_PREFIX + key : key,
         title:
           key === selectedKey ? `${words.this} · ${item.label}` : item.label,
         ...(item.description === undefined
@@ -175,6 +212,8 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
           <Icon name="squares-four" size={ICON_SIZE.xs} color={iconColor} />
         ),
       },
+      ...(databaseLocation === null ? [] : [{ id: DATABASE_LOCATIONS, title: t('common.back') }]),
+      ...(choosingDatabaseLocation && worktreeLocation && checkout ? [{ id: DATABASE_WORKTREE, title: checkout.rootPath }] : []),
       ...listed,
     ];
     if (
@@ -218,6 +257,10 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     open,
     lifetime,
     serverId,
+    choosingDatabaseLocation,
+    databaseLocation,
+    worktreeLocation,
+    checkout,
   ]);
   const { onChange } = props;
   const select = React.useCallback(
@@ -231,6 +274,19 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
         return;
       }
       if (id === LOADING) return;
+      if (id === DATABASE_LOCATIONS) {
+        setLocation(null);
+        return;
+      }
+      if (id === DATABASE_WORKTREE) {
+        setLocation(worktreeLocation);
+        return;
+      }
+      if (id.startsWith(DATABASE_LOCATION_PREFIX)) {
+        const option = read.items.find(item => automationSubjectKeyV1(item.subject) === id.slice(DATABASE_LOCATION_PREFIX.length));
+        if (option?.databaseLocation) setLocation(option.databaseLocation);
+        return;
+      }
       if (id === ANY) {
         onChange(undefined);
         return;
@@ -242,7 +298,7 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
       setChosen({ key: id, label: item.label });
       onChange(item.subject);
     },
-    [read, onChange],
+    [read, onChange, worktreeLocation],
   );
   return (
     <ValueFieldSelect
@@ -251,13 +307,12 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
       items={items}
       selectedId={selectedKey}
       onSelect={select}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setLocation(undefined);
+      }}
       keepsOpen={KEEPS_OPEN}
-      emptyLabel={
-        read.status === 'unsupported'
-          ? t('common.unavailable')
-          : t('common.noMatches')
-      }
+      emptyLabel={t('common.noMatches')}
     />
   );
 });

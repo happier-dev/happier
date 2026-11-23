@@ -1,6 +1,6 @@
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
+import { type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations';
 import { ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -19,10 +19,16 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { WorkflowActionCallerContext } from './callWorkflowAction';
 import { WorkflowActionError } from './workflowActionError';
 
+export type DatabaseSubjectPickerLocation = Readonly<{
+    scope: DatabaseTargetsListInputV1['scope'];
+    machineId: string;
+}>;
+
 export type AutomationSubjectPickerOption = Readonly<{
     subject: AutomationSubjectV1;
     label: string;
     description?: string;
+    databaseLocation?: DatabaseSubjectPickerLocation;
 }>;
 export type AutomationEnvironmentSubject = Extract<AutomationSubjectV1, { kind: 'environment' | 'backup' }>;
 
@@ -33,12 +39,11 @@ export type AutomationSubjectPickerPage = Readonly<{
     coverage: ProjectsListResult['coverage'];
 }>;
 
-export type AutomationSubjectPickerActionPageKind = Exclude<AutomationSubjectKind, { kind: 'database' }>;
-
 /** Page demand comes from the caller or the list owner's existing default. */
 export type AutomationSubjectPickerActionPageRequest =
-    | Readonly<{ kind: Exclude<AutomationSubjectPickerActionPageKind, { kind: 'plugin' | 'healthCheck' | 'app' }>;
+    | Readonly<{ kind: Exclude<AutomationSubjectKind, { kind: 'plugin' | 'healthCheck' | 'app' | 'database' }>;
         cursor?: string }>
+    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'database' }>; databaseScope: DatabaseTargetsListInputV1['scope'] }>
     | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'app' }>; cursor?: string; query?: string; limit?: number }>
     | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'healthCheck' }>;
         page: Omit<WorkflowSubjectsListRequestV1, 'kind' | 'limit'> & Partial<Pick<WorkflowSubjectsListRequestV1, 'limit'>> }>
@@ -47,11 +52,18 @@ export type AutomationSubjectPickerActionPageRequest =
 
 /** Project an acknowledged page without reading its body or fetching a second page. */
 export function projectAutomationSubjectPickerActionPage(input: Readonly<{
-    kind: AutomationSubjectPickerActionPageKind; serverId: string; result: unknown;
+    kind: AutomationSubjectKind; serverId: string; result: unknown;
     subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
 }>): AutomationSubjectPickerPage {
     const serverId = input.serverId;
     switch (input.kind.kind) {
+        case 'database': {
+            const page = DatabaseTargetsListResultV1Schema.parse(input.result);
+            const items = page.targets.flatMap(({ label, automationSubject }) =>
+                automationSubject?.ok ? [{ subject: automationSubject.subject, label }] : []);
+            return { items, nextCursor: null,
+                coverage: page.completeness.complete && items.length === page.targets.length ? 'complete' : 'partial' };
+        }
         case 'healthCheck': {
             const page = WorkflowSubjectsListResultV1Schema.parse(input.result);
             return { items: page.subjects.map(item => ({ subject: item.subject, label: item.label })),
@@ -94,7 +106,14 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
             if (!page.ok) throw new Error(page.error);
             const kind = input.kind.kind;
             return { items: page.items.map(environment => ({ label: environment.name ?? environment.id,
-                subject: { kind, serverId: environment.serverId, environmentId: environment.id } })), nextCursor: page.nextCursor,
+                subject: { kind, serverId: environment.serverId, environmentId: environment.id },
+                ...(kind === 'environment' ? { databaseLocation: {
+                    scope: { kind: 'environment' as const, environment: {
+                        serverId: environment.serverId, projectSourceId: environment.projectSourceId, environmentId: environment.id,
+                    } },
+                    machineId: environment.controllerMachineId,
+                } } : {}),
+            })), nextCursor: page.nextCursor,
             coverage: page.coverage ?? 'unknown' };
         }
         case 'session': {
@@ -140,10 +159,18 @@ export async function readAutomationSubjectPickerActionPage(input: Readonly<{
     }
     const page = 'page' in input ? input.page : input;
     const read = resolveAutomationSubjectPickerListRead({ kind: input.kind, serverId,
-        cursor: page.cursor, ...('limit' in page ? { limit: page.limit } : {}),
+        ...('databaseScope' in input ? { databaseScope: input.databaseScope } : {}),
+        ...('cursor' in page ? { cursor: page.cursor } : {}), ...('limit' in page ? { limit: page.limit } : {}),
         ...('query' in page ? { query: page.query } : {}),
         ...('sources' in page ? { sources: page.sources } : {}) });
     const { callWorkflowAction } = await import('./callWorkflowAction');
+    if (read.kind === 'database') {
+        const target = input.context?.externalActionTarget;
+        if (target?.kind !== 'machine') throw new WorkflowActionError({ message: 'machine_unavailable', rawCode: 'machine_unavailable' });
+        const { readDeploymentDatabaseTargets } = await import('@/components/projects/deployments/deploymentReadTransport');
+        const result = await readDeploymentDatabaseTargets(input.lifetime, target.machineId, read.input, input.signal);
+        return projectAutomationSubjectPickerActionPage({ kind: input.kind, serverId, result });
+    }
     if (read.kind === 'plugin_contribution' && 'subjectKinds' in input) {
         const declaration = readPluginAutomationSubjectKindV1({ ...read, subjectKinds: input.subjectKinds });
         if (!declaration) throw new WorkflowActionError({ message: 'subject_kind_unavailable', rawCode: 'subject_kind_unavailable' });

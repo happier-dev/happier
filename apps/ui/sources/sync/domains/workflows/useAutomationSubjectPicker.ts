@@ -26,7 +26,7 @@ export type AutomationSubjectPickerInput = PickerRequest & Readonly<{
 
 type PickerState = Readonly<{
     items: readonly AutomationSubjectPickerOption[];
-    status: 'idle' | 'loading' | 'loading_more' | 'ready' | 'error' | 'unsupported';
+    status: 'idle' | 'loading' | 'loading_more' | 'ready' | 'error';
     coverage: AutomationSubjectPickerPage['coverage'];
     nextCursor: string | null;
     error: unknown;
@@ -34,17 +34,14 @@ type PickerState = Readonly<{
 
 export type AutomationSubjectPickerRead = Omit<PickerState, 'nextCursor'> & Readonly<{
     hasMore: boolean;
-    /** Database list targets do not yet have an owner-published Automation subject projection. */
-    unsupported: Readonly<{ owner: 'database'; missing: 'automation_subject_projection' }> | null;
     loadMore(): Promise<void>;
     reload(): Promise<void>;
 }>;
 
 const IDLE: PickerState = { items: [], status: 'idle', coverage: 'unknown', nextCursor: null, error: null };
-const DATABASE_PROJECTION = { owner: 'database', missing: 'automation_subject_projection' } as const;
 
 function hasActionReader(input: PickerRequest): input is ReadableRequest {
-    return input.kind.kind !== 'database';
+    return input.kind.kind !== 'database' || 'databaseScope' in input && input.databaseScope !== undefined;
 }
 
 /**
@@ -60,8 +57,7 @@ export function useAutomationSubjectPicker(input: AutomationSubjectPickerInput):
         : 'databaseScope' in input ? { databaseScope: input.databaseScope }
             : { query: 'query' in input ? input.query : undefined, limit: 'limit' in input ? input.limit : undefined }) });
     const session = React.useMemo(() => ({ input, active: false, request: null as AbortController | null,
-        state: input.demanded && input.lifetime && !hasActionReader(input)
-            ? { ...IDLE, status: 'unsupported' as const } : IDLE }),
+        state: IDLE }),
     [key, input.lifetime, input.demanded, input.context]);
     const [published, setPublished] = React.useState({ session, state: session.state });
     const publish = React.useCallback((state: PickerState) => {
@@ -121,6 +117,6 @@ export function useAutomationSubjectPicker(input: AutomationSubjectPickerInput):
     const state = published.session === session ? published.state : session.state;
     return React.useMemo(() => ({ items: state.items, status: state.status, error: state.error,
         coverage: state.coverage, hasMore: state.nextCursor !== null,
-        unsupported: state.status === 'unsupported' ? DATABASE_PROJECTION : null, loadMore, reload }),
+        loadMore, reload }),
     [state, loadMore, reload]);
 }

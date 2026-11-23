@@ -164,6 +164,7 @@ export function WorkflowTriggerBlock(
     machineId: string | null;
     serverId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    workspaceRefId?: string;
     /** The authored lifetime Session, independent of the watched source. */
     sessionId?: string;
     /** Borrowed by the existing PR picker and scope controls; carries no independent read or controller. */
@@ -314,6 +315,7 @@ export function WorkflowTriggerBlock(
           testID={props.testID}
           when={when}
           onSubjectNamed={isDeployFinishedTrigger(when) ? setNamedSubject : undefined}
+          workspaceRefId={props.workspaceRefId}
           machineId={props.machineId}
           serverId={props.serverId}
           onChange={props.onChangeWhen}
@@ -360,6 +362,7 @@ function ActionTrackRows(
     onSubjectNamed?: (subject: Readonly<{ key: string; label: string }> | null) => void;
     machineId: string | null;
     serverId: string | null;
+    workspaceRefId?: string;
     onChange: (next: TriggerWhenValue) => void;
   }>,
 ) {
@@ -437,6 +440,7 @@ function ActionTrackRows(
               operand={operand}
               subject={when.subject}
               onSubjectNamed={props.onSubjectNamed}
+              workspaceRefId={props.workspaceRefId}
               machineId={props.machineId}
               serverId={props.serverId}
               onChange={(subject) => {

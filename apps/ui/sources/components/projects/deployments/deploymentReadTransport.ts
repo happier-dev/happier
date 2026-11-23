@@ -2,9 +2,10 @@ import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { AutomationDatabaseSubjectV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1 } from '@happier-dev/plugin-sdk/database';
+import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1, type DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
 import {
     readAutomationDatabaseSubjectV1,
     type AutomationDatabaseSubjectReadV1,
@@ -79,6 +80,22 @@ type UiDeploymentReadTransport = Omit<DeploymentReadTransportV1, 'readEnvironmen
         targetLinks: readonly DeploymentTargetLinkChoiceV1['targetLink'][], options: DeploymentReadOptionsV1)
         => Promise<DeploymentReadResultV1<readonly DeploymentTargetLinkChoiceV1[]>>;
 }>;
+
+export async function readDeploymentDatabaseTargets(
+    lifetime: ServerAccountScopeLifetime,
+    machineId: string,
+    input: DatabaseTargetsListInputV1,
+    signal?: AbortSignal,
+): Promise<DatabaseTargetsListResultV1> {
+    const execute = createFrontDoorUiActionExecutor(undefined, {
+        serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+    });
+    const result = await execute(ACTION_INVOKE_ACTION_ID_V1, {
+        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
+        input,
+    }, { signal, externalActionTarget: { kind: 'machine', machineId } });
+    return DatabaseTargetsListResultV1Schema.parse(result);
+}
 
 /** The shared controller consumes the existing Action and mode-aware Account Artifact owners. */
 export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifetime): UiDeploymentReadTransport {
@@ -267,12 +284,11 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (selectedMetadata && (hasManagedData || runtimeTargetLink?.activeDeploymentId && (selection === undefined || data.length > 0))) {
                     if (environment.controllerMachineId) {
                         try {
-                            databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
-                                action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
-                                input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
+                            databaseTargets = await readDeploymentDatabaseTargets(lifetime, environment.controllerMachineId, {
+                                scope: { kind: 'environment', environment: { serverId: environment.serverId,
                                     projectSourceId: environment.projectSourceId, environmentId: environment.id },
-                                    ...(selection ? { selection } : {}) } },
-                            }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
+                                    ...(selection ? { selection } : {}) },
+                            }, options.signal);
                         } catch (error) {
                             databaseSubjectFailure = failureFromError(error).failure;
                         }

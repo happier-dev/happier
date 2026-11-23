@@ -349,6 +349,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     onStartsOpenChange={demandCatalog}
                     onSelectStart={(id) => selectStart(when, id, (next) => editRow(row, next))}
                     {...placement}
+                    workspaceRefId={runsOn?.workspaceRefId}
                     accountLifetime={props.accountLifetime}
                     sessionId={lifetimeSessionId}
                     sessionContext={sessionContext}
@@ -386,7 +387,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
-                {...placement} accountLifetime={props.accountLifetime} sessionId={lifetimeSessionId} sessionContext={sessionContext}
+                {...placement} workspaceRefId={runsOn?.workspaceRefId} accountLifetime={props.accountLifetime} sessionId={lifetimeSessionId} sessionContext={sessionContext}
                 onChangeWhen={(when) => editPending(item.clientId, when)}
                 onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
         )),
