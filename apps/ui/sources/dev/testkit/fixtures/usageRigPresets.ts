@@ -26,7 +26,7 @@ export function buildUsageRigPresetPlans(scope: ServerAccountScope, period: Usag
             if (definition.kind !== 'builtin' || !isUsageQueryWidget(definition.id)) continue;
             const descriptor = readBuiltinWidgetDescriptorV1(definition)!;
             // Start with the stored artifact after the toolbar's metric edit.
-            const configured = metric && usageWidgetAcceptsMetric(definition) ? { ...instance,
+            const configured = metric && usageWidgetAcceptsMetric(instance) ? { ...instance,
                 bindings: setWidgetInputBindingsV1(instance.bindings, { metric: { kind: 'value', value: metric } }, ['metric']) } : instance;
             const binding = resolveConfiguredWidgetInputs({ instance: configured, descriptor, providedContext: context, viewerValues: {} });
             if (binding.status !== 'ready') throw new Error(`Usage preset ${preset.id}/${definition.id} input ${binding.status}`);

@@ -4618,11 +4618,11 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
-  it('reacquires only named quota sources when a wake has no changed-day hint', async () => {
+  it('reacquires only named quota sources on a record wake and reuses daily history across Source and period changes', async () => {
     const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
-    const now = Date.UTC(2026, 10, 18, 12);
+    const now = Date.now();
     const day = 86_400_000;
-    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const olderDay = Math.floor(now / day) * day - 400 * day;
     const refs = Array.from({ length: 8 }, (_, index) => ({
       service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `quota-${index}`,
     }));
@@ -4633,14 +4633,15 @@ describe('usage query captured Resource adapter', () => {
         providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
         staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
         meters: [{ meterId: 'daily', label: 'Daily', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
-          resetsAt: now + day, windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
+          resetsAt: now + day / 2, windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
     });
-    const summaryBody = (snapshot: typeof snapshots[number]) => Array.from({ length: 13 }, (_, index) => {
-      const dayStartAtMs = Math.floor(now / day) * day - (12 - index) * day;
-      const historical = { ...snapshot, observedAtMs: dayStartAtMs + 3_600_000, fetchedAtMs: dayStartAtMs + 3_600_000 };
-      return { dayStartAtMs, payload: { v: 1, coverage: { observationCount: 1,
-        frontier: { id: `day-${snapshot.recordId}-${index}`, observedAtMs: historical.observedAtMs } },
-        content: { t: 'plain' as const, v: buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs, snapshots: [historical] }) } } };
+    const observations = (snapshot: typeof snapshots[number]) => [olderDay + 3_600_000, now - 3_600_000, now].map((observedAtMs, index) => {
+      const used = index === 2 ? snapshot.meters[0]!.used! : 4;
+      return { id: `quota-${observedAtMs}`, observedAtMs, snapshot: {
+        ...snapshot, observedAtMs, fetchedAtMs: observedAtMs,
+        meters: snapshot.meters.map(meter => ({ ...meter, used, remaining: 100 - used, utilizationPct: used,
+          resetsAt: index === 0 ? olderDay + day : meter.resetsAt })),
+      } };
     });
     const historyReads = new Map(snapshots.map(snapshot => [snapshot.recordId, 0]));
     const summaryReads = new Map(snapshots.map(snapshot => [snapshot.recordId, 0]));
@@ -4670,15 +4671,30 @@ describe('usage query captured Resource adapter', () => {
           request.url.searchParams.get('query'));
         const recordId = query.recordId;
         summaryReads.set(recordId, (summaryReads.get(recordId) ?? 0) + 1);
-        const snapshot = snapshots.find(candidate => candidate.recordId === recordId)!;
-        return Response.json({ summaries: summaryBody(snapshot), missingDays: [] });
+        const rows = observations(snapshots.find(candidate => candidate.recordId === recordId)!);
+        const summaries = [...new Set(rows.map(row => Math.floor(row.observedAtMs / day) * day))].map(dayStartAtMs => {
+          const dayRows = rows.filter(row => row.observedAtMs >= dayStartAtMs && row.observedAtMs < dayStartAtMs + day);
+          const frontier = dayRows.at(-1)!;
+          return { dayStartAtMs, payload: { v: 1, coverage: { observationCount: dayRows.length,
+            frontier: { id: frontier.id, observedAtMs: frontier.observedAtMs } },
+            content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs, snapshots: dayRows.map(row => row.snapshot) }) } } };
+        });
+        const range = query.range;
+        return Response.json({ summaries: range ? summaries.filter(({ dayStartAtMs }) =>
+          dayStartAtMs < range.endAtMs && dayStartAtMs + day > range.startAtMs) : summaries, missingDays: [] });
       }
       if (request.path.endsWith('/history')) {
         const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
           request.url.searchParams.get('query'));
         const recordId = query.recordId;
+        if (!('history' in query)) throw new Error('Unexpected projection request for daily quota');
         historyReads.set(recordId, (historyReads.get(recordId) ?? 0) + 1);
-        return new Response(JSON.stringify({ entries: [], nextCursor: null }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+        const index = snapshots.findIndex(snapshot => snapshot.recordId === recordId);
+        const { startAtMs, endAtMs } = query.history.range;
+        const entries = observations(snapshots[index]!).filter(row => row.observedAtMs >= startAtMs && row.observedAtMs < endAtMs)
+          .map(row => ({ id: row.id, observedAtMs: row.observedAtMs, record: { content: { t: 'plain', v: row.snapshot },
+            metadata: { fetchedAt: row.observedAtMs, staleAfterMs: day, status: 'ok' }, sources: [sources[index]] } }));
+        return new Response(JSON.stringify({ entries, nextCursor: null }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
       }
       if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
       return undefined;
@@ -4693,13 +4709,41 @@ describe('usage query captured Resource adapter', () => {
       serverBasis: { serverId: basis.serverId, generation: basis.generation }, credentialScope: [basis.serverId, String(basis.generation), credentialScope].join('\u0000') }));
     for (const quotaContext of quotaContexts) loadQualifiedQuotaSnapshotOnce(buildQualifiedQuotaSnapshotScopeKey(quotaContext), quotaContext);
     await expect.poll(() => quotaContexts.every(quotaContext => getQualifiedQuotaSnapshotEntry(buildQualifiedQuotaSnapshotScopeKey(quotaContext)).read)).toBe(true);
-    const query = normalizeUsageQuery({ period: { relative: 'year' }, includeAccounting: false, includeQuota: true, includeQuotaHistory: true,
+    const query = normalizeUsageQuery({ period: { relative: 'year' }, includeAccounting: true, includeQuota: true, includeQuotaHistory: true,
       includeQuotaExactHistory: false, includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
-    await readUiUsageQueryBatch(captured, { queries: [query] });
-    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const store = getUsageQueryResourceStore(captured);
+    const entryFor = (query: ReturnType<typeof normalizeUsageQuery>) => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const entry = entryFor(query);
     const release = entry.subscribe(() => {}, true);
+    const settledQuota = async (target: typeof entry) => {
+      await expect.poll(() => target.getSnapshot().value !== undefined && target.getSnapshot().pending === 'idle').toBe(true);
+      expect(target.getSnapshot().error).toBeUndefined();
+      return decodeUsageQueryResource(target.getSnapshot().value!).results[0]?.quota?.[0];
+    };
     const reads = () => snapshots.map(snapshot => ({ history: historyReads.get(snapshot.recordId)!, summaries: summaryReads.get(snapshot.recordId)! }));
     try {
+      const year = await settledQuota(entry);
+      expect(year?.current?.meters[0]?.used).toBe(10);
+      expect(year?.pace[0]?.value).toMatchObject({ status: 'available', sampleCount: 2 });
+      const yearDays = year?.pageFacts?.dayQuotaHistory?.map(day => day.dayStartAtMs) ?? [];
+      expect(yearDays.length).toBeGreaterThan(0);
+      expect(yearDays).not.toContain(olderDay);
+      const acceptedReads = [...historyReads.values()];
+      expect(acceptedReads.every(count => count > 0)).toBe(true);
+
+      const selectedSource = normalizeUsageQuery({ ...query, sources: ['codex'] });
+      const all = normalizeUsageQuery({ ...selectedSource, period: { relative: 'all' } });
+      for (const [requested, days] of [[selectedSource, yearDays], [all, [olderDay, ...yearDays]]] as const) {
+        const presented = entryFor(requested);
+        const releasePresented = presented.subscribe(() => {}, true);
+        try {
+          const quota = await settledQuota(presented);
+          expect.soft(quota?.pageFacts?.dayQuotaHistory?.map(day => day.dayStartAtMs)).toEqual(days);
+          expect.soft(quota?.pace).toEqual(year?.pace);
+          expect.soft([...historyReads.values()], 'An unchanged quota admission reuses its already accepted raw history').toEqual(acceptedReads);
+        } finally { releasePresented(); }
+      }
       await entry.refresh();
       await flushHookEffects({ cycles: 20 });
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
