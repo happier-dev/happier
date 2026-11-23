@@ -10,7 +10,6 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -203,25 +202,25 @@ describe('Project atmosphere Settings Action ingress', () => {
             expect(fixture.writes()).toBe(0);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
-            })); });
+            }), { version: 2 }); });
+            vi.mocked(Modal.confirm).mockClear();
+            vi.mocked(Modal.confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
             await screen.pressByTestIdAsync('look-show-on:home');
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            expect(fixture.writes()).toBe(0);
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
             expect(fixture.writes()).toBe(0);
             await screen.pressByTestIdAsync('look-show-on:home');
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
             await vi.waitFor(() => expect(read().atmosphere).toMatchObject({ showOn: ['home'] }));
+            expect(Modal.confirm).toHaveBeenCalledTimes(2);
             expect(readProjectAtmosphere(storage.getState(), project)).toMatchObject({ showOn: ['home'] });
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-            })); });
+            }), { version: 3 }); });
             await screen.pressByTestIdAsync('look-show-on:everywhere');
             await vi.waitFor(() => expect(read().atmosphere).toMatchObject({ showOn: ['home', 'new-session', 'projects', 'sessions', 'pages'] }));
             expect(read()).toMatchObject({ label: 'Retained', pinned: true });
             expect(account.settingsWrites).toHaveLength(0);
-            expect(account.artifacts.list()).toHaveLength(2);
+            expect(Modal.confirm).toHaveBeenCalledTimes(2);
+            expect(account.artifacts.list()).toEqual([]);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
@@ -240,21 +239,25 @@ describe('Project atmosphere Settings Action ingress', () => {
             expect(fixture.writes()).toBe(0);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
-            })); });
+            }), { version: 2 }); });
+            const answer = createDeferred<boolean>();
+            vi.mocked(Modal.confirm).mockClear();
+            vi.mocked(Modal.confirm).mockReturnValueOnce(answer.promise);
             let pending: unknown;
             await act(async () => { pending = editor.getCurrent().update(current => ({ ...current, source: 'none' })); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
+            expect(account.artifacts.list()).toEqual([]);
+            expect(fixture.writes()).toBe(0);
             const saved = read();
             if (!saved.atmosphere || saved.atmosphere === 'home') throw new Error('Expected override');
             fixture.replace({ ...saved, label: 'Changed during approval', atmosphere: { ...saved.atmosphere,
                 planet: { ...saved.atmosphere.planet, digits: false }, showOn: ['projects'] } });
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await act(async () => { await pending; });
+            await act(async () => { answer.resolve(true); await pending; });
             expect(read()).toMatchObject({ label: 'Changed during approval', pinned: true,
                 atmosphere: { source: 'none', planet: { digits: false }, showOn: ['projects'] } });
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-            })); });
+            }), { version: 3 }); });
             await act(async () => { await editor.getCurrent().resetToHome!(); });
             await vi.waitFor(() => expect(read().atmosphere).toBe('home'));
             expect(read()).toMatchObject({ label: 'Changed during approval', pinned: true });
