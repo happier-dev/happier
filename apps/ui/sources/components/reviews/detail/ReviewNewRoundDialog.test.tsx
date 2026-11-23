@@ -114,4 +114,21 @@ describe('Retrying reviewers that did not finish', () => {
       expect(loading.getTextContent()).toContain(t('reviewWalkthrough.detail.checkingReviewer'));
     } finally { await loading.unmount(); }
   });
+
+  it('fits its content again once a failed preview is retried: the unavailable notice is its own screen (U8 R8 R6d)', async () => {
+    const keys: (string | undefined)[] = [];
+    function Keyed(props: Readonly<{ reason: string | null }>) {
+      const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
+      if (chrome?.kind === 'card') keys.push(chrome.screenKey);
+      return <ReviewNewRoundDialog previousRound={2} retrying={['Claude · step 2']}
+        reviewers={[{ id: 'step-2-reviewer-1', label: 'Claude · step 2', mark: null, continuity: null }]}
+        ready={false} reason={props.reason} onRetry={() => {}} onStart={startNothing} onClose={onClose} setChrome={setChrome} />;
+    }
+    const screen = await renderScreen(<Keyed reason="Happier couldn’t confirm whether this finished." />);
+    try {
+      const failed = keys.at(-1);
+      await screen.update(<Keyed reason={null} />);
+      expect(keys.at(-1)).not.toBe(failed);
+    } finally { await screen.unmount(); }
+  });
 });

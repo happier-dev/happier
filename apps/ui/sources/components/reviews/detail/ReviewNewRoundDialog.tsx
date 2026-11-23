@@ -82,6 +82,7 @@ export function ReviewNewRoundDialog(
   // Strings, so a caller's new array of the same names does not publish new chrome.
   const title = !retried ? t('reviewWalkthrough.detail.newRound') : retried.length === 1
     ? t('reviewWalkthrough.detail.retryReviewer', { name: retried[0]! }) : t('reviewWalkthrough.detail.retryUnfinished', { count: retried.length });
+  const unavailable = Boolean(props.reason);
   const subtitle = t(!retried ? 'reviewWalkthrough.detail.newRoundDescription'
     : props.retryingEveryone && retried.length > 1 ? 'reviewWalkthrough.detail.retryRoundDescriptionAll'
       : retried.length === 1 ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.retryRoundDescriptionMany');
@@ -103,6 +104,9 @@ export function ReviewNewRoundDialog(
       subtitleLines: 2,
       testID: 'review-new-round',
       scrollHost: 'bounded',
+      // The unavailable notice is its own screen: once a retry clears it, the card fits its rows again instead of
+      // keeping the taller notice height (U8 R8 R6d).
+      screenKey: unavailable ? 'unavailable' : 'reviewers',
       dimensions: {
         width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide,
         maxHeightRatio: 0.86,
@@ -130,7 +134,7 @@ export function ReviewNewRoundDialog(
         </ModalCardFooterActions>
       ),
     }),
-    [busy, costsAccepted, failure, onClose, props.ready, start, subtitle, title],
+    [busy, costsAccepted, failure, onClose, props.ready, start, subtitle, title, unavailable],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (

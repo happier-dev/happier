@@ -295,6 +295,8 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(getReviewListSnapshot(key).items?.[0]?.reviewId).toBe('review-live'));
             await reportCollectionLayout(screen, 'reviews:list');
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-live')).not.toBeNull());
+            // Its sealed title hasn't opened yet: the title's place holds a skeleton bar, never the word "Review" (U8 R8 L3).
+            expect(screen.findByTestId('reviews:row:review-live:title-pending')).not.toBeNull();
             // One fact: what needs the person, never the total beside it (U8 A2).
             const pendingLabel = t('reviewWalkthrough.detail.glanceToDecide', { count: 1 });
             expect(screen.getTextContent()).toContain(pendingLabel);

@@ -125,6 +125,8 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
                 {children}
             </WorkspaceDestinationRow>,
             glyph: () => null, loadingGlyph: false, title: titleOf,
+            // Until its sealed title opens, the title's place holds the skeleton bar, never "Review" (U8 R8 L3).
+            titlePending: item => view.titles.has(item.reviewId) && view.titles.get(item.reviewId) === undefined,
             columnTitles: { title: reviewLabel },
             accessibilityLabel: item => [titleOf(item), reviewRowFact(item)?.label, bylineOf(item), ageOf(item)]
                 .filter(Boolean).join(' · '),

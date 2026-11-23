@@ -8,11 +8,16 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /** Exact Doc labels consume the canonical opened header, never an independently retained title. */
-export function useArtifactTitleProjections(scope: ServerAccountScope | null, artifactIds: readonly string[], active = true): readonly (string | null)[] {
+export function useArtifactTitleProjections(scope: ServerAccountScope | null, artifactIds: readonly string[], active = true): readonly (string | null | undefined)[] {
     const presentedSignal = useLayoutPresentationSignal();
     const current = storage(state => areServerAccountScopesEqual(state.profileScope, scope));
-    const titles = storage(useShallow(state => artifactIds.map(id => areServerAccountScopesEqual(state.profileScope, scope)
-        && state.artifacts[id]?.isDecrypted ? state.artifacts[id]?.title ?? null : null)));
+    // `undefined` while the Artifact hasn't been opened yet (its title is on its way); `null` once opened without one
+    // or unreadable, so a list draws a pending title rather than a stand-in word (U8 R8 L3).
+    const titles = storage(useShallow(state => artifactIds.map(id => {
+        if (!areServerAccountScopesEqual(state.profileScope, scope)) return null;
+        const artifact = state.artifacts[id];
+        return !artifact ? undefined : artifact.isDecrypted ? artifact.title ?? null : null;
+    })));
     React.useEffect(() => {
         // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
         const start = (presented: boolean): (() => void) | void => {

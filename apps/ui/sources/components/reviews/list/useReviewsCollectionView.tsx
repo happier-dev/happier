@@ -116,8 +116,9 @@ export function useReviewsCollectionView(focused: boolean, commandOwner = true) 
   const list = useReviewList(request);
   const artifactIds = React.useMemo(() => list.items?.map(item => item.reviewId) ?? [], [list.items]);
   const openedTitles = useArtifactTitleProjections(list.scope, artifactIds, focused);
+  // `undefined`: the sealed title hasn't opened yet; `null`: opened without one.
   const titles = React.useMemo(() => new Map(artifactIds.map((id, index) =>
-    [id, openedTitles[index] ?? null] as const)), [artifactIds, openedTitles]);
+    [id, openedTitles[index]] as const)), [artifactIds, openedTitles]);
   const { searchQuery, setSearchQuery } = binding;
   useCurrentUiContextLocalCommands(focused && commandOwner ? [{
     key: 'reviews.query',
