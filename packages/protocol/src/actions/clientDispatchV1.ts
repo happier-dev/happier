@@ -185,10 +185,12 @@ export function buildUiActionDispatchRequestV1(request: Readonly<{
   admittedHostReviewedChildren?: AdmittedHostReviewedChildrenV1;
 }>): UiActionDispatchRequestV1 {
   const shape = UiActionDispatchRequestV1Schema.shape.context.shape;
-  const { callerPermissionMode, causalPermissionAuthority, ...hostContext } = request.context;
+  const { callerPermissionMode, causalPermissionAuthority, defaultSessionId, defaultSessionMachineId, ...hostContext } = request.context;
   // Only the executor's closed admission supplies these facts, never a caller's context projection.
   const context = { ...Object.fromEntries(Object.entries(hostContext)
     .filter(([key]) => key !== 'admittedHostReviewedChildren' && Object.hasOwn(shape, key))),
+    ...(defaultSessionId == null ? {} : { defaultSessionId }),
+    ...(defaultSessionMachineId == null ? {} : { defaultSessionMachineId }),
     // The staged permission Action is new to this wire. Keep existing Actions readable by older clients.
     ...(request.actionId === SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 ? {
       ...(callerPermissionMode === undefined ? {} : { callerPermissionMode }),
