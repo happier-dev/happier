@@ -413,6 +413,8 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
 
 export const SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH = 2_000;
 
+export const CONNECTED_SERVICE_BINDING_UNSUPPORTED = 'connected_service_binding_unsupported';
+
 export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyRuntimeIssueV1), z.readonly(z.object({
     v: z.literal(1),
     scope: z.literal('primary_session'),

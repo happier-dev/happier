@@ -276,6 +276,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 : null;
             const resolveConnectedServicesSelection = (connectedServices: ConnectedServiceBindingsV2 | null | undefined) =>
                 trace('connected_services_selection', () => resolveExecutionRunConnectedServicesSelection({
+                    runId: opts.runId,
                     backendId: engineResolution.backendId,
                     agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
                     contributions: opts.engineRegistry?.contributions,

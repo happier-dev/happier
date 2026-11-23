@@ -7,6 +7,9 @@ import { readSafeVoiceProviderFailureMessage } from './voiceMachineErrorCopy';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
+import { CONNECTED_SERVICE_BINDING_UNSUPPORTED } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
 import type {
     VoiceMachineError,
@@ -82,7 +85,8 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'agent_signed_out') return 'authentication_required';
     if (reason === 'held_by_person' || reason === 'VOICE_AGENT_TARGET_SESSION_INACTIVE'
         || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE') return 'session_unavailable';
-    if (reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
+    if (reason === CONNECTED_SERVICE_BINDING_UNSUPPORTED
+        || reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
         || reason === 'voice_provider_agent_unavailable'
         || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
         || reason === 'execution_run_protocol_unsupported'
@@ -124,7 +128,10 @@ export function createVoiceMachineError(params: Readonly<{
     const providerCode = ProviderErrorCodeV1Schema.safeParse(readSafeVoiceRuntimeFailureCode(params.cause));
     const providerError = providerErrorResult.success ? providerErrorResult.data
         : providerCode.success ? createProviderErrorV1(providerCode.data) : null;
-    const providerMessage = readSafeVoiceProviderFailureMessage(params.reason, params.cause);
+    const unsupportedBinding = params.reason === CONNECTED_SERVICE_BINDING_UNSUPPORTED;
+    const providerMessage = unsupportedBinding && cause instanceof Error && cause.message !== params.reason
+        ? redactVoicePathLikeString(redactBugReportSensitiveText(cause.message))
+        : readSafeVoiceProviderFailureMessage(params.reason, params.cause);
     const quota = params.reason === 'usage_limit' && cause && typeof cause === 'object'
         ? ExecutionRunTurnStreamEventErrorSchema.safeParse({ t: 'error', error: params.reason,
             usageLimitRecovery: 'usageLimitRecovery' in cause ? cause.usageLimitRecovery : undefined,
@@ -139,6 +146,8 @@ export function createVoiceMachineError(params: Readonly<{
             ? { usageLimit: { usageLimitRecovery: quota.data.usageLimitRecovery,
                 usageLimitResetAtMs: quota.data.usageLimitResetAtMs } } : {}),
         ...policy,
+        ...(unsupportedBinding
+            ? { recoveryAction: 'none' as const, retryPolicy: 'never' as const } : {}),
         // A cloud agent refusal needs Voice provider settings on every platform,
         // rather than the native microphone settings used by open_settings.
         ...(params.reason === 'voice_provider_agent_unavailable'

@@ -55,7 +55,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, input.errorMessage);
     const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
     const startupCode = sessionCause?.code ?? input.errorMessage;
-    const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause) : null;
+    const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause, input.errorProviderMessage) : null;
     const turnMessage = presentExecutionRunTurnFailure(sessionCause);
     const providerMessage = turnMessage ? redactVoicePathLikeString(turnMessage) : input.errorProviderMessage;
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey)

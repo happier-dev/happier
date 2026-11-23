@@ -2314,6 +2314,24 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     await hook.unmount();
   });
 
+  it('names the unsupported Connected Services binding without offering Retry', async () => {
+    const { classifyVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+    const { createRpcCallError } = await import('@/sync/runtime/rpcErrors');
+    const correction = "Backend 'codex' does not support Connected Service 'happier.agent.muse/muse-account'. Remove that binding or select a backend that supports it.";
+    const failure = classifyVoiceMachineError(createRpcCallError({
+      error: correction, errorCode: 'connected_service_binding_unsupported',
+    }));
+    const hook = await renderControl({
+      adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle',
+      canStop: false, errorCode: failure.kind, errorMessage: failure.reason,
+      errorProviderMessage: failure.providerMessage, errorRecoveryAction: failure.recoveryAction,
+    });
+    expect(hook.getCurrent().captionLabel).toBe(correction);
+    expect(failure.retryPolicy).toBe('never');
+    expect(hook.getCurrent().recoveryLabel).not.toBe(t('common.retry'));
+    await hook.unmount();
+  });
+
   it('names why a failed attempt failed and offers its short recovery verb', async () => {
     const hook = await renderControl({
       adapterId: 'local_conversation',

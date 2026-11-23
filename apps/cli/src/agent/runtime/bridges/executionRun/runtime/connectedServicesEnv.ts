@@ -1,4 +1,4 @@
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { CONNECTED_SERVICE_BINDING_UNSUPPORTED, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -115,18 +115,6 @@ export function hasConnectedExecutionRunBinding(bindings: ConnectedServiceBindin
         .some((binding) => binding.source === 'connected' || binding.source === 'team_resource');
 }
 
-function hasUndeclaredConnectedExecutionRunBinding(
-    bindings: ConnectedServiceBindingsV2,
-    declaredServiceIds: readonly string[],
-): boolean {
-    return Object.entries(bindings.bindingsByServiceId).some(
-        ([serviceId, binding]) => (
-            (binding.source === 'connected' || binding.source === 'team_resource')
-            && !declaredServiceIds.includes(serviceId)
-        ),
-    );
-}
-
 function defaultDeps(): MaterializationDeps {
     return {
         requestMaterialization: requestExecutionRunConnectedServicesMaterialization,
@@ -154,6 +142,7 @@ function defaultDeps(): MaterializationDeps {
  * policy can suppress competing native bindings before any credential side effect.
  */
 export async function resolveExecutionRunConnectedServicesSelection(params: Readonly<{
+    runId?: string;
     backendId: string;
     backendSourceKind: 'built_in' | 'configured' | (string & {});
     agentCatalogEntry: AgentCatalogEntry | null;
@@ -170,26 +159,25 @@ export async function resolveExecutionRunConnectedServicesSelection(params: Read
 
     if (params.connectedServices === null) return null;
 
-    if (
-        params.connectedServices !== undefined
-        && hasConnectedExecutionRunBinding(params.connectedServices)
-        && (
-            !supportsCatalogConnectedServices
-            || hasUndeclaredConnectedExecutionRunBinding(
-                params.connectedServices,
-                declaredServiceIds,
-            )
-        )
-    ) {
-        throw new ExecutionRunConnectedServicesError(
-            `Connected services selection is not supported for backend '${backendId}'`,
-        );
-    }
-
     const explicitBindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV2> =
         params.connectedServices !== undefined
             ? { ...params.connectedServices.bindingsByServiceId }
             : {};
+    const unsupported = Object.entries(explicitBindingsByServiceId).find(([serviceId, binding]) =>
+        (binding.source === 'connected' || binding.source === 'team_resource')
+        && !declaredServiceIds.includes(serviceId));
+    if (unsupported) {
+        const [serviceId] = unsupported;
+        const code = CONNECTED_SERVICE_BINDING_UNSUPPORTED;
+        const message = `Backend '${backendId}' does not support Connected Service '${serviceId}'. Remove that binding or select a backend that supports it.`;
+        logger.warn('[EXECUTION RUN] Connected Services selection refused', {
+            code, stage: 'connected_services_selection', runId: params.runId,
+        });
+        throw new ExecutionRunConnectedServicesError(message, code, undefined, {
+            code, phase: 'client_start', failureReason: 'session_configuration_invalid',
+            retryable: false, providerErrorMessage: message,
+        });
+    }
     const hadExplicit = Object.keys(explicitBindingsByServiceId).length > 0;
     const defaultServiceIdsToResolve = (params.connectedServicesDefaultServiceIds ?? []).filter(
         (serviceId) => !Object.prototype.hasOwnProperty.call(explicitBindingsByServiceId, serviceId),
@@ -296,6 +284,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     const selection = params.resolvedSelection !== undefined
         ? params.resolvedSelection
         : await resolveExecutionRunConnectedServicesSelection({
+            runId: params.runId,
             backendId,
             backendSourceKind: params.backendSourceKind,
             agentCatalogEntry: params.agentCatalogEntry,

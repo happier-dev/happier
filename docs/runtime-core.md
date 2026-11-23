@@ -4744,6 +4744,11 @@ and its
 
 ## Execution Run launch selection
 
+In 0.3 development source, an explicit Connected Services binding for a service
+the selected backend does not declare is refused before credential materialization.
+The `connected_service_binding_unsupported` error identifies the service and
+backend. Remove the binding or choose a compatible backend before starting again.
+
 In 0.3 development source, Connected Service pool selection for a Run uses the
 existing qualified Account-scoped coordinator and shared group lease. The Run
 materializes the committed generation into its own activation independently of

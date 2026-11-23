@@ -1,5 +1,6 @@
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import {
+    CONNECTED_SERVICE_BINDING_UNSUPPORTED,
     readAgentStartupFailureCode,
     readRequesterSessionRuntimeRefusalCode,
     readSessionPreparationFailureCode,
@@ -207,7 +208,12 @@ export function presentSessionStartupFailureCause(
     code: unknown,
     issue?: SessionRuntimeIssueV1,
     failureCause = issue?.failureCause,
+    executionRunMessage?: string,
 ): string | null {
+    if (code === CONNECTED_SERVICE_BINDING_UNSUPPORTED || failureCause?.code === CONNECTED_SERVICE_BINDING_UNSUPPORTED) {
+        const correction = failureCause?.providerErrorMessage ?? executionRunMessage;
+        if (correction) return redactBugReportSensitiveText(correction).trim() || null;
+    }
     const message = resolveSessionStartupFailureCause(code, issue, failureCause);
     const preparationCause = issue?.source === 'dependency_failure' ? issue.failureCause?.preparationCause : undefined;
     const preparationMessage = message ?? issue?.sanitizedPreview;

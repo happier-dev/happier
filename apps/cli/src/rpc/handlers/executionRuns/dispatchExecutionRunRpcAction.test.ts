@@ -22,6 +22,8 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
 import { markExecutionRunStartPreparationFailure } from '@/agent/runtime/bridges/executionRun/errors';
+import { resolveExecutionRunConnectedServicesSelection } from '@/agent/runtime/bridges/executionRun/runtime/connectedServicesEnv';
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { sendBackendLongLivedRun } from '@/agent/runtime/bridges/executionRun/send/backendLongLivedPrompt';
 import { ExecutionRunTransportErrorCodeSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -1058,6 +1060,31 @@ describe('createExecutionRunRpcActionExecutor', () => {
 
     expect(isExecutionRunsEnabled).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess_1' }));
+  });
+
+  it('carries the selection owner correction in the Run start response', async () => {
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: { ...createUnusedExecutionRunBridge(), start: async () => {
+        await resolveExecutionRunConnectedServicesSelection({
+          backendId: 'codex', backendSourceKind: 'built_in', agentCatalogEntry: findCatalogEntry('codex'),
+          connectedServices: { v: 2, bindingsByServiceId: {
+            'happier.agent.muse/muse-account': { source: 'team_resource', resourceId: 'private-resource', deliveryMode: 'brokered' },
+          } },
+        });
+        throw new Error('Expected the selection to be refused');
+      } },
+      context: { sessionId: null, cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      isExecutionRunsEnabled: () => true,
+    });
+    const response = await executor.execute('execution.run.start', {
+      ...AGENT_EXECUTION_RUN_START_REQUEST, sessionId: null,
+    }, { surface: 'rpc' });
+    expect(response).toMatchObject({
+      ok: false, errorCode: 'connected_service_binding_unsupported',
+      error: expect.stringMatching(/codex.*happier\.agent\.muse\/muse-account.*Remove that binding/u),
+    });
+    expect(JSON.stringify(response)).not.toContain('private-resource');
   });
 
   it('returns the Account snapshot refusal phase on a detached execution.run.start', async () => {

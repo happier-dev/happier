@@ -28,6 +28,8 @@ import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/
 import { resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
 import { resolveExecutionRunChildSelection } from './openInputs';
 import { findCatalogEntry } from '@/agent/catalog/registry';
+import { projectExecutionRunError } from '../errors';
+import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -321,6 +323,35 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             hadCredentials: true,
         });
         expect(deps.requestMaterialization).not.toHaveBeenCalled();
+    });
+
+    it('retains the unsupported Team service and selected backend as a non-retryable Run refusal', async () => {
+        const deps = createDeps();
+        const serviceId = 'happier.agent.muse/muse-account';
+        const result = await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
+            backendSourceKind: 'built_in',
+            connectedServices: { v: 2, bindingsByServiceId: {
+                [serviceId]: { source: 'team_resource', resourceId: 'private-resource', deliveryMode: 'brokered' },
+            } },
+            cwd: '/tmp/project',
+            deps,
+        }).then(() => null, error => projectExecutionRunError(toVoiceAgentStartError(error, 'codex', 'Voice startup failed')));
+
+        expect(result).toMatchObject({
+            code: 'connected_service_binding_unsupported',
+            runtimeIssueV1: { failureCause: {
+                code: 'connected_service_binding_unsupported', retryable: false,
+                providerErrorMessage: expect.stringContaining(serviceId),
+            } },
+        });
+        expect(result?.message).toContain('codex');
+        expect(result?.message).not.toContain('private-resource');
+        expect(deps.requestMaterialization).not.toHaveBeenCalled();
+        expect(loggerWarnMock).toHaveBeenCalledExactlyOnceWith('[EXECUTION RUN] Connected Services selection refused', {
+            code: 'connected_service_binding_unsupported', stage: 'connected_services_selection', runId: 'run_1',
+        });
     });
 
     it('materializes an explicit connected selection through the daemon bridge', async () => {

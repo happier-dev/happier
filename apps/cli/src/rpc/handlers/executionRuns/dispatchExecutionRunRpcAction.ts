@@ -63,7 +63,8 @@ import type { ExecutionRunPermissionRequestStore } from '@/agent/runtime/bridges
 import {
   readExecutionRunWorkflowObservationSink,
 } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
-import { readExecutionRunStartPreparationReason } from '@/agent/runtime/bridges/executionRun/errors';
+import { readExecutionRunErrorCode, readExecutionRunErrorMessage, readExecutionRunStartPreparationReason } from '@/agent/runtime/bridges/executionRun/errors';
+import { CONNECTED_SERVICE_BINDING_UNSUPPORTED } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 import type { RpcActionExecutor, RpcActionExecutorContext } from '../_actionDispatchAdapter';
@@ -638,11 +639,12 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
         }, runCreation, error);
       }
-      if (error instanceof VoiceAgentError) {
+      const runErrorCode = readExecutionRunErrorCode(error);
+      if (error instanceof VoiceAgentError || runErrorCode === CONNECTED_SERVICE_BINDING_UNSUPPORTED) {
         return classifyFailure({
           ok: false,
-          error: error.message,
-          errorCode: error.code,
+          error: error instanceof VoiceAgentError ? error.message : readExecutionRunErrorMessage(error),
+          errorCode: error instanceof VoiceAgentError ? error.code : CONNECTED_SERVICE_BINDING_UNSUPPORTED,
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
         }, runCreation, error);
       }

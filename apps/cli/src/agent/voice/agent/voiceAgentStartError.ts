@@ -2,7 +2,8 @@ import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { VoiceAgentError } from './voiceAgentTypes';
-import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
+import { readExecutionRunErrorCode, readExecutionRunRuntimeIssue } from '@/agent/runtime/bridges/executionRun/errors';
+import { CONNECTED_SERVICE_BINDING_UNSUPPORTED } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isPluginError } from '@happier-dev/cli-common/plugins/errors';
 
 /** Keep the runtime and credential owners' results when adapting startup to Voice. */
@@ -22,6 +23,9 @@ export function toVoiceAgentStartError(
   if (diagnostic) {
     return new VoiceAgentError(diagnostic.code, diagnostic.code, diagnostic);
   }
-  return new VoiceAgentError(readExecutionRunErrorCode(error) ?? fallbackCode,
+  const voiceError = new VoiceAgentError(readExecutionRunErrorCode(error) ?? fallbackCode,
     error instanceof Error ? error.message : fallback);
+  return voiceError.code === CONNECTED_SERVICE_BINDING_UNSUPPORTED
+    ? Object.assign(voiceError, { runtimeIssueV1: readExecutionRunRuntimeIssue(error) })
+    : voiceError;
 }

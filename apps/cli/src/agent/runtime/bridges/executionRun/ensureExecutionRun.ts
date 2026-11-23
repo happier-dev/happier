@@ -24,6 +24,8 @@ import { isExecutionRunControllerCurrent, settleExecutionRunController } from '.
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
 import { resolveExecutionRunResumeBackendOptions, type ExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
+import { readExecutionRunErrorCode } from './errors';
+import { CONNECTED_SERVICE_BINDING_UNSUPPORTED } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 export type ExecutionRunEnsureResult =
   | Readonly<{ ok: true; actionInvocation?: ExecutionRunState['actionInvocation'] }>
@@ -324,7 +326,13 @@ export async function ensureExecutionRun(args: Readonly<{
       if (!startedVoice) materialization.rollback();
       await retireVoiceResumeOccurrence();
       const message = error instanceof Error ? error.message : 'Resume failed';
-      return { ok: false, errorCode: 'execution_run_not_allowed', error: message, resumeFailureKind: 'indeterminate' };
+      const code = readExecutionRunErrorCode(error);
+      return {
+        ok: false,
+        errorCode: code === CONNECTED_SERVICE_BINDING_UNSUPPORTED ? code : 'execution_run_not_allowed',
+        error: message,
+        resumeFailureKind: 'indeterminate',
+      };
     } finally {
       delete voiceCtrl.resumeMaterialization;
     }
