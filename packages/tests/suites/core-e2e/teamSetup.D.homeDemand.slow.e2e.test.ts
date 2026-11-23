@@ -1,9 +1,13 @@
 import * as React from 'react';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
+import { ProjectSetupSetOutputV1Schema } from '@happier-dev/protocol/projects/projectSetupSetV1';
+import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachinePresetRecipientCensusResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
 import { HomeHubLayoutResultSchema } from '@happier-dev/protocol/actions/specs/homeHub';
 import { ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -12,7 +16,6 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
@@ -202,7 +205,7 @@ it('TS.D.homeDemand pages the selected Team Sources at the server owner before a
     result: { kind: 'opened', directory: folder } });
 });
 
-it('TS.D.changedReferences receives a Source push and keeps accepted input until explicit review and native apply', async () => {
+it('TS.D.changedReferences receives Source and preset pushes and keeps both effects until separate native reviews', async () => {
   if (!ui || !fixture) throw new Error('UI Action client not started');
   const context = { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
     actionCaller: { kind: 'host' } } as const;
@@ -299,50 +302,163 @@ it('TS.D.changedReferences receives a Source push and keeps accepted input until
     }
     return { operationId, digest: operation.setupReview.reviewedEffectDigest };
   };
-  const apply = async (review: Awaited<ReturnType<typeof hold>>) => {
-    expect(await ui!.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
-      heldOperationId: review.operationId, expectedEffectDigest: review.digest, consentScope: 'untilChanged' },
-    context)).toMatchObject({ ok: true });
+  const apply = async (review: Awaited<ReturnType<typeof hold>>, consentScope: 'untilChanged' | 'thisTime' = 'untilChanged') => {
+    const result = await ui!.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
+      heldOperationId: review.operationId, expectedEffectDigest: review.digest, consentScope }, context);
+    if (!result.ok) throw new Error(`Reviewed Project Apply refused (${result.errorCode})`);
     expect(await observe(review.operationId, { waitForTerminal: true })).toMatchObject({ state: 'succeeded' });
   };
   const initialReview = await hold();
   await apply(initialReview);
   expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
 
-  // Mount the actual scoped Source consumer. Its incumbent Account-change owner
-  // supplies the update; the test never calls refresh/load after publication.
-  const { useProjectSources } = await import('../../../../apps/ui/sources/components/projects/sources/useProjectSources');
-  const { captureActiveServerAccountScopeLifetime } = await import('../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope');
+  const presetId = randomUUID();
+  const homeId = fixture.serverId;
+  const owner = { kind: 'team' as const, teamId: team.id };
+  const machineTarget = { homeId, machineId };
+  const presetMarker = join(folder, 'preset-version');
+  const sealPreset = async (marker: '1' | '2') => {
+    const response = await fetch(`${fixture!.server.baseUrl}/v1/machines/presets/recipient-census`, {
+      method: 'POST', headers: { Authorization: `Bearer ${author.credentials.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ homeId, owner }),
+    });
+    expect(response.status).toBe(200);
+    const census = ManagedMachinePresetRecipientCensusResultV1Schema.parse(await response.json());
+    if (census.kind !== 'ready') throw new Error(`Team preset census refused (${census.code})`);
+    return sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: { v: 1, name: 'Changed Machine setup',
+      setup: { scripts: [{ body: `printf ${marker} >> '${presetMarker}'`, affects: 'none' }] } },
+    recipientCensus: census.recipients, randomBytes });
+  };
+  const readSavedPreset = (result: Awaited<ReturnType<typeof author.executeAsPerson>>) => {
+    if (!result.ok) throw new Error(`Preset publication refused (${result.errorCode})`);
+    const saved = PresetMutationResultV1Schema.parse(result.result);
+    if (saved.kind !== 'saved') throw new Error(`Preset publication failed (${saved.kind})`);
+    return saved.preset;
+  };
+  const originalPreset = readSavedPreset(await author.executeAsPerson('machines.presets.create', {
+    id: presetId, homeId, owner, contentEncryptionMode: 'e2ee', ...await sealPreset('1'),
+  }, { presentUserConfirmation: { actionId: 'machines.presets.create' } }));
+  const planPreset = async (revision: number, attached: boolean) => {
+    const planned = await memberAccount.execute('machines.setup.plan', { ...machineTarget, mode: 'effects',
+      ...(attached ? { candidatePreset: { presetId, presetRevision: revision } } : {
+        sources: [{ kind: 'accountPresetOpaque', presetId, presetRevision: revision, contentEncryptionMode: 'e2ee' },
+          { kind: 'direct', setup: {} }],
+      }),
+    });
+    if (!planned.ok) throw new Error(`Preset review refused (${planned.errorCode})`);
+    return MachineSetupPlanResultV1Schema.parse(planned.result);
+  };
+  const confirmPreset = async (plan: Awaited<ReturnType<typeof planPreset>>) => {
+    const applied = await memberAccount.executeReviewed('machines.setup.apply', { ...machineTarget,
+      targets: [machineSetupApplyTargetFromPlanV1(machineTarget, plan)] });
+    if (!applied.ok) throw new Error(`Preset Apply refused (${applied.errorCode})`);
+    const { operationId } = MachineSetupApplyResultV1Schema.parse(applied.result);
+    expect(await observe(operationId, { waitForTerminal: true })).toMatchObject({ state: 'succeeded' });
+  };
+  await confirmPreset(await planPreset(originalPreset.revision, false));
+  expect(await readFile(presetMarker, 'utf8')).toBe('1');
+  // Restore the mounted member after the CLI path that applies the initial preset.
+  await ui.close();
+  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials });
+  await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+
+  // Both consumers stay mounted through publications by the separately signed-in author.
+  const { useProjectSource, useProjectSources } = await import('../../../../apps/ui/sources/components/projects/sources/useProjectSources');
+  const { getServerProfileById } = await import('../../../../apps/ui/sources/sync/domains/server/serverProfiles');
+  const { useMachineField } = await import('../../../../apps/ui/sources/sync/store/hooks');
+  const { readMachinePresetRevisionsSnapshot } =
+    await import('../../../../apps/ui/sources/sync/engine/machines/machinePresetsResource');
+  expect(getServerProfileById(ui.serverId)?.serverIdentityId).toBe(homeId);
+  const { useMachinePresetUpdates } = await import('../../../../apps/ui/sources/components/machines/setup/useMachinePresetUpdates');
+  const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } =
+    await import('../../../../apps/ui/sources/sync/domains/scope/serverCredentialAccountScope');
+  const { captureActiveServerAccountScopeLifetime } =
+    await import('../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope');
   const { InjectedAuthProvider } = await import('../../../../apps/ui/sources/auth/context/AuthContext');
   const { renderScreen } = await import('../../../../apps/ui/sources/dev/testkit');
-  const lifetime = captureActiveServerAccountScopeLifetime();
-  if (!lifetime) throw new Error('Expected the admitted UI Account lifetime');
+  const resolution = await resolveServerCredentialAccountScope(ui.serverId);
+  if (resolution.kind !== 'bound') throw new Error(`Member Home scope unavailable (${resolution.kind})`);
+  expect(resolution.scope.accountId).toBe(accountId);
+  const activeLifetime = captureActiveServerAccountScopeLifetime();
+  const lifetime = activeLifetime?.scope.serverId === ui.serverId && activeLifetime.scope.accountId === accountId
+    ? activeLifetime : captureServerCredentialAccountScopeLifetime(resolution);
+  let selectedSource: ReturnType<typeof useProjectSource> | null = null;
   let catalog: ReturnType<typeof useProjectSources> | null = null;
+  let notices: ReturnType<typeof useMachinePresetUpdates> = [];
+  let setupObservation: unknown;
   function SelectedSources() {
-    catalog = useProjectSources(lifetime!.scope, { lifetime, sharedWithTeamId: team.id });
+    setupObservation = useMachineField(machineId, 'daemonState', 'setup', { serverId: lifetime.scope.serverId });
+    selectedSource = useProjectSource(lifetime, original.id);
+    catalog = useProjectSources(lifetime.scope, { lifetime, sharedWithTeamId: team.id });
+    notices = useMachinePresetUpdates({ serverId: lifetime.scope.serverId, machineId, active: true });
     return null;
   }
-  await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: React.createElement(SelectedSources) }));
-  await vi.waitFor(() => expect(catalog?.state.rows.find(source => source.id === original.id)?.revision).toBe(original.revision));
-  const updated = await publish('printf updated > accepted-version', original.revision);
-  await vi.waitFor(() => expect(catalog?.state.rows.find(source => source.id === updated.id)?.revision).toBe(updated.revision),
-    { timeout: 10_000 });
-  const retained = await ui.execute('projects.inspect', { workspace: opened.workspace, read: { kind: 'setup' } }, context);
-  expect(retained).toMatchObject({ ok: true });
-  expect(JSON.stringify(retained)).toContain(acceptedDigest);
-  expect(JSON.stringify(retained)).not.toContain('printf updated');
-  expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
-  // Only the person's explicit accept changes the attached input, and only
-  // native consent runs it. A stale reviewed digest keeps the owner's reason.
-  expect(await accept(accepted.revision)).toMatchObject({ ok: true });
-  const changedReview = await hold();
-  expect(changedReview.digest).not.toBe(initialReview.digest);
-  expect(await ui.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
-    heldOperationId: changedReview.operationId, expectedEffectDigest: initialReview.digest, consentScope: 'thisTime' },
-  context)).toMatchObject({ ok: true });
-  await waitFor(async () => (await observe(changedReview.operationId)).setupReview?.code === 'project_setup_effect_changed',
-    { context: 'stale Project setup approval' });
-  expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
-  await apply(changedReview);
-  expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('updated');
+  const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: React.createElement(SelectedSources) }));
+  try {
+    await vi.waitFor(() => expect(catalog?.state.rows.find(source => source.id === original.id)?.revision).toBe(original.revision));
+    await waitFor(() => selectedSource?.source?.source.revision === original.revision,
+      { context: 'mounted accepted Source read before publication', timeoutMs: 30_000 });
+    const updated = await publish('printf updated > accepted-version', original.revision);
+    await waitFor(() => selectedSource?.source?.source.revision === updated.revision,
+      { context: 'mounted accepted Source receives the author revision', timeoutMs: 30_000 });
+    await waitFor(() => catalog?.state.rows.find(source => source.id === updated.id)?.revision === updated.revision,
+      { context: 'mounted Team catalog retains the updated Source', timeoutMs: 30_000 });
+    const readPresetHeaders = () => readMachinePresetRevisionsSnapshot(lifetime.scope.serverId, homeId, accountId);
+    await vi.waitFor(() => expect(setupObservation).toMatchObject({
+      attachedPresets: [expect.objectContaining({ kind: 'accountPreset', presetId,
+        presetRevision: originalPreset.revision, setupRevision: originalPreset.setupRevision })],
+    }), { timeout: 15_000 });
+    await vi.waitFor(() => {
+      const headers = readPresetHeaders();
+      expect(headers.error, 'settled member preset headers').toBeNull();
+      expect(headers.value?.[presetId], 'member initial preset header').toMatchObject({
+        revision: originalPreset.revision, setupRevision: originalPreset.setupRevision,
+      });
+    }, { timeout: 15_000 });
+    // A separately credentialed CLI writer keeps the member App mounted on its own Account.
+    const updatedPreset = readSavedPreset(await author.execute('machines.presets.update', {
+      id: presetId, homeId, expectedRevision: originalPreset.revision, patch: await sealPreset('2'),
+    }, { presentUserConfirmation: { actionId: 'machines.presets.update' } }));
+    expect(updatedPreset.setupRevision).toBeGreaterThan(originalPreset.setupRevision!);
+    await vi.waitFor(() => {
+      const headers = readPresetHeaders();
+      expect(headers.error, 'settled member preset headers after publication').toBeNull();
+      expect(headers.value?.[presetId], 'member updated preset header').toMatchObject({
+        revision: updatedPreset.revision, setupRevision: updatedPreset.setupRevision,
+      });
+    }, { timeout: 20_000 });
+    await waitFor(() => notices.some(notice => notice.kind === 'changed' && notice.presetId === presetId
+      && notice.setupRevision === updatedPreset.setupRevision), { context: 'member sees the changed preset' });
+    const retained = await ui.execute('projects.inspect', { workspace: opened.workspace, read: { kind: 'setup' } }, context);
+    expect(retained).toMatchObject({ ok: true });
+    expect(JSON.stringify(retained)).toContain(acceptedDigest);
+    expect(JSON.stringify(retained)).not.toContain('printf updated');
+    expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
+    expect(await readFile(presetMarker, 'utf8')).toBe('1');
+    // Only the person's explicit accept changes the attached input, and only
+    // native consent runs it. A stale reviewed digest keeps the owner's reason.
+    expect(await accept(accepted.revision)).toMatchObject({ ok: true });
+    const changedReview = await hold();
+    expect(changedReview.digest).not.toBe(initialReview.digest);
+    expect(await ui.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
+      heldOperationId: changedReview.operationId, expectedEffectDigest: initialReview.digest, consentScope: 'thisTime' },
+    context)).toMatchObject({ ok: true });
+    await waitFor(async () => (await observe(changedReview.operationId)).setupReview?.code === 'project_setup_effect_changed',
+      { context: 'stale Project setup approval' });
+    expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
+    const rereviewed = await observe(changedReview.operationId, { refreshSetupReview: true });
+    expect(rereviewed.setupReview?.reviewedEffectDigest).toBe(changedReview.digest);
+    await apply(changedReview, 'thisTime');
+    expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('updated');
+    expect(await readFile(presetMarker, 'utf8')).toBe('1');
+    const nextPresetPlan = await planPreset(updatedPreset.revision, true);
+    const applied = await ui.executeConfirmed('machines.setup.apply', { ...machineTarget,
+      targets: [machineSetupApplyTargetFromPlanV1(machineTarget, nextPresetPlan)] }, context);
+    if (!applied.ok) throw new Error(`Updated preset Apply refused (${applied.errorCode})`);
+    const { operationId } = MachineSetupApplyResultV1Schema.parse(applied.result);
+    expect(await observe(operationId, { waitForTerminal: true })).toMatchObject({ state: 'succeeded' });
+    expect(await readFile(presetMarker, 'utf8')).toBe('12');
+    await waitFor(() => !notices.some(notice => notice.presetId === presetId),
+      { context: 'member receives the applied preset observation' });
+  } finally { await screen.unmount(); }
 });
