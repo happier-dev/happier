@@ -468,7 +468,9 @@ describe('private preset preparation operation', () => {
   it.each([
     { name: 'moved controller refuses before touching the old image', execution: undefined, prepareOn: 'controller-b', expected: 'refused' },
     { name: 'same controller replaces the old image', execution: undefined, prepareOn: 'controller-a', expected: 'ready' },
-    { name: 'account-executed cleanup replaces from the moved controller', execution: { target: 'account' } as const, prepareOn: 'controller-b', expected: 'ready' },
+    { name: 'account-executed cleanup replaces from the moved controller',
+      execution: { target: 'account', account: { artifactId: 'fixture.account', exportName: 'destroy' } } as const,
+      prepareOn: 'controller-b', expected: 'ready' },
   ])('Prepare on a new controller keeps an image owned elsewhere: $name', async ({ execution, prepareOn, expected }) => {
     const fixture = storageFixture();
     const readDestroyExecution = async () => ({ execution });

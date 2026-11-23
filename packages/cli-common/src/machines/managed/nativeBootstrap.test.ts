@@ -99,7 +99,7 @@ describe('Session holder bootstrap in a managed guest', () => {
         const launch = correlation.resource.contributionRef;
         const prepare = prepareManagedWorkspaceAttachment({
             managedId: 'request', launch: { provider: launch, schemaVersion: 1, choices: { existing: 'same-resource' } },
-            invoke: async (role, body) => {
+            invoke: async (role, body): Promise<JsonValue> => {
                 calls.push(role);
                 if (role === 'acquire') {
                     expect(body).toEqual({ managedId: 'request', launch: { existing: 'same-resource' } });

@@ -32,8 +32,13 @@ describe.each(['request', 'requestStream'] as const)('%s Fetch acknowledgement',
             else request.socket.destroy();
         });
         const runtime = createFetchPluginHttpRuntime(globalThis.fetch);
-        await expect(runtime[operation]({ url: origin, method: operation === 'request' ? 'POST' : 'GET', redirect: 'error' },
-            { signal: cancellation.signal })).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+        if (!runtime.requestStream) throw new Error('Fetch runtime must implement streaming');
+        const request = { url: origin, redirect: 'error' } as const;
+        const options = { signal: cancellation.signal };
+        const pending = operation === 'request'
+            ? runtime.request({ ...request, method: 'POST' }, options)
+            : runtime.requestStream({ ...request, method: 'GET' }, options);
+        await expect(pending).rejects.toMatchObject({ code: 'outcome_unknown', data: {
                 failureCause: { phase: 'plugin.http.execute' },
             } });
         expect(accepted).toBe(true);
@@ -45,10 +50,12 @@ describe.each(['request', 'requestStream'] as const)('%s Fetch acknowledgement',
         let attempted = false;
         const refusal = new PluginError({ code: 'plugin_fetch_redirect_refused' });
         const runtime = createFetchPluginHttpRuntime(async () => { attempted = true; throw refusal; });
-        await expect(runtime[operation]({ url: 'https://fixture.example.test', redirect: 'error' },
+        const send = runtime[operation];
+        if (!send) throw new Error('Fetch runtime must implement streaming');
+        await expect(send({ url: 'https://fixture.example.test', redirect: 'error' },
             { signal: cancellation.signal })).rejects.toBe(cancellation.signal.reason);
         expect(attempted).toBe(false);
-        await expect(runtime[operation]({ url: 'https://fixture.example.test', redirect: 'error' })).rejects.toBe(refusal);
+        await expect(send({ url: 'https://fixture.example.test', redirect: 'error' })).rejects.toBe(refusal);
     });
 });
 
