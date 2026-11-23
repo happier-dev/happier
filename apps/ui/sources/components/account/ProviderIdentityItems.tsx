@@ -365,12 +365,22 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
         ? catalogSnapshot.requestStatus
         : settled ? 'ready' : 'loading';
     // Only the live entry says which connections a Home offers: its released features may name methods the entry
-    // then omits (Home policy, the provider catalog). So nothing is drawn from them, and on a Home that released
-    // a method list no line is held either, because a held line the entry answers with no rows would leave again.
-    // A Home that released no method list keeps the held line: its live answer always draws the registry's rows.
-    const releasedMethodList = React.useMemo(() => featuresSnapshot.status === 'ready'
-        && projectAuthenticationMethodCapabilities(featuresSnapshot.features).usesStructuredMethods,
-    [featuresSnapshot]);
+    // then omits (Home policy, the provider catalog). So no connection is drawn from them; they only count the
+    // lines to hold. A Home that released no method list keeps its one held line: its live answer always draws
+    // the registry's rows.
+    const releasedDescriptors = React.useMemo(() => {
+        if (featuresSnapshot.status !== 'ready') return null;
+        const capabilities = projectAuthenticationMethodCapabilities(featuresSnapshot.features);
+        return capabilities.usesStructuredMethods ? providerDescriptorsFrom(capabilities.catalog.methods) : null;
+    }, [featuresSnapshot]);
+    const releasedMethodList = releasedDescriptors !== null;
+    // A first visit holds one unlabelled line per advertised connection not already linked (a linked identity
+    // draws its own row), so the usual Home moves nothing when the entry lands. Nothing on a held line names its
+    // method; one the entry omits collapses once. A return visit draws its last settled rows instead.
+    const reservedLines = requestStatus === 'loading' && releasedDescriptors
+        ? releasedDescriptors.filter((descriptor) => descriptor.canConnect
+            && !getLinkedProvider(props.profile, descriptor.id)).length
+        : 0;
 
     React.useEffect(() => {
         const abortController = new AbortController();
@@ -525,6 +535,15 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
                             onRetry: retryCatalog,
                         }}
                     rows={1}
+                    lines={2}
+                    accessibilityLabel={t('common.loading')}
+                />
+            ) : null}
+            {reservedLines > 0 ? (
+                <ItemLoadStateRows
+                    testID="settings-account-identity-reserve"
+                    state={{ kind: 'loading' }}
+                    rows={reservedLines}
                     lines={2}
                     accessibilityLabel={t('common.loading')}
                 />

@@ -219,20 +219,80 @@ describe('ProviderIdentityItems while the live entry is read', () => {
         expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
     });
 
-    it('never draws a connection the released features advertise but the live entry omits, and nothing above Recovery key changes', async () => {
-        methods = [
-            { id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] },
-            { id: 'github', actions: [{ id: 'connect', enabled: true, mode: 'keyed' }] },
-        ];
+    // TH-OWNER-UI-1123 (owner 2026-11-23): on a first visit the advertised connections hold unlabelled lines, so
+    // the usual Home moves nothing when the live entry lands. A placeholder never names its method: the entry may
+    // still omit it.
+    const reservedLines = (screen: Awaited<ReturnType<typeof renderSection>>) => rowsAbove(screen)
+        .filter((id) => /^settings-account-identity-reserve-skeleton:\d+$/.test(id));
+    // One id per drawn line above Recovery key: a reserved line, or a connection's own control.
+    const lineIds = (screen: Awaited<ReturnType<typeof renderSection>>) => {
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        return ids.filter((id) => id === 'recovery-key-row'
+            || /^settings-account-identity-reserve-skeleton:\d+$/.test(id)
+            || /^settings-account-identity-[^:]+-(connect|disconnect)$/.test(id));
+    };
+    const renderedText = (screen: Awaited<ReturnType<typeof renderSection>>) => JSON.stringify(screen.tree.toJSON());
+    const advertise = (...ids: string[]) => [
+        { id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] },
+        ...ids.map((id) => ({ id, actions: [{ id: 'connect', enabled: true, mode: 'keyed' }] })),
+    ];
+    const liveEntry = (...ids: string[]) => Response.json({
+        v: 1,
+        state: 'ready',
+        scope: { kind: 'home' },
+        actions: ids.map((methodId) => ({
+            kind: 'authenticate' as const, methodId, action: 'connect' as const, mode: 'keyed' as const,
+            origin: 'home' as const, presentation: { displayName: methodId },
+        })),
+        autoRedirect: null,
+    } satisfies AuthEntryProjectionV1);
+
+    it('reserves one unlabelled line per advertised connection on a first visit, naming no method', async () => {
+        methods = advertise('github', 'gitlab');
+        await activateHome('https://first-visit-reserve.example.test');
+        const screen = await renderSection();
+        expect(reservedLines(screen)).toHaveLength(2);
+        for (const id of collectRenderedTestIds(screen.tree.toJSON())) {
+            expect(id).not.toMatch(/github|gitlab/i);
+        }
+        expect(renderedText(screen)).not.toMatch(/github|gitlab/i);
+    });
+
+    it('replaces the reserved lines in place when the live entry offers the same connections', async () => {
+        methods = advertise('github');
+        await activateHome('https://first-visit-equal.example.test');
+        const screen = await renderSection();
+        const before = lineIds(screen).indexOf('recovery-key-row');
+        expect(before).toBe(1);
+        await act(async () => { entry.resolve(liveEntry('github')); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-github-connect')).not.toBeNull());
+        expect(reservedLines(screen)).toEqual([]);
+        expect(lineIds(screen).indexOf('recovery-key-row')).toBe(before);
+    });
+
+    it('collapses the reserved line of a connection the live entry omits, and never draws that connection', async () => {
+        methods = advertise('github');
         await activateHome('https://features-ahead.example.test');
         const screen = await renderSection();
-        const first = rowsAbove(screen);
-        expect(first).not.toContain('settings-account-identity-github-connect');
-        await act(async () => { entry.resolve(Response.json({
-            v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null,
-        } satisfies AuthEntryProjectionV1)); });
-        expect(rowsAbove(screen)).toEqual(first);
+        expect(reservedLines(screen)).toHaveLength(1);
         expect(screen.findHostByTestId('settings-account-identity-github-connect')).toBeNull();
+        await act(async () => { entry.resolve(liveEntry()); });
+        expect(reservedLines(screen)).toEqual([]);
+        expect(screen.findHostByTestId('settings-account-identity-github-connect')).toBeNull();
+    });
+
+    it('reserves nothing on a return visit, which draws the last settled connections at once', async () => {
+        methods = advertise('github');
+        await activateHome('https://return-visit-reserve.example.test');
+        const firstVisit = await renderSection();
+        await act(async () => { entry.resolve(liveEntry('github')); });
+        await vi.waitFor(() => expect(firstVisit.findHostByTestId('settings-account-identity-github-connect')).not.toBeNull());
+        await firstVisit.unmount();
+
+        entry = createDeferred<Response>();
+        const returnVisit = await renderSection();
+        expect(reservedLines(returnVisit)).toEqual([]);
+        expect(returnVisit.findHostByTestId('settings-account-identity-github-connect')).not.toBeNull();
     });
 
     it('starts a return visit from the Home\'s last settled live answer, with no skeleton', async () => {
