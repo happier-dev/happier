@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import * as React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../cli-common/sourceRuntimeEntries.mjs';
 import { buildUniversalPluginUiArtifacts } from './buildUniversalUiArtifacts.js';
@@ -59,7 +60,7 @@ describe('portable Connected Account authentication entry graphs', () => {
 });
 
 describe('bundled Plugin UI artifact graph', () => {
-    it.each(pluginNames)('publishes and evaluates every declared %s executable through the canonical source compiler', async (plugin) => {
+    it.each(pluginNames)('publishes every declared %s executable and evaluates UI exports through the canonical source compiler', async (plugin) => {
         const repositoryRoot = resolve(import.meta.dirname, '../../../../..');
         const packages = await readWorkspacePackages(repositoryRoot);
         const scratch = await mkdtemp(join(tmpdir(), 'happier-plugin-ui-artifact-graph-'));
@@ -79,6 +80,8 @@ describe('bundled Plugin UI artifact graph', () => {
         try {
             const projectRoot = join(repositoryRoot, 'packages/plugins', plugin);
             const authored = await import(pathToFileURL(join(projectRoot, 'src/manifest.ts')).href);
+            const accountArtifacts = new Set(derivePluginAccountExecutionArtifactSlots(authored.PLUGIN_MANIFEST.contributes)
+                .map(({ registrationRight }) => registrationRight.target.artifactId));
             const manifestPath = join(scratch, `${plugin}.json`);
             await writeFile(manifestPath, JSON.stringify(authored.PLUGIN_MANIFEST), 'utf8');
             const declarations = await discoverExecutablePluginUiArtifacts(projectRoot, manifestPath, ['happier-source']);
@@ -114,6 +117,8 @@ describe('bundled Plugin UI artifact graph', () => {
                 console.log('PLUGIN_UI_GRAPH', JSON.stringify({ plugin, artifactId: artifact.artifactId,
                     bytes: bytes.byteLength, libraries, imports, protocolInputs, heavyEdges }));
                 const module = { exports: {} as Record<string, unknown> };
+                // The CLI bundle test loads Account artifacts with the real Account resolver.
+                if (accountArtifacts.has(declaration.artifactId)) continue;
                 evaluatePortableCommonJs(bytes.toString('utf8'), module, requireHost);
                 for (const name of declaration.requestedExports) {
                     expect(module.exports[name], `${plugin}/${artifact.artifactId}:${name}`).toBeTypeOf('function');
