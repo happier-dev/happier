@@ -2076,9 +2076,11 @@ describe('Project deployments page', () => {
   it('says a failed deploy in the rail without naming a Machine this Home does not know', async () => {
     const { controller, detail } = controllerFor({});
     const failed = createDeploymentReceiptHeaderV1({ id: 'failed-release', state: 'failed' });
+    const runtimeTargetLink = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink;
+    if (!runtimeTargetLink?.machines[0]) throw new Error('Expected an own-server Machine in the rail fixture');
     const transport: DeploymentReadTransportV1 = {
       listEnvironments: async () => ({ ok: true, value: { items: [
-        { environment: detail.environment, title: detail.content.name, currentDeployment: failed }], nextCursor: null } }),
+        { environment: detail.environment, title: detail.content.name, currentDeployment: failed, runtimeTargetLink }], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
       listHistory: async () => ({ ok: true, value: { ok: true, items: [failed], nextCursor: null } }),
       readReceipt: async () => ({ ok: false, errorCode: 'not_found' }) as never,
@@ -2087,17 +2089,21 @@ describe('Project deployments page', () => {
     const railController = createDeploymentReadControllerV1({ scope, transport });
     try {
       const screen = await renderScreen(<ProjectDeploymentsView controller={railController} demand={shown}
-        accountId="account-owner" serverId={scope.serverId} lifetime={null} sourceId="source-app" />);
-      const row = screen.findHostByTestId(`project-deployments.rail.row.${detail.environment.id}`);
-      expect(row).not.toBeNull();
-      const text = screen.getTextContent();
-      expect(text).toContain('Failed');
-      // Landing still opens the first Environment when this split page has no route selection.
+        accountId="account-owner" serverId={scope.serverId} lifetime={null} sourceId="source-app"
+        workspaceRef={{ id: 'checkout-a', serverId: scope.serverId, machineId: 'checkout-machine', rootPath: '/source',
+          label: null, createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId: scope.projectSourceId, revision: 1 } }} />);
       await act(async () => {
         screen.findByTestId('project-deployments.layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
       });
+      const rowId = `project-deployments.rail.row.${detail.environment.id}`;
+      await waitForContent(screen, rowId);
+      const row = screen.findByTestId(rowId)!;
+      const text = row.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
+        .map(node => node.props.children).join(' ');
+      expect(text).toContain('Failed');
+      expect(text).not.toContain(runtimeTargetLink.machines[0].machineId);
+      await screen.pressByTestIdAsync(rowId);
       await waitForContent(screen, 'project-deployments.environment');
-      expect(text).not.toContain('null');
     } finally { railController.retire(); }
   });
 
@@ -2203,7 +2209,7 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it('says a failed attempt\'s cause in words, names the serving version once, and one no-health-check claim', async () => {
+  it('says a failed attempt\'s cause in words and keeps one serving version and its Health fact', async () => {
     const detail = environmentDetailForHome();
     const servingId = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
     if (!servingId) throw new Error('Expected a serving receipt in the fixture');
@@ -2227,11 +2233,11 @@ describe('Project deployments page', () => {
       const servingText = JSON.stringify(servingRow?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
         .map(node => node.props.children));
       expect(servingText.split('aaaaaaa').length - 1).toBe(1);
-      // The Overview carries the receipt's own notice for a version running without a health check, and says it once:
-      // the facts no longer repeat it (DEPLOY-ACCEPT-143 A7).
+      // The fact strip reports the check status; the notice explains how to verify the serving version.
       expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).not.toBeNull();
-      expect(JSON.stringify(screen.findByTestId('project-deployments.environment.facts')?.findAll(node =>
-        typeof node.props.children === 'string').map(node => node.props.children))).not.toContain('No health check');
+      const healthFact = screen.findByTestId('project-deployments.environment.facts.health');
+      expect(healthFact?.findAll(node => typeof node.type === 'string' && node.props.children === 'No health check').length)
+        .toBeGreaterThan(0);
     } finally { controller.retire(); }
   });
 

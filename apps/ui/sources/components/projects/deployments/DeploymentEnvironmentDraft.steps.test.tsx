@@ -450,6 +450,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       serverIdentityId: `srv_${'8'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
+    let attempts = 0;
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
@@ -458,9 +459,9 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
           repository: { nameWithOwner: 'alice/app', cloneUrl: 'https://github.com/alice/app.git' }, protocol: 'https' },
         defaultRef: 'main' } } });
       homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
-      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'here', installationId: 'here-installation',
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'away', installationId: 'away-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
-        execute: () => null,
+        execute: () => { attempts++; return null; },
         failure: () => ({ errorCode: 'target_unavailable', error: 'target_unavailable' }) });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [
         createMachineFixture({ id: 'away', installationId: 'away-installation', active: false }),
@@ -476,6 +477,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(header().props.primaryAction.disabled).toBe(false); });
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(attempts).toBe(1);
         expect(screen.findByTestId('project-deployments.draft.machineAwayNotice')).not.toBeNull(); });
       // Exactly one notice says it, as the shared line at the Machine it concerns: no banner, no "Couldn't save" card.
       expect(screen.findAllByType(AttentionBanner).map(node => node.props.testID)).toEqual([]);

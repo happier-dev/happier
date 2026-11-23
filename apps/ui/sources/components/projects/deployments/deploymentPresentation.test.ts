@@ -3,6 +3,7 @@ import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testin
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { t } from '@/text';
 import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
@@ -11,7 +12,9 @@ it('presents the recorded interruption reason on the receipt and its history row
     const notice = deploymentStateNotice(receipt.state, failure);
     expect(notice?.text).not.toBe(deploymentStateNotice(receipt.state)?.text);
     expect(deploymentHistoryLead(receipt, failure)).toEqual(notice);
-    expect(deploymentHistoryLead(receipt, null)?.text).toBe(deploymentStateLabel('outcome_unknown'));
+    expect(deploymentHistoryLead(receipt, null)).toEqual({
+        tone: 'warning', text: t('projects.deployments.stateUnknownShort'),
+    });
 });
 
 describe('deploy availability', () => {
