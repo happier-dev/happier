@@ -1803,6 +1803,67 @@ describe('createAutomationEventActionExecutor', () => {
 });
 
 
+it('uses saved actor consent for a native After event and applies Only when to the terminal outcome', async () => {
+  const { createActionAutomationHttpPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+  const { createWorkflowActorConsentPortV1, createWorkflowTriggerActions } = await import('@happier-dev/protocol/actions/executor/workflowTriggerActions');
+  const { AutomationActionAdmitRequestV1Schema } = await import('@happier-dev/protocol/automations/automationActionOccurrenceV1');
+  const { AutomationActionTriggerSchema } = await import('@happier-dev/protocol/automations/automationActionTriggerV1');
+  const { automationSubjectKeyV1 } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+  const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+  const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const subject = { kind: 'environment' as const, serverId: 'home', environmentId: 'environment' };
+  const matching = { phase: 'after' as const, actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], subject };
+  const workflowId = '22222222-2222-4222-8222-222222222222';
+  const source = { automationId: 'shared', triggerId: triggerIdFor('shared'), triggerRevision: 1,
+    workflowId,
+    workflowRevision: 1, ownerAccountId: 'author', reachesOthers: true, phase: matching.phase, actionIds: matching.actionIds,
+    subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, workflowId) };
+  const consentFor = { automationId: source.automationId, triggerId: source.triggerId };
+  const consent = { automationId: 'saved-consent', triggerId: triggerIdFor('saved-consent'), triggerRevision: 1,
+    workflowId: source.workflowId, workflowRevision: 1, ownerAccountId: 'actor', consentFor, consentedWorkflowRevision: 1 };
+  const retainedContext = { executionTarget: { kind: 'detached_run' }, actorConsent: { ...matching, agentSteps: [], childRevisions: [] },
+    actionApprovals: [{ triggerId: consent.triggerId, operation: { approvedBy: { accountId: 'actor' }, steps: [],
+      parent: { actionId: 'approval.request.decide', input: {} } } }] };
+  const saved = AutomationDefinitionDetailSchema.parse({ id: consent.automationId, name: 'After consent', description: null,
+    enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: source.workflowId,
+    executionRecipe: { v: 2, templateVersion: 1, placement: 'action_invocation', triggerEvidence: null,
+      managedTarget: null, visibleTeamId: null, workflow: { t: 'plain', v: retainedContext } },
+    scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [{ kind: 'action',
+      id: consent.triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+      consentFor, consentedWorkflowRevision: 1 }] });
+  const unexpected = async (): Promise<never> => { throw new Error('Equal-revision terminal matching needs only retained content'); };
+  const actions = createWorkflowTriggerActions({ newId: () => 'unused', resolveWorkflow: unexpected, sealContext: unexpected,
+    openContext: async () => retainedContext,
+    openSharedActionTrigger: async () => AutomationActionTriggerSchema.parse({ kind: 'action', ...matching,
+      filter: { v: 1, all: [{ op: 'eq', field: '/outcome', value: 'failed' }] } }),
+    automations: { get: async id => id === consent.automationId ? saved : null,
+      list: unexpected, listDetails: unexpected, create: unexpected, reconcile: unexpected, delete: unexpected } });
+  const posted: unknown[] = [];
+  const http = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
+    if (request.method === 'GET') return { v: 1, rows: [source, consent] };
+    const body = AutomationActionAdmitRequestV1Schema.parse(request.body);
+    posted.push(body);
+    return { results: body.triggers.map(({ automationId, triggerId }) => ({ automationId, triggerId, kind: 'admitted', runId: 'run' })) };
+  } });
+  const checks = createWorkflowActorConsentPortV1({ actions, accountId: 'actor', resolveProject: unexpected });
+  const port = { ...http, prepareMatching: checks.prepareMatching,
+    select: (args: Parameters<typeof http.select>[0]) => http.select({ ...args, resolveConsent: checks.resolveConsent }) };
+  const executor = createAutomationEventActionExecutor({ credentials, revalidateCallerMaterialization: async () => true,
+    revalidateCallerOccurrence: async () => true, nativeCompletion: { port, resolveDeclaration: async ref => ({
+      completesActionIds: matching.actionIds, completionOutcome: ref.localId === 'failed' ? 'failed' : 'succeeded',
+    }) } });
+  const complete = async (outcome: 'failed' | 'succeeded') => executor({ actionId: 'automation.event.admit', caller: actionCaller, input: {
+    eventRef: { pluginId: actionCaller.pluginId, localId: outcome }, sourceInstanceId: 'native-receipts', occurrenceId: outcome,
+    occurredAt: 100, observationReceivedAt: 101, subjectContexts: [{ role: 'operand', subject }], payload: {}, definitions: [],
+  } });
+  expect(await complete('succeeded')).toEqual({ results: [] });
+  expect(posted).toEqual([]);
+  expect(await complete('failed')).toEqual({ results: [] });
+  expect(posted).toEqual([expect.objectContaining({ evidence: expect.objectContaining({ outcome: 'failed' }), triggers: [{
+    automationId: consent.automationId, triggerId: consent.triggerId, triggerRevision: 1,
+  }] })]);
+});
+
 it.each([
   { privateAvailable: true, admissionKind: 'admitted' as const },
   { privateAvailable: true, admissionKind: 'rejoined' as const },

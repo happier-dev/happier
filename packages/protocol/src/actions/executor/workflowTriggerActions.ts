@@ -274,8 +274,10 @@ export function createWorkflowActorConsentPortV1(options: Readonly<{
     prepareMatching: options.actions.prepareActionMatching(options.accountId),
     async resolveConsent({ selection, context }) {
       if (!selection.consent?.row) return { current: false };
+      // A native terminal Event has Machine context. Its Account-bound port supplies the actor.
+      const actor = context.runtimeAccountId === undefined ? { ...context, runtimeAccountId: options.accountId } : context;
       const current = await options.actions.readActorConsent({ ...selectionInput(selection),
-        resolveProject: () => options.resolveProject(context) }, context);
+        resolveProject: () => options.resolveProject(actor) }, actor);
       return current.current ? { current: true, row: reference(selection, current) } : current;
     },
     async allowConsent({ selection, context, executionContext, decisionInput }) {
