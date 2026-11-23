@@ -20,6 +20,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
@@ -70,6 +71,7 @@ export type ManagedMachineKeepControlProps = Readonly<{
   capabilitiesAvailable?: boolean;
   /** Why the policy cannot be edited yet, when its owner knows (the controller is offline). */
   unavailableReason?: string;
+  unavailableDetails?: readonly TechnicalDetailsLine[];
   /** Exact complete option identities; selection writes its returned native launch, never an inferred field. */
   nativeDuration?: Readonly<{
     value: string | null;
@@ -105,7 +107,7 @@ export type ManagedMachineKeepControlProps = Readonly<{
  */
 export const ManagedMachineKeepControl = React.memo(
   function ManagedMachineKeepControl(props: ManagedMachineKeepControlProps) {
-    if (props.finiteOnly) return <KeepFinite {...props} />;
+    if (props.finiteOnly) return <><KeepFinite {...props} />{keepTechnicalDetails(props)}</>;
     const wakeShown = props.canWake !== false && keepOffersWake(props.policy.retention);
     const setRetention = (retention: RetentionV1) => {
       const preserveWake = retention.kind === 'until-delete' ||
@@ -124,7 +126,7 @@ export const ManagedMachineKeepControl = React.memo(
         retention: props.policy.retention,
         wakeOnAcceptedMessage: wake,
       });
-    return props.presentation === 'field' ? (
+    const control = props.presentation === 'field' ? (
       <KeepField
         {...props}
         wakeShown={wakeShown}
@@ -139,14 +141,29 @@ export const ManagedMachineKeepControl = React.memo(
         setWake={setWake}
       />
     );
+    return <>{control}{keepTechnicalDetails(props)}</>;
   },
 );
+
+function keepTechnicalDetails(props: ManagedMachineKeepControlProps) {
+  if (!props.unavailableDetails?.length) return null;
+  return (
+    <TechnicalDetailsDisclosure
+      title={t('approvals.technicalDetails')}
+      lines={props.unavailableDetails}
+      testID={`${props.testID}.technical-details`}
+    />
+  );
+}
 
 function UnavailableKeepPolicy(props: ManagedMachineKeepControlProps) {
   // One row says the current rule and why it cannot change yet; no second row, no trailing rule.
   return <Item testID={`${props.testID}:retention`} title={t('managedRetention.whenUnused')}
-    subtitle={[describeRetention(props.policy.retention, undefined, props.parking),
-      props.nativeExpiry ?? props.unavailableReason ?? t('managedMachines.options.unavailable')].join('\n')}
+    subtitle={[
+      describeRetention(props.policy.retention, undefined, props.parking),
+      props.nativeExpiry,
+      props.unavailableReason ?? (!props.nativeExpiry ? t('managedMachines.options.unavailable') : undefined),
+    ].filter(Boolean).join('\n')}
     subtitleLines={0} mode="info" showChevron={false} />;
 }
 
@@ -396,7 +413,7 @@ function KeepChoices(props: InnerProps) {
       ) : readOnly ? (
         // Read-only, the reason it cannot change yet takes the consequence's reserved lines.
         <Text testID={`${props.testID}:consequence`} style={[styles.consequence, styles.reserved]} accessibilityLiveRegion="polite">
-          {props.nativeExpiry ?? props.unavailableReason ?? t('managedMachines.options.unavailable')}
+          {props.unavailableReason ?? props.nativeExpiry ?? t('managedMachines.options.unavailable')}
         </Text>
       ) : props.deadline && current.kind === 'deadline' ? (
         // The chosen row already says when; what stays worth saying is that it will not wait for work.

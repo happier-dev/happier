@@ -2636,11 +2636,19 @@ describe('managed Machine detail', () => {
         expect(screen.findByTestId('managed-machine.approval')).toBeNull();
         expect(settledDetailReads).toBe(1);
     });
-    it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager'] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
+    const providerRefusals = {
+        requester_credential_disclosure_required: 'Allow this provider to use the selected Account.',
+        credential_scope_denied: 'The selected Account cannot manage this provider resource.',
+        unreachable: undefined,
+    } as const;
+    const providerRefusalCases = Object.keys(providerRefusals) as (keyof typeof providerRefusals)[];
+    it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager', ...providerRefusalCases] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_move');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests(
             controllerState === 'missing-nonmanager' ? 'viewer' : 'owner', { currentAccount: true }) });
+        const refusal = providerRefusalCases.find(code => code === controllerState);
+        const missingController = controllerState === 'missing' || refusal !== undefined;
         const controller = { machineId: 'original', installationId: 'original-installation' };
         const next = { machineId: 'reachable', installationId: 'reachable-installation' };
         const blocked = { machineId: 'blocked', installationId: 'blocked-installation' };
@@ -2689,7 +2697,10 @@ describe('managed Machine detail', () => {
                 if (actionId === 'machines.provisioners.check') checked.push(request.input);
                 if (actionId === 'machines.managed.controller.update') { moves.push(request.input); moveTargets.push(request.target); }
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [provisioner] }
-                    : actionId === 'machines.provisioners.check' ? { available: request.target?.kind === 'machine' && request.target.machineId !== blocked.machineId }
+                    : actionId === 'machines.provisioners.check' ? {
+                        available: request.target?.kind === 'machine' && request.target.machineId !== blocked.machineId,
+                        ...(refusal && request.target?.kind === 'machine' && request.target.machineId === blocked.machineId ? { code: refusal, status: providerRefusals[refusal] } : {}),
+                    }
                         : actionId === 'machines.provisioners.options' ? createMachineProvisionerOptionsFixture({ base: { launch: machine.launch.choices } })
                         : { kind: 'approval_request_created', artifactId: 'move-approval', actionId };
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true, result } });
@@ -2710,14 +2721,14 @@ describe('managed Machine detail', () => {
         }
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            if (controllerState === 'missing') expect(screen.findByTestId('managed-machine.controller-unavailable:move')).not.toBeNull();
+            if (missingController) expect(screen.findByTestId('managed-machine.controller-unavailable:move')).not.toBeNull();
             else expect(screen.tree.findByType(ManagedMachineControllerSection).props.controller.move.kind).toBe('movable');
             expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
         });
-        const move = controllerState === 'missing'
+        const move = missingController
             ? { kind: 'movable', onPress: () => screen.pressByTestId('managed-machine.controller-unavailable:move') }
             : screen.tree.findByType(ManagedMachineControllerSection).props.controller.move;
-        if (controllerState === 'missing') expect(screen.findByTestId('managed-machine.controller-unavailable:move')).not.toBeNull();
+        if (missingController) expect(screen.findByTestId('managed-machine.controller-unavailable:move')).not.toBeNull();
         expect(move.kind).toBe('movable');
         expect(checked).toContainEqual({ homeId: machine.homeId, controller: next, contribution: provider, credentials: [credential] });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
@@ -2734,6 +2745,12 @@ describe('managed Machine detail', () => {
         expect(reachable.subtitle).toContain(screen.tree.findByType(MachineConfigurationReceipt).props.model.facts
             .find((fact: { id: string; value: string }) => fact.id === 'credential:0').value);
         expect(list.props.candidates.find((candidate: { id: string; reachable: boolean }) => candidate.id.includes('blocked'))?.reachable).toBe(false);
+        if (refusal) {
+            expect(screen.getTextContent()).toContain((providerRefusals[refusal] ?? t('errors.networkError')));
+            expect(screen.findByTestId('managed-machine.move-candidates.blocked.move')).toBeNull();
+            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.move-candidates.blocked.technical-details'
+                && Array.isArray(node.props.lines)).at(0)?.props.lines).toContainEqual(expect.objectContaining({ value: refusal }));
+        }
         expect(checked).toContainEqual({ homeId: machine.homeId, controller: next, contribution: provider, credentials: [credential] });
         await act(async () => list.props.onMove(reachable.id));
         await waitForHomeGovernance(async () => {
@@ -4370,7 +4387,7 @@ describe('managed Machine detail', () => {
         });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.disabled).toBe(true);
     });
-    it('settles a failed Keep parent read into the existing unavailable state', async () => {
+    it.each(providerRefusalCases)('shows the typed Keep-passive policy failure and technical details (%s)', async refusal => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-timeout.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_keep_timeout');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -4385,8 +4402,11 @@ describe('managed Machine detail', () => {
         ]);
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
-            if (url.pathname === '/v1/actions/machines.provisioners.list')
-                return Response.json({ code: 'target_unavailable' }, { status: 503 });
+            if (url.pathname === '/v1/actions/machines.provisioners.check') {
+                const request = readNativeControllerRequest(init);
+                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId,
+                    actionId: 'machines.provisioners.check', execution: { ok: true, result: { available: false, code: refusal, status: providerRefusals[refusal] } } }));
+            }
             const qualification = staticRetentionQualification(machine, url, init);
             if (qualification) return qualification;
             if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
@@ -4400,9 +4420,12 @@ describe('managed Machine detail', () => {
             await flushHookEffects();
             expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep).toMatchObject({
                 capabilitiesAvailable: false,
-                unavailableReason: t('managedRetention.waitsForProvider', { provider: t('common.machine') }),
+                unavailableReason: (providerRefusals[refusal] ?? t('errors.networkError')),
             });
         });
+        expect(screen.getTextContent()).toContain((providerRefusals[refusal] ?? t('errors.networkError')));
+        expect(screen.tree.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.endsWith('.technical-details')
+            && Array.isArray(node.props.lines)).at(0)?.props.lines).toContainEqual(expect.objectContaining({ value: refusal }));
         await screen.unmount();
     });
     it('keeps one Keep parent read running across a Home change that revalidates the same resource', async () => {

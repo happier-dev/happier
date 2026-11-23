@@ -881,7 +881,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
 
     async function listPage(options?: MachinePresetListPageOptions) {
         const { sharedWithTeamId, projection, limit, cursor, signal, onApprovalPending, onApprovalSettled } = options ?? {};
-        const result = await read('machines.presets.list', { homeId, includeArchived: true,
+        const result = await read('machines.presets.list', { homeId,
+            ...(projection === 'count' ? {} : { includeArchived: true }),
             ...(sharedWithTeamId === undefined ? {} : { sharedWithTeamId }),
             ...(projection === undefined ? {} : { projection }),
             ...(limit === undefined ? {} : { limit }),

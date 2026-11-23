@@ -14456,6 +14456,15 @@ epoch. The inspected 0.2 frontier `ead3f779118d6a3d17e167517a64660f9e2c2c0d`
 has passthrough new/update Machine readers and no managed-input producer; that
 parser tolerance does not establish managed wake support against an older Home.
 
+## Machine preset collection count (unreleased 0.3)
+
+The Machines navigation badge uses `machines.presets.list` with `projection: 'count'`
+for each current Account and Home. The collection applies the same preset
+visibility and inherited Team archive rules as its other projections. The count
+covers active presets by default and contains no revision headers, private content
+or recipient envelopes. The existing Account change feed and reconnect recovery
+refresh it. Current Protocol, Home and UI must load together for this projection.
+
 ## Devcontainer preset operands and acquisition review (unreleased 0.3)
 
 Devcontainer launch choices now use the provider's author-input schema and omit

@@ -260,11 +260,13 @@ export const MANAGED_MACHINE_PRESET_PAGE_SIZE_V1 = 50;
 export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema),
   sharedWithTeamId: z.optional(id()),
-  projection: z.optional(z.literal('revisions')),
+  projection: z.optional(z.enum(['revisions', 'count'])),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(MANAGED_MACHINE_PRESET_PAGE_SIZE_V1))),
   includeArchived: z.optional(z.boolean()), cursor: z.optional(id()),
 }).check(z.refine(input => input.limit === undefined || (input.sharedWithTeamId !== undefined && input.projection === undefined),
-  { message: 'A preset page limit requires a Team full-list request' })));
+  { message: 'A preset page limit requires a Team full-list request' }))
+  .check(z.refine(input => input.projection !== 'count' || input.cursor === undefined,
+    { message: 'A preset count covers the entire collection' })));
 export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), id: id(), expectedRevision: revision(),
   patch: z.strictObject({
@@ -314,6 +316,7 @@ export const ManagedMachinePresetListResultV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ kind: z.literal('listed'), presets: z.array(ManagedMachinePresetV1Schema), cursor: z.optional(id()),
     opened: z.optional(z.array(ManagedMachinePresetOpenedContentV1Schema)) }),
   z.strictObject({ kind: z.literal('revisions'), presets: z.array(ManagedMachinePresetRevisionV1Schema), cursor: z.optional(id()) }),
+  z.strictObject({ kind: z.literal('count'), count: z.number().check(z.int(), z.nonnegative()) }),
   ManagedMachinePresetRefusedV1Schema,
 ]));
 export type ManagedMachinePresetCreateInputV1 = z.infer<typeof ManagedMachinePresetCreateInputV1Schema>;

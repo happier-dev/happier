@@ -19,8 +19,14 @@ import { readMachineProvisionerOptionsRefusalV1, type MachineProvisionerCheckRes
 
 export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string; requestId?: string;
     optionsRefusal?: MachineProvisionerCheckResultV1;
+    status?: MachineProvisionerCheckResultV1['status'];
     nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1; failureCause?: ActionExecuteFailure['failureCause'] }>
     & Pick<PluginErrorContractData, 'message'> & Pick<PluginActionFailureAuthorPayloadV1, 'remediation'>;
+export function projectManagedProvisionerCheckFailure(check: MachineProvisionerCheckResultV1): ManagedProvisionerFailure | null {
+    if (!check.code) return null;
+    return { kind: 'failed', code: check.code, status: check.status, nativeCause: check.nativeCause };
+}
+
 export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'failed' }>
     | ManagedProvisionerFailure
     | Readonly<{ kind: 'admitted'; receipt: ExternalActionManagedAdmissionReceiptV1 }>;

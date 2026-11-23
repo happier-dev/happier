@@ -4,9 +4,9 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineReachable, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
-import { createManagedProvisionerClient } from './managedProvisionerClient';
+import { createManagedProvisionerClient, projectManagedProvisionerCheckFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 
-export type ManagedMachineMoveCandidate = Readonly<{ id: string; controller: ManagedControllerV1 | null; reachable: boolean }>;
+export type ManagedMachineMoveCandidate = Readonly<{ id: string; controller: ManagedControllerV1 | null; reachable: boolean; failure?: ManagedProvisionerFailure }>;
 
 export function currentManagedMoveController(machine: Machine | undefined, custodianAccountId: string,
     scope: MachineReachabilityScope | null | undefined): ManagedControllerV1 | null {
@@ -33,12 +33,16 @@ export async function readManagedMachineMoveCandidates(input: Readonly<{
         const unavailable = { id: row.id, controller, reachable: false };
         if (!controller || !current() || !machine.launch.credentials?.length) return unavailable;
         const catalog = await client.read('machines.provisioners.list', { homeId: machine.homeId, controller }, options);
-        if (!current() || catalog.kind === 'failed') return unavailable;
+        if (!current()) return unavailable;
+        if (catalog.kind === 'failed') return { ...unavailable, failure: catalog };
         const provisioner = catalog.value.provisioners.find(candidate => sameStrictJsonValue(candidate.contribution, machine.launch.provider)
             && candidate.descriptor.schemaVersion === machine.launch.schemaVersion && candidate.descriptor.billing.location === 'cloud');
         if (!provisioner) return unavailable;
         const checked = await client.read('machines.provisioners.check', { homeId: machine.homeId, controller,
             contribution: machine.launch.provider, credentials: projectRetainedManagedCredentialSelectionsV1(machine.launch.credentials) }, options);
-        return { id: row.id, controller, reachable: current() && checked.kind === 'succeeded' && checked.value.available };
+        if (!current()) return unavailable;
+        if (checked.kind === 'failed') return { ...unavailable, failure: checked };
+        if (checked.value.available) return { ...unavailable, reachable: true };
+        return { ...unavailable, failure: projectManagedProvisionerCheckFailure(checked.value) ?? undefined };
     }));
 }

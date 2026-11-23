@@ -34,7 +34,7 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
     settleTransientConfirmations: false,
 }).module);
 // Boundary mocks must be registered first; cold module transformation is not this contract.
-const { useMachinePresets, useMachinePreset, useMachinePresetDetail } = await import('./useMachinePresets');
+const { useMachinePresets, useMachinePreset, useMachinePresetDetail, useActiveMachinePresetCount } = await import('./useMachinePresets');
 const { createMachinePresetCollectionClient } = await import('./machinePresetCollectionClient');
 const { ModalProvider } = await import('@/modal');
 beforeEach(async () => {
@@ -79,6 +79,42 @@ describe('preset collection and history through Actions', () => {
             expect.objectContaining({ sharedWithTeamId: 'selected-team' }),
             expect.objectContaining({ sharedWithTeamId: 'selected-team', cursor: 'next-page' }),
         ]);
+    });
+    it('refreshes the active navigation count without reading inventory for an unchanged-count preset edit', async () => {
+        const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        let revision = 7;
+        harness.answer(serverId, '/v1/machines/presets/list', { select: input => ({
+            body: (input as { projection?: string }).projection === 'count' ? { kind: 'count', count: 1 }
+                : { kind: 'revisions', presets: [{ id: 'preset', homeId: 'srv_history', revision, setupRevision: 2 }] },
+        }) });
+        const count = await renderHook(() => useActiveMachinePresetCount([serverId]));
+        await waitForHomeGovernance(() => expect(count.getCurrent()).toBe(1));
+        await flushHookEffects();
+        revision++;
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1],
+            { feedPageConsumed: true, changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(2));
+        expect(count.getCurrent()).toBe(1);
+        expect(harness.requestsFor('/v1/machines/presets/list').map(request => request.input)).toEqual([
+            { homeId: 'srv_history', projection: 'count' }, { homeId: 'srv_history', projection: 'count' },
+        ]);
+        expect(harness.requestsFor('/v1/machines/presets/recipient-census')).toHaveLength(0);
+
+        const connected = () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+        await act(async () => connected());
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(2);
+
+        harness.answer(serverId, '/v1/machines/presets/list', { status: 503, body: { error: 'unavailable' } });
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1],
+            { feedPageConsumed: true, changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(3));
+        await flushHookEffects();
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'count', count: 2 } });
+        await act(async () => connected());
+        await waitForHomeGovernance(() => expect(count.getCurrent()).toBe(2));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(4);
     });
     it('publishes a changed preset copy and its setup revision together once', async () => {
         const homeId = 'srv_history';

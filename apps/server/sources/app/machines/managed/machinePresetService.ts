@@ -1065,6 +1065,7 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
     try { return await inReadSnapshot(async tx => {
         await requireHomeInTx(tx, params.input.homeId);
         const input = params.input;
+        const countScope = (where: Prisma.ManagedMachinePresetWhereInput) => tx.managedMachinePreset.count({ where });
         // Revision demand never reads the private content or recipient envelopes.
         const revisionSelect = { id: true, homeId: true, revision: true, setupRevision: true,
             archivedAt: true, teamId: true } as const;
@@ -1090,9 +1091,12 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
                 presets: fullRows.map(row => ({ ...projectPreset(row, lastUsed.get(row.id)),
                     ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) })) };
         };
-        if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return projectRows([]);
+        if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) {
+            return input.projection === 'count' ? { kind: 'count', count: 0 } : projectRows([]);
+        }
         if (input.sharedWithTeamId) {
             const scope = await scopedPresetListWhereInTx(tx, params, { ...input, sharedWithTeamId: input.sharedWithTeamId });
+            if (input.projection === 'count') return { kind: 'count', count: await countScope(scope.where) };
             const rows = await readRows(scope.where);
             return projectRows(rows.map(row => inheritPresetOwnerArchive(row, scope.teamArchivedAt)), 'team');
         }
@@ -1103,19 +1107,25 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         const teamIds = [...contexts.values()].filter(context => context.teamCapabilities.viewTeam
             && (input.includeArchived || context.team.archivedAt === null)
             && qualifications.get(context.team.id)?.ok === true).map(context => context.team.id);
-        const rowsById = new Map<string, Awaited<ReturnType<typeof readRows>>[number]>();
         // Home, custodian, archive/cursor and Prisma pagination are fixed;
         // Team membership contributes one bind per selected id.
         const teamChunks = portableQueryChunks({ values: teamIds, bindingsPerValue: 1,
             fixedBindings: 7 + (input.owner ? 1 : 0) });
-        for (const [index, ids] of (teamChunks.length ? teamChunks : [[]]).entries()) {
-            const selected = await readRows({
+        const scopes = (teamChunks.length ? teamChunks : [[]]).map((ids, index): Prisma.ManagedMachinePresetWhereInput => ({
             homeId: input.homeId, ...(!input.includeArchived ? { archivedAt: null } : {}),
             OR: [...(index === 0 ? [{ custodianAccountId: params.accountId }] : []), { teamId: { in: [...ids] } }],
             ...(input.owner?.kind === "account" ? { custodianAccountId: input.owner.accountId } : {}),
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}),
-        });
-            for (const row of selected) rowsById.set(row.id, row);
+        }));
+        if (input.projection === 'count') {
+            // Ownership is exclusive: an Account preset has no Team, so the chunk counts are disjoint.
+            let count = 0;
+            for (const scope of scopes) count += await countScope(scope);
+            return { kind: 'count', count };
+        }
+        const rowsById = new Map<string, Awaited<ReturnType<typeof readRows>>[number]>();
+        for (const scope of scopes) {
+            for (const row of await readRows(scope)) rowsById.set(row.id, row);
         }
         const rows = [...rowsById.values()].map(row => inheritPresetOwnerArchive(row,
             row.teamId ? contexts.get(row.teamId)?.team.archivedAt : null)).sort((left, right) => left.id.localeCompare(right.id));

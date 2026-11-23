@@ -207,6 +207,12 @@ describe("Machine preset relational owner", () => {
         const headers = await requestPreset(accountId, 'list', { homeId, projection: 'revisions', includeArchived: true });
         expect(headers.statusCode, headers.body).toBe(200);
         expect(headers.json()).toEqual({ kind: 'revisions', presets: [{ id, homeId, revision: 2, setupRevision: 3 }] });
+        const count = await requestPreset(accountId, 'list', { homeId, projection: 'count' });
+        expect(count.statusCode, count.body).toBe(200);
+        expect(count.json()).toEqual({ kind: 'count', count: 1 });
+        const archived = await requestPreset(accountId, 'archive', { homeId, id, expectedRevision: 2 });
+        expect(archived.json()).toMatchObject({ kind: 'saved' });
+        expect((await requestPreset(accountId, 'list', { homeId, projection: 'count' })).json()).toEqual({ kind: 'count', count: 0 });
     });
 
     it('normalizes settled resize replay content during encryption migration and preserves an unincorporated override', async () => {
@@ -1744,6 +1750,10 @@ describe("Machine preset relational owner", () => {
             controller, teamAcquireDelegated: true,
         });
         expect((await requestPreset(owner, 'create', definition)).statusCode).toBe(200);
+        for (const [actor, count] of [[member, 1], [outsider, 0]] as const) {
+            expect((await requestPreset(actor, 'list', { homeId, projection: 'count' })).json())
+                .toEqual({ kind: 'count', count });
+        }
         expect(await inTx(tx => archiveTeamInTx(tx, { actorAccountId: owner, teamId: team.id }))).toMatchObject({ ok: true });
         const archivedAt = (await db.team.findUniqueOrThrow({ where: { id: team.id } })).archivedAt?.getTime();
         expect(archivedAt).toEqual(expect.any(Number));
@@ -1756,6 +1766,8 @@ describe("Machine preset relational owner", () => {
                 homeId, owner: definition.owner, includeArchived: true,
             })).json()).toMatchObject({ kind: 'listed', presets: [{ id: definition.id, archivedAt }] });
         }
+        expect((await requestPreset(member, 'list', { homeId, projection: 'count' })).json())
+            .toEqual({ kind: 'count', count: 0 });
         expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).archivedAt).toBeNull();
         await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
             accountId: owner, homeId, id: definition.id, revision: 0,
@@ -1766,6 +1778,8 @@ describe("Machine preset relational owner", () => {
         const restored = await requestPreset(owner, 'get', { homeId, id: definition.id });
         expect(restored.statusCode, restored.body).toBe(200);
         expect(restored.json().preset).not.toHaveProperty('archivedAt');
+        expect((await requestPreset(member, 'list', { homeId, projection: 'count' })).json())
+            .toEqual({ kind: 'count', count: 1 });
     });
 
     it('keeps an Account-hosted E2EE preset acquirable without a controller declaration', async () => {

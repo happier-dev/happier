@@ -10,6 +10,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { t } from '@/text';
 
@@ -60,7 +61,11 @@ export const ManagedMachinePolicySection = React.memo(
             <Item
               testID={`${props.testID}.whenUnused`}
               title={t('managedRetention.whenUnused')}
-              subtitle={keep.finiteOnly ? keep.nativeExpiry : describeRetention(keep.policy.retention, undefined, keep.parking)}
+              subtitle={[
+                keep.finiteOnly ? keep.nativeExpiry : describeRetention(keep.policy.retention, undefined, keep.parking),
+                keep.unavailableReason,
+              ].filter(Boolean).join('\n')}
+              subtitleLines={0}
               mode="info"
               showChevron={false}
             />
@@ -79,7 +84,8 @@ export const ManagedMachinePolicySection = React.memo(
             <Item
               testID={`${props.testID}.whenUnused`}
               title={t('managedRetention.whenUnused')}
-              subtitle={props.compactSummary.summary}
+              subtitle={[props.compactSummary.summary, keep.unavailableReason].filter(Boolean).join('\n')}
+              subtitleLines={0}
               onPress={props.compactSummary.onPress}
             />
             {/* Shown read-only (keep.disabled) until the capability owner answers, so its arrival moves nothing. */}
@@ -97,6 +103,13 @@ export const ManagedMachinePolicySection = React.memo(
             />
           </SectionContentRow>
         )}
+        {(props.readOnly || props.compactSummary) && keep.unavailableDetails?.length ? (
+          <TechnicalDetailsDisclosure
+            title={t('approvals.technicalDetails')}
+            lines={keep.unavailableDetails}
+            testID={`${props.testID}.technical-details`}
+          />
+        ) : null}
       </ItemGroup>
     );
   },
@@ -239,6 +252,7 @@ export type ManagedControllerCandidate = Readonly<{
   icon: React.ReactNode;
   /** "Can reach Hetzner · Work", "Offline since 08:30", "Can't reach your Hetzner account". */
   subtitle: string;
+  technicalDetails?: readonly TechnicalDetailsLine[];
   online: boolean;
   current: boolean;
   reachable: boolean;
@@ -260,35 +274,43 @@ export const ManagedControllerMoveList = React.memo(
           const movable =
             !candidate.current && candidate.reachable && candidate.online;
           return (
-            <Item
-              key={candidate.id}
-              testID={`${props.testID}.${candidate.id}`}
-              title={candidate.name}
-              subtitle={candidate.current
-                ? <InlineStatus tone={candidate.online ? 'success' : 'muted'} label={candidate.subtitle} />
-                : candidate.subtitle}
-              icon={candidate.icon}
-              titleStyle={
-                !candidate.current && !candidate.reachable
-                  ? { color: theme.colors.text.secondary }
-                  : undefined
-              }
-              mode="info"
-              showChevron={false}
-              rightElement={
-                movable ? (
-                  <RoundButton
-                    testID={`${props.testID}.${candidate.id}.move`}
-                    size="small"
-                    title={t('managedController.moveHere')}
-                    accessibilityLabel={t('managedController.move', {
-                      controller: candidate.name,
-                    })}
-                    onPress={() => props.onMove(candidate.id)}
-                  />
-                ) : undefined
-              }
-            />
+            <React.Fragment key={candidate.id}>
+              <Item
+                testID={`${props.testID}.${candidate.id}`}
+                title={candidate.name}
+                subtitle={candidate.current
+                  ? <InlineStatus tone={candidate.online ? 'success' : 'muted'} label={candidate.subtitle} />
+                  : candidate.subtitle}
+                icon={candidate.icon}
+                titleStyle={
+                  !candidate.current && !candidate.reachable
+                    ? { color: theme.colors.text.secondary }
+                    : undefined
+                }
+                mode="info"
+                showChevron={false}
+                rightElement={
+                  movable ? (
+                    <RoundButton
+                      testID={`${props.testID}.${candidate.id}.move`}
+                      size="small"
+                      title={t('managedController.moveHere')}
+                      accessibilityLabel={t('managedController.move', {
+                        controller: candidate.name,
+                      })}
+                      onPress={() => props.onMove(candidate.id)}
+                    />
+                  ) : undefined
+                }
+              />
+              {candidate.technicalDetails?.length ? (
+                <TechnicalDetailsDisclosure
+                  title={t('approvals.technicalDetails')}
+                  lines={candidate.technicalDetails}
+                  testID={`${props.testID}.${candidate.id}.technical-details`}
+                />
+              ) : null}
+            </React.Fragment>
           );
         })}
       </ItemGroup>

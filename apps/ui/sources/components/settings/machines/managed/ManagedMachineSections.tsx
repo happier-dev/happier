@@ -71,7 +71,7 @@ import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedCo
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { describeKeepCosts, describeRetention, describeRetentionConsequence, formatRetentionDuration, retentionParking } from './managedRetentionPresentation';
-import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
+import { describeManagedActionFailureDiagnostic, presentManagedReadFailure } from './managedNativeFailurePresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedDestructiveAction, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
@@ -82,7 +82,7 @@ import { publishActionOperationObservation, reconcileActionOperationsOnce } from
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { refreshActionOperationSnapshot } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
-import { readManagedMachinePolicyParent, readManagedMachineRebuildReview, type ManagedMachinePolicyParent } from './managedMachinePolicyParent';
+import { readManagedMachinePolicyParent, readManagedMachineRebuildReview } from './managedMachinePolicyParent';
 import { useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { currentManagedMoveController, readManagedMachineMoveCandidates, type ManagedMachineMoveCandidate } from './managedMachineMoveCandidates';
@@ -277,9 +277,11 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.serverId)}` as never);
     const approvalRequestRef = React.useRef(approval.requestApproval);
     approvalRequestRef.current = approval.requestApproval;
-    const [policyParent, setPolicyParent] = React.useState<ManagedMachinePolicyParent | null>(null);
+    const [policyRead, setPolicyRead] = React.useState<Awaited<ReturnType<typeof readManagedMachinePolicyParent>>
+        | Readonly<{ kind: 'pending' }> | null>(null);
+    const policyParent = policyRead?.kind === 'ready' ? policyRead.parent : null;
+    const policyFailure = policyRead?.kind === 'failed' ? policyRead : null;
     const [parentReadRevision, refreshPolicyParent] = React.useReducer(value => value + 1, 0);
-    const [parentReadFailed, setParentReadFailed] = React.useState(false);
     const parentReadIdentityRef = React.useRef<string | null>(null);
     const [inspectPurpose, setInspectPurpose] = React.useState<'check' | 'logs'>('check');
     const policyController = !machine.controller ? undefined : requiredController && controllerPresence?.online ? machine.controller
@@ -295,23 +297,23 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         const readIdentity = JSON.stringify([parentReadKey, binding?.accountId ?? null, parentControllerAvailable]);
         const rereading = parentReadIdentityRef.current === readIdentity;
         parentReadIdentityRef.current = readIdentity;
-        if (!rereading) setPolicyParent(null);
-        setParentReadFailed(false);
-        const settleFailed = () => { setPolicyParent(null); setParentReadFailed(true); };
-        // Inventory revalidation flips `current` on every Home change; the read is keyed on the resource and its controller, not on that.
-        if (!parentControllerAvailable) { settleFailed(); return; }
-        if (!binding?.isCurrent()) return;
+        if (!binding?.isCurrent()) { setPolicyRead(null); return; }
+        if (!parentControllerAvailable) {
+            setPolicyRead({ kind: 'failed', code: 'controller_unavailable' });
+            return;
+        }
+        setPolicyRead(current => rereading && current?.kind === 'ready' ? current : { kind: 'pending' });
+        // Inventory revalidation flips `current` on every Home change; the read is keyed on the resource and its controller.
         const abort = new AbortController();
-        const retirement = binding.onRetire(() => { abort.abort(); setPolicyParent(null); });
+        const retirement = binding.onRetire(() => { abort.abort(); setPolicyRead(null); });
         void readManagedMachinePolicyParent({ machine, controller: policyController ?? undefined, binding, signal: abort.signal,
             onApprovalPending: registration => approvalRequestRef.current(registration) }).then(result => {
             if (abort.signal.aborted || !binding.isCurrent()) return;
             // An equal re-read keeps the settled parent, so nothing that reads it re-renders.
-            if (result.kind === 'ready') setPolicyParent(current => current && sameStrictJsonValue(current, result.parent) ? current : result.parent);
-            else settleFailed();
+            setPolicyRead(current => result.kind === 'ready' && current?.kind === 'ready'
+                && sameStrictJsonValue(current.parent, result.parent) ? current : result);
         }).catch(() => {
-            // An unavailable parent cannot enable Reset; the live row stays readable and says why it is read-only.
-            if (!abort.signal.aborted) settleFailed();
+            if (!abort.signal.aborted) setPolicyRead({ kind: 'failed', code: 'managed_parent_unavailable' });
         });
         return () => { abort.abort(); retirement.dispose(); };
     }, [props.binding, parentControllerAvailable, parentReadKey, parentReadRevision]);
@@ -624,8 +626,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             const result = await readManagedMachinePolicyParent({ machine, binding, signal: interest.signal,
                 onApprovalPending: registration => approvalRequestRef.current(registration) });
             if (!binding.isCurrent() || interest.signal.aborted) return false;
-            if (result.kind === 'failed') { setError(result.code); return false; }
-            setPolicyParent(result.parent);
+            setPolicyRead(result);
+            if (result.kind === 'failed') return false;
             // Reset is a concrete, newly reviewed live-policy Action, never a receipt rewrite.
             pendingRef.current = false;
             setPending(null);
@@ -637,7 +639,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     setProposedPolicy(current => current === proposedPolicy ? null : current);
                 });
         } catch {
-            if (binding.isCurrent() && !interest.signal.aborted) setError('managed_parent_unavailable');
+            if (binding.isCurrent() && !interest.signal.aborted) {
+                setPolicyRead({ kind: 'failed', code: 'managed_parent_unavailable' });
+            }
             return false;
         } finally {
             if (!dispatched && binding.isCurrent() && !interest.signal.aborted) {
@@ -758,15 +762,14 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const offerStartOnRow = startAction !== undefined && asleepWithStorage;
     const receiptActions = offerStartOnRow ? allReceiptActions.filter(action => action !== startAction) : allReceiptActions;
     const pageReceipt: ManagedReceiptModel = offerStartOnRow ? { ...receipt, secondary: receiptActions } : receipt;
+    const policyFailurePresentation = policyFailure ? presentManagedReadFailure(policyFailure, machine.launch.provider.pluginId, provisionerPresentation.localized) : null;
     const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
         // The reviewed facts already say whether it is finite, so the read-only rule keeps the shape it will have.
         finiteOnly: (policyParent?.capabilities ?? machine.reviewedFacts?.retentionCapabilities)?.finiteOnly,
         capabilitiesAvailable: policyParent !== null,
-        // Until the controller answers, the rule is read-only: say who it waits for, or that it is being read.
-        unavailableReason: controllerPresence?.online === false ? controllerRequired(controllerName)
-            // Checking and its failure read as one calm line each, so the card keeps its height between them.
-            : parentReadFailed ? t('managedRetention.waitsForProvider', { provider: providerName ?? t('common.machine') })
-                : providerName ? t('managedMachines.options.loading', { provider: providerName }) : undefined,
+        unavailableReason: policyFailurePresentation?.reason ?? (policyRead?.kind === 'pending'
+            ? t('managedRetention.waitsForProvider', { provider: providerName ?? t('common.machine') }) : undefined),
+        unavailableDetails: policyFailurePresentation?.technicalDetails,
         nativeExpiry: nativeExpiryDescription,
         effects: supportedMachineRetentionEffectsV1(supportedIntents), parking,
         canWake: isMachineRetainedWakeEligibleV1(policy.retention, { supportedIntents }),
@@ -970,10 +973,12 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     && row.installationId === machine.controller.installationId;
                 const currentInstallation = currentManagedMoveController(row, machine.custodianAccountId, reachabilityScope);
                 const reachable = candidate.reachable && sameStrictJsonValue(currentInstallation, candidate.controller) && currentInstallation !== null;
+                const failure = !current && !reachable && candidate.failure ? presentManagedReadFailure(candidate.failure, machine.launch.provider.pluginId, provisionerPresentation.localized) : null;
                 return { id: candidate.id, name: getMachineDisplayName(row) ?? candidate.id, icon: machineMark,
-                    subtitle: presence?.online && machine.launch.credentials?.length ? t(reachable ? 'managedController.reachableAccount'
+                    technicalDetails: failure?.technicalDetails,
+                    subtitle: failure?.reason ?? (presence?.online && machine.launch.credentials?.length ? t(reachable ? 'managedController.reachableAccount'
                         : 'managedController.unavailableAccount', { account: credentialNames })
-                        : presence?.label ?? t('common.unknown'), online: presence?.online ?? false, current, reachable };
+                        : presence?.label ?? t('common.unknown')), online: presence?.online ?? false, current, reachable };
             })} onMove={moveController} /> : null}
         {/* Diagnostics are rare detail: after what people change here (Keep it, Managed from). */}
         {(canReadGuestLogs || canRunGuestCommand) && machine.resource && !resourceConfirmedAbsent ? <ItemGroup title={t('managedMachines.inspect.diagnosticsTitle')}

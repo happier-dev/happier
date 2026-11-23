@@ -169,7 +169,7 @@ describe('AccountSettingMutationV1', () => {
     const selections = { v: 1, pluginExecutionOriginsByPluginId: {},
       targetsByKey: { agents: { serverIdentityId: 'srv_home', machineId: 'machine-1' } } };
     const raw = { machineAdministrationSelectionsV1: selections, neighbor: { keep: true } };
-    expect(accountSettingsParse(raw)).not.toHaveProperty('machineAdministrationSelectionsV1');
+    expect(accountSettingsParse(raw)).toMatchObject(raw);
     expect(applyAccountSettingMutationV1(raw, {
       operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }],
     })).toEqual({ status: 'applied', raw: { ...raw, workDepthLimit: 4 } });

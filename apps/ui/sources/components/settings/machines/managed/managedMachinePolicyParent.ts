@@ -13,7 +13,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import { createManagedProvisionerClient } from './managedProvisionerClient';
+import { createManagedProvisionerClient, projectManagedProvisionerCheckFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 import { readManagedConfiguration } from './readManagedConfiguration';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { createMachinePresetCollectionClient } from './machinePresetCollectionClient';
@@ -41,7 +41,7 @@ type ManagedMachineNativeReadInput = Readonly<{
 async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInput): Promise<Readonly<{
     kind: 'ready'; provisioner: ManagedConfiguratorDraft['provisioner']; selected: ManagedConfiguratorDraft['selected'];
     effectReview?: DevcontainerEffectReviewV1;
-}> | Readonly<{ kind: 'failed'; code: string }>> {
+}> | ManagedProvisionerFailure> {
     const { machine, binding, signal } = input;
     const controller = input.controller ?? machine.controller;
     const current = () => !signal.aborted && binding.isCurrent();
@@ -82,8 +82,9 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
         ...(readSelectors ? { selectors: readSelectors, optionsAfterAvailableCheck: true } : {}),
         signal, onApprovalPending: input.onApprovalPending });
     if (native.kind === 'retired') return { kind: 'failed', code: 'action_account_scope_changed' };
-    if (native.failure) return { kind: 'failed', code: native.failure.code };
-    if (!native.check?.available) return { kind: 'failed', code: 'managed_parent_unavailable' };
+    if (native.failure) return { kind: 'failed', ...native.failure };
+    if (!native.check?.available) return (native.check && projectManagedProvisionerCheckFailure(native.check))
+        ?? { kind: 'failed', code: 'managed_parent_unavailable' };
     const { schema: querySchema, selectors } = retainedQuery;
     if (querySchema && native.options) {
         const draft = refreshManagedConfiguratorOptions({ ...createManagedConfiguratorDraft({ provisioner, controller,
@@ -102,7 +103,7 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
 
 export async function readManagedMachineRebuildReview(input: ManagedMachineNativeReadInput): Promise<Readonly<{
     kind: 'ready'; review: DevcontainerEffectReviewV1;
-}> | Readonly<{ kind: 'failed'; code: string }>> {
+}> | ManagedProvisionerFailure> {
     const native = await readManagedMachineNativeReview(input);
     if (native.kind === 'failed') return native;
     if (!native.provisioner.descriptor.retention.supportedIntents.includes('rebuild')
@@ -115,7 +116,7 @@ export async function readManagedMachineRebuildReview(input: ManagedMachineNativ
 /** Reset reads today's parent; the creation receipt is deliberately not an input to policy resolution. */
 export async function readManagedMachinePolicyParent(input: ManagedMachineNativeReadInput): Promise<Readonly<{
     kind: 'ready'; parent: ManagedMachinePolicyParent;
-}> | Readonly<{ kind: 'failed'; code: string }>> {
+}> | ManagedProvisionerFailure> {
     const { machine, binding, signal } = input;
     const current = () => !signal.aborted && binding.isCurrent();
     const options = { signal, onApprovalPending: input.onApprovalPending };

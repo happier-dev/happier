@@ -432,7 +432,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
     }, [statesByServerId, refresh]);
 }
 
-/** A collection navigation row counts visible active presets from Home's revision headers. */
+/** Navigation consumes the active total from each visible Account collection. */
 export function useActiveMachinePresetCount(serverIds: readonly string[]): number {
     const presented = useLayoutPresentationActive();
     const accountScopes = useServerCredentialAccountScopeStates(serverIds);
@@ -450,8 +450,7 @@ export function useActiveMachinePresetCount(serverIds: readonly string[]): numbe
     const readCount = React.useCallback(() => {
         let active = 0;
         for (const { serverId, homeId, binding } of homes) {
-            const revisions = readMachinePresetRevisionsSnapshot(serverId, homeId, binding.accountId).value;
-            for (const preset of Object.values(revisions ?? {})) if (preset.archivedAt === undefined) active++;
+            active += readMachinePresetCountSnapshot(serverId, homeId, binding.accountId).value ?? 0;
         }
         return active;
     }, [homes]);

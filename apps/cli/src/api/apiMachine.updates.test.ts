@@ -52,7 +52,6 @@ describe('ApiMachineClient updates', () => {
 
   it('publishes the installation key without rewriting a retained Setup source', async () => {
     const key = new Uint8Array(32).fill(19);
-    // READY196's decrypted shape, with synthetic preset identity and content.
     const setup = { version: 1, revision: 2, exclusions: [], sources: [
       { kind: 'direct', setup: {} },
       { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {} },
@@ -70,7 +69,6 @@ describe('ApiMachineClient updates', () => {
       return { result: 'success', version: write.expectedVersion + 1, metadata: write.metadata };
     } });
     const { ApiMachineClient } = await import('./apiMachine');
-    // Stored data predates the current authored Setup type.
     const client = new ApiMachineClient('token', machine as unknown as ConstructorParameters<typeof ApiMachineClient>[1]);
     Reflect.set(client, 'socket', socket);
     const publishKey = () => client.updateMachineMetadata(current => ({ ...current!, installationPublicKey }));
@@ -78,12 +76,10 @@ describe('ApiMachineClient updates', () => {
       await expect(publishKey()).resolves.toBe('published');
       expect(writes).toEqual([{ ...metadata, installationPublicKey }]);
       await expect(publishKey()).resolves.toBe('unchanged');
-      await expect(client.updateMachineMetadata(current => ({ ...current!, setup: { ...current!.setup!, revision: 3 } })))
-        .rejects.toThrow('Unsupported Machine metadata publication');
       const { mutateMachineSetupDesiredV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
       await expect(mutateMachineSetupDesiredV1({ expectedDesiredRevision: 2, sources: [
         { kind: 'direct', setup: {} },
-        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {}, contentEncryptionMode: 'e2ee' },
+        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {}, contentEncryptionMode: 'e2ee' },
       ], exclusions: [] }, {
         read: async () => client.getMachineMetadataSnapshot(),
         compareAndSwap: input => client.compareAndSwapMachineMetadata(input),

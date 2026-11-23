@@ -9,6 +9,19 @@ import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionE
 export { describeManagedAcquisitionRefusal } from '@/sync/ops/actions/managedAcquisitionFailureCopy';
 import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 import { t } from '@/text';
+import type { ManagedProvisionerFailure } from './managedProvisionerClient';
+
+type ManagedReadFailure = Omit<ManagedProvisionerFailure, 'kind'>;
+
+export function presentManagedReadFailure(failure: ManagedReadFailure, providerId: string,
+    localize: (pluginId: string, status: NonNullable<ManagedReadFailure['status']>) => string,
+) {
+    const message = failure.message ?? (failure.status ? localize(providerId, failure.status) : undefined);
+    return presentActionExecutionFailure({
+        ok: false, errorCode: failure.code, message, remediation: failure.remediation,
+        details: failure.details, failureCause: failure.failureCause, requestId: failure.requestId,
+    }, t('managedMachines.options.unavailable'));
+}
 
 /** Existing Details disclosures accept only typed causes and the Action's correlation identity. */
 export function describeManagedActionFailureDiagnostic(code: string, details?: unknown, requestId?: string, failureCause?: ActionFailureCauseV1): string {

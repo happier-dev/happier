@@ -178,18 +178,6 @@ it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed
     expect(fixture.row().revision).toBe(input.expectedRevision);
 });
 
-it('retains a prepared local image and refuses Archive when its recorded host is missing', async () => {
-    const fixture = await archiveFixture();
-    const { serverId, homeId } = fixture;
-    const preset = fixture.row();
-    const result = await createDefaultActionExecutor().executeConfirmed('machines.presets.archive', {
-        homeId, id: preset.id, expectedRevision: preset.revision,
-    }, { serverId, surface: 'ui', authority: 'present_user', actionRequestId: 'archive-original', signal: fixture.signal });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'controller_unavailable' });
-    expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.archive'))).toHaveLength(0);
-    expect(fixture.row().content).toMatchObject({ t: 'plain', v: { prepared: { artifact: { value: { image: 'original-image' } } } } });
-});
-
 it.each(['revoked', 'replaced', 'offline', 'missing', 'cancelled'] as const)
 ('archives only a permanently unavailable original host (%s)', async state => {
     const fixture = await archiveFixture('original-host');

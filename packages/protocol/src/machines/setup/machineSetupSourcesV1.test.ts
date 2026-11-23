@@ -168,11 +168,12 @@ describe('Machine setup saved-copy publication', () => {
     const item = { kind: 'softwareRecipe' as const, selection: {
       ref: { pluginId: 'fixture.tools', recipeId: 'package', revision: '1' }, inputs: {},
     } };
-    const accepted = { intent, homeId: 'home', runId: '8702d93d-4f09-49ae-bfc8-16f21a30e68f',
+    const authoredKey = 'existing-app';
+    const accepted = { intent, authoredKey, homeId: 'home', runId: '8702d93d-4f09-49ae-bfc8-16f21a30e68f',
       sourceKey: '$root', blockId: 'actual-accepted-child', actionId: 'deployments.deploy' as const };
     const sourceFacts = { direct: { firstPresence: { [machineSetupItemKeyV1(item)]: 'absent' as const }, acceptedAppRuns: [accepted] } };
     const initial = { ...createEmptyMachineSetupDesiredV1(), sources: createEmptyMachineSetupDesiredV1().sources.map(source => ({
-      ...source, setup: { items: [item, { kind: 'app' as const, definition: intent }] },
+      ...source, setup: { items: [item, { kind: 'app' as const, definition: intent, authoredKey }] },
     })), sourceFacts };
     const boundary = publicationPort(initial);
     expect(await getMachineSetupDesiredV1(boundary.port)).toMatchObject({ status: 'ready', policy: { sources: initial.sources, sourceFacts } });
