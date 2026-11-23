@@ -1,37 +1,76 @@
 /**
- * Exact-value redaction of host-minted secrets that an Agent can read and echo into its
- * transcript. Applied once at each Session writer of Agent-authored content, before encryption or
- * plain storage: the message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
+ * Exact-value redaction of secrets that an Agent can read and echo into its transcript. Applied
+ * once at each Session writer of Agent-authored content, before encryption or plain storage: the
+ * message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
  * (`ApiSessionClient.updateAgentState`, which carries permission request arguments). Execution Run
  * output leaves its hosting process only through the Run read projection in
  * `dispatchExecutionRunRpcAction.ts`, which applies it there for every reader, including Workflow
  * storage that Team members can read. Retired secrets no longer authenticate, so read-time
  * redaction of live registrations is sufficient.
  *
- * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers and the session hook server. Their
- * secrets reach the Agent only through its runner-written private config (MCP client config,
- * bridge config, hook secret files), which the Agent's own process can read. Session MCP relays
- * use their registration bearer to distinguish catalogs sharing one endpoint; Unix shell clients
- * can also use kernel peer proof without a bearer.
+ * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers, the session hook
+ * server, and the secret values the daemon materialized into a runner-spawned launch (Project
+ * secret bindings, Profile secret bindings, produced native credentials), registered by the
+ * runner's exec authorization for the launch's life. The registry is process-local: it protects
+ * the process that writes this Session's transcript, so registration happens there.
  */
-const registeredSecrets = new Set<string>();
+const registeredSecrets = new Map<string, number>();
 
 export const TRANSCRIPT_SECRET_REDACTED = '[redacted]';
 
-/** Register a live host-minted secret; the returned function unregisters it. */
+/** Register a live secret; the returned function releases this registration. */
 export function registerTranscriptSecret(secret: string): () => void {
-    registeredSecrets.add(secret);
-    return () => { registeredSecrets.delete(secret); };
+    registeredSecrets.set(secret, (registeredSecrets.get(secret) ?? 0) + 1);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        const count = registeredSecrets.get(secret) ?? 0;
+        if (count <= 1) registeredSecrets.delete(secret);
+        else registeredSecrets.set(secret, count - 1);
+    };
+}
+
+function redactString(value: string, secrets: readonly string[]): string {
+    let redacted = value;
+    for (const secret of secrets) {
+        if (redacted.includes(secret)) redacted = redacted.split(secret).join(TRANSCRIPT_SECRET_REDACTED);
+    }
+    return redacted;
+}
+
+function redactValue(value: unknown, secrets: readonly string[]): unknown {
+    if (typeof value === 'string') return redactString(value, secrets);
+    if (Array.isArray(value)) {
+        let changed = false;
+        const next = value.map(entry => {
+            const redacted = redactValue(entry, secrets);
+            changed ||= redacted !== entry;
+            return redacted;
+        });
+        return changed ? next : value;
+    }
+    if (value === null || typeof value !== 'object') return value;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        const redactedKey = redactString(key, secrets);
+        const redacted = redactValue(entry, secrets);
+        changed ||= redactedKey !== key || redacted !== entry;
+        next[redactedKey] = redacted;
+    }
+    return changed ? next : value;
 }
 
 /**
- * Replaces every registered secret in the JSON content. Registered secrets are base64url, so the
- * replacement inside the serialized form is exact. Without a registered secret this is a no-op.
+ * Replaces every registered secret inside the string keys and values of JSON content, leaving its
+ * structure intact; registered values may be any person-chosen string. Unchanged content is
+ * returned as is. Without a registered secret this is a no-op.
  */
 export function redactTranscriptSecrets<T>(content: T): T {
     if (registeredSecrets.size === 0 || content === undefined) return content;
-    const serialized = JSON.stringify(content);
-    let redacted = serialized;
-    for (const secret of registeredSecrets) redacted = redacted.split(secret).join(TRANSCRIPT_SECRET_REDACTED);
-    return redacted === serialized ? content : JSON.parse(redacted) as T;
+    const secrets = [...registeredSecrets.keys()].sort((left, right) => right.length - left.length);
+    return redactValue(content, secrets) as T;
 }

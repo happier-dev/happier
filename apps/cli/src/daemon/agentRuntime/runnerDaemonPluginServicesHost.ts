@@ -2942,8 +2942,12 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     authorizationId,
                     launch,
                 );
+                const secretValues = launch.secretRedactionLease?.values() ?? [];
                 return result(operation, {
                     authorizationId,
+                    // The runner spawns this launch and writes the Session transcript; it
+                    // registers these values with its transcript redactor until release.
+                    ...(secretValues.length ? { secretValues: [...secretValues] } : {}),
                     launch: {
                         command: launch.command,
                         args: [...launch.args],

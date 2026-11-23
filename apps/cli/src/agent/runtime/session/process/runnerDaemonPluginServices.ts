@@ -1,6 +1,7 @@
 import { lazyActionSpecRecord } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { randomUUID } from 'node:crypto';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { ScmCommandRunner } from '@/scm/runtime';
 import { createRunnerDaemonScmCheckpointPhaseRunner, createRunnerDaemonScmCommandRunner } from './runnerDaemonScmCommand';
 import type { RepositoryCheckpointPhaseRunner } from '@/scm/checkpoints/repositoryCheckpointPhaseWire';
@@ -2659,8 +2660,17 @@ export async function prepareRunnerDaemonPluginServices(
             throw new PluginError({ code: 'plugin_exec_launch_authorization_invalid',
                 message: 'Daemon returned an invalid process launch authorization' });
         }
+        const secretValues = raw.secretValues ?? [];
+        if (!Array.isArray(secretValues)
+            || !secretValues.every((value): value is string => typeof value === 'string' && value.length > 0)) {
+            throw new PluginError({ code: 'plugin_exec_launch_authorization_invalid',
+                message: 'Daemon returned an invalid process launch authorization' });
+        }
         const authorizationId = raw.authorizationId;
         const { stdin, stdinPreamble, ...launch } = raw.launch;
+        // This process spawns the Agent and writes its transcript: keep the daemon-materialized
+        // secret values out of it for as long as the launch lives.
+        const unregisterSecrets = secretValues.map(value => registerTranscriptSecret(value));
         let released = false;
         return Object.freeze({ ...launch,
             args: Object.freeze([...launch.args]), env: Object.freeze({ ...launch.env }),
@@ -2670,6 +2680,7 @@ export async function prepareRunnerDaemonPluginServices(
             release() {
                 if (released) return;
                 released = true;
+                for (const unregister of unregisterSecrets) unregister();
                 void dispatch<null>({ kind: 'plugin_exec.launch.release_v1', requestId: randomUUID(),
                     invocationId: input.invocationId, authorizationId }, { timeoutMs: 1_000 }).catch(() => undefined);
             },

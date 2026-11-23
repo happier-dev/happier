@@ -41,6 +41,7 @@ import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import { createRequesterSessionCredentialCustody, prepareRequesterSessionBootstrap,
   retireRequesterSessionCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
+import { buildOutboundSessionMessagePayload } from '@/api/session/client/transport/outboundSessionMessagePayload';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { authorizeResolvedAgentNativeExecLaunchForHost, issueAgentNativeLaunchQualifierForHost, spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
@@ -900,12 +901,15 @@ it.each(['retained', 'associated retained', 'current', 'associated current', 're
   expect(decodeRunnerDaemonPluginServiceWireValueV1(scm.result.value)).toMatchObject({ success: true, exitCode: 0,
     stdout: expect.stringMatching(/^git version /) });
   const unavailable = createUnavailablePluginServices();
+  let authorizedWire: unknown;
   const services = await prepareRunnerDaemonPluginServices({ invocationId: 'owner-native-exec', signal: h.signal, local: unavailable,
     dispatch: async operation => {
       const response = await h.dispatch(operation);
       if (!response.ok) throw new Error(response.error.code);
       if (response.result.kind !== 'plugin_services.result_v1') throw new Error('Missing native service response');
-      return decodeRunnerDaemonPluginServiceWireValueV1(response.result.value);
+      const value = decodeRunnerDaemonPluginServiceWireValueV1(response.result.value);
+      if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') authorizedWire = value;
+      return value;
     } });
   if (generation === 'current custom ACP') {
     const { writeAcpTestAgentScript } = await import('@/agent/acp/testkit/subprocessHarness');
@@ -951,18 +955,35 @@ it.each(['retained', 'associated retained', 'current', 'associated current', 're
   const nativeEffects = h.nativeEffects();
   const launch = await authorizeResolvedAgentNativeExecLaunchForHost(services.exec, { command: process.execPath,
     args: ['-e', selectedSecret
-      ? `process.stdout.write(process.env.NATIVE==="active"&&process.env.PROJECT_TOKEN===${JSON.stringify(secretValue)}?"native-owner-ready":"missing-owner-environment")`
+      // The Agent echoes its Project secret, as `env` or a tool result would.
+      ? `process.stdout.write(process.env.NATIVE==="active"&&process.env.PROJECT_TOKEN===${JSON.stringify(secretValue)}?"native-owner-ready "+process.env.PROJECT_TOKEN:"missing-owner-environment")`
       : associated ? 'process.stdout.write(process.env.NATIVE==="active"?"native-owner-ready":"missing-native")'
       : 'process.stdout.write("native-owner-ready")'], cwd: h.cwd, env: { PATH: process.env.PATH ?? '' } });
   const child = spawnAuthorizedHostExecLaunchForHost(launch, { signal: h.signal });
   try {
     const result = await child.handle.wait();
     expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
-    expect(new TextDecoder().decode(result.stdout)).toBe('native-owner-ready');
+    const stdout = new TextDecoder().decode(result.stdout);
+    expect(stdout).toBe(selectedSecret ? `native-owner-ready ${secretValue}` : 'native-owner-ready');
+    if (selectedSecret) {
+      // The runner's transcript writer stores the echo while the launch is live.
+      const stored = JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null },
+        { type: 'tool-result', output: `${stdout} control=project-visible-control` }));
+      expect(stored).not.toContain(secretValue);
+      expect(stored).toContain('native-owner-ready');
+      expect(stored).toContain('project-visible-control');
+      // The daemon materializes the value; the runner spawns the Agent and writes its
+      // transcript in another process, so the values cross the daemon wire with the launch.
+      expect(authorizedWire).toMatchObject({ secretValues: [secretValue] });
+    }
     if (associated) expect(h.nativeEffects()).toBeGreaterThan(nativeEffects);
   } finally {
     await child.dispose();
     await child.waitForSettlement();
+  }
+  if (selectedSecret) {
+    // The registration lives exactly as long as the launch it protects.
+    expect(JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, secretValue))).toContain(secretValue);
   }
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('owner-native-exec') });
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('owner-native') });
