@@ -585,14 +585,14 @@ describe('independent Generic join', () => {
       // canonical host reports that uncertainty as a typed Configure result,
       // not a known pre-effect Action refusal or a successful applied join.
       if (rejectPublication) {
-        expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', effectAttempted: true,
+        expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed', effectAttempted: true,
           failureCause: { phase: 'machines.reachability.publication', errorCode: 'ECONNRESET' } });
-        expect(request.execution).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+        expect(request.execution).toMatchObject({ ok: false, errorCode: 'native_effect_failed' });
       } else {
         expect(parseCompletedReachabilityConfigure(result))
-          .toMatchObject({ status: 'outcome_unknown', errorCode: 'outcome_unknown' });
+          .toMatchObject({ status: 'outcome_unknown', errorCode: 'native_effect_failed' });
         expect(request.execution).toMatchObject({ ok: true,
-          result: { status: 'outcome_unknown', errorCode: 'outcome_unknown' } });
+          result: { status: 'outcome_unknown', errorCode: 'native_effect_failed' } });
       }
       expect(grantCountAtNativeFailure).toBe(1);
       const nativeFailures = fixture.elevation.diagnostics.flatMap(diagnostic => diagnostic.records)

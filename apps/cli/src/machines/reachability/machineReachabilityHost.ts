@@ -6,7 +6,7 @@ import { prepareMachineRecipeProgramV1 } from '@/machines/setup/prepareMachineRe
 import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { mutateMachineMetadataFieldV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { MachineElevatedResultV1, MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -70,6 +70,12 @@ const refuse = (code: string, details?: unknown, effectAttempted?: boolean): nev
 };
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
   ? error.code : 'machine_reachability_unavailable';
+
+function refuseMembershipElevation(result: Exclude<MachineElevatedResultV1, { outcome: 'applied' }>): never {
+  if (result.outcome === 'not_applied') return refuse(result.reasonCode);
+  if (result.outcome === 'needs_attendance') return refuse(result.outcome);
+  return refuse(result.failure?.kind ?? result.outcome);
+}
 
 /** A public role code is a diagnostic, never a host-control exception. */
 class NativeRoleFailure extends Error {
@@ -494,8 +500,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           });
           if (installed.outcome !== 'applied') {
             if (installed.outcome === 'not_applied' || installed.outcome === 'needs_attendance') anyNativeEffectPossible = previouslyAttempted;
-            return refuse('reasonCode' in installed ? installed.reasonCode
-              : installed.outcome === 'needs_attendance' ? 'needs_attendance' : 'outcome_unknown');
+            return refuseMembershipElevation(installed);
           }
           anyNativeEffectPossible = previouslyAttempted || prerequisiteEffectsApplied;
           setupApplied = true;
@@ -541,8 +546,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
                 anyNativeEffectPossible = previouslyAttempted;
                 roleMayHaveChangedMembership = false;
               }
-              return refuse('reasonCode' in installed ? installed.reasonCode
-                : installed.outcome === 'needs_attendance' ? 'needs_attendance' : 'outcome_unknown');
+              return refuseMembershipElevation(installed);
             }
             anyNativeEffectPossible = previouslyAttempted || membershipEffectsApplied;
             roleMayHaveChangedMembership = membershipEffectsApplied;
@@ -589,8 +593,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
                   fileMayExist = fileAlreadyPresent;
                   cleanupConfirmed = !fileMayExist;
                 }
-                return refuse('reasonCode' in installed ? installed.reasonCode
-                  : installed.outcome === 'needs_attendance' ? 'needs_attendance' : 'outcome_unknown');
+                return refuseMembershipElevation(installed);
               }
               setupApplied = true;
               deps.context.operationProgress?.update({ phase: 'setup_applied' });
@@ -627,8 +630,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
               anyNativeEffectPossible = false;
               roleMayHaveChangedMembership = false;
             }
-            return refuse('reasonCode' in left ? left.reasonCode
-              : left.outcome === 'needs_attendance' ? 'needs_attendance' : 'outcome_unknown');
+            return refuseMembershipElevation(left);
           }
         }
         const observed = await observeMachineReachability({ state: currentState, providers,

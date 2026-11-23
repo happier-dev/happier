@@ -71,6 +71,34 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     expect(f.hostNative.firewallStages).toEqual([]);
   });
 
+  it('preserves the native cause when a reviewed leave loses confirmation after applying', async () => {
+    const selected = builtin(false);
+    const f = await journey('external', [], {
+      authoredProvider: createDockerNetworkAuthoredProvider(false, true), providerSelection: selected, builtinTailscale: true,
+    });
+    const { metadata, metadataVersion } = f.metadata.read();
+    expect(await f.metadata.port.compareAndSwap({ expectedMetadataVersion: metadataVersion,
+      metadata: { ...metadata, accessProviderSelections: [selected] } })).toMatchObject({ status: 'applied' });
+    const review = parseReachabilityInspectResult(await inspectMachineReachability({
+      serverId: 'generic-home', machineId, change: { kind: 'privateNetwork', intent: 'leave', selection: selected },
+    }, f.dependencies(f.context())));
+    const runNative = f.hostNative.runNative;
+    vi.spyOn(f.hostNative, 'runNative').mockImplementation(async command => {
+      const result = await runNative(command);
+      if (command.executable.endsWith('tailscale') && command.args[0] === 'down') {
+        throw Object.assign(new Error('Synthetic loss of native confirmation'), { code: 'EIO' });
+      }
+      return result;
+    });
+    const configured = MachineReachabilityConfigureResultV1Schema.parse(await executeMachineReachabilityTransition(
+      f.configureInput(review), f.dependencies({ ...f.context(), operationAcceptance: {
+        operationId: 'builtin-leave-lost-confirmation', actionId: 'machines.reachability.configure', accept() {},
+      } }),
+    ));
+    expect(f.hostNative.tailscaleMutations).toEqual([['down']]);
+    expect(configured).toMatchObject({ status: 'outcome_unknown', errorCode: 'native_effect_failed' });
+  });
+
   // Reuse the generic journey's Server QB87 Home-acquisition budget. The
   // observable Action bodies keep the CLI's unchanged 30-second budget.
   describe('without a selected key', () => {
