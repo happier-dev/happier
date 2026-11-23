@@ -273,10 +273,17 @@ describe('private recap composition', () => {
         accounting: [{ query, value, status: 'available' }],
         work: [{ query, status, ...(status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) }],
         previous: available }, bundledUsageModelPriceCatalog).results[0]!;
-      expect(retainedEmpty.workSummary?.mergedPrCount).toBe(0);
-      expect(composeUsageRecap({ input, snapshot: retainedEmpty })).toMatchObject({ kind: 'composed',
-        unavailableFields: [], facts: { work: { linkedOutcomes: 0, allocatedContributions: 0,
-          unallocatedContributions: 1 }, highlights: [] } });
+      const recap = composeUsageRecap({ input, snapshot: retainedEmpty });
+      if (status === 'pending') {
+        expect(retainedEmpty.workSummary?.mergedPrCount).toBe(0);
+        expect(recap).toMatchObject({ kind: 'composed', unavailableFields: [], facts: { work: {
+          linkedOutcomes: 0, allocatedContributions: 0, unallocatedContributions: 1 }, highlights: [] } });
+      } else {
+        expect(retainedEmpty.workSummary?.mergedPrCount).toBeUndefined();
+        expect(recap).toMatchObject({ kind: 'composed', unavailableFields: ['work'], facts: { highlights: [] },
+          coverage: { sourceStatuses: expect.arrayContaining([{ status: 'stale' }]) } });
+        expect(recap.kind === 'composed' && recap.facts.work).toBeUndefined();
+      }
     }
     {
       const noWitness = resolveUsagePageAggregation({ queries: [query],
