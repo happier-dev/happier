@@ -122,6 +122,7 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['browser Home payload export', true, null, false, false, false, false],
     ['browser Home payload export opaque Plain preset', true, null, false, false, true, false],
     ['browser bootstrap failure recovery', true, null, false, false, false, false],
+    ['browser bootstrap failure recovery from Machine detail', true, null, false, false, false, false],
     ['browser bootstrap failure recovery Home payload export', true, null, false, false, false, false],
     ['browser bootstrap failure recovery Delete', true, 'machines.managed.delete', false, false, false, false],
     ['browser refused roles seed', true, null, false, false, false, false],
@@ -1052,6 +1053,27 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     return;
                 }
                 interruptBootstrap = false;
+                if (label === 'browser bootstrap failure recovery from Machine detail') {
+                    const retryInput = { homeId, managedId: 'managed-1', expectedIntentRevision: managed!.intentRevision };
+                    await executor.execute('machines.managed.bootstrap.retry', retryInput, {
+                        ...context, actionRequestId: 'detail-installation-retry', presentUserConfirmation: undefined,
+                    });
+                    expect(managed).toMatchObject({ allocation: 'bound',
+                        observation: { reason: 'bootstrap.admission_unavailable' } });
+                    expect(managed?.enrolledMachineId).toBeUndefined();
+                    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+                    const retried = await createFrontDoorActionExecute(executor).confirmed('machines.managed.bootstrap.retry', retryInput, {
+                        ...context, actionRequestId: 'reviewed-detail-installation-retry', presentUserConfirmation: undefined,
+                    });
+                    expect(retried, JSON.stringify({ retried, observation: managed?.observation })).toMatchObject({
+                        ok: true, result: { managedId: 'managed-1' },
+                    });
+                    expect(managed, JSON.stringify(managed?.observation)).toMatchObject({
+                        allocation: 'bound', bootstrapInstalled: true, enrolledMachineId: 'joined',
+                    });
+                    expect({ admissions, allocations, guestDispatches }).toEqual({ admissions: 1, allocations: 1, guestDispatches: 0 });
+                    return;
+                }
                 const retried = await runManagedMachineCreation({
                     draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity }, acquisition,
                     agentStart: input.agentStart, scope: lifetime.scope, signal: new AbortController().signal,

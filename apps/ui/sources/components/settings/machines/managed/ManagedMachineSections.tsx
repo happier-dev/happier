@@ -929,7 +929,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     params: { serverId: props.serverId, ...(machine.controller ? { machineId: machine.controller.machineId } : {}) } }) } : {}),
             } : {}),
             ...(canRecoverCreation && (!machine.controller || currentControllerAvailable || creatorScoped && machine.controllerAccess) && recovery.kind !== 'unavailable' ? {
-                reinstall: () => fireAndForget(run(recovery.actionId, buildManagedInstallationRetryInput(machine)), { tag: 'ManagedMachineSections.retryInstall' }),
+                reinstall: () => fireAndForget(runConfirmed(recovery.actionId, buildManagedInstallationRetryInput(machine)), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
         {/* Ended (lab m-life): the record says what went and what stays; nothing is left to check or read. */}
         {resourceConfirmedAbsent && machine.resource ? <ItemGroup testID="managed-machine.ended-record" surface="none"
