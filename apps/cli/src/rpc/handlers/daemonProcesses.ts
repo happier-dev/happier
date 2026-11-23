@@ -9,6 +9,7 @@ import { MachineProcessesListInputV1Schema, MachineProcessesAnswerV1Schema, Mach
     type MachineProcessesCleanUpInputV1, type MachineProcessesStartAgainInputV1, type MachineProcessesActionResultV1,
     type MachineProcessesCleanUpResultV1, type MachineProcessesStartAgainResultV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readMachineTargetedActionRpcInputV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
@@ -61,22 +62,22 @@ export function registerDaemonProcessesRpcHandlers(rpc: RpcHandlerRegistrar, opt
     // Each finite request consumes dispatcher admission; native effects keep
     // their exact identity/ownership checks and local cancellation below.
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_LIST, async (raw: unknown, context) => {
-        const input = MachineProcessesListInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
+        const input = MachineProcessesListInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const requester = bindAdmission(input, context);
         try { return MachineProcessesAnswerV1Schema.parse(await options.view.list(input, requester)); }
         finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_GET, async (raw: unknown, context) => {
-        const input = MachineProcessesGetInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
+        const input = MachineProcessesGetInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const requester = bindAdmission(input, context);
         try { return MachineProcessesGetResultV1Schema.parse(await options.view.get(input, requester)); }
         finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_CHECK, async (raw: unknown, context) => {
-        const input = MachineProcessesCheckInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
+        const input = MachineProcessesCheckInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const requester = bindAdmission(input, context);
         try { return MachineProcessesCheckResultV1Schema.parse(await options.view.check(input, requester)); }
         finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PROCESSES_WATCH, async (raw: unknown, context) => {
-        const input = MachineProcessesWatchInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
+        const input = MachineProcessesWatchInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const requester = bindAdmission(input, context);
         try { return MachineProcessesWatchResultV1Schema.parse(await options.view.watch(input, requester, context?.signal)); }
         finally { await requester.assertLocal(); }
     });
@@ -91,19 +92,19 @@ export function registerDaemonProcessesRpcHandlers(rpc: RpcHandlerRegistrar, opt
         accountId: identity.accountId, isCustodian: identity.accountId === identity.custodianAccountId,
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_KILL, async (raw: unknown, context) => {
-        const input = MachineProcessesKillInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        const input = MachineProcessesKillInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const actor = bindAdmission(input, context);
         return MachineProcessesActionResultV1Schema.parse(await actions.executeKill(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_STOP, async (raw: unknown, context) => {
-        const input = MachineProcessesStopInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        const input = MachineProcessesStopInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const actor = bindAdmission(input, context);
         return MachineProcessesActionResultV1Schema.parse(await actions.executeStop(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_LEFT_BEHIND_CLEAN_UP, async (raw: unknown, context) => {
-        const input = MachineProcessesCleanUpInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        const input = MachineProcessesCleanUpInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const actor = bindAdmission(input, context);
         return MachineProcessesCleanUpResultV1Schema.parse(await actions.cleanUp(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, async (raw: unknown, context) => {
-        const input = MachineProcessesStartAgainInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        const input = MachineProcessesStartAgainInputV1Schema.parse(readMachineTargetedActionRpcInputV1(raw)); const actor = bindAdmission(input, context);
         return MachineProcessesStartAgainResultV1Schema.parse(await actions.startAgain(input, requester(actor), execution(input, context)));
     });
 }

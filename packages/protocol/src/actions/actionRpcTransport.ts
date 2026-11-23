@@ -53,6 +53,15 @@ export const ManagedWorkspaceScmRpcRequestV1Schema = lazyZodSchema(() => z.stric
   target: ManagedWorkspaceAddressV2Schema,
 }));
 
+/**
+ * The semantic input of a Machine-targeted Action RPC. A requester's admitted Action arrives
+ * wrapped; a direct call arrives bare. Machine admission is the RPC ingress's, not this reader's.
+ */
+export function readMachineTargetedActionRpcInputV1(raw: unknown): unknown {
+  const envelope = TargetedActionRpcRequestV1Schema.safeParse(raw);
+  return envelope.success && envelope.data.target.kind === 'machine' ? envelope.data.input : raw;
+}
+
 export function createTargetedActionRpcRequestV1(
   input: unknown,
   target: ExternalActionTargetV1,

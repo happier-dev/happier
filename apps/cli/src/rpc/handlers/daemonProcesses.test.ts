@@ -12,6 +12,7 @@ import { createLinuxMachineVitalsReader } from '@/daemon/vitals/readers/linux';
 import { parseLinuxProcStartTimeMs } from '@happier-dev/cli-common/processInstance';
 import { MachineProcessesAnswerV1Schema, MachineProcessesCheckResultV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { registerDaemonProcessesRpcHandlers } from './daemonProcesses';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -49,6 +50,10 @@ it('discloses native Environment processes only through current Machine and capt
     try {
         registerDaemonProcessesRpcHandlers(registrar, { view, target });
         expect(MachineProcessesAnswerV1Schema.parse(await list()).owners).toEqual([]);
+        // A requester's admitted Action arrives in the targeted Action RPC envelope (BL4-CONFIRM-B C77, #205).
+        expect(MachineProcessesAnswerV1Schema.parse(await handlers.get(RPC_METHODS.MACHINES_PROCESSES_LIST)!(
+            createTargetedActionRpcRequestV1({ machineId: 'm', serverId: 'browser-home' }, { kind: 'machine', machineId: 'm' }),
+            context)).owners).toEqual([]);
         registerDaemonProcessesRpcHandlers(registrar, { view, target, readEnvironment: async (environment, ingress) => {
             // The Account read adapter is the external Home boundary; all projection/admission logic stays real.
             expect(environment).toEqual({ serverId: 'home', environmentId: 'environment' });
