@@ -65,6 +65,10 @@ const runtimeFetchSpy = vi.hoisted(() => vi.fn(async () => new Response('', { st
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: runtimeFetchSpy,
+    runtimeFetchManualResponse: (input: unknown, init: unknown, onIssued?: () => void) => {
+        onIssued?.();
+        return runtimeFetchSpy(input, init);
+    },
 }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
