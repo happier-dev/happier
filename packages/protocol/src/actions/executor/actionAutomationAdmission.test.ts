@@ -130,10 +130,11 @@ it('keeps the refused admission unavailable while a concurrent admission reopens
 });
 
 it.each([
-  { scenario: 'keeps unchanged Workflow consent without materialization', reads: 0, hasChild: false, addsNativeAction: false },
-  { scenario: 'keeps unchanged child Workflow consent without materialization', reads: 4, hasChild: true, addsNativeAction: false },
-  { scenario: 'asks again for an added native Action whose Machine cannot supply its contract', reads: 1, hasChild: false, addsNativeAction: true },
-])('$scenario', async ({ reads, hasChild, addsNativeAction }) => {
+  { scenario: 'keeps equal-revision Workflow consent without a step compare', revision: 1, reads: [], hasChild: false, addsNativeAction: false },
+  { scenario: 'keeps unchanged child Workflow consent without materialization', revision: 1, reads: ['root', 'child'], hasChild: true, addsNativeAction: false },
+  { scenario: 'advances a mismatched revision with unchanged steps after one compare and no re-ask', revision: 2, reads: ['root'], hasChild: false, addsNativeAction: false },
+  { scenario: 'asks once after one mismatched-revision compare finds an added native Action', revision: 2, reads: ['root'], hasChild: false, addsNativeAction: true },
+])('$scenario', async ({ revision, reads, hasChild, addsNativeAction }) => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const child = WorkflowDefinitionV1Schema.parse({ version: 1,
     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -142,15 +143,18 @@ it.each([
     blocks: [{ kind: 'workflow', id: 'child', workflowRef: childRef }] }) : child;
   const revisions = new Map([["root", 1], [childRef, 1]]);
   const definitions = new Map([["root", root], [childRef, child]]);
-  let workflowReads = 0;
+  const workflowReads: string[] = [];
   let materializationCalls = 0;
-  let reconcileWrites = 0;
+  const reconciledRevisions: number[] = [];
   let retained: AutomationDefinitionDetail | null = null;
   const actions = createAccountWorkflowTriggerActions({
     nativeAccount: { accountId: 'actor', serverId: 'home', isCurrent: async () => true },
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     randomBytes: length => new Uint8Array(length).fill(1), newId: kind => `${kind}-1`,
-    resolveWorkflow: async ref => { workflowReads += 1; return { definition: definitions.get(ref)!, revision: { headerVersion: 1, bodyVersion: revisions.get(ref)! } }; },
+    resolveWorkflow: async ref => {
+      workflowReads.push(ref);
+      return { definition: definitions.get(ref)!, revision: { headerVersion: 1, bodyVersion: revisions.get(ref)! } };
+    },
     openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
     sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
       workflow: { t: 'plain', v: context }, triggerEvidence: null, managedTarget: null, visibleTeamId: null }),
@@ -170,39 +174,73 @@ it.each([
             revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null })) };
         return retained;
       },
-      reconcile: async () => { reconcileWrites += 1; throw new Error('Unexpected consent reconciliation'); },
+      reconcile: async (automationId, input) => {
+        const [update] = input.triggers;
+        const old = retained?.triggers[0];
+        if (!retained || retained.id !== automationId || !old || update?.kind !== 'existing'
+          || update.triggerId !== old.id || update.expectedRevision !== old.revision
+          || update.trigger?.kind !== 'action' || update.trigger.consentedWorkflowRevision === undefined) {
+          throw new Error('Expected revision advance on the saved consent trigger');
+        }
+        reconciledRevisions.push(update.trigger.consentedWorkflowRevision);
+        retained = { ...retained, triggers: [AutomationTriggerDetailSchema.parse({
+          ...old, ...update.trigger, revision: old.revision + 1,
+        })] };
+        return retained;
+      },
       delete: async () => ({ ok: true }),
     },
   });
   const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
     runtimeAccountId: 'actor', serverId: 'home', actionRequestId: 'consent' };
   const project = { machineId: 'machine', directory: '/repo' };
-  const matching = { actionIds: ['notifications.notify_me'], phase: 'before' as const };
+  const subject = { kind: 'machine' as const, serverId: 'home', machineId: project.machineId };
+  const matching = { actionIds: ['notifications.notify_me'], phase: 'before' as const, subject };
   const consentTrigger = { kind: 'action' as const, enabled: true,
     consentFor: { automationId: 'source', triggerId: 'source-trigger' }, consentedWorkflowRevision: 1 };
   const saved = await actions.saveActorConsent({ workflow: 'root', workflowRevision: 1, matching, project, consentTrigger,
     decisionInput: { artifactId: 'approval', decision: 'approve', triggerConsent: { automationId: 'source', triggerId: 'source-trigger', decision: 'allow' } } }, caller);
-  workflowReads = 0;
+  workflowReads.length = 0;
   materializationCalls = 0;
-  reconcileWrites = 0;
+  revisions.set('root', revision);
   if (addsNativeAction) {
-    revisions.set('root', 2);
     definitions.set('root', WorkflowDefinitionV1Schema.parse({ ...root, blocks: [...root.blocks, {
       kind: 'action', id: 'write-marker', actionId: 'machines.command.run',
       input: { command: { kind: 'literal', value: 'printf edited' } },
     }] }));
+  } else if (revision !== saved.workflowRevision) {
+    definitions.set('root', WorkflowDefinitionV1Schema.parse({ ...root,
+      blocks: root.blocks.map(block => ({ ...block, name: 'Renamed review' })),
+    }));
   }
-  const selection = { workflow: 'root', workflowRevision: revisions.get('root')!, matching, project,
-    saved: { automationId: saved.automationId, triggerId: saved.triggerId, workflowRevision: saved.workflowRevision }, consentTrigger };
-  if (addsNativeAction) {
-    expect(await actions.readActorConsent(selection, caller)).toEqual({ current: false,
-      review: { reason: 'steps', changedSteps: [{ sourceKey: '$root', blockId: 'write-marker' }] } });
-  } else {
-    expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
-    expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
+  const source = { ...consentTrigger.consentFor, triggerRevision: 1, workflowId: 'root', workflowRevision: revision,
+    ownerAccountId: 'author', reachesOthers: true, actionIds: matching.actionIds, phase: matching.phase,
+    mode: 'wait' as const, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'root') };
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [source, {
+    automationId: saved.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision,
+    workflowId: source.workflowId, workflowRevision: saved.workflowRevision, ownerAccountId: 'actor',
+    consentFor: consentTrigger.consentFor, consentedWorkflowRevision: saved.workflowRevision,
+  }] }), settle: async () => {} });
+  const { resolveConsent } = createWorkflowActorConsentPortV1({ accountId: 'actor', actions, resolveProject: async () => project });
+  const args = { actionId: matching.actionIds[0]!, input: {}, context: { ...caller, defaultSessionMachineId: project.machineId },
+    subjects: [{ role: 'operand' as const, subject }], resolveConsent };
+  const observed = createApprovalAutomaticChecksV1(await port.select(args), false).consents;
+  expect(observed).toEqual([expect.objectContaining({
+    automationId: source.automationId, triggerId: source.triggerId,
+    ...(addsNativeAction ? { decision: 'pending',
+      review: { reason: 'steps', changedSteps: [{ sourceKey: '$root', blockId: 'write-marker' }] } }
+      : { decision: 'allow' }),
+  })]);
+  expect(workflowReads).toEqual(reads.map(ref => ref === 'child' ? childRef : ref));
+  expect(materializationCalls).toBe(revision === saved.workflowRevision ? 0 : 1);
+  expect(reconciledRevisions).toEqual(revision !== saved.workflowRevision && !addsNativeAction ? [revision] : []);
+  if (!addsNativeAction && revision !== saved.workflowRevision) {
+    expect(observed[0]?.actorConsent).toMatchObject({ consentedWorkflowRevision: revision });
+    workflowReads.length = 0;
+    expect(createApprovalAutomaticChecksV1(await port.select(args), false).consents).toEqual(observed);
+    expect(workflowReads).toEqual([]);
+    expect(reconciledRevisions).toEqual([revision]);
   }
-  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: reads,
-    materializationCalls: addsNativeAction ? 1 : 0, reconcileWrites: 0 });
 });
 
 describe('Approval profile subject admission', () => {
