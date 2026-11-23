@@ -117,7 +117,7 @@ describe('mounted Session server-start recipe composer', () => {
         network.resetRequests();
         storage.setState(storage.getInitialState(), true);
         const profilesByOrigin = new Map<string, ReturnType<typeof AccountProfileSchema.parse>>();
-        network.setHttpResponder(async input => {
+        network.setHttpResponder(async (input, init) => {
             const url = new URL(String(input));
             if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
                 features: { sessions: { folders: { enabled: foldersEnabled } } },
@@ -127,6 +127,14 @@ describe('mounted Session server-start recipe composer', () => {
             if (url.pathname === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
                 content: { t: 'plain', v: { experiments: true, featureToggles: { 'sessions.folders': true } } }, version: 1,
             }));
+            if (url.pathname === '/v1/artifacts/read' && typeof init?.body === 'string') {
+                const request = JSON.parse(init.body);
+                if (request.projection === 'headers' && request.artifactIds?.length === 1 && request.artifactIds[0] === 'custom:removed') {
+                    return Response.json({ projection: 'headers', items: [{
+                        artifactId: 'custom:removed', ok: false, error: 'artifact_not_found', status: 404, retryable: false,
+                    }] });
+                }
+            }
             const profile = profilesByOrigin.get(url.origin);
             return url.pathname === '/v1/account/profile' && profile ? Response.json(profile) : null;
         });
