@@ -834,6 +834,11 @@ uses the final inventory and accepted current mode; a mode-specific failed open
 uses the latest observed availability evidence from that attempt, retained across
 producer cleanup. Later valid current-mode facts clear earlier refusal evidence.
 A public error code without matching evidence retains ordinary cleanup.
+In 0.3 development, an Agent can declare `sessions.forkWorkspace: 'source'`
+when its native fork retains the source workspace. Auto selects Replay for
+that Agent when a managed child needs its own workspace. Native-only requests
+return a typed refusal that points to Replay. Explicit path and in-place
+workspaces can still take the native path when the Agent supports the cutoff.
 Native forks observe the same attestation inside their fork owner's child
 cleanup scope. The shared Project startup wrapper returns the physical child
 identity to that owner, which attempts the existing Stop and archival cleanup

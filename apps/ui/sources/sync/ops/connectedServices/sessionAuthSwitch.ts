@@ -39,6 +39,7 @@ export async function readSessionConnectedServiceAuthOptions(
         method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS,
         payload: { sessionId: params.sessionId },
         authorization: { kind: 'session.read', sessionId: params.sessionId },
+        ...(context.actionRequestId ? { requestId: context.actionRequestId } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
     });
 }

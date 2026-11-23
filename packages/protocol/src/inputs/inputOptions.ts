@@ -44,7 +44,7 @@ import { buildUsageScopeInventoryQuery, readUsageGroupByOptions, readUsagePeriod
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
 import { readUsageProjectScopeMachines, readUsageScopeOptions, type UsageProjectOptionFacts } from '../usage/usageFilterOptions.js';
-import { readRpcErrorCode } from '../rpc/errors.js';
+import { isMachineRpcTimeoutError, readRpcErrorCode } from '../rpc/errors.js';
 import { SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1, resolveSavedHealthCheckOptionsV1 } from './savedHealthCheckOptions.js';
 import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
 import { DesktopDisplaysListResultSchema } from '../actions/specs/desktopShell.js';
@@ -767,7 +767,11 @@ export async function resolveInputOptions(params: Readonly<{
     const selectedMachine = ctx.expectedSessionMachineId ?? machineId
       ?? readNonEmptyString(readRecord(readRecord(await deps.sessionStatusGet?.({ sessionId, serverId, context: ctx })).session).machineId);
     if (!selectedMachine) return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
-    const result = await deps.sessionConnectedServicesAuthOptions({ sessionId, machineId: selectedMachine, serverId }, ctx);
+    const result = await deps.sessionConnectedServicesAuthOptions({ sessionId, machineId: selectedMachine, serverId }, ctx)
+      .catch((error: unknown) => {
+        if (isMachineRpcTimeoutError(error)) return { ok: false, errorCode: 'timeout', error: 'timeout' };
+        throw error;
+      });
     const failure = params.readFailure(result);
     if (failure) return failure;
     const options = SessionConnectedServiceAuthSwitchOptionsResultSchema.safeParse(result);

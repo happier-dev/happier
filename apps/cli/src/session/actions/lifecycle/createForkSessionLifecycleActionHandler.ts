@@ -11,7 +11,8 @@ import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
+import { requiresReplayForSessionForkWorkspace, SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
+import { readSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import {
     evaluateAgentSessionCapabilitySupport,
     isProviderBoundSessionMetadata,
@@ -23,7 +24,6 @@ import { attemptAcpLatestFork } from './fork/attemptAcpLatestFork';
 import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
 import { attemptProviderNativeFork } from './fork/attemptProviderNativeFork';
 import { createReplayForkSession } from './fork/createReplayForkSession';
-import { readForkWorkspacePlacement } from './fork/prepareManagedForkDirectory';
 import type { ForkLifecycleResult } from './fork/forkLifecycleTypes';
 import { readReplayTextLimitFromEnv } from '@/session/replay/readReplayTextLimitFromEnv';
 import type {
@@ -155,15 +155,19 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         }
 
         const forkAgentId = forkBackendResolution.catalogAgentId;
-        const nativeForkOpenDeclared = forkAgentId !== null
-            && readAgentSessionCapabilities(
-                readAgentCatalogSnapshot().agentDefinitionsById
-                    .get(forkAgentId)
-                    ?.richDefinition
-                    ?.definition,
-            )?.open.includes('fork') === true;
+        const sessionCapabilities = forkAgentId === null ? null : readAgentSessionCapabilities(
+            readAgentCatalogSnapshot().agentDefinitionsById.get(forkAgentId)?.richDefinition?.definition,
+        );
+        const workspaceRequiresReplay = requiresReplayForSessionForkWorkspace(sessionCapabilities, parentMetadata);
+        if (workspaceRequiresReplay && requestedStrategy !== 'auto' && requestedStrategy !== 'replay') {
+            return {
+                ok: false,
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'This agent can only fork natively in the source workspace. Use Replay to fork into a new managed workspace.',
+            };
+        }
         const nativeForkOpenSupported = forkAgentId !== null
-            && nativeForkOpenDeclared
+            && sessionCapabilities?.open.includes('fork') === true
             && evaluateAgentSessionCapabilitySupport({
                 agentId: forkAgentId,
                 capability: forkPoint.type === 'seq'
@@ -189,7 +193,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         // already threw above.
         const providerBoundFork = isProviderBoundSessionMetadata(parentMetadata);
         // A guest path is usable only through the child launch owner.
-        const inPlaceFork = readForkWorkspacePlacement(parentMetadata)?.recipe.inPlaceWorkspace !== undefined;
+        const inPlaceFork = readSessionCreationCorrespondence(parentMetadata)?.recipe.inPlaceWorkspace !== undefined;
         if (
             providerBoundFork
             && requestedStrategy !== 'auto'
@@ -265,7 +269,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             // It enables exactly the native attempts `auto` enables, in the same
             // order; the tail check below is what keeps it from ever falling
             // through to Replay, which the user did not choose.
-            const genericNativeIntent = requestedStrategy === 'auto' || requestedStrategy === 'native';
+            const genericNativeIntent = !workspaceRequiresReplay && (requestedStrategy === 'auto' || requestedStrategy === 'native');
             const shouldAttemptAcpForkLatest =
                 !inPlaceFork &&
                 !providerBoundFork &&
@@ -315,7 +319,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             // An agent-owned fork surface can implement both native and ACP
             // modes. Route ACP-backed sessions directly to the ACP lifecycle so
             // one surface invocation has one authoritative persisted strategy.
-            if (!inPlaceFork && !providerBoundFork && !(genericNativeIntent && shouldAttemptAcpForkLatest)) {
+            if (!workspaceRequiresReplay && !inPlaceFork && !providerBoundFork && !(genericNativeIntent && shouldAttemptAcpForkLatest)) {
                 const providerNativeFork = await attemptProviderNativeFork({
                     requestedStrategy,
                     credentials,

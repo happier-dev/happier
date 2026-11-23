@@ -85,7 +85,8 @@ beforeEach(async () => {
     return { status: response.status, data: await response.json() };
   });
   const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
-    approvalWaivedSurfaces: Object.fromEntries(controls.map(id => [id, ['agent', 'mcp']])) } });
+    approvalWaivedSurfaces: Object.fromEntries(controls.map(id => [id, id === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1
+      ? ['agent', 'mcp', 'cli'] : ['agent', 'mcp']])) } });
   storage.setState({ settings });
   homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
   const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
@@ -219,7 +220,7 @@ describe('CLI current-Session control owners', () => {
     expect(readRow().metadataVersion).toBe(acceptedVersion);
   });
 
-  it.each(['agent', 'mcp'] as const)('writes Session configuration and connected-account routing without an app on %s', async surface => {
+  it.each(['agent', 'mcp', 'cli'] as const)('writes connected-account routing without an app on %s', async surface => {
     const readRow = installConfigSession();
     // The Socket transport is mocked. The receiving handlers, choice admission
     // and metadata tuple writer are real and there is no reverse-dispatch client.
@@ -233,7 +234,8 @@ describe('CLI current-Session control owners', () => {
       pluginActionExecutionOwner: 'current_process', serverIdentityId: 'srv_session_parity',
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: storage.getState().settings }) });
-    const context = { surface, authority: 'account_automation' as const, defaultSessionId: sessionId };
+    const authContext = { surface, authority: 'account_automation' as const, defaultSessionId: sessionId };
+    const context = { ...authContext, surface: surface === 'cli' ? 'agent' as const : surface };
     const config = { sessionId, configId: 'effort', valueId: 'high' };
     const service = 'happier.agent.codex/openai-codex';
     const routing = { agentId: 'external-agent', selectedServiceId: service,
@@ -274,14 +276,14 @@ describe('CLI current-Session control owners', () => {
     if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
     const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(readRow().metadata), ownerMetadata: owner.v });
     expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { effort: { value: 'high' } } });
-    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, authContext))
       .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
     expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: routing.agentId, bindings: routing.bindings })]);
     const acceptedVersion = readRow().metadataVersion;
     expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: 'unadvertised' }, context))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(readRow().metadataVersion).toBe(acceptedVersion);
-    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, authContext))
       .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
     const options = await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
       actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
@@ -289,7 +291,7 @@ describe('CLI current-Session control owners', () => {
       optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID,
       sessionId,
       draftInput: { machineId },
-    }, context);
+    }, authContext);
     expect(options).toMatchObject({ ok: true, result: { options: [{ label: 'Native sign-in', value: routing }] } });
     expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: null }, context))
       .toEqual(expect.objectContaining({ ok: true, result: {
@@ -297,7 +299,7 @@ describe('CLI current-Session control owners', () => {
       } }));
     if (!options.ok) throw new Error('Expected eligible routing choices');
     const published = options.result as { options: Array<{ value: unknown }> };
-    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, { ...auth, routing: published.options[0].value }, context))
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, { ...auth, routing: published.options[0].value }, authContext))
       .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
     expect(applied).toHaveLength(3);
   });

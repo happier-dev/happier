@@ -68,6 +68,7 @@ export async function resolveInactiveConnectedServiceSessionContext(
     >[0]['credentials'];
     sessionId: string;
     currentMachineId: string;
+    signal?: AbortSignal;
   }>,
 ): Promise<Readonly<{
   /** Absent when the Session declares no Agent this daemon has installed. */
@@ -94,8 +95,9 @@ export async function resolveInactiveConnectedServiceSessionContext(
     fetchSessionByIdCompat({ reason: 'session-control',
       token: input.token,
       sessionId: input.sessionId,
+      signal: input.signal,
     }),
-    fetchAccountEncryptionCurrentness({ token: input.token }),
+    fetchAccountEncryptionCurrentness({ token: input.token, signal: input.signal }),
   ]);
   const metadata = rawSession
     ? tryReadSessionMetadataRecord({

@@ -384,7 +384,7 @@ function SessionConnectedServicesSwitchSelection({
     ) : published.status === 'loading' ? (
         <SurfaceStateCard kind="loading" size="line" lineDensity="menu" title={t('common.loading')} />
     ) : published.status === 'failed' ? (
-        <SurfaceStateCard testID="session-auth-switch-options" kind="error" size="line" lineDensity="menu"
+        <SurfaceStateCard testID="session-auth-switch-options" kind="error" size="line"
             title={t('workflows.start.choicesFailed')} diagnosticCode={published.errorCode} diagnosticDetail={published.requestId}
             action={{ label: t('common.retry'), onPress: () => retry() }} />
     ) : undefined;

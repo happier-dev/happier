@@ -75,6 +75,7 @@ export const MUSE_PLUGIN = definePlugin({
           surfaces: ['externalSessions'],
           sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: true, configuration: true,
             workspaceWrites: 'deny',
+            forkWorkspace: 'source',
             catalog: { active: ['skills'], inactive: ['skills'] },
             executionRunContext: { versions: [1] } },
         }),

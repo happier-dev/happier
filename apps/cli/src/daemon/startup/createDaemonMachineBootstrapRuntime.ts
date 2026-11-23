@@ -288,6 +288,7 @@ export function createDaemonMachineBootstrapRuntime(
     readMaterializedStateObservationBinding?: BootstrapRuntime['readMaterializedStateObservationBinding'];
     resolveExecutionRunLiveBrokerAuthority?: BootstrapRuntime['resolveExecutionRunLiveBrokerAuthority'];
     withSessionConfigOptionEnvironment?: BootstrapRuntime['withSessionConfigOptionEnvironment'];
+    readSessionConnectedServiceAuthOptions?: BootstrapRuntime['readSessionConnectedServiceAuthOptions'];
     externalActionIngressOwner?: ExternalActionIngressOwner;
     createWorkflowRunCoordinatorForMachine?: (input: Readonly<{
       machineId: string;
@@ -955,6 +956,7 @@ export function createDaemonMachineBootstrapRuntime(
       ? { readMaterializedStateObservationBinding: params.readMaterializedStateObservationBinding }
       : {}),
     withSessionConfigOptionEnvironment: params.withSessionConfigOptionEnvironment,
+    readSessionConnectedServiceAuthOptions: params.readSessionConnectedServiceAuthOptions,
     ...(params.resolveExecutionRunLiveBrokerAuthority
       ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
       : {}),

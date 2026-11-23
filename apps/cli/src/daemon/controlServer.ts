@@ -119,11 +119,8 @@ import { createRandomSpawnNonce } from '@/session/shared/spawnNonce';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
-  SessionConnectedServiceAuthSwitchOptionsResultSchema,
-  SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema,
   SessionConnectedServiceAuthSwitchReceiptSchema,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
-  type SessionConnectedServiceAuthSwitchOptionsResult,
   type SessionConnectedServiceAuthSwitchReceipt,
   type SessionConnectedServiceAuthSwitchRpcParams,
 } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
@@ -769,7 +766,6 @@ export function createDaemonControlApp({
   runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
-  handleSessionConnectedServiceAuthOptions,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
@@ -899,7 +895,6 @@ export function createDaemonControlApp({
     attemptId: string;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
-  handleSessionConnectedServiceAuthOptions?: (sessionId: string) => Promise<SessionConnectedServiceAuthSwitchOptionsResult>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
@@ -1772,19 +1767,6 @@ export function createDaemonControlApp({
     }
     const result = await handleSessionConnectedServiceAuthSwitch(request.body);
     return { ok: true as const, result };
-  });
-
-  typed.post('/connected-service-auth/session/options', {
-    schema: {
-      body: SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema,
-      response: { 200: SessionConnectedServiceAuthSwitchOptionsResultSchema, 401: authSchema401 },
-    },
-    preHandler: requireAuth,
-  }, async request => {
-    if (!handleSessionConnectedServiceAuthOptions || isDaemonQuiescing()) {
-      return { ok: false as const, errorCode: 'unavailable' as const };
-    }
-    return await handleSessionConnectedServiceAuthOptions(request.body.sessionId);
   });
 
   typed.post('/connected-service-auth/session/refresh-runtime-auth', {
@@ -4659,7 +4641,6 @@ export function startDaemonControlServer({
   runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
-  handleSessionConnectedServiceAuthOptions,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
@@ -4789,7 +4770,6 @@ export function startDaemonControlServer({
     attemptId: string;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
-  handleSessionConnectedServiceAuthOptions?: (sessionId: string) => Promise<SessionConnectedServiceAuthSwitchOptionsResult>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
@@ -4874,7 +4854,6 @@ export function startDaemonControlServer({
       runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
       handleSessionConnectedServiceAuthSwitch,
-      handleSessionConnectedServiceAuthOptions,
       handleSessionConnectedServiceRuntimeAuthRefresh,
       handleSessionRunnerRestart,
       handleSessionRunnerRestartAll,

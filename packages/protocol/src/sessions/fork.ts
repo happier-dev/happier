@@ -6,6 +6,19 @@ import { SessionForkPointSchema, type SessionForkPoint } from './forkPoint.js';
 import { HappierReplayWireMaxSeedCharsSchema } from './replaySeedBudget.js';
 import { SpawnSessionErrorDetailSchema } from './spawnSession.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
+import { readSessionCreationCorrespondence } from './creation/sessionCreationCorrespondenceV1.js';
+import { readSessionDirectoryKind } from './metadata/sessionDirectoryV1.js';
+import type { PluginAgentSessionCapabilitiesV2 } from '../plugins/contributions/agentSessionCapabilities.js';
+
+/** A managed child gets a new allocation unless its creation recipe pins it to an in-place workspace. */
+export function requiresReplayForSessionForkWorkspace(
+  capabilities: Pick<PluginAgentSessionCapabilitiesV2, 'forkWorkspace'> | null | undefined,
+  metadata: unknown,
+): boolean {
+  return capabilities?.forkWorkspace === 'source'
+    && readSessionDirectoryKind(metadata) === 'managed'
+    && !readSessionCreationCorrespondence(metadata)?.recipe.inPlaceWorkspace;
+}
 
 /**
  * The cutoff is owned by the zero-dependency `./forkPoint.js` module, but this

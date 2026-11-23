@@ -714,6 +714,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   readMaterializedStateObservationBinding?: MachineRpcHandlerDeps['readMaterializedStateObservationBinding'];
   resolveExecutionRunLiveBrokerAuthority?: MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority'];
   withSessionConfigOptionEnvironment?: MachineRpcHandlerDeps['withSessionConfigOptionEnvironment'];
+  readSessionConnectedServiceAuthOptions?: MachineRpcHandlerDeps['readSessionConnectedServiceAuthOptions'];
   externalActionIngressOwner?: ExternalActionIngressOwner;
   prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
   openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
@@ -1405,6 +1406,7 @@ export async function bootstrapMachineSyncRuntime(
           },
         } : {}),
         withSessionConfigOptionEnvironment: params.withSessionConfigOptionEnvironment,
+        readSessionConnectedServiceAuthOptions: params.readSessionConnectedServiceAuthOptions,
         ...(params.resolveExecutionRunLiveBrokerAuthority
           ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
           : {}),

@@ -2617,6 +2617,7 @@ export async function startDaemon(
       resolveExecutionRunLiveBrokerAuthority,
       readRequesterNativeOfferedModel,
       withSessionConfigOptionEnvironment,
+      readSessionConnectedServiceAuthOptions,
       withSessionAccountContext,
       providerAccountUsageStore,
       resolveProviderAccountUsageStore,
@@ -3854,6 +3855,7 @@ export async function startDaemon(
         resolveExecutionRunLiveBrokerAuthority,
         readRequesterNativeOfferedModel,
         withSessionConfigOptionEnvironment,
+        readSessionConnectedServiceAuthOptions,
         withSessionAccountContext,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); },
         readRequesterSessionCredentialBindings: async () => {

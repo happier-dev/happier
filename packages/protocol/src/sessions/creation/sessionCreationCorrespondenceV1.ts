@@ -171,6 +171,14 @@ export type SessionCreationCorrespondenceV1 = z.infer<
 >;
 export const SessionCreationCorrespondenceV1ReadSchema = createStoredReadSchema(SessionCreationCorrespondenceV1Schema);
 
+export function readSessionCreationCorrespondence(metadata: unknown): SessionCreationCorrespondenceV1 | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const marker = (metadata as Record<string, unknown>).sessionCreationCorrespondenceV1;
+  if (marker === undefined || marker === null) return null;
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(marker);
+  return correspondence.success ? correspondence.data : null;
+}
+
 
 export function normalizeSessionCreationOrganizationPlacementV1(
   input: z.input<typeof SessionOrganizationPlacementV1Schema> | undefined,

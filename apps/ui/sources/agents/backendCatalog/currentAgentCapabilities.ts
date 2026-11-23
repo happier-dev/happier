@@ -6,6 +6,7 @@ import type {
     PluginProjectedAgentV2,
     PluginProjectionV2,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { requiresReplayForSessionForkWorkspace } from '@happier-dev/protocol/sessions/fork';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { parseExternalSessionsSourceForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
@@ -230,22 +231,16 @@ export function supportsAgentLifecycleCapability(query: AgentLifecycleCapability
             return currentAgent?.capabilities.sessions?.usageReporting === true
                 && supportsSessionCapability(query, agentId, 'usageReporting', true);
         case 'sessionFork.conversation':
-            return supportsSessionCapability(
-                query,
-                agentId,
-                'sessionFork.conversation',
-                supportsCurrentProjectedAgentSessionOpen(currentAgent, 'fork'),
-            );
         case 'sessionFork.fromMessage':
-            // V2's static `open: ['fork']` declares conversation-level fork
-            // admission, not an exact transcript cutoff. Only the live runtime
-            // publication can advertise the finer from-message operation.
-            return supportsSessionCapability(
-                query,
-                agentId,
-                'sessionFork.fromMessage',
-                false,
-            );
+            // Only the live publication advertises an exact transcript cutoff.
+            return !requiresReplayForSessionForkWorkspace(currentAgent?.capabilities.sessions, query.metadata)
+                && supportsSessionCapability(
+                    query,
+                    agentId,
+                    query.capability,
+                    query.capability === 'sessionFork.conversation'
+                        && supportsCurrentProjectedAgentSessionOpen(currentAgent, 'fork'),
+                );
         case 'sessionRollback.conversation':
             return supportsSessionCapability(
                 query,

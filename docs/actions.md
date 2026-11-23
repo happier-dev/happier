@@ -6177,6 +6177,13 @@ source refusal remains a typed error rather than a successful empty list or a
 fallback to static choices. UI options reads are demanded by an open form and
 retire with the last consumer.
 
+In 0.3 development, connected-account routing choices use the admitted
+Session's Machine RPC and the Account's connected-account and Team catalogs.
+The read works with a stopped runner. A Machine RPC timeout reaches the form
+as a typed failure with its options request ID. The CLI and Agent surfaces
+submit the chosen route through the same `session.connected_services_auth.set`
+Action and its existing approval policy.
+
 Usage Project choices use the same admitted accounting inventory as the page.
 Omit the period to list all known Projects in the admitted scope. A relative
 period without an offset uses UTC, like `usage.query`. To get the same choices

@@ -74,6 +74,8 @@ export const PluginAgentSessionCapabilitiesV2Schema = lazyZodSchema(() => z.stri
   functionTools: z.optional(z.literal(true)),
   /** Native filesystem enforcement of configuration.workspaceWrites='deny'. Absence is unsupported. */
   workspaceWrites: z.optional(z.literal('deny')),
+  /** Native fork keeps the source workspace and cannot open in a separate allocation. */
+  forkWorkspace: z.optional(z.literal('source')),
   compaction: z.optional(PluginAgentSessionCompactionCapabilityV2Schema),
   conversationRollback: z.optional(z.literal(true)),
   goals: z.optional(PluginAgentGoalsV2Schema),

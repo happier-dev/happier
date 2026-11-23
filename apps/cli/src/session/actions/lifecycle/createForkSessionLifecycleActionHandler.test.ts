@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   evaluateAgentSessionCapabilitySupport: vi.fn(),
   forkAgentId: 'codex',
   nativeForkOpenModes: [] as string[],
+  nativeForkRetainsWorkspace: false,
   /**
    * Which registry generation declares the Agent. `cold` is the primed module
    * cache; `runtime` is a plugin reload the cache has not seen yet — the state
@@ -31,7 +32,7 @@ function buildForkAgentDefinitions() {
       definition: {
         primary: 'sessions',
         capabilities: {
-          sessions: { open: mocks.nativeForkOpenModes },
+          sessions: { open: mocks.nativeForkOpenModes, ...(mocks.nativeForkRetainsWorkspace ? { forkWorkspace: 'source' } : {}) },
         },
       },
     },
@@ -410,6 +411,35 @@ describe('createForkSessionLifecycleActionHandler', () => {
       declaredSupport: 'supported',
     });
     expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+
+  it('selects replay before launching a native fork that would retain the managed parent workspace', async () => {
+    mocks.nativeForkOpenModes.push('create', 'resume', 'fork');
+    mocks.nativeForkRetainsWorkspace = true;
+    try {
+      mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
+      mocks.tryDecryptSessionOwnerMetadataView.mockReturnValue({ path: '/tmp/project', sessionDirectoryV1: { v: 1, kind: 'managed' } });
+      mocks.attemptNativeForkOpen.mockResolvedValue({ ok: false, errorCode: 'agent_session_error' });
+      mocks.attemptProviderNativeFork.mockResolvedValue(null);
+      mocks.createReplayForkSession.mockResolvedValue({ ok: true, childSessionId: 'child-replay' });
+      const handler = createForkSessionLifecycleActionHandler({
+        sessionHostBridge: createBridge({ forkSurface: null }),
+        handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+      });
+      const fork = { v: 1, parentSessionId: 'parent-session', forkPoint: { type: 'latest' } };
+      await expect(handler({ ...fork, strategy: 'auto' })).resolves.toEqual({ ok: true, childSessionId: 'child-replay' });
+      await expect(handler({ ...fork, strategy: 'native' })).resolves.toMatchObject({
+        ok: false, errorCode: 'INVALID_REQUEST', errorMessage: expect.stringContaining('Replay'),
+      });
+      expect(mocks.attemptNativeForkOpen).not.toHaveBeenCalled();
+
+      mocks.tryDecryptSessionOwnerMetadataView.mockReturnValue({ path: '/tmp/project' });
+      mocks.attemptNativeForkOpen.mockResolvedValue({ ok: true, childSessionId: 'child-native' });
+      await expect(handler({ ...fork, strategy: 'native' })).resolves.toEqual({ ok: true, childSessionId: 'child-native' });
+    } finally {
+      mocks.nativeForkRetainsWorkspace = false;
+    }
   });
 
   it('resolves the generic native intent through the existing native-open policy', async () => {

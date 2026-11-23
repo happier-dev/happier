@@ -4,7 +4,7 @@ import { AuthProvider } from '@/auth/context/AuthContext';
 import { t, type TranslationKey } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
-import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SessionConnectedServiceAuthSwitchOption } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
@@ -527,7 +527,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         );
     });
 
-    it.each(['ready', 'retry', 'empty', 'lagging profile'] as const)('renders the Muse route options with %s', async (scenario) => {
+    it.each(['ready', 'retry', 'timeout', 'empty', 'lagging profile'] as const)('renders the Muse route options with %s', async (scenario) => {
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
         const serviceId = buildQualifiedPluginContributionKey(service);
         const consumer = { pluginId: service.pluginId, localId: 'muse' };
@@ -579,16 +579,27 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                         expect(picker.getTextContent()).toContain('common.loading');
                         expect(picker.getTextContent()).not.toContain(empty);
                     }
-                    await vi.waitFor(() => expect(authOptionsRpc).toHaveBeenCalledWith(expect.objectContaining({ payload: { sessionId } })));
-                    await act(async () => reply.resolve(scenario === 'retry' ? { ok: false, errorCode: 'unavailable' }
-                        : { ok: true, options: scenario === 'empty' ? [] : options }));
+                    await vi.waitFor(() => expect(authOptionsRpc).toHaveBeenCalledWith(expect.objectContaining({
+                        payload: { sessionId }, requestId: expect.any(String),
+                    })));
+                    const requestId = authOptionsRpc.mock.calls[0]?.[0]?.requestId;
+                    await act(async () => {
+                        if (scenario === 'timeout') {
+                            reply.reject(Object.assign(new Error('Machine RPC timed out'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE }));
+                        } else {
+                            reply.resolve(scenario === 'retry' ? { ok: false, errorCode: 'unavailable' }
+                                : { ok: true, options: scenario === 'empty' ? [] : options });
+                        }
+                    });
                     if (scenario === 'empty') {
                         await vi.waitFor(() => expect(picker.getTextContent()).toContain(empty));
                         return;
                     }
-                    if (scenario === 'retry') {
+                    if (scenario === 'retry' || scenario === 'timeout') {
                         await vi.waitFor(() => expect(picker.getTextContent()).toContain('workflows.start.choicesFailed'));
-                        expect(picker.findByTestId('session-auth-switch-options-diagnostic-unavailable')).toBeTruthy();
+                        const code = scenario === 'timeout' ? 'timeout' : 'unavailable';
+                        await picker.pressByTestIdAsync('session-auth-switch-options-details-toggle');
+                        expect(picker.getTextContent()).toContain(`${code}\n${requestId}`);
                         expect(picker.getTextContent()).not.toContain(empty);
                         await picker.pressByTestIdAsync('session-auth-switch-options-action');
                     }

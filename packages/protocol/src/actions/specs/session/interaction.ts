@@ -664,7 +664,7 @@ function createSessionInteractionActionSpecs() {
     safety: 'danger',
     placements: [],
     bindings: { mcpToolName: 'session_connected_services_auth_set' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { title: 'Set session connected-account routing', fields: [
       { path: 'routing', title: 'Connected-account routing', widget: 'json', optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID },
     ] },

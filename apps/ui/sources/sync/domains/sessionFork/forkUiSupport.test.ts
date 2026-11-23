@@ -46,6 +46,24 @@ function makeSession(metadata: any): Session {
 }
 
 describe('forkUiSupport', () => {
+  it('offers Replay for a managed Muse Session and keeps Native available in an explicit workspace', () => {
+    const currentAgentCapabilities: CurrentProjectedAgentCapabilities = {
+      agentId: 'muse',
+      identity: { pluginId: 'happier.agent.muse', localId: 'muse' },
+      generation: 42,
+      capabilities: { sessions: { open: ['fork'], delivery: ['newTurn'], cancel: true, forkWorkspace: 'source' } },
+    };
+    const input = {
+      forkPoint: { type: 'latest' as const }, replayEnabled: true, agentSwitchingEnabled: false, currentAgentCapabilities,
+    };
+    const metadata = { machineId: 'm1', path: '/checkout', flavor: 'muse' };
+    expect(resolveSessionForkStrategyAvailability({ ...input,
+      session: makeSession({ ...metadata, sessionDirectoryV1: { v: 1, kind: 'managed' } }),
+    })).toMatchObject({ native: false, replay: true });
+    expect(resolveSessionForkStrategyAvailability({ ...input, session: makeSession(metadata) }))
+      .toMatchObject({ native: true, replay: true });
+  });
+
   it('allows fork-from-message when replay is enabled and message seq is present', () => {
     const session = makeSession({ machineId: 'm1', flavor: 'claude' });
     expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: true, agentSwitchingEnabled: false })).toBe(true);

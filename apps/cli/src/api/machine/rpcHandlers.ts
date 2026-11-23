@@ -177,6 +177,7 @@ import type {
 import { RestartAllSessionRunnersRequestV1Schema, RestartSessionRunnerRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { RestartSessionRunnerRequestV2Schema, RestartSessionRunnerConfirmedBackgroundRequestSchema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
 import { SessionRunnerStatusGetRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import type { ReadSessionConnectedServiceAuthOptions } from '@/daemon/connectedServices/sessionAuthSwitch/readSessionConnectedServiceAuthOptions';
 import { SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema, SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -194,7 +195,6 @@ import {
   requestDaemonSessionRunnerRestartConfirmedBackground,
   requestDaemonSessionRunnerRestartV2,
   restartAllDaemonSessionRunners,
-  requestDaemonSessionConnectedServiceAuthOptions,
 } from '@/daemon/controlClient';
 import { isUnattestedPublicV1RunnerRolloutMutation } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -418,6 +418,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
   currentMachineId?: string;
   withSessionConfigOptionEnvironment?: WithSessionConfigOptionEnvironment;
+  readSessionConnectedServiceAuthOptions?: ReadSessionConnectedServiceAuthOptions;
   /** Authenticated Home at this Machine RPC receiver, never a request-body selector. */
   currentServerId?: string;
   executionRunRuntimeAccountId?: string;
@@ -989,7 +990,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, async (raw: unknown, context) => {
     const { sessionId } = SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema.parse(raw);
-    return await requestDaemonSessionConnectedServiceAuthOptions(sessionId, { signal: context?.signal });
+    return await params.deps?.readSessionConnectedServiceAuthOptions?.(sessionId, context)
+      ?? { ok: false, errorCode: 'unavailable' };
   });
   if (params.deps?.withSessionConfigOptionEnvironment) registerMachineSessionConfigOptionRpcHandlers({
     rpcHandlerManager, withEnvironment: params.deps.withSessionConfigOptionEnvironment,
