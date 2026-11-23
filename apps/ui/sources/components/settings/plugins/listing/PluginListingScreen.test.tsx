@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
+import { Modal } from '@/modal';
+import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { storage } from '@/sync/domains/state/storageStore';
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 
@@ -140,6 +144,44 @@ describe('PluginListingScreen', () => {
         // One "Use on a machine" control carries the recipe's two outcomes (lab round 4), not a second button.
         expect(screen.getTextContent()).toContain('Use on a machine');
         expect(screen.getTextContent()).not.toContain('Add to a preset…');
+    });
+
+    it('reconnects the existing signed-out account from the installed plugin setup row', async () => {
+        const scope = { serverId: 'server-a', accountId: 'setup-owner' };
+        const service = { pluginId: listing.id, localId: 'service' };
+        const account = { service, accountId: 'work' };
+        const { profile, profileScope } = storage.getState();
+        storage.setState({ profileScope: scope, profile: {
+            ...profile, id: scope.accountId, connectedAccountGroupsV4: [],
+            connectedAccountsV4: [{
+                ref: account, status: 'needs_reauth', authenticationModeId: 'oauth',
+                revisionSemantics: 'revisioned', credentialRevision: 'csr_cccccccccccccccccccccc',
+                configurationReady: true, configurationRevision: null, scopes: [],
+            }],
+        } });
+        publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://setup.invalid', generation: 1 });
+        state.value = screenState({
+            installedPluginById: new Map([[listing.id, {}]]),
+            pluginProjectionV2: PluginProjectionV2Schema.parse({
+                v: 2, generation: 1, familiesById: {},
+                agentsById: { agent: {
+                    id: 'agent', identity: { pluginId: listing.id, localId: 'agent' },
+                    connectedAccounts: [{ purpose: 'primary', service, required: true }],
+                } },
+            }),
+        });
+        const screen = await renderListing();
+        try {
+            const stepId = JSON.stringify(['connectedAccount', buildQualifiedPluginContributionKey(service)]);
+            await act(async () => { screen.pressByTestId(`settings.plugins.listing.setup.${stepId}.action`); });
+            expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+                props: expect.objectContaining({ request: { scope, service, intent: 'reconnect', account } }),
+            }));
+        } finally {
+            await screen.unmount();
+            publishAppliedActiveServerRuntimeAvailability(false);
+            storage.setState({ profile, profileScope });
+        }
     });
 
     it('says the listing is gone, with a retry, once the source answered without it', async () => {

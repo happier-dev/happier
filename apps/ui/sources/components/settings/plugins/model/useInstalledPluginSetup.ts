@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { findConnectedAccountRefForService } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -93,9 +94,17 @@ export function useInstalledPluginSetup(input: Readonly<{
     const open = React.useCallback(async (row: InstalledPluginSetupRow, title: string, recipeMachineId?: string) => {
         if (lifetime?.isCurrent() !== true) return;
         switch (row.kind) {
-            case 'connectedAccount':
-                if (canUseAccountFacts) await presentConnectSheet({ scope: lifetime.scope, intent: 'link', service: row.service });
+            case 'connectedAccount': {
+                if (!canUseAccountFacts) return;
+                // This pending step has no usable account for the service.
+                const account = findConnectedAccountRefForService(profiles ?? [], row.service);
+                await presentConnectSheet({
+                    scope: lifetime.scope,
+                    service: row.service,
+                    ...(account ? { intent: 'reconnect', account } : { intent: 'link' }),
+                });
                 return;
+            }
             case 'mcpSignIn':
                 if (canUseAccountFacts) router.push(mcpServerRoute(row.serverId) as never);
                 return;
@@ -111,7 +120,7 @@ export function useInstalledPluginSetup(input: Readonly<{
                     });
                 }
         }
-    }, [canUseAccountFacts, lifetime, router, host, pluginId]);
+    }, [canUseAccountFacts, lifetime, profiles, router, host, pluginId]);
     return { ...setup, open, skip: dismissalKey === null ? null : skip,
         recipeScope: canUseAccountFacts ? lifetime.scope : null } as const;
 }

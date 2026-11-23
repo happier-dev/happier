@@ -97,7 +97,15 @@ export function holdsConnectedAccountForService(
   accounts: readonly Readonly<{ ref: QualifiedConnectedAccountRef }>[],
   service: Readonly<{ pluginId: string; localId: string }>,
 ): boolean {
-  return accounts.some(({ ref }) => ref.service.pluginId === service.pluginId && ref.service.localId === service.localId);
+  return findConnectedAccountRefForService(accounts, service) !== undefined;
+}
+
+/** Resolve the held account's reference when the caller needs the reconnect target. */
+export function findConnectedAccountRefForService(
+  accounts: readonly Readonly<{ ref: QualifiedConnectedAccountRef }>[],
+  service: Readonly<{ pluginId: string; localId: string }>,
+): QualifiedConnectedAccountRef | undefined {
+  return accounts.find(({ ref }) => ref.service.pluginId === service.pluginId && ref.service.localId === service.localId)?.ref;
 }
 
 /** Exact identity for personal references and Team credential carriers. */
