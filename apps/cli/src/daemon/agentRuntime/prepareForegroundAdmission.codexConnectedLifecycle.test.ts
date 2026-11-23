@@ -19,6 +19,7 @@ import { writeSessionMarker } from '../sessionRegistry';
 
 import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { spawnTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY } from './foregroundAdmissionContract';
 import { claimDaemonForegroundAgentRuntimeEnvironment } from '@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient';
 import { writeDaemonState } from '@/persistence';
@@ -167,7 +168,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         await expect(stat(nativeHome)).resolves.toBeTruthy();
         const restartRequests: string[] = [];
         account.purposeRuntime.bindSessionRestartOwner(({ sessionId }) => restartRequests.push(sessionId));
-        vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+        stubUndiciFetch(async () => new Response(JSON.stringify({
           access_token: 'access-fresh', refresh_token: 'refresh-fresh', id_token: 'id-fresh', expires_in: 3600,
         }), { status: 200 }));
         const authority = authorityBySession.get(claimInput.canonicalSessionId);
