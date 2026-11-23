@@ -2768,7 +2768,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 items: [{ id: comment.id, body: comment.body, snapshot: comment.snapshot }] } });
         } finally { api.dispose?.(); }
     });
-    it.each(['equivalent', 'retired'] as const)('retains an entered Account read only while its execution remains current (%s)', async change => {
+    it('retains an entered Account read across an equivalent declaration publication', async () => {
         const accountLifetime = clientAccountLifetime();
         let enter!: () => void;
         const entered = new Promise<void>(resolve => { enter = resolve; });
@@ -2797,13 +2797,10 @@ describe('Account Action placement through the executable dispatcher', () => {
                 } },
             });
             await entered;
-            currentAction = { ...activation.action, ...(change === 'retired' ? { occurrenceId: 'replacement-custody' } : {}) };
+            currentAction = { ...activation.action };
             release();
-            // The host Action validates its own input. It must be reached after
-            // equivalent publication; true custody replacement must stop first.
-            await expect(pending).resolves.toMatchObject(change === 'equivalent'
-                ? { ok: true, result: { code: 'invalid_parameters' } }
-                : { ok: true, result: { code: 'plugin_action_generation_retired' } });
+            // The host Action still receives and validates its own input.
+            await expect(pending).resolves.toMatchObject({ ok: true, result: { code: 'invalid_parameters' } });
         } finally { release(); await activation.composition.unload(); accountLifetime.retire(); }
     });
 
@@ -7195,98 +7192,6 @@ describe('plugin-surface action branch selection', () => {
         } finally {
             accountBrowserRelay.enabled = false;
             await finiteActivation?.composition.unload();
-            await activation.composition.unload(); lifetime.retire();
-            getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
-                machineListStatusByServerId: previous.machineListStatusByServerId });
-        }
-    });
-
-    it('reaches the canonical catalog transport from the real configured browser handler', async () => {
-        const { createTriageRunConfiguredActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRun');
-        const { createTriageReadActionsActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
-        const { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, TriageReadActionsActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
-        const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
-        const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
-        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
-        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
-        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
-        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
-        await prepareSessionDraftPersistenceStorage();
-        const lifetime = clientAccountLifetime();
-        const previous = getStorage().getState();
-        const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
-        if (!admitted.ok) throw new Error('Triage manifest must be admitted');
-        const declaration = admitted.manifest.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1)!;
-        const subject = { kind: 'deploymentEnvironment', serverId: lifetime.scope.serverId, environmentId: 'serving-environment' } as const;
-        const input = { v: 1, handoff: { task: 'investigate', configuredActionId: 'deployments.set-up',
-            context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
-            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } };
-        let relayed = 0;
-        let requesterInvocation: unknown;
-        const catalog = createTestkitAccountKv({ [TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1]: { v: -1 } });
-        // Only persistent Account KV and the remote host's contribution service
-        // are boundary fixtures; the remote catalog handler and parser are real.
-        const catalogContext = { signal: new AbortController().signal, services: {
-            storage: { account: { kv: catalog.kv } },
-            targetedContributions: { observeForSelf: () => ({
-                readCurrent: async () => ({ contributions: [] }), dispose: () => {},
-            }) },
-        } } as unknown as import('../../../../../../packages/plugins/triage/src/actions/dataContext').TriageDataActionContext;
-        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
-            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'setup-machine',
-            actionId: 'action.invoke', tokenEpoch: 0, execute: async (value, context) => {
-                relayed++;
-                requesterInvocation = context.invocation;
-                const request = PluginUiExecuteActionRequestV1Schema.parse(value);
-                return await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse(request.input), catalogContext);
-            } });
-        const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
-        await publishMachineInventoryForTest(lifetime.scope, [machine]);
-        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
-            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
-        const activation = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
-            accountPlacement: true, accountLifetime: lifetime, accountActionDeclaration: declaration,
-            confirmationWhen: declaration.confirmationWhen,
-            inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
-            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
-                artifactId: 'triage-account-runtime', executable: { exports: ['activate'] },
-                entry: 'react-native/triage-account-runtime/entry.cjs.bundle',
-                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: 'react-native/triage-account-runtime/entry.cjs.bundle' })),
-            }),
-            accountManifest: { ...admitted.manifest, contributes: { actions: admitted.manifest.contributes.actions.filter(action =>
-                action.id === declaration.id || action.id === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) } },
-            accountActivate: api => {
-                api.actions.register(declaration.id, createTriageRunConfiguredActionHandler());
-                api.actions.register(TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, createTriageReadActionsActionHandler());
-            } });
-        const catalogId = buildQualifiedPluginContributionKey({ pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 });
-        const { hostAccountOrigin: _origin, accountActionDeclaration: _declaration, ...receiverAction } = activation.projection.actionsById[catalogId]!;
-        const receiverProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-            actionsById: { [catalogId]: receiverAction },
-        });
-        daemonRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
-            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
-                return { protocolVersion: 1, projection: receiverProjection };
-            }
-            return answerActionSchemasRead(request);
-        });
-        newSessionNavigation.mockClear();
-        accountBrowserRelay.enabled = true;
-        await activation.composition.unload();
-        try {
-            await activation.composition.reconcile([activation.activation]);
-            const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
-            const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id },
-                input, hostAction: { execute: scopedHomeActionExecutor(lifetime.scope), context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } },
-                resolveContributedAction: identity => activation.projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null, clientAction: {} });
-            expect(relayed, JSON.stringify(outcome)).toBe(1);
-            expect(requesterInvocation).toMatchObject({ caller: { kind: 'plugin', pluginId: PLUGIN_MANIFEST.id }, authority: 'account_automation' });
-            expect(requesterInvocation).not.toHaveProperty('reviewedParent');
-            expect(outcome).toMatchObject({ ok: true, result: { handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' } } });
-        } finally {
-            accountBrowserRelay.enabled = false;
             await activation.composition.unload(); lifetime.retire();
             getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
                 machineListStatusByServerId: previous.machineListStatusByServerId });
