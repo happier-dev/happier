@@ -4,6 +4,7 @@ import type { LayoutChangeEvent } from 'react-native';
 import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
+import { invokeDesktopHost } from '@/utils/platform/desktopHost';
 
 import type { FirstOpenLayoutTarget } from './FirstOpenWelcomeModelContext';
 import type { FirstOpenDecision } from './resolveFirstOpen';
@@ -32,7 +33,11 @@ export function createFirstOpenLayoutRecorder() {
 export function useFirstOpenBoot() {
     const stage = useStepMotionStage();
     const [opening, setOpening] = useState<FirstOpenAdmission | null>(null);
-    const admitOpening = useCallback((decision: FirstOpenDecision) => {
+    const admitOpening = useCallback((decision: FirstOpenDecision, desktopCandidate?: 'overlay' | 'in-app' | null) => {
+        if (desktopCandidate) {
+            // Main's decision only selects the host. The native presenter already started warming.
+            void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {});
+        }
         if (decision === 'none') return;
 
         const recordLayout = createFirstOpenLayoutRecorder();

@@ -40,19 +40,19 @@ impl Handoff {
         Self::Preparing { play: false, ready: false }
     }
 
-    fn decide(&mut self, play_overlay: bool) -> bool {
-        let Self::Preparing { play, .. } = self else { return false };
-        if !play_overlay {
+    fn decide(&mut self, play_overlay: bool) {
+        let Self::Preparing { play, .. } = self else { return };
+        if play_overlay {
+            *play = true;
+        } else {
             *self = Self::Closed;
-            return false;
         }
-        if *play { return false; }
-        *play = true;
-        true
     }
 
     fn overlay_ready(&mut self) {
-        if let Self::Preparing { play: true, ready } = self {
+        // Warm-up and admission come from separate windows. First content joins
+        // them with the actual Welcome snapshot before accepting playback.
+        if let Self::Preparing { ready, .. } = self {
             *ready = true;
         }
     }
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn a_painted_overlay_without_a_welcome_reveals_main_immediately() {
         let mut handoff = Handoff::prepare();
-        assert!(handoff.decide(true));
+        handoff.decide(true);
         handoff.overlay_ready();
         assert_eq!(handoff.first_content(false, || panic!("no replica can be presented")), FirstContent::Reveal);
         assert!(!handoff.swap());
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn ready_overlay_owns_the_foreground_until_a_single_swap() {
         let mut handoff = Handoff::prepare();
-        assert!(handoff.decide(true));
+        handoff.decide(true);
         handoff.overlay_ready();
         assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
         assert!(handoff.swap());
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn main_content_reveals_immediately_and_discards_late_readiness() {
         let mut handoff = Handoff::prepare();
-        assert!(handoff.decide(true));
+        handoff.decide(true);
         assert_eq!(handoff.first_content(true, || panic!("unready overlay needs no activation check")), FirstContent::Reveal);
         handoff.overlay_ready();
         assert_eq!(handoff, Handoff::Closed);
@@ -117,14 +117,19 @@ mod tests {
     }
 
     #[test]
-    fn readiness_before_decision_and_background_launches_cannot_start_an_overlay() {
-        let mut unprepared = Handoff::prepare();
-        unprepared.overlay_ready();
-        assert!(unprepared.decide(true));
-        assert_eq!(unprepared.first_content(true, || true), FirstContent::Reveal);
+    fn a_presenter_that_draws_during_main_boot_can_play_at_first_content() {
+        let mut handoff = Handoff::prepare();
+        // The presenter spends part of main's boot loading and drawing. Its
+        // acknowledgement can arrive before main resolves auth and decides.
+        handoff.overlay_ready();
+        handoff.decide(true);
+        assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
+    }
 
+    #[test]
+    fn a_ready_presenter_cannot_start_on_a_background_launch() {
         let mut background = Handoff::prepare();
-        assert!(background.decide(true));
+        background.decide(true);
         background.overlay_ready();
         assert_eq!(background.first_content(true, || false), FirstContent::Reveal);
     }
@@ -132,15 +137,15 @@ mod tests {
     #[test]
     fn reduced_motion_or_in_app_routes_close_the_prepared_overlay() {
         let mut handoff = Handoff::prepare();
-        assert!(!handoff.decide(false));
+        handoff.decide(false);
+        handoff.decide(true);
         assert_eq!(handoff, Handoff::Closed);
-        assert!(!handoff.decide(true));
     }
 
     #[test]
     fn interrupted_playing_reveals_whereas_destroy_after_swap_does_not() {
         let mut handoff = Handoff::prepare();
-        assert!(handoff.decide(true));
+        handoff.decide(true);
         handoff.overlay_ready();
         assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
         assert!(handoff.close());
@@ -150,7 +155,7 @@ mod tests {
     #[test]
     fn failed_swap_and_interruption_settle_only_the_opening_that_owns_main() {
         let mut handoff = Handoff::prepare();
-        assert!(handoff.decide(true));
+        handoff.decide(true);
         handoff.overlay_ready();
         assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
         assert!(handoff.swap());

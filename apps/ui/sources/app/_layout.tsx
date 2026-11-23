@@ -90,7 +90,7 @@ import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/d
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
-import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
+import { desktopHostKind, getDesktopHostWindowLabel, isDesktopHost } from '@/utils/platform/desktopHost';
 import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternalLinkClicks';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
@@ -730,6 +730,7 @@ function AppBoot() {
     const pathname = useCurrentRoutePathname();
     const segments = useCurrentRouteSegments();
     const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
+    const isFirstOpenPresenter = getDesktopHostWindowLabel() === 'first_open_overlay';
     const primaryRealm = desktopWindowContext.role === 'primary';
     const fullChrome = desktopWindowContext.chrome === 'full';
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
@@ -774,6 +775,13 @@ function AppBoot() {
     }, [pathname]);
 
     React.useEffect(() => {
+        if (isFirstOpenPresenter) {
+            // The opening only draws a forwarded view model. Its route can warm
+            // immediately while the ordinary font faces and messages load.
+            void loadFonts().catch(() => {});
+            void Promise.resolve(preloadTranslations()).catch(() => {});
+            return;
+        }
         let cancelled = false;
         let releaseOpening: ReturnType<typeof admitOpening>;
         const runBoot = nativeSecondaryWindow ? runDesktopAppWindowBootSequence : runAppBootSequence;
@@ -805,12 +813,7 @@ function AppBoot() {
                     accountRestored,
                     desktopCandidate: candidate,
                 });
-                releaseOpening = admitOpening(decision);
-                if (candidate) {
-                    void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {
-                        // Native still shows main as soon as it has usable content.
-                    });
-                }
+                releaseOpening = admitOpening(decision, candidate);
             },
             onReady: (state) => {
                 if (!cancelled) setInitState(state);
@@ -824,7 +827,7 @@ function AppBoot() {
             cancelled = true;
             releaseOpening?.();
         };
-    }, [admitOpening, isDesktopOverlayWindow, primaryRealm]);
+    }, [admitOpening, isDesktopOverlayWindow, isFirstOpenPresenter, primaryRealm]);
 
     React.useEffect(() => {
         if (initState) {
@@ -843,7 +846,7 @@ function AppBoot() {
     //
 
     if (bootError) throw bootError;
-    if (!initState) {
+    if (!initState && !isFirstOpenPresenter) {
         const pending = <AppBootPendingSurface phase={bootPhase} />;
         return primaryRealm && Platform.OS === 'web'
             ? renderFirstOpen(null, <AppLaunchState testID="app-boot-loading">{pending}</AppLaunchState>)
@@ -866,7 +869,7 @@ function AppBoot() {
 
     const appShellWithRootDesktopDragSurface = (
         <RootShellChromeFrame
-            isAuthenticated={initState.credentials != null}
+            isAuthenticated={initState?.credentials != null}
             fullChrome={fullChrome}
             isTerminalConnectRoute={isTerminalConnectRoute}
         >
@@ -912,7 +915,7 @@ function AppBoot() {
                                 <HorizontalSafeAreaRoot><Slot /></HorizontalSafeAreaRoot>
                             </ModalProvider>
                         </GlassNavigationThemeProvider>
-                    ) : <AuthProvider initialCredentials={initState.credentials}>
+                    ) : <AuthProvider initialCredentials={initState?.credentials ?? null}>
                         <GlassNavigationThemeProvider>
                             <StatusBarProvider />
                             <AppPaneModalProvider>

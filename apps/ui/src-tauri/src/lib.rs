@@ -235,8 +235,13 @@ pub fn run() {
                 let unavailable = desktop_startup::setup(
                     tray::model::MenuPlatform::current(),
                     menu_bar::launched_in_menu_bar_mode(app.handle()),
-                    cfg!(debug_assertions),
                     |step| match step {
+                        desktop_startup::Step::Log => app.handle().plugin(
+                            tauri_plugin_log::Builder::default()
+                                .level(if cfg!(debug_assertions) { log::LevelFilter::Info } else { log::LevelFilter::Off })
+                                .level_for("app_lib::first_open::presentation", log::LevelFilter::Info)
+                                .build(),
+                        ),
                         desktop_startup::Step::Autostart => autostart::register(app),
                         desktop_startup::Step::Tray => tray::register(app),
                         desktop_startup::Step::MainWindow => {
@@ -252,11 +257,6 @@ pub fn run() {
                         desktop_startup::Step::ActivityOverlay => activity_overlay::register(app),
                         desktop_startup::Step::Updater => app.handle()
                             .plugin(tauri_plugin_updater::Builder::new().build()),
-                        desktop_startup::Step::DebugLog => app.handle().plugin(
-                            tauri_plugin_log::Builder::default()
-                                .level(log::LevelFilter::Info)
-                                .build(),
-                        ),
                     },
                 )?;
                 for failure in &unavailable {

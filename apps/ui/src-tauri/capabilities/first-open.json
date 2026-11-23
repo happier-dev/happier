@@ -6,7 +6,8 @@
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "allow-desktop-first-open-overlay-ready",
+    "allow-desktop-first-open-overlay-subscribed",
+    "allow-desktop-first-open-overlay-progress",
     "allow-desktop-first-open-overlay-unavailable",
     "allow-desktop-first-open-swap",
     "allow-desktop-first-open-close"

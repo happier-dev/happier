@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use super::{FirstContent, Handoff, Settlement};
@@ -24,7 +24,7 @@ pub enum Decision { OverlayEligible, InApp, Reduced, None }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Placement {
+pub(crate) struct Placement {
     overlay_frame: WindowFrame,
     window_rect: WindowFrame,
     cursor: Option<[f64; 2]>,
@@ -55,8 +55,19 @@ struct Opening {
     placement: Option<Placement>,
 }
 
-#[derive(Default)]
-pub(crate) struct FirstOpenState(Mutex<Opening>);
+pub(crate) struct FirstOpenState(Mutex<Opening>, Instant);
+
+impl Default for FirstOpenState {
+    fn default() -> Self {
+        Self(Mutex::default(), Instant::now())
+    }
+}
+
+impl FirstOpenState {
+    fn mark(&self, event: std::fmt::Arguments<'_>) {
+        log::info!("first_open: {event} (+{:.1} ms)", self.1.elapsed().as_secs_f64() * 1000.);
+    }
+}
 
 fn placement(main: &WebviewWindow) -> Result<(Placement, f64), String> {
     let monitor = main.current_monitor().map_err(|error| error.to_string())?
@@ -174,7 +185,7 @@ pub(crate) fn prepare(main: &WebviewWindow, supports_overlay: bool) -> Candidate
         create_overlay(app, &placement, scale)?;
         let state = app.state::<FirstOpenState>();
         *state.0.lock().unwrap() = Opening { handoff: Handoff::prepare(), placement: Some(placement) };
-        log::info!("first_open: presenter created");
+        state.mark(format_args!("presenter created"));
         Ok(())
     }) {
         Ok(()) => Candidate::Overlay,
@@ -195,34 +206,54 @@ pub async fn desktop_first_open_decide(window: WebviewWindow, play: Decision) ->
     ensure_caller(&window, MAIN_WINDOW_LABEL)?;
     let app = window.app_handle();
     let play_overlay = matches!(play, Decision::OverlayEligible);
-    let placement = {
+    {
         let state = app.state::<FirstOpenState>();
         let mut opening = state.0.lock().unwrap();
-        opening.handoff.decide(play_overlay).then(|| opening.placement.clone()).flatten()
-    };
-    if let Some(placement) = placement {
-        if let Some(overlay) = app.get_webview_window(OVERLAY) {
-            overlay.emit_to(tauri::EventTarget::webview_window(OVERLAY), "first_open:prepare", placement)
-                .map_err(|error| error.to_string())?;
-            log::info!("first_open: prepare sent");
-        }
-    } else if !play_overlay {
+        opening.handoff.decide(play_overlay);
+        state.mark(format_args!("main boot decision, overlay eligible={play_overlay}"));
+    }
+    if !play_overlay {
         close(app, MainWindowRevealRequest::App);
     }
     Ok(())
 }
 
+// By the time the route asks for placement, its start and Welcome listeners are live.
 #[tauri::command]
-pub async fn desktop_first_open_overlay_ready(window: WebviewWindow) -> Result<(), String> {
+pub fn desktop_first_open_overlay_subscribed(window: WebviewWindow) -> Result<Placement, String> {
     ensure_caller(&window, OVERLAY)?;
-    window.state::<FirstOpenState>().0.lock().unwrap().handoff.overlay_ready();
-    log::info!("first_open: presenter ready");
+    let state = window.state::<FirstOpenState>();
+    let opening = state.0.lock().unwrap();
+    let placement = opening.placement.clone().ok_or("opening presenter is closed")?;
+    state.mark(format_args!("presenter route subscribed"));
+    state.mark(format_args!("prepare sent"));
+    Ok(placement)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum PresenterProgress { Prepared, Drawn, Ready }
+
+#[tauri::command]
+pub fn desktop_first_open_overlay_progress(window: WebviewWindow, progress: PresenterProgress) -> Result<(), String> {
+    ensure_caller(&window, OVERLAY)?;
+    let state = window.state::<FirstOpenState>();
+    match progress {
+        PresenterProgress::Prepared => state.mark(format_args!("prepare received")),
+        PresenterProgress::Drawn => state.mark(format_args!("presenter first draw")),
+        PresenterProgress::Ready => {
+            let mut opening = state.0.lock().unwrap();
+            opening.handoff.overlay_ready();
+            state.mark(format_args!("presenter ready"));
+        }
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn desktop_first_open_overlay_unavailable(window: WebviewWindow) -> Result<(), String> {
     ensure_caller(&window, OVERLAY)?;
+    window.state::<FirstOpenState>().mark(format_args!("presenter unavailable"));
     close_with(window.app_handle(), MainWindowRevealRequest::App, Settlement::Fallback);
     Ok(())
 }
@@ -234,14 +265,17 @@ pub(crate) fn on_main_content(main: &WebviewWindow, request: MainWindowRevealReq
         let state = app.state::<FirstOpenState>();
         let mut opening = state.0.lock().unwrap();
         if opening.placement.is_none() {
-            if welcome.is_some() { notify_main(app, Host::Settled { outcome: Settlement::Fallback }); }
+            if welcome.is_some() {
+                state.mark(format_args!("main content, Reveal (presenter closed)"));
+                notify_main(app, Host::Settled { outcome: Settlement::Fallback });
+            }
             return false;
         }
         // Only the startup owner can prepare a normal-launch overlay. macOS also supplies
         // activation before any window has focus. Preserve the original request for fallback.
         let overlay_request = if cfg!(target_os = "macos") { request } else { MainWindowRevealRequest::User };
         let decision = opening.handoff.first_content(welcome.is_some(), || window_chrome::reveal_request_takes_focus(app, overlay_request));
-        log::info!("first_open: main content, {decision:?}");
+        state.mark(format_args!("main content, {decision:?} (Welcome model={})", welcome.is_some()));
         opening.placement.take().filter(|_| decision == FirstContent::PlayOverlay)
     };
     let attempting_overlay = placement.is_some();
@@ -266,7 +300,7 @@ pub(crate) fn on_main_content(main: &WebviewWindow, request: MainWindowRevealReq
         #[cfg(not(target_os = "macos"))]
         overlay.set_focus().ok()?;
         notify_main(app, Host::Overlay { epoch });
-        log::info!("first_open: start {epoch}");
+        app.state::<FirstOpenState>().mark(format_args!("start {epoch}"));
         Some(())
     })();
     if start.is_some() { return true; }
@@ -309,7 +343,7 @@ pub async fn desktop_first_open_swap(window: WebviewWindow) -> Result<(), String
     if app.state::<FirstOpenState>().0.lock().unwrap().handoff.swap() {
         let result = reveal_main(app, MainWindowRevealRequest::App);
         notify_main(app, Host::Settled { outcome: Settlement::after_swap(result.is_ok()) });
-        log::info!("first_open: swap");
+        app.state::<FirstOpenState>().mark(format_args!("swap"));
         result?;
     }
     Ok(())

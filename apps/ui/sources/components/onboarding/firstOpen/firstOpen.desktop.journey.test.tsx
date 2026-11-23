@@ -25,11 +25,14 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-it('waits for a painted presenter, builds the inert live Welcome model, and swaps once on Escape', async () => {
+it('paints and acknowledges the presenter during main boot, then builds the inert live Welcome and swaps once on Escape', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     const events = new Map<string, number>();
+    const frame = { x: 0, y: 0, width: 1440, height: 900 };
+    const placement = { overlayFrame: frame, windowRect: { x: 250, y: 80, width: 940, height: 740 }, cursor: null };
     const host = createDesktopHostInternals(({ command, args }) => {
+        if (command === 'desktop_first_open_overlay_subscribed') return placement;
         if (command === 'plugin:event|listen' && typeof args.event === 'string' && typeof args.handler === 'number') {
             events.set(args.event, args.handler);
             return args.handler;
@@ -50,10 +53,8 @@ it('waits for a painted presenter, builds the inert live Welcome model, and swap
     const box = document.createElement('div');
     document.body.append(box);
     const root = createRoot(box);
-    const frame = { x: 0, y: 0, width: 1440, height: 900 };
     const draw = vi.fn();
     const restoreGraphics = installFirstOpenWebGraphics(frame.width, frame.height, draw);
-    const placement = { overlayFrame: frame, windowRect: { x: 250, y: 80, width: 940, height: 740 }, cursor: null };
     const welcome = {
         heading: { title: 'Set up Happier', subtitle: 'Welcome' },
         doors: [{ index: 0, display: { title: 'Start', testID: 'welcome-primary-start', primary: true } }],
@@ -70,13 +71,12 @@ it('waits for a painted presenter, builds the inert live Welcome model, and swap
                 <StepMotionStage><Route /></StepMotionStage>
             </SafeAreaProvider>,
         ));
-        await vi.waitFor(() => expect(events.has('first_open:prepare')).toBe(true));
-        expect(openingCalls()).toEqual([]);
-        await act(async () => { emit('first_open:prepare', placement); });
+        // Hold main's auth decision and first content while the presenter boots.
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(openingCalls()).toEqual(['desktop_first_open_overlay_ready']);
             expect(box.querySelectorAll('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]').length).toBe(1);
+            expect(host.calls.filter(call => call.command === 'desktop_first_open_overlay_progress').map(call => call.args.progress))
+                .toEqual(['prepared', 'drawn', 'ready']);
         }, { timeout: 10_000 });
         expect(box.textContent).not.toContain('Set up Happier');
         await act(async () => emit('first_open:start', {
