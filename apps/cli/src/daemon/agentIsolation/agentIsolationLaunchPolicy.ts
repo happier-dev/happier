@@ -354,6 +354,21 @@ export function canExecuteRequesterWorkspaceOnDaemonForHost(
 ): boolean {
     if (isHostRequesterUnrestrictedOwner(identity)) return true;
     if (identity.kind !== 'isolated' || identity.separationRequired) return false;
+    return isRequesterOwnWorkPlacedOnDaemonForHost(identity, readPolicy);
+}
+
+/**
+ * A Home-admitted grantee's own Project and Session work runs on the daemon
+ * exactly when the held Machine policy disables isolation (owner ruling
+ * 2026-11-23: guests there run as the Machine owner). An unread policy, an
+ * enabled policy and an enabled-but-unavailable policy never place on the
+ * daemon. This conveys no Manage, credential or person break-glass authority.
+ */
+export function isRequesterOwnWorkPlacedOnDaemonForHost(
+    identity: HostRequesterExecutionIdentity,
+    readPolicy?: () => Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'> | undefined,
+): boolean {
+    if (identity.kind !== 'isolated') return false;
     const snapshot = readPolicy?.();
     return snapshot !== undefined && resolveHostRequesterAgentPlacementForHost({ identity, snapshot }) === 'daemon';
 }

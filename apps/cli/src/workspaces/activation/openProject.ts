@@ -1,5 +1,5 @@
 import { readProjectCloneSource } from './readProjectCloneSource';
-import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner, isRequesterOwnWorkPlacedOnDaemonForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readRequesterAccountActionContext, type RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { configuration } from '@/configuration';
 import type { preparePrivateProjectOpenCheckout, PrivateProjectCheckoutOpenRuntime } from './privateProjectOpenCheckout';
@@ -57,6 +57,8 @@ export type ProjectOpenRuntime = Readonly<{
   readCredentials(): Promise<StoredCredentials | null>;
   registry?: ScmBackendRegistry;
   privateCheckout?: PrivateProjectCheckoutOpenRuntime;
+  /** The Machine isolation policy the receiving admission reads; it places a grantee's own work. */
+  readAgentIsolation?: Parameters<typeof isRequesterOwnWorkPlacedOnDaemonForHost>[1];
   setupPreparation?: Pick<ProjectSetupPreparationInput, 'nativeIo' | 'platform'> & Partial<Pick<ProjectSetupPreparationInput,
     'environmentBindings' | 'secretEnvironment' | 'configEnvironment' | 'plugins' | 'successHomeDir'>>;
   /** Existing daemon Sync preparation, including its transport and root custody. */
@@ -282,7 +284,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       sessionRequester: context.requesterSessionBootstrap?.attribution,
       sessionRequesterHomeServerIdentityId: context.requesterSessionBootstrap?.homeServerIdentityId });
     if (executionIdentity.kind === 'unknown') return refused(executionIdentity.reason);
+    // Where the owner turned isolation off, a guest's own Project opens on the daemon like their Agent runs.
     const usesOwnerRoot = isHostRequesterUnrestrictedOwner(executionIdentity)
+      || isRequesterOwnWorkPlacedOnDaemonForHost(executionIdentity, runtime.readAgentIsolation)
       || input.source.kind === 'folder' && input.materialization.kind === 'attach'
         && executionIdentity.requester.accountId === admission.custodianAccountId;
     const ownerCloneAccount = usesOwnerRoot && input.materialization.kind === 'clone' ? input.materialization.gitAccount : undefined;

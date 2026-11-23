@@ -2617,6 +2617,7 @@ export class ApiMachineClient {
                             openManagedProjectWorkspace: this.lifecycleDependencies.openManagedProjectWorkspace,
                         } : {}),
                         privateCheckout: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+                        readAgentIsolation: () => this.getAgentIsolationSnapshot(),
                         serverId: executionRunServerId,
                         serverHttpBaseUrl: resolveServerHttpBaseUrl(),
                         machineId: this.machine.id,

@@ -101,6 +101,18 @@ these guest launches; update the daemon to use the fallback. Enabled separation
 whose native setup fails still reports its typed failure rather than silently
 changing placement.
 
+When you turn Agent isolation off on your Machine, everyone you share it with
+works as you there, with **Can use** as well as **Can manage**. In unreleased
+0.3 development, a **Can use** guest can then do their own Project and Session
+work on it: open a Project, read and change its files, run its scripts, start,
+restart and stop its Services, and use source control in their own repository,
+with this Machine's Git credentials. Their Agent could already do all of this
+as you, so turn isolation on if you want their work kept separate. Other
+people's Sessions, terminals and Services stay theirs. Administering the Machine
+(host commands, installs, setup and desktop control) still needs **Can manage**.
+When isolation is on, or is enabled but not working yet, **Can use** keeps
+working inside isolation or is refused with the reason.
+
 The Machine owner can inspect keys and selected credential material delivered to
 the Machine, including after separate member users are available. This concerns
 material entrusted to that Machine, not automatic access to every credential in

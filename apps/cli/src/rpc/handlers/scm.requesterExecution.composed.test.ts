@@ -395,9 +395,14 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     // The admitted request reaches the real Git backend and resolves the empty forge inventory.
     expect(await open(direct, 'owner-account', 'manage')).toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
     expect(daemonGit().length).toBeGreaterThan(0);
-    expect(await open(direct, 'member-account', 'manage'))
-      .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
-    expect(await open(direct, 'member-account', 'use'))
+    // Isolation off: a guest's own source control runs there like their Agent (owner ruling 2026-11-23 ~15:10Z).
+    for (const role of ['manage', 'use'] as const) {
+      const before = daemonGit().length;
+      expect(await open(direct, 'member-account', role)).toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
+      expect(daemonGit().length).toBeGreaterThan(before);
+    }
+    const separatedGuest = await fixture({ sourceRuntimeIsolation: 'required' });
+    expect(await open(separatedGuest, 'member-account', 'use'))
       .toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
 
     const separated = await fixture({ sourceRuntimeIsolation: 'required' });
@@ -686,6 +691,36 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(gitLaunches().length).toBeGreaterThan(0);
     expect(daemonGit()).toEqual([]);
     expect(os.daemonTouches).toEqual([]);
+  });
+
+  // Owner ruling 2026-11-23 ~15:10Z: on an isolation-off Machine a Use guest's own source control
+  // runs there. Real: ingress, requester selection, SCM and Git. Isolation expected but unavailable keeps the refusal.
+  it('commits for a Use guest in their own repository only where the owner turned isolation off', async () => {
+    const direct = await fixture({ sourceRuntimeIsolation: 'disabled' });
+    const guestRepository = await repository(direct.directory, 'guest-project');
+    git(guestRepository, 'config', 'user.name', 'Guest test');
+    git(guestRepository, 'config', 'user.email', 'guest@example.invalid');
+    await writeFile(join(guestRepository, 'notes.txt'), 'from the guest\n');
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_CHANGE_INCLUDE, { cwd: guestRepository, paths: ['notes.txt'] }],
+      [RPC_METHODS.SCM_COMMIT_CREATE, { cwd: guestRepository, message: 'guest commit' }],
+    ] as const) {
+      const response = await direct.invoke(method, params, 'member-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: true });
+    }
+    expect(git(guestRepository, 'log', '-1', '--format=%s|%an')).toBe('guest commit|Guest test\n');
+    // A retained member folder of another person stays that person's: placement lends no access to it.
+    const memberHead = git(direct.memberRepository, 'rev-parse', 'HEAD');
+    // A staged change, so only the refusal can leave HEAD where it was.
+    await writeFile(join(direct.memberRepository, 'member.txt'), 'member work\n');
+    git(direct.memberRepository, 'add', 'member.txt');
+    expect(await direct.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: direct.memberRepository, message: 'not mine' },
+      'other-account', 'use')).toMatchObject({ success: false });
+    expect(git(direct.memberRepository, 'rev-parse', 'HEAD')).toBe(memberHead);
+    const unavailable = await fixture({ sourceRuntimeIsolation: 'required' });
+    const unavailableRepository = await repository(unavailable.directory, 'guest-project');
+    expect(await unavailable.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: unavailableRepository, message: 'refused' }, 'member-account', 'use'))
+      .toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
   });
 
   // F-B follow-up: blame is a local repository read (an Action-spec RPC); in the member child it runs

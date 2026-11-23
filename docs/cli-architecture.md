@@ -2311,10 +2311,22 @@ uses the owner's Agent placement (`sharedAgent` when isolation is enabled,
 `daemon` when disabled). macOS and Windows do not provision member users.
 Native readiness is still required for an enabled isolation transport; a broken
 member setup never silently falls back. Unknown requester custody still refuses.
-When the verified custodian's Agent has Manage and Machine policy selects
-`daemon`, Machine RPC uses that placement for admitted operations, including Git
-push and forge actions such as opening a pull request. Route-specific admission,
-approval and credential checks still apply.
+When Machine policy selects `daemon` (the owner turned isolation off), Machine
+RPC uses that placement for every Home-admitted grantee's own work, Use as well
+as Manage, person or Agent (owner ruling 2026-11-23): open, files, Project
+scripts, Services and source control, including Git push and forge actions such
+as opening a pull request. `isRequesterOwnWorkPlacedOnDaemonForHost` is the one
+decision; `machineRpcAuthorization` and Project Open consume it. An unread
+policy, an enabled policy and an enabled-but-unavailable policy never select it,
+so Use keeps working inside isolation or keeps its typed refusal
+(`agent_isolation_unavailable`, `machine_manage_required` for source control).
+Placement binds nothing by path: on such a Machine the guest's Agent already
+runs as the owner's operating-system user. Other people's Sessions stay behind
+Home's Session proof, their terminals behind terminal custody, their Services
+behind Services requester custody, and their Projects in their own Account rows.
+Machine administration (host commands, installs, setup, desktop control) stays
+Manage at Home and at its own owners. Route-specific admission, approval and
+credential checks still apply.
 Placement changes neither requester credentials nor Session ownership or the
 Session's role at the Computer gate. Happier's Computer controls require Manage
 to access the owner's real display. In fallback mode, a guest's Agent runs as you

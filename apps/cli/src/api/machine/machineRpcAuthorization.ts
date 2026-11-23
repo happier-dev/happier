@@ -21,6 +21,7 @@ import {
 import {
   canExecuteRequesterWorkspaceOnDaemonForHost,
   isHostRequesterUnrestrictedOwner,
+  isRequesterOwnWorkPlacedOnDaemonForHost,
   selectHostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -1996,8 +1997,11 @@ export async function authorizeMachineRpcRequest(
         const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
           && isScmLocalRepositoryReadRpcMethod(rpcMethod);
         const unrestricted = isHostRequesterUnrestrictedOwner(identity);
-        const directRequester = !unrestricted && identity.kind === 'isolated' && context.role === 'manage'
-          && canExecuteRequesterWorkspaceOnDaemonForHost(identity, machine.readAgentIsolation);
+        // Home admitted this grantee (Use or Manage) for this method. Where the owner turned
+        // isolation off, their own work runs on the daemon (owner ruling 2026-11-23 ~15:10Z);
+        // every other policy state keeps the refusals below.
+        const directRequester = !unrestricted && identity.kind === 'isolated'
+          && isRequesterOwnWorkPlacedOnDaemonForHost(identity, machine.readAgentIsolation);
         if (directRequester) {
           // Placement never substitutes for the method's remaining authorization checks.
           authorized = { ok: true, directScmWorkspaceRequester: identity };
