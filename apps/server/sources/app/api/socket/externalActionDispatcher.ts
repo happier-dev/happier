@@ -30,7 +30,7 @@ import { verifyCurrentExternalActionPrincipal, hasCurrentExternalActionSessionSo
     projectExternalActionBoundPrincipal, isOriginalAccountHandoffAction,
     readCurrentExternalActionHandoffBindingInTx,
     resolveExternalActionExecutionMachineAdmissionInTx, readAdmittedFiniteOperationPrincipal,
-    type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
+    projectExternalActionMintInput, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import {
     readSessionPublisherAuthorityProjection,
@@ -725,13 +725,11 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(request.managedCreationAdmission ? { managedCreationAdmission: request.managedCreationAdmission } : {}),
                 ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
                 managedMachineAdmission: capturedMachineAdmission,
-                input: request.envelope.v === 1 ? request.envelope.input
-                : deploymentMetadataReceiptId !== undefined ? {
-                    deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId }
-                : deploymentMetadataEnvironmentId === undefined
-                    ? presetPreparationAdmission ?? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
-                        ?? (request.actionId === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(request.envelope)?.input : undefined)
-                    : { environmentId: deploymentMetadataEnvironmentId },
+                input: projectExternalActionMintInput({
+                    actionId: request.actionId, envelope: request.envelope,
+                    deploymentMetadataReceiptId, deploymentMetadataEnvironmentId,
+                    presetPreparationAdmission, deploymentNativeAdmission, managedInput: managedAdmission?.input,
+                }),
                 deploymentNativeAdmission,
                 deploymentLinkEnvironmentId,
                 ...(deploymentLinkReplacement ? { deploymentLinkReplacement } : {}),

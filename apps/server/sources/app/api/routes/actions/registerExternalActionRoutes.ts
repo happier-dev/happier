@@ -64,12 +64,12 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
     verifyWorkflowExternalActionRequesterAuthorization,
-    type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
+    projectExternalActionMintInput, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedMachineError, hasBoundManagedLifecycle, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedCreationSetup, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission, readExternalActionManagedAcquireAdmission } from '@/app/auth/externalActionManagedAdmission';
+import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { prepareManagedCredentialDeliveryForAction, readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
@@ -924,13 +924,11 @@ export function registerExternalActionRoutes(
                         ? { managedCreationRecovery: true } : {}),
                     managedMachineAdmission: admission,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
-                    input: body.data.envelope.v === 1 ? body.data.envelope.input
-                        : deploymentMetadataReceiptId !== undefined ? {
-                            deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId }
-                        : deploymentMetadataEnvironmentId === undefined
-                            ? presetPreparationAdmission ?? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
-                                ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)
-                            : { environmentId: deploymentMetadataEnvironmentId },
+                    input: projectExternalActionMintInput({
+                        actionId: actionId.data, envelope: body.data.envelope,
+                        deploymentMetadataReceiptId, deploymentMetadataEnvironmentId,
+                        presetPreparationAdmission, deploymentNativeAdmission, managedInput: managedAdmission?.input,
+                    }),
                     deploymentNativeAdmission,
                     deploymentReview: body.data.deploymentReview,
                     deploymentLinkEnvironmentId,

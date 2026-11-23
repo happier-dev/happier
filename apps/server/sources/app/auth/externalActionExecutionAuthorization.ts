@@ -36,7 +36,7 @@ import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machi
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
-import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
+import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, readExternalActionManagedAcquireAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
@@ -357,6 +357,26 @@ export type WorkflowExternalActionAdmission = Readonly<{
 
 function isReviewedSetupAgentInstall(actionId: string, origin: ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin']): boolean {
     return actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action && origin?.reviewedChild?.actionId === actionId;
+}
+
+/** Plain input or the public portion of a sealed request for the Home mint. */
+export function projectExternalActionMintInput(input: Readonly<{
+    actionId: string;
+    envelope: ExternalActionRequestEnvelope;
+    deploymentMetadataReceiptId: string | undefined;
+    deploymentMetadataEnvironmentId: string | undefined;
+    presetPreparationAdmission: unknown;
+    deploymentNativeAdmission: unknown;
+    managedInput: unknown;
+}>): unknown {
+    const { envelope, deploymentMetadataReceiptId, deploymentMetadataEnvironmentId } = input;
+    if (envelope.v === 1) return envelope.input;
+    if (deploymentMetadataReceiptId !== undefined) {
+        return { deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId };
+    }
+    if (deploymentMetadataEnvironmentId !== undefined) return { environmentId: deploymentMetadataEnvironmentId };
+    return input.presetPreparationAdmission ?? input.deploymentNativeAdmission ?? envelope.sessionSpawnAdmission ?? input.managedInput
+        ?? (input.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 ? readExternalActionManagedAcquireAdmission(envelope)?.input : undefined);
 }
 
 /** Public spawn operands bind their destination through the existing API owner. */
