@@ -277,6 +277,17 @@ describe('ModalCardFrame', () => {
         }));
         expect(screen.findByTestId('sub')?.props.numberOfLines).toBeUndefined();
     });
+    it('announces its title as the heading its section titles nest under', async () => {
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const screen = await renderScreen(React.createElement(ModalCardFrame, {
+            children: React.createElement('Child'), title: 'Deploy an app', subtitle: 'Choose where it runs.',
+            titleTestID: 'title', subtitleTestID: 'sub', onClose: vi.fn(),
+        }));
+        // Section titles inside the card announce level 2 (ItemGroup); the card's title is the level above them.
+        expect(screen.findByTestId('title')?.props.accessibilityRole).toBe('header');
+        expect(screen.findByTestId('title')?.props['aria-level']).toBe(1);
+        expect(screen.findByTestId('sub')?.props.accessibilityRole).toBeUndefined();
+    });
     it('gives a phone card’s title the full row and moves wide header actions beneath it', async () => {
         windowState.width = 390;
         windowState.height = 844;

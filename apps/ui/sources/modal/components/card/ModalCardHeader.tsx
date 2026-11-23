@@ -56,6 +56,8 @@ export function ModalCardHeader(props: ModalCardHeaderProps) {
     const renderText = React.useCallback<HappierModalHeaderTextRender>((input) => (
         <Text
             testID={input.testID}
+            // The card's title is the heading its section titles (level 2, ItemGroup) nest under.
+            {...(input.role === 'title' ? { accessibilityRole: 'header' as const, 'aria-level': 1 } : {})}
             style={input.role === 'title' ? styles.title : styles.subtitle}
             numberOfLines={input.role === 'subtitle' ? subtitleLines : undefined}
         >{input.children}</Text>
