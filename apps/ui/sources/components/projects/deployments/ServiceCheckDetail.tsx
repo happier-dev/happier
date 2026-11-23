@@ -201,7 +201,7 @@ export function ServiceCheckDetail(
     facts.checks[0] ??
     null;
   const settings = readServiceCheckSettings(seed, shown?.checkId ?? null);
-  const checkNow = useCheckNow(settings?.run ?? null, row.scope);
+  const checkNow = useCheckNow(settings?.run ?? null, settings?.observerMachineId ?? null, row.scope);
   const serverIdForSubject = row.scope.serverId;
   const investigateSubject = React.useMemo(
     () => serviceCheckInvestigationSubject(seed, shown?.checkId ?? null, serverIdForSubject),
@@ -713,7 +713,8 @@ function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): 
 type CheckNowControl = Readonly<{ state: 'idle' | 'running' | 'failed'; run: () => void; cancel: () => void }>;
 
 /** One Check now per page: the button (header or body) and what it says while it waits share this state. */
-function useCheckNow(run: ServiceCheckSettings['run'] | null, scope: ManagedConfiguredCheckRow['scope']): CheckNowControl {
+function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId: string | null,
+  scope: ManagedConfiguredCheckRow['scope']): CheckNowControl {
   const [state, setState] = React.useState<'idle' | 'running' | 'failed'>('idle');
   const controller = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => controller.current?.abort(), []);
@@ -727,6 +728,7 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, scope: ManagedConf
       await checkNowConfiguredHealthCheck({
         subject: run.subject,
         check: run.check,
+        observerMachineId,
         signal: current.signal,
         serverId: scope.serverId,
         expectedAccountId: scope.accountId,
@@ -735,7 +737,7 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, scope: ManagedConf
     } catch {
       if (!current.signal.aborted) setState('failed');
     }
-  }, [run, scope.accountId, scope.serverId]);
+  }, [run, observerMachineId, scope.accountId, scope.serverId]);
   // The person can stop waiting: the Action's own signal is aborted; a result its Machine still sends arrives as usual.
   const cancel = React.useCallback(() => {
     controller.current?.abort();

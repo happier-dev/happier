@@ -27,11 +27,13 @@ export function configuredHealthCheckAutomationSubject(state: ConfiguredHealthRe
 
 /** The existing public Action front door owns policy, approval and Machine targeting. */
 export async function checkNowConfiguredHealthCheck(input: SavedHealthCheckRunInput & Readonly<{
-    serverId: string; expectedAccountId?: string;
+    serverId: string; expectedAccountId?: string; observerMachineId: string | null;
 }>, execute = createFrontDoorUiActionExecutor(undefined, { serverId: input.serverId, expectedAccountId: input.expectedAccountId }),
     operation?: UiActionOperation): Promise<HealthCheckResultV1> {
+    const externalActionTarget = input.observerMachineId === null
+        ? operation?.externalActionTarget : { kind: 'machine' as const, machineId: input.observerMachineId };
     return (await runSavedHealthCheck(input, (action, value, options) => execute('action.invoke', { action, input: value },
-        { ...operation, signal: options.signal }))).result;
+        { ...operation, externalActionTarget, signal: options.signal }))).result;
 }
 
 /** observedAt is the actual probe time retained with the current sample history. */

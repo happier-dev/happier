@@ -131,14 +131,19 @@ describe('configured saved health public Action bridge', () => {
                 // Permit catalog discovery, then apply the person's finite-run decision.
                 presentUserActionConfirmation: async () => ++confirmations === 1 || approved,
                 // Only contributed code/finite observation is a substituted process boundary.
-                invokeContributedAction: async request => ({ ok: true, result: await kit.invokeAction(request.action.localId, normalizeStrictJsonValue(request.input)) }),
+                invokeContributedAction: async request => {
+                    if (request.context.externalActionTarget?.kind !== 'machine' || request.context.externalActionTarget.machineId !== 'observer') {
+                        return { ok: false, errorCode: 'observer_unavailable', error: 'Saved observer was not reached' };
+                    }
+                    return { ok: true, result: await kit.invokeAction(request.action.localId, normalizeStrictJsonValue(request.input)) };
+                },
             }));
             const execute = createFrontDoorUiActionExecutor({ ...executor, execute: (id, input, context) => executor.execute(id, input, {
                 ...context, authority: 'present_user', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'action.invoke': { approvalRequiredSurfaces: ['ui'] } } }),
             }) }, { serverId: 'home' });
             const operation = configured.checkNowConfiguredHealthCheck({ serverId: 'home', subject: { kind: 'environment', environmentId: 'production' },
-                check: { checkId: 'site', kind: { pluginId: plugin.manifest.id, localId: 'http' } },
+                check: { checkId: 'site', kind: { pluginId: plugin.manifest.id, localId: 'http' } }, observerMachineId: 'observer',
                 signal: new AbortController().signal }, execute);
             if (approved) expect(await operation).toEqual(expected);
             else await expect(operation).rejects.toMatchObject({ code: 'approval_canceled' });
