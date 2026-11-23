@@ -16,7 +16,8 @@ import { useJourneyAccountService } from '@/components/homes/journeys/useJourney
 import { HubSetupGridView } from '@/components/hub/HubSetupSection';
 import { VOICE_SETUP_STEP_ID } from '@/voice/settings/setup/useVoiceSetupItem';
 import { buildVoiceSetupFixtureItem, LAB_BRIEF, type VoiceSetupFixtureFrame } from './voiceSetupFixtures';
-import { VoiceBriefButtonView, VoiceBriefList } from '@/components/voice/brief/VoiceBrief';
+import { VoiceBriefList } from '@/components/voice/brief/VoiceBrief';
+import { VoiceBriefButtonView } from '@/components/voice/brief/VoiceBriefButton';
 import { View } from 'react-native';
 import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { HubCustomizeButton } from '@/components/hub/header/HubCustomizeButton';

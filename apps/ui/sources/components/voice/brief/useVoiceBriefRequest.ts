@@ -6,7 +6,6 @@ import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL, type VoiceAtt
 import { useVoiceSurfaceModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import { useInboxModel } from '@/hooks/inbox/useInboxModel';
 import { useVoiceBriefNeedsYou } from './useVoiceBriefNeedsYou';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { buildVoiceBrief } from '@/voice/context/buildVoiceBrief';
@@ -15,7 +14,7 @@ import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, getVoiceSessionSnapshot, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import type { VoiceSessionStatus } from '@/voice/session/types';
 
-import { registerVoiceBriefHomeRequest, registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, voiceBriefUnavailable, type VoiceBriefOperation, type VoiceBriefOperationOutcome } from './voiceBriefActionRuntime';
+import { registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, voiceBriefUnavailable, type VoiceBriefOperation, type VoiceBriefOperationOutcome } from './voiceBriefActionRuntime';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
 type Delivery = 'waiting' | 'sent' | 'refused' | 'stopped';
@@ -34,24 +33,6 @@ function briefNeedsRecovery(delivery: Delivery, voice: Pick<VoiceAttemptControlP
     status: VoiceSessionStatus, retryRequired: boolean, started: boolean): boolean {
     return (delivery !== 'stopped' && (status === 'error' || retryRequired))
         || (delivery === 'waiting' && (voice.availability !== 'ready' || (!voice.live && (retryRequired || started))));
-}
-
-/** Closed Home registers only its existing opener; Inbox details remain demand-mounted. */
-export function useVoiceBriefHomeRequest(input: Readonly<{ available: boolean; onOpen: () => void }>): void {
-    const enabled = useFeatureEnabled('voice');
-    const current = React.useRef({ ...input, enabled, accountLifetime: captureActiveServerAccountScopeCurrentness() });
-    current.current = { ...input, enabled, accountLifetime: captureActiveServerAccountScopeCurrentness() };
-    React.useLayoutEffect(() => {
-        if (!input.available || enabled !== true) return;
-        return registerVoiceBriefHomeRequest(() => {
-            const owner = current.current;
-            if (!owner.available || owner.enabled !== true || !owner.accountLifetime.isCurrent()) {
-                return voiceBriefUnavailable('ui.voice_global.brief.account_scope');
-            }
-            owner.onOpen();
-            return voiceBriefOperationResult('waiting');
-        });
-    }, [input.available, enabled]);
 }
 
 /** One request owner for the visible Brief and agent Actions; lifecycle and output remain incumbent. */

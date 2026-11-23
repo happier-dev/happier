@@ -51,8 +51,9 @@ import { useHomeWidgetGroupOperations } from './layout/useHomeWidgetGroupOperati
 import { HubCustomizeButton } from './header/HubCustomizeButton';
 import { HomeCustomizeBar } from './header/HomeCustomizeBar';
 import { EmptySlot } from '@/components/ui/empty/EmptySlot';
-import { VoiceBriefBlock, VoiceBriefButton } from '@/components/voice/brief/VoiceBrief';
-import { useVoiceBriefHomeRequest } from '@/components/voice/brief/useVoiceBriefRequest';
+import { VoiceBriefButton } from '@/components/voice/brief/VoiceBriefButton';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
+import { useVoiceBriefHomeRequest } from '@/components/voice/brief/useVoiceBriefHomeRequest';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
@@ -98,6 +99,10 @@ import { subscribeHomeCustomizeRequest } from './header/homeCustomizeRequest';
 import { AddNameSetupBlock } from '@/components/account/useAddNameSetupItem';
 import { resolveHomeMomentTarget } from './homeMomentTarget';
 import { useHomeHubGuidanceKind } from './useHomeHubGuidanceKind';
+
+const VoiceBriefBlock = retryableLazy(async () => ({
+    default: (await import('@/components/voice/brief/VoiceBrief')).VoiceBriefBlock,
+}));
 
 /** What Home adds beneath the getting-started guidance when that guidance is Home (one stable element). */
 const HOME_GUIDANCE_ACCESSORY = <AddNameSetupBlock />;
@@ -582,7 +587,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     );
     useVoiceBriefHomeRequest({
         available: focused && hubShown,
-        onOpen: () => setBriefOpen(true),
+        // Keep the greeting and its current Inbox preview visible while the brief loads.
+        onOpen: () => React.startTransition(() => setBriefOpen(true)),
     });
     const surface = React.useMemo(() => accountScope ? { ...accountScope, owner: { kind: 'home' as const } } : null, [accountScope]);
     const movement = useWidgetMovementAdmission(focused ? surface : null, layout.sections);
@@ -674,7 +680,9 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                 </HomeHubReadingColumn>
             ) : null}
             {heroComposer ? null : phoneLead}
-            {briefOpen ? <HomeHubReadingColumn><VoiceBriefBlock onClose={() => setBriefOpen(false)} /></HomeHubReadingColumn> : null}
+            <React.Suspense fallback={null}>
+                {briefOpen ? <HomeHubReadingColumn><VoiceBriefBlock onClose={() => setBriefOpen(false)} /></HomeHubReadingColumn> : null}
+            </React.Suspense>
             <SessionSurfaceEntityFeedback kind="home-section" scope={accountScope} address={null} testID="home-hub.widget-move" />
             <SessionSurfaceEntityTargetFeedback drag={homeDrop} testID="home-hub.widget-move" />
             <HomeHubSectionList

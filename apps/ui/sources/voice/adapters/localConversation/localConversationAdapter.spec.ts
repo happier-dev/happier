@@ -241,7 +241,8 @@ describe('local conversation voice adapter', () => {
 
   it('speaks the Home public Brief request through the connected Local Agent', async () => {
     const { InboxModelBoundary } = await import('@/hooks/inbox/useInboxModel');
-    const { useVoiceBriefHomeRequest, useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
+    const { useVoiceBriefHomeRequest } = await import('@/components/voice/brief/useVoiceBriefHomeRequest');
+    const { useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
     const { executeVoiceBriefOperation } = await import('@/components/voice/brief/voiceBriefActionRuntime');
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
@@ -301,7 +302,8 @@ describe('local conversation voice adapter', () => {
   it('hands a spoken native Brief Action to its mounted owner and speaks the one resulting Brief', async () => {
     const providerInputs: string[] = [];
     const { InboxModelBoundary } = await import('@/hooks/inbox/useInboxModel');
-    const { useVoiceBriefHomeRequest, useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
+    const { useVoiceBriefHomeRequest } = await import('@/components/voice/brief/useVoiceBriefHomeRequest');
+    const { useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
     if (!credentials) throw new Error('Home Brief requires restored Account credentials');

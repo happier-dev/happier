@@ -4,7 +4,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
@@ -13,71 +12,13 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
-import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
-import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { VoiceNeedsYouPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { getVoiceSessionPresentedAttemptId } from '@/voice/session/voiceSessionStore';
 import { type VoiceBrief, type VoiceBriefItem } from '@/voice/context/buildVoiceBrief';
 import { useVoiceBriefRequest } from './useVoiceBriefRequest';
-
-/**
- * Home's quiet "Brief me" (lab `voice-moments` B0): one press turns the greeting into the brief.
- * Closed, it costs nothing — no Inbox subscription, no Voice start. While Voice is not set up a brief
- * could not be spoken, so the entry is the attempt owner's own "Set up Voice" and opens setup.
- */
-export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Readonly<{
-    open: boolean;
-    /** Phone (lab B0p): the button spans the page under the greeting instead of sitting beside it. */
-    block?: boolean;
-}>): React.ReactElement | null {
-    const voiceEnabled = useFeatureEnabled('voice');
-    const { execute, ready } = useMountedActionExecution(getActiveServerAccountScope());
-    const request = React.useCallback(() => {
-        const expectedAttemptId = getVoiceSessionPresentedAttemptId();
-        return execute('ui.voice_global.brief.request', expectedAttemptId ? { expectedAttemptId } : {});
-    }, [execute]);
-    const openSetup = React.useCallback(() => {
-        void execute('ui.voice_global.setup.open', {});
-    }, [execute]);
-    const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
-    if (voiceEnabled !== true || props.open) return null;
-    // Setup's own open Action: in place where a host presents it (Home's Get set up), else Settings → Voice open.
-    const setup = voice.primaryAction === 'setup' && voice.primaryActionLabel
-        ? { label: voice.primaryActionLabel, onPress: openSetup }
-        : voice.primaryAction === 'recover' && voice.primaryActionLabel
-            ? { label: voice.live ? voice.primaryActionLabel : t('voicePresence.setUp'), onPress: () => { void voice.onPrimaryAction(); } }
-        : undefined;
-    return <VoiceBriefButtonView onOpen={request} block={props.block} disabled={!setup && !ready} setup={setup} />;
-});
-
-/** The button as drawn (the dev Home fixture draws it without the server's feature decision). */
-export const VoiceBriefButtonView = React.memo(function VoiceBriefButtonView(props: Readonly<{
-    onOpen: () => void;
-    block?: boolean;
-    disabled?: boolean;
-    /** Voice is not set up: the entry names that act instead of opening a brief that cannot be spoken. */
-    setup?: Readonly<{ label: string; onPress: () => void }>;
-}>) {
-    return (
-        <RoundButton
-            style={props.block ? stylesheet.block : undefined}
-            testID="home-brief-me"
-            disabled={props.disabled}
-            size="small"
-            display="secondary"
-            title={props.setup?.label ?? t('voiceMoments.briefMe')}
-            accessibilityLabel={props.setup?.label ?? t('voiceMoments.briefMeA11y')}
-            leading={<VoiceMarkArt pose="ready" size={16} still />}
-            onPress={props.setup?.onPress ?? props.onOpen}
-        />
-    );
-});
 
 /**
  * The brief, in place (lab B1): what the Inbox already knows — needs you, failed, ready — read aloud
@@ -329,9 +270,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
         paddingHorizontal: theme.space.s4,
-    },
-    block: {
-        alignSelf: 'stretch',
     },
     groupTitle: {
         ...Typography.variant('meta', 'semiBold'),
