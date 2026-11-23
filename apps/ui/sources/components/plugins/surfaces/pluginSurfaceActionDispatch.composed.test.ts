@@ -2338,7 +2338,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             } });
         const identity = { pluginId: activation.action.pluginId, localId: activation.action.id };
         const actionId = formatQualifiedPluginActionId(identity);
-        const notice = { code: 'action_automation_skipped', reason: 'machine_required', automationId: 'automation',
+        const notice = { code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'automation',
             triggerId: 'after', workflowId: 'workflow' } as const;
         const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
             seed: async () => ({ v: 1, rows: [{ automationId: 'automation', triggerId: 'after', triggerRevision: 1,
@@ -2354,6 +2354,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                     actionAccountLifetime: lifetime, hostAction: { execute: executor.execute, context: {
                         surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
                         serverIdentityId: home.serverIdentityId, runtimeAccountId: lifetime.scope.accountId,
+                        defaultSessionMachineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
                         actionRequestId: `${name}-${mode}`, actionAutomationPort: port,
                     } } });
                 expect(result).toMatchObject({ ok: true, result: { mode } });
@@ -2415,7 +2416,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             const hostAction = { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
                 surface: entry === 'UI' ? 'ui' as const : 'voice' as const,
                 authority: entry === 'UI' ? 'present_user' as const : 'account_automation' as const,
-                ...(entry === 'Voice' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine-client-action' } } : {}),
+                externalActionTarget: { kind: 'machine' as const, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId },
                 serverId: lifetime.scope.serverId, serverIdentityId: home.serverIdentityId,
                 runtimeAccountId: lifetime.scope.accountId, actionRequestId: 'ui-before-original', actionAutomationPort: actionAutomations,
             } };
