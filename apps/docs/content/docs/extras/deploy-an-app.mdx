@@ -266,6 +266,23 @@ sampling ratio. An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under
 development; this section does not certify the complete telemetry journey.
 
+### Verify browser exception capture
+
+Select **Exceptions** in the Environment's telemetry setup and redeploy so the
+app receives its collector configuration. The **Add telemetry to this app**
+agent brief includes code for browser errors and unhandled promise rejections.
+Adapt it to your framework and route reports through your app's own server or
+edge endpoint. Keep the collector credential in the server-side configuration.
+A static-only app needs a server or edge endpoint, or an existing error
+integration.
+
+Exercise a controlled error and an unhandled rejection in a test deployment.
+Open the resulting Happier issue in **PRs & Issues** and inspect its occurrence.
+The issue summary is stored with your Account, while the stack and raw occurrence
+stay on the collector. Investigation of a minified stack needs the source map from
+the matching build. After deploying a fix, repeat the failing interaction and
+record which build and route you exercised.
+
 ## 3. Add a Domain
 
 Open the Environment's **Domains** tab and choose **Add domain**. Enter the
