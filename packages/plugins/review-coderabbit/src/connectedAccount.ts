@@ -32,9 +32,14 @@ export async function stageCodeRabbitNativeAuth(store: CodeRabbitCredentialStore
   await store.set('nativeAuth', content.toString('base64'), options);
   const text = content.toString('utf8');
   await store.set(CODERABBIT_NATIVE_AUTH_CONTENT_KEY, text, options);
-  let parsed: unknown = null;
-  try { parsed = JSON.parse(text); } catch { return; }
+  for (const [key, value] of readCodeRabbitLoginTokens(text)) await store.set(key, value, options);
+}
+
+/** Token fields a CodeRabbit login file names, by canonical key; none when it is not JSON. */
+function readCodeRabbitLoginTokens(text: string): ReadonlyMap<string, string> {
   const found = new Map<string, string>();
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(text); } catch { return found; }
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
     for (const [field, entry] of Object.entries(value)) {
@@ -44,7 +49,7 @@ export async function stageCodeRabbitNativeAuth(store: CodeRabbitCredentialStore
     }
   };
   visit(parsed);
-  for (const [key, value] of found) await store.set(key, value, options);
+  return found;
 }
 
 const unavailable = () => ({ status: 'unavailable' as const, diagnostic: {
@@ -100,6 +105,10 @@ export const CODERABBIT_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
     if (request.fileIds.includes(CODERABBIT_AUTH_FILE)) {
       files[CODERABBIT_AUTH_FILE] = options?.existingFiles?.[CODERABBIT_AUTH_FILE] ?? Buffer.from(auth, 'base64');
     }
-    return { kind: 'files', files };
+    // The login text and its token fields, stored and as delivered (the CLI may have refreshed its
+    // own file), for records saved before they were stored as declared keys.
+    const texts = [...new Set([Buffer.from(auth, 'base64').toString('utf8'),
+      ...Object.values(files).map(bytes => Buffer.from(bytes).toString('utf8'))])];
+    return { kind: 'files', files, secretValues: texts.flatMap(text => [text, ...readCodeRabbitLoginTokens(text).values()]) };
   },
 };

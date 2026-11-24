@@ -58,7 +58,9 @@ describe('CodeRabbit vendor-owned manual login and selected native home', () => 
       const refreshedAuth = new TextEncoder().encode('{"fixtureVendorToken":"refreshed-private-token"}\n');
       const reused = await runtime.materialize({ kind: 'files', fileIds: ['.coderabbit/auth.json'] }, context,
         { existingFiles: { '.coderabbit/auth.json': refreshedAuth } });
-      expect(reused).toEqual({ kind: 'files', files: { '.coderabbit/auth.json': refreshedAuth } });
+      // The delivered (refreshed) login text is named for the Session transcript, beside the stored one.
+      expect(reused).toEqual({ kind: 'files', files: { '.coderabbit/auth.json': refreshedAuth },
+        secretValues: [opaqueAuth, new TextDecoder().decode(refreshedAuth)] });
       await expect(runtime.materialize({ kind: 'environment', keys: ['CODERABBIT_API_KEY'] }, context)).rejects.toMatchObject({ code: 'plugin_connected_account_materialization_unsupported' });
       expect(result).not.toHaveProperty('providerIdentity');
     } finally { await kit.dispose(); }

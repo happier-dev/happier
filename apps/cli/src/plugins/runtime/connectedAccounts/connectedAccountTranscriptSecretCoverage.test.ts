@@ -7,7 +7,8 @@ import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/p
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { saveCredential as saveXaiCredential } from '../../../../../../packages/plugins/grok/src/connectedAccounts/portableRuntime';
 import { geminiConnectedAccountRuntime } from '../../../../../../packages/plugins/gemini/src/connectedAccounts/runtime';
-import { stageCodeRabbitNativeAuth } from '../../../../../../packages/plugins/review-coderabbit/src/connectedAccount';
+import { CODERABBIT_ACCOUNT_RUNTIME, stageCodeRabbitNativeAuth } from '../../../../../../packages/plugins/review-coderabbit/src/connectedAccount';
+import { xaiConnectedAccountRuntime } from '../../../../../../packages/plugins/grok/src/connectedAccounts/runtime';
 
 /**
  * Every bundled Connected Account that an Agent Session receives (environment or files) must
@@ -489,5 +490,35 @@ describe('bundled Connected Account transcript secret coverage', () => {
     ).toEqual([]);
     expect(rows.length).toBeGreaterThan(0);
     expect(leaks).toEqual([]);
+  }, 60_000);
+
+  // Records saved before their secrets had declared keys: each materializer names the inner secrets
+  // it parses from its own stored value, and the host registers them beside the collector's.
+  const pem = `-----BEGIN PRIVATE KEY-----\n${fake('legacy-gemini-private-key')}\n-----END PRIVATE KEY-----\n`;
+  it.each([
+    ['Gemini service-account', '@happier-dev/plugins-gemini', 'gemini-account', 'service-account', geminiConnectedAccountRuntime, {
+      serviceAccountJson: JSON.stringify({ type: 'service_account', project_id: 'project', private_key: pem,
+        client_email: 'agent@project.iam.gserviceaccount.com', client_id: '1' }) }, [pem]],
+    ['CodeRabbit', '@happier-dev/plugins-review-coderabbit', 'coderabbit-account', 'native-login', CODERABBIT_ACCOUNT_RUNTIME, {
+      nativeAuth: Buffer.from(JSON.stringify({ session: { access_token: fake('legacy-coderabbit') } })).toString('base64') },
+      [fake('legacy-coderabbit')]],
+    ['Grok sign-in', '@happier-dev/plugins-grok', 'xai', 'device', xaiConnectedAccountRuntime, {
+      xaiCredential: JSON.stringify({ mode: 'subscription', accessToken: fake('legacy-xai-access'),
+        refreshToken: fake('legacy-xai-refresh'), expiresAtMs: Date.UTC(2100, 0, 1) }) },
+      [fake('legacy-xai-access'), fake('legacy-xai-refresh')]],
+  ] as const)('masks a %s record saved in its older stored shape', async (_provider, packageName, serviceId, modeId, runtime, values, printed) => {
+    const { PLUGIN_MANIFEST } = await import(`${packageName}/manifest`) as { PLUGIN_MANIFEST: { contributes: {
+      connectedAccountDescriptors: readonly { id: string; authentication: { modes: readonly { id: string }[] } }[] } } };
+    const declared = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(descriptor => descriptor.id === serviceId)
+      ?.authentication.modes.find(mode => mode.id === modeId);
+    const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse(declared);
+    const { output, secretValues } = await readDelivered(runtime as ConnectedAccountRuntime, modeId, values);
+    expect(output).toContain('fake-secret-');
+    const secrets = [...createConnectedAccountCredentialRedaction({ mode, credential: { v: 1, values }, configuration: {} })
+      .readSecretValues(), ...secretValues].sort((left, right) => right.length - left.length);
+    const redact = (text: string) => secrets.reduce((current, secret) => current.split(secret).join('[redacted]'), text);
+    expect(redact(output)).not.toContain('fake-secret-');
+    // Each inner secret printed on its own is masked too.
+    for (const secret of printed) expect(redact(secret)).not.toContain('fake-secret-');
   }, 60_000);
 });

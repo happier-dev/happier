@@ -235,7 +235,10 @@ const geminiConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
         if (request.fileIds.includes(SERVICE_ACCOUNT_FILE_ID)) {
           files[SERVICE_ACCOUNT_FILE_ID] = new TextEncoder().encode(value);
         }
-        return { kind: 'files', files };
+        // The private key inside the delivered JSON, parsed and as the file spells it, for records
+        // saved before the declared private-key keys existed.
+        const secretValues = [value, serviceAccount.private_key, JSON.stringify(serviceAccount.private_key).slice(1, -1)];
+        return { kind: 'files', files, secretValues };
       }
       if (request.kind === 'environment') {
         const available: Readonly<Record<string, string>> = {
