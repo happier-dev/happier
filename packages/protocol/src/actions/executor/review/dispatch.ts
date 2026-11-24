@@ -622,6 +622,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               sessionId,
               {
                 intent: engineInput.intent ?? 'review',
+                ...(engineInput.runnerAgentTarget ? { runnerAgentTarget: engineInput.runnerAgentTarget } : {}),
                 ...(engineInput.roleId ? { roleId: engineInput.roleId } : {}),
                 ...(engineInput.launchProfileId ? { launchProfileId: engineInput.launchProfileId } : {}),
                 display: { groupId: reviewGroupId },

@@ -78,12 +78,22 @@ describe('Review roster leaves', () => {
       },
     } satisfies ActionExecutorDeps);
     expect(await executor.execute('review.start', { sessionId: 'source-session', cwd: '/repo',
-      reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review uncommitted changes.',
+      reviewers: [{ kind: 'engine', engineId: 'codex',
+        runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+        } } }], instructions: 'Review uncommitted changes.',
     }, { surface: 'ui', defaultSessionId: 'source-session', defaultSessionMachineId: 'source-machine' })).toMatchObject({ ok: true });
     expect(captures).toHaveLength(1);
     expect(captures[0]).toMatchObject({ cwd: '/repo', source: { kind: 'workingTree', area: 'pending' } });
     expect(events).toEqual(['capture', 'record', 'run']);
-    expect(requests[0]?.intentInput).toMatchObject({ comparisonId });
+    expect(requests[0]).toMatchObject({
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+      } },
+      intentInput: { comparisonId },
+    });
     const binding = ReviewRoundBindingV1Schema.parse(requests[0]?.intentInput?.reviewRound);
     expect((await persisted.records.read(binding.reviewId))?.rounds[0]).toMatchObject({ comparisonId });
   });
@@ -134,10 +144,13 @@ describe('Review roster leaves', () => {
       { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
     ];
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+    } };
     for (const [index, modelId] of ['first-model', 'second-model'].entries()) {
       const data = ReviewStartInputSchema.parse({
         sessionId: 'source-session', reviewers: [{ kind: 'engine', engineId: 'codex', modelId,
-          runnerAgentTarget: runnerAgentTargets[index], options: { focus: modelId } }], instructions: 'Review independently.',
+          runnerAgentTarget: runnerAgentTargets[index], connectedServices, options: { focus: modelId } }], instructions: 'Review independently.',
         reviewRound, reviewReviewerId: `reviewer-${index + 1}`, reviewRoundSettlement: 'workflow',
       });
       expect(await dispatchReviewDispatch2({ actionId: 'review.start', data, parsed: { data }, deps,
@@ -146,10 +159,12 @@ describe('Review roster leaves', () => {
         startExecutionRunWithSelection: (...args) => startExecutionRunWithSelectionV1(deps, ...args),
       })).toMatchObject({ ok: true, result: { reviewRound } });
     }
+    expect(requests.map(request => request.runnerAgentTarget)).toEqual(runnerAgentTargets);
+    expect(requests.map(request => request.connectedServices)).toEqual([connectedServices, connectedServices]);
     expect(requests.map(request => request.modelId)).toEqual(['first-model', 'second-model']);
     expect(requests.map(request => ReviewStartInputSchema.parse(request.intentInput).reviewers)).toEqual(
       runnerAgentTargets.map((runnerAgentTarget, index) => [{ kind: 'engine', engineId: 'codex',
-        runnerAgentTarget, modelId: index === 0 ? 'first-model' : 'second-model',
+        runnerAgentTarget, connectedServices, modelId: index === 0 ? 'first-model' : 'second-model',
         options: { focus: index === 0 ? 'first-model' : 'second-model' } }]),
     );
     expect(requests.map(request => request.intentInput)).toMatchObject([
