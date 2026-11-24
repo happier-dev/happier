@@ -101,19 +101,13 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
         fileTask = (async (): Promise<WorkspaceFileDetailsRefreshResult> => {
             try {
                 if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
+                const target = workspaceFileSystemTargetFromScope(input.scope);
                 const videoPreview = input.readAsText !== true && viewer.kind === 'video';
                 const wantsBinaryPreview = input.readAsText !== true && viewer.previewable && viewer.kind !== 'svg';
                 // Opaque binary classification performs no inline read and consumes no text budget; one stat verifies
                 // that the identity card names an existing file and exposes metadata-access failures.
                 if (viewer.kind === 'binary' && !input.readAsText) {
-                    const stat = await callDaemonWorkspaceStatFileRpc({
-                        machineId: input.scope.machineId,
-                        serverId: input.scope.serverId,
-                        rootPath: input.scope.rootPath,
-                        ...(input.scope.workspace ? { workspace: input.scope.workspace } : {}),
-                        request: { path: input.filePath },
-                        signal: input.signal,
-                    });
+                    const stat = await workspaceStatFile(target, input.filePath, { signal: input.signal });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                     if (!stat.success) return fileFailure(stat.error, stat.errorCode);
                     if (stat.exists !== true) return fileFailure(t('files.fileReadFailed'));
@@ -132,7 +126,6 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                 let statSizeBytes: number | null = null;
                 let binaryPreviewRevision: string | null = null;
 
-                const target = workspaceFileSystemTargetFromScope(input.scope);
                 if (maxPreviewBytes != null || viewer.previewable) {
                     const stat = await workspaceStatFile(target, input.filePath, { signal: input.signal });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
