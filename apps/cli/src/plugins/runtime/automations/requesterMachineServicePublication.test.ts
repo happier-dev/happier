@@ -227,8 +227,8 @@ it.each(['backup', 'backup receiver', 'Project setup', 'Project removal', 'Proje
                 const workspace = { id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/project',
                     label: null, createdAtMs: 1, lastOpenedAtMs: null };
                 if (projectRemoval) {
-                    const worktreePath = join(isolated.home, `${rootActionId}-removal`);
-                    const siblingPath = join(isolated.home, `${rootActionId}-retained-sibling`);
+                    const worktreePath = join(isolated.home, `${authorizationActionId}-removal`);
+                    const siblingPath = join(isolated.home, `${authorizationActionId}-retained-sibling`);
                     await Promise.all([mkdir(worktreePath), mkdir(siblingPath)]);
                     const ports = getHostWorktreePortsOwner();
                     const capturedRoot = await resolvePhysicalWorktreeRootIdentity(worktreePath);
