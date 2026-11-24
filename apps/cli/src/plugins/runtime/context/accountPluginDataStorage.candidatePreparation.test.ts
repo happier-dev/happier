@@ -416,16 +416,15 @@ it.each(['channel-state', 'channel-deliveries'])('adopts the observed retained %
 
 it.each([
     { id: 'channel-deliveries', version: 5 },
-    { id: 'channel-state', version: 24 },
-])('promotes a stored V$version $id row on Collection demand', async ({ id, version }) => {
+    { id: 'channel-state', version: 24, sourceDigest: '5EY3qVdZqSlCS_M08QWkvHIIhCYdvSvT437gTs6KSQY' },
+    { id: 'channel-state', version: 25, sourceDigest: 'EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM' },
+])('promotes a stored V$version $id row on Collection demand', async ({ id, version, sourceDigest }) => {
     const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
         new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
     )));
     const manifest = PluginManifestV2Schema.parse(CHANNELS_MANIFEST);
     const declaration = manifest.contributes.accountCollections!.find(item => item.id === id)!;
-    const readerDeclaration = id === 'channel-state'
-        ? declaration
-        : bundled.contributes.accountCollections!.find(item => item.id === id)!;
+    const readerDeclaration = bundled.contributes.accountCollections!.find(item => item.id === id)!;
     const target = normalizePluginAccountCollectionContractV1({ pluginId: manifest.id, contribution: declaration });
     const reader = normalizePluginAccountCollectionContractV1({ pluginId: bundled.id, contribution: readerDeclaration });
 
@@ -434,13 +433,13 @@ it.each([
     ), 'utf8'));
     const source = id === 'channel-state'
         ? normalizePluginAccountCollectionContractV1({ pluginId: manifest.id, contribution: JSON.parse(readFileSync(new URL(
-            '../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV24.json', import.meta.url,
+            `../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV${version}.json`, import.meta.url,
         ), 'utf8')).collection })
         : retained.contracts.map((contract: unknown) =>
             PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract }).contract)
             .find((contract: typeof target) => contract.collectionId === id)!;
     expect(source.schemaVersion).toBe(version);
-    if (id === 'channel-state') expect(source.contractDigest).toBe('5EY3qVdZqSlCS_M08QWkvHIIhCYdvSvT437gTs6KSQY');
+    if (sourceDigest) expect(source.contractDigest).toBe(sourceDigest);
     const { pluginId: _sourcePluginId, collectionId: sourceCollectionId, contractDigest: _sourceDigest,
         ...sourceDefinition } = source;
     const sourceDeclaration = PluginAccountCollectionContributionV1Schema.parse({ ...sourceDefinition, id: sourceCollectionId });
@@ -524,7 +523,7 @@ it.each([
         rowId: value.id, revision: 22, value,
     });
     expect(reader).toEqual(target);
-    expect(reader.schemaVersion).toBe(version + 1);
+    expect(reader.schemaVersion).toBeGreaterThan(version);
     expect(promoted).toBe(true);
 });
 

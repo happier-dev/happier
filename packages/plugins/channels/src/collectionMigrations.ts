@@ -420,6 +420,13 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 25,
     // Native Workflow refusal codes extend terminal attention. Retained rows keep their facts.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v25-to-v26',
+    fromSchemaVersion: 25,
+    toSchemaVersion: 26,
+    // The embedded configured-Fix failure cause gained optional launch-path identity.
+    // Data can validate both retained v25 digests without changing custody.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

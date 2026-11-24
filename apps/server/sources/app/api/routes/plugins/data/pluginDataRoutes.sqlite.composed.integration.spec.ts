@@ -4103,18 +4103,17 @@ describe("plugin collection UI query route", () => {
         });
     });
 
-    it.each([19, 20])("promotes retained Channels v%s census custody and serves it through its exact HTTP reader", async (sourceVersion) => {
-        const accountId = `channels-v${sourceVersion}-retained-census`;
+    it.each([19, 20, 25])("promotes retained Channels v%s state and serves it through its exact HTTP reader", async (sourceVersion) => {
+        const accountId = `channels-v${sourceVersion}-retained-state`;
         const captured = JSON.parse(readFileSync(new URL(
             '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
         ), 'utf8'));
-        const retainedV20 = JSON.parse(readFileSync(new URL(
-            '../../../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV20.json', import.meta.url,
-        ), 'utf8'));
-        const sourceContract = sourceVersion === 20
-            ? normalizePluginAccountCollectionContractV1({ pluginId: CHANNELS_MANIFEST.id,
-                contribution: PluginAccountCollectionContributionV1Schema.parse(retainedV20.collection) })
-            : PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+        const sourceContract = sourceVersion === 19
+            ? PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract
+            : normalizePluginAccountCollectionContractV1({ pluginId: CHANNELS_MANIFEST.id,
+                contribution: PluginAccountCollectionContributionV1Schema.parse(JSON.parse(readFileSync(new URL(
+                    `../../../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV${sourceVersion}.json`, import.meta.url,
+                ), 'utf8')).collection) });
         const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
         const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
         if (!targetDeclaration) throw new Error('Missing current Channels state declaration');
@@ -4151,6 +4150,20 @@ describe("plugin collection UI query route", () => {
             writerContext: { schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
             operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
                 content: sourceValue.content, projection: sourceValue.projection }] } });
+        const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
+        if (sourceVersion === 25) {
+            // The cut-39 contract was still selected by Home when the cut-41
+            // reader started requesting a different v25 digest.
+            expect(source.contractDigest).toBe('EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM');
+            await withPluginDataApp(async app => {
+                const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
+                    payload: { pluginId, collectionId, readerContext: target, rowId: historical.id } });
+                expect(get.statusCode, get.body).toBe(200);
+                expect(PluginCollectionGetResultV1Schema.parse(get.json()).row).toMatchObject({
+                    rowId: historical.id, revision: 1, content: sourceValue.content,
+                });
+            });
+        }
         let migrated = historical;
         for (let version = source.schemaVersion; version < target.schemaVersion;) {
             const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === version);
@@ -4180,7 +4193,6 @@ describe("plugin collection UI query route", () => {
                 actor: { kind: 'human', principalId: 'person-1', isIntegrationSelf: false },
                 message: { id: 'provider:message:1', providerTimestamp: 1, addressingEvidence: 'none', contentProvenance: 'original' } } } };
         const encoded = encode(targetContract, current);
-        const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
         await withPluginDataApp(async app => {
             const historicalGet = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
                 payload: { pluginId, collectionId, readerContext: target, rowId: historical.id } });

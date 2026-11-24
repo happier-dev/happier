@@ -7043,6 +7043,12 @@ content-free native Workflow refusal codes. The V24→V25 identity migration
 preserves existing binding and custody rows. Use matching Channels Collection
 and Action declarations when reading new terminal attention.
 
+In 0.3 development, Channels `channel-state` V26 declares the optional
+Codex launch-path identity in configured-Fix failure causes. Once Home
+materializes the V26 declaration, its reader can read a retained V25 writer's
+rows while the existing writer preparation runs. The V25→V26 identity
+migration preserves binding and custody values.
+
 ### Plugin Collection tables
 
 The Account Collection query owner accepts both `asc` and `desc` keyset order.
