@@ -904,7 +904,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
           || priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
     const pendingWork = workSnapshot?.status === 'pending';
     const retainWork = pendingWork || failedWork;
-    const workAsOfMs = failedWork ? priorWorkSource?.asOfMs : workSnapshot?.asOfMs;
+    const workAsOfMs = failedWork ? priorWorkSource?.asOfMs
+      : (pendingWork ? priorWorkSource?.asOfMs : undefined) ?? workSnapshot?.asOfMs;
     const unreadWorkSessions = pendingWork ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
     // A reread has not replaced observed Work facts. Keep their currentness
     // until its answer changes them, including a completed retained failure.

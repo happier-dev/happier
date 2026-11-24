@@ -1594,14 +1594,20 @@ describe('resolveUsagePageAggregation', () => {
         number: 1, title: 'Work', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open',
       } };
     const result = resolveUsagePageAggregation({ queries: [query, other], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'partial', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
+      work: [{ query, status: 'available', asOfMs: 225, evidence: [witness], pullRequestReadSessions: ['session'] }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'allocated', outcome: { repositoryKey: 'repo' } }]);
-    expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial' });
+    expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'available', asOfMs: 225 });
+    expect(result.results[0]?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
     expect(result.results[1]?.work).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
     const pending = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'pending' }], previous: result }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]?.work).toEqual(result.results[0]?.work);
+    const pendingSlice = UsageQueryBatchResultSchema.parse(pending).results[0]!;
+    expect(pendingSlice.sources).toContainEqual({ source: 'work', status: 'pending', asOfMs: 225 });
+    expect(pendingSlice.workSummary?.pullRequestsRead).toBeUndefined();
+    expect(pendingSlice.workSummary?.mergedPrCount).toBeUndefined();
+    expect(pendingSlice.mergedOutcomes).toBeUndefined();
     const changedValue = UsageAnalyticsQueryResponseSchema.parse({ ...value, contributions: [{ ...contribution, tokens: { ...tokens, input: 14, total: 18 } }] });
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: changedValue, status: 'available' }],
       work: [{ query, status: 'pending' }], previous: result }, bundledUsageModelPriceCatalog);
@@ -1628,7 +1634,7 @@ describe('resolveUsagePageAggregation', () => {
       failed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
         work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] }, bundledUsageModelPriceCatalog);
       expect(failed.results[0]?.work).toEqual(result.results[0]?.work);
-      expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
+      expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 225, errorCode: 'work_evidence_failed' });
       expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
     }
     const failedSource = failed.results[0]!.sources.find(source => source.source === 'work')!;

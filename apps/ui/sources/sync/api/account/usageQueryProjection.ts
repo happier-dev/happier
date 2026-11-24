@@ -338,7 +338,8 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
             // reporting this source's admitted replacement as pending. Consumers
             // can retain its facts without mistaking them for the current read.
             if (prior?.status === 'error' || prior?.errorCode) return { ...prior, status: 'pending' as const };
-            return source.asOfMs === undefined && prior?.asOfMs !== undefined
+            // The Work projection retains its read time with its evidence.
+            return source.source !== 'work' && source.asOfMs === undefined && prior?.asOfMs !== undefined
                 ? { ...source, asOfMs: prior.asOfMs } : source;
         }) };
     }) };

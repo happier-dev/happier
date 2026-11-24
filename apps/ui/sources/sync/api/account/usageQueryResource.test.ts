@@ -10057,8 +10057,9 @@ describe('usage query Work composition', () => {
     }
   });
 
-  it.each(['growth', 'replacement', 'growth with an event on the retained turn'] as const)(
+  it.each(['growth', 'replacement', 'growth with an event on the retained turn', 'explicit Refresh'] as const)(
   'keeps the mounted page and Usage Action Work answer dated and valid during %s', async change => {
+    const refresh = change === 'explicit Refresh';
     const keepsFirstSession = change !== 'replacement';
     const testsReuse = change === 'growth';
     const firstReadAt = Date.UTC(2026, 9, 12, 12);
@@ -10091,7 +10092,7 @@ describe('usage query Work composition', () => {
       },
     } satisfies UsageWorkEvidence;
     const held = createDeferred<void>();
-    let merged = !testsReuse;
+    let merged = !testsReuse && !refresh;
     let hold = false;
     let unavailable = false;
     scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
@@ -10160,17 +10161,18 @@ describe('usage query Work composition', () => {
       }
 
       now += 1_100;
-      contributions = keepsFirstSession ? [...contributions, added] : [added];
+      if (!refresh) contributions = keepsFirstSession ? [...contributions, added] : [added];
       if (change === 'growth with an event on the retained turn') {
         contributions.push({ ...first, id: 'one-new-event-on-the-old-turn' });
       }
       hold = true;
-      pushAccounting();
+      const refreshing = refresh ? entry.refresh() : undefined;
+      if (!refresh) pushAccounting();
       await expect.poll(() => scmTransport.mock.calls.length).toBe(2);
       await expect.poll(() => readPage()?.accounting?.totals.eventCount).toBe(contributions.length);
       await expect.poll(() => workSource(readPage())?.status).toBe('pending');
       expect(scmTransport.mock.lastCall?.[0].payload.sessions.map((row: { sessionId: string }) => row.sessionId).sort())
-        .toEqual(keepsFirstSession ? [first.sessionId, added.sessionId].sort() : [added.sessionId]);
+        .toEqual(refresh ? [first.sessionId] : keepsFirstSession ? [first.sessionId, added.sessionId].sort() : [added.sessionId]);
       const expectPending = (slice: ReturnType<typeof readPage>) => {
         expect.soft(workSource(slice)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
         expect.soft(slice?.workSummary?.pullRequestsRead).toBeUndefined();
@@ -10189,9 +10191,10 @@ describe('usage query Work composition', () => {
       // The Work clock must record the answer, even if Accounting and RPC issuance used another instant.
       now += 600;
       held.resolve();
+      await refreshing;
       await waitForPage();
       for (const slice of [readPage(), await readAction()]) {
-        expectSettledWork(slice, now, keepsFirstSession ? 1 : 0);
+        expectSettledWork(slice, now, keepsFirstSession && merged ? 1 : 0);
         expect(slice?.work?.outcomes.map(row => row.pullRequest.number)).toEqual(keepsFirstSession ? [1] : [2]);
       }
       if (!testsReuse) return;
