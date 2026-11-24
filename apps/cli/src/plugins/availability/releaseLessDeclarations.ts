@@ -76,7 +76,7 @@ function requiresAccountDeclaration(manifest: CanonicalPluginManifest): boolean 
 }
 
 /** Stable per machine and plugin, so a CLI update keeps its webhook targets. */
-function runtimeMaterializationId(pluginId: string): string {
+export function releaseLessRuntimeMaterializationId(pluginId: string): string {
     return `daemon-selected:${pluginId}`;
 }
 
@@ -101,7 +101,7 @@ export function projectReleaseLessPluginDeclarations(input: Readonly<{
                 ? 'localPath' as const : null;
         if (!sourceClass) continue;
         const registryMaterializationId = input.registryMaterializationIdsByPluginId[target.pluginId];
-        const materializationId = registryMaterializationId ?? runtimeMaterializationId(target.pluginId);
+        const materializationId = registryMaterializationId ?? releaseLessRuntimeMaterializationId(target.pluginId);
         declarations.set(target.pluginId, Object.freeze({
             manifest: target.manifest,
             materializationId,

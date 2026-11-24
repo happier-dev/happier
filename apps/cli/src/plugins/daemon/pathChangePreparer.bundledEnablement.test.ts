@@ -10,6 +10,7 @@ import { readInstallationStateRevision } from '@/plugins/store/registry/generati
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
 import { createDaemonPluginChangeService } from './changeService';
 import { createDaemonPathPluginChangePreparer } from './pathChangePreparer';
 import { readCurrentDaemonPluginCatalog } from './currentCatalog';
@@ -61,8 +62,25 @@ describe('bundled Machine desired enablement', () => {
       await writeFile(secretPath, 'retained-secret');
       const generationsBefore = await readdir(store.paths.generationsDir);
 
+      const readMaterialization = async () => {
+        const inventory = await store.readAvailabilityInventory();
+        const lease = reloadController.tryAcquireRuntimeRegistry();
+        if (!lease) throw new Error('Expected a serving plugin runtime');
+        try {
+          return projectPluginInstalledAvailabilityInventory({
+            inventory,
+            registry: lease.registry.contributes,
+            registryRevision: lease.durableRevision,
+            runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
+          }).materializations.find(entry => entry.pluginId === pluginId);
+        } finally {
+          await lease.release();
+        }
+      };
       await expect(changes.requestPluginChange({ kind: 'disable', pluginId }))
         .resolves.toMatchObject({ kind: 'committed', pluginId });
+      const disabledMaterialization = await readMaterialization();
+      expect(disabledMaterialization).toMatchObject({ enabled: false, sourceClass: 'bundledFirstParty' });
       const restarted = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
       const disabled = await restarted.readSnapshot();
       expect(disabled.bundledPluginEnabledById[pluginId]).toBe(false);
@@ -117,6 +135,11 @@ describe('bundled Machine desired enablement', () => {
 
       await expect(changes.requestPluginChange({ kind: 'enable', pluginId }))
         .resolves.toMatchObject({ kind: 'committed', pluginId });
+      expect(await readMaterialization()).toMatchObject({
+        materializationId: disabledMaterialization?.materializationId,
+        version: disabledMaterialization?.version,
+        enabled: true,
+      });
       expect((await restarted.readSnapshot()).bundledPluginEnabledById[pluginId] ?? true).toBe(true);
       expect((await readCurrentDaemonPluginCatalog({ happyHomeDir, reloadController }))
         .find(entry => entry.pluginId === pluginId))

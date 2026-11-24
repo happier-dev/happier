@@ -9,6 +9,7 @@ import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalP
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { admitDecodedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
+import { releaseLessRuntimeMaterializationId } from '../../availability/releaseLessDeclarations';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';
 import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
@@ -671,6 +672,26 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         observedAt: current.revision.createdAtMs,
       });
     });
+    const bundledMachineEnablement = resolveBundledPluginMachineEnablement({
+      state: current.catalog,
+      bundledPluginEnabledById: current.revision.bundledPluginEnabledById,
+    });
+    // Disabled bundled sources leave the runtime declaration graph. Keep their
+    // installation observation in the census without loading the source.
+    const disabledBundledMaterializations = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.flatMap(({ pluginId, packageVersion }) =>
+      bundledMachineEnablement[pluginId] === false && !current.revision.plugins[pluginId]
+        ? [Object.freeze({
+            materializationId: releaseLessRuntimeMaterializationId(pluginId),
+            pluginId,
+            version: packageVersion,
+            sourceClass: 'bundledFirstParty' as const,
+            portableRelease: false,
+            uiArtifacts: Object.freeze([]),
+            enabled: false,
+            trustState: 'untrusted' as const,
+            observedAt: current.revision.createdAtMs,
+          })]
+        : []);
     return Object.freeze({
       revision: current.commit.revision,
       releasePublications: Object.freeze([...releasePublications].sort((left, right) => (
@@ -680,6 +701,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       ))),
       materializations: Object.freeze([
         ...installedMaterializations,
+        ...disabledBundledMaterializations,
       ].sort((left, right) => (
         left.materializationId.localeCompare(right.materializationId)
       ))),
