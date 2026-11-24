@@ -49,6 +49,7 @@ export type CodexAppServerSessionControlsSnapshot = Readonly<{
     currentModeId: string | null;
     availableModels: SessionModelOption[];
     modelsObserved: boolean;
+    configuredModelId?: string;
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
 }>;
@@ -408,6 +409,7 @@ export function resolveCodexAppServerCollaborationModeSelection(params: Readonly
 export async function readCodexAppServerSessionControls(params: Readonly<{
     client: JsonRpcClient;
     authMethod?: string | null;
+    configuredModelCwd?: string;
     currentModeId?: string | null;
     currentModelId?: string | null;
     currentReasoningEffort?: string | null;
@@ -415,12 +417,17 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
 }>): Promise<CodexAppServerSessionControlsSnapshot> {
     // Best-effort: Codex app-server endpoints can be feature-gated or versioned. If one endpoint is
     // unavailable, still return whatever we can (most importantly the model list + options).
-    const [modesSettled, modelsSettled] = await Promise.allSettled([
+    const [modesSettled, modelsSettled, configSettled] = await Promise.allSettled([
         params.client.request('collaborationMode/list', {}),
         params.client.request('model/list', {}),
+        params.configuredModelCwd !== undefined
+            ? params.client.request('config/read', { cwd: params.configuredModelCwd, includeLayers: false })
+            : undefined,
     ]);
     const modesResponse = modesSettled.status === 'fulfilled' ? modesSettled.value : null;
     const modelsResponse = modelsSettled.status === 'fulfilled' ? modelsSettled.value : null;
+    const configResponse = configSettled.status === 'fulfilled' ? asRecord(configSettled.value) : null;
+    const configuredModelId = normalizeString(asRecord(configResponse?.config)?.model);
 
     const availableModesWithMasks = normalizeCollaborationModeMasks(modesResponse);
     const availableModes = availableModesWithMasks.map(({ id, name, description }) => ({
@@ -449,6 +456,7 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
         currentModeId,
         availableModels,
         modelsObserved,
+        ...(configuredModelId ? { configuredModelId } : {}),
         currentModelId,
         configOptions: [],
     };

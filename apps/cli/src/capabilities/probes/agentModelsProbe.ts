@@ -49,6 +49,7 @@ export type ProbedAgentModelsResult = Readonly<{
   provider: CatalogAgentId;
   availableModels: ReadonlyArray<ProbedAgentModel>;
   supportsFreeform: boolean;
+  configuredModelId?: string;
   source: 'dynamic' | 'static';
   cacheable?: boolean;
   observedAt?: number;
@@ -65,6 +66,7 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
 
 const ProbeModelsObservationSchema = lazySchema(() => z.object({
   availableModels: z.array(z.unknown()),
+  configuredModelId: z.string().trim().min(1).optional(),
   observedAt: z.number().finite().nonnegative().optional(),
   refreshError: z.boolean().optional(),
   source: z.enum(['dynamic', 'static']).optional(),
@@ -561,7 +563,8 @@ export async function probeAgentModelsBestEffort(params: {
     }
 
     if (preflightModelsAdapter?.probeModelsRaw) {
-      let provenance: { observedAt?: number; refreshError?: boolean; source?: 'dynamic' | 'static' } = {};
+      let provenance: Pick<ProbedAgentModelsResult, 'configuredModelId' | 'observedAt' | 'refreshError'>
+        & { source?: ProbedAgentModelsResult['source'] } = {};
       const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
         const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
           backendTarget: params.backendTarget,
@@ -580,6 +583,7 @@ export async function probeAgentModelsBestEffort(params: {
         const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);
         if (envelope.success) {
           provenance = {
+            ...(envelope.data.configuredModelId ? { configuredModelId: envelope.data.configuredModelId } : {}),
             ...(envelope.data.observedAt !== undefined ? { observedAt: envelope.data.observedAt } : {}),
             ...(envelope.data.refreshError !== undefined ? { refreshError: envelope.data.refreshError } : {}),
             ...(envelope.data.source ? { source: envelope.data.source } : {}),

@@ -880,7 +880,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         return Object.keys(merged).length > 0 ? merged : null;
     }, [agentOptionState, agentType, connectedServicesBindingsPayload]);
 
-    const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
+    const { preflightModels, preflightModelsTargetKey, preflightModelCatalogReady, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
         backendTarget,
         selectedMachineId,
         capabilityServerId,
@@ -1892,6 +1892,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         persistedOperationReentry,
         sourceContext: sourceContextState.sourceContext,
         preflightModels,
+        preflightModelCatalogReady,
     });
 
     const {

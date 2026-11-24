@@ -38,6 +38,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     preflightModelsTargetKey: string | null;
+    preflightModelCatalogReady: boolean;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
@@ -228,5 +229,15 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         ...(dynamicProbeEnabled && preflightModelsKey && params.enabled !== false ? { onRefresh } : {}),
     }), [hasCurrentIdentity, probePhase, refreshedAt, probeError, dynamicProbeEnabled, preflightModelsKey, params.enabled, onRefresh]);
 
-    return { preflightModels: currentModels, preflightModelsTargetKey: currentModels ? preflightModelsTargetKey : null, modelOptions, probe };
+    const preflightModelCatalogReady = Boolean(
+        currentModels && preflightModelsKey && probe.phase === 'idle' && !probe.error && probe.refreshedAt !== null
+        && isDynamicModelProbeCacheFresh(readDynamicModelProbeCache(preflightModelsKey)),
+    );
+    return {
+        preflightModels: currentModels,
+        preflightModelsTargetKey: currentModels ? preflightModelsTargetKey : null,
+        preflightModelCatalogReady,
+        modelOptions,
+        probe,
+    };
 }

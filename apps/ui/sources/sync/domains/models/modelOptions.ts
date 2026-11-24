@@ -86,6 +86,7 @@ export type PreflightModelList = Readonly<{
         modelOptions?: readonly SessionConfigOption[];
     }>>;
     supportsFreeform: boolean;
+    configuredModelId?: string;
 }>;
 
 type DynamicModelRowInput = Readonly<{

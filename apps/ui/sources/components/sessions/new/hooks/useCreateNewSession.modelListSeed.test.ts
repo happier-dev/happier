@@ -31,6 +31,7 @@ const PI_PREFLIGHT_MODELS: PreflightModelList = {
 
 async function setupUseCreateNewSessionHarness(params: Readonly<{
     publishModelsSeedError?: Error;
+    confirm?: boolean;
 }> = {}) {
     const updateSessionPermissionModeSpy = vi.fn();
     const updateSessionModelModeSpy = vi.fn();
@@ -39,7 +40,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
     });
     const captureExceptionSpy = vi.fn();
     const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
-    const modalConfirmSpy = vi.fn(async () => false);
+    const modalConfirmSpy = vi.fn(async () => params.confirm ?? false);
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const refreshSessionsSpy = vi.fn(async () => {});
     const refreshAutomationsSpy = vi.fn(async () => {});
@@ -215,6 +216,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         captureExceptionSpy,
         machineSpawnNewSessionSpy,
         modalAlertSpy,
+        modalConfirmSpy,
         folderAssignmentHttp,
         materializeNewSessionCheckoutSpy,
     };
@@ -228,6 +230,7 @@ async function runCreateSession(
         agentType: AgentId;
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
+        preflightModelCatalogReady?: boolean;
         targetServerId?: string;
         backendTarget?: BackendTargetRefV1;
         targetFolder?: NewSessionTargetFolderV1 | null;
@@ -275,6 +278,7 @@ async function runCreateSession(
             allowedTargetServerIds: [params.targetServerId ?? TARGET_SERVER_ID],
             targetFolder: params.targetFolder ?? null,
             preflightModels: params.preflightModels,
+            preflightModelCatalogReady: params.preflightModelCatalogReady,
         });
 
         handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -298,6 +302,48 @@ afterEach(() => {
 });
 
 describe('useCreateNewSession model list seeding', () => {
+    const codexCatalog = {
+        availableModels: [{ id: 'older-model', name: 'Older model' }],
+        supportsFreeform: false,
+        configuredModelId: 'newer-model',
+    };
+
+    it('warns before launching a configured model missing from the Codex catalog', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            preflightModels: codexCatalog,
+            preflightModelCatalogReady: true,
+        });
+
+        expect(harness.modalConfirmSpy).toHaveBeenCalledWith(
+            'newSession.modelMissingFromCatalogTitle',
+            'newSession.modelMissingFromCatalogMessage',
+            expect.any(Object),
+        );
+        expect(harness.machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+        expect(harness.materializeNewSessionCheckoutSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { modelMode: 'older-model', ready: true, confirm: false },
+        { modelMode: 'default', ready: false, confirm: false },
+        { modelMode: 'default', ready: true, confirm: true },
+    ])('allows launch with model $modelMode, catalog ready $ready, confirmation $confirm', async ({ modelMode, ready, confirm }) => {
+        const harness = await setupUseCreateNewSessionHarness({ confirm });
+
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            modelMode,
+            preflightModels: codexCatalog,
+            preflightModelCatalogReady: ready,
+        });
+
+        expect(harness.modalConfirmSpy).toHaveBeenCalledTimes(confirm ? 1 : 0);
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('seeds sessionModelsV1 from the wizard preflight probe for a dynamic agent without static models', async () => {
         const harness = await setupUseCreateNewSessionHarness();
 

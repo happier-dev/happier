@@ -19,7 +19,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     await fixture.cleanup();
   });
 
-  async function probe(models: unknown[], options: { failFirst?: boolean; accountSettings?: Record<string, unknown> } = {}) {
+  async function probe(models: unknown[], options: { failFirst?: boolean; accountSettings?: Record<string, unknown>; configuredModel?: string } = {}) {
     // The installed app-server process is the only substituted boundary. Launch,
     // RPC orchestration, session-control parsing, normalization and caching stay real.
     const command = await writeFakeCodexAppServerScript({
@@ -39,6 +39,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
         '    ? { error: { code: -32000, message: "temporary startup failure" } }',
         '    : { result: msg.method === "model/list" ? { data: models, nextCursor: null }',
         '      : msg.method === "collaborationMode/list" ? { data: [] }',
+        `      : msg.method === "config/read" ? { config: { model: ${JSON.stringify(options.configuredModel ?? null)}, extra: "private-value" } }`,
         '      : { userAgent: "fake/0.0.0", platformFamily: "unix", platformOs: "linux" } };',
         '  process.stdout.write(JSON.stringify({ id: msg.id, ...response }) + "\\n");',
         '}',
@@ -82,6 +83,16 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
         ] }],
       }],
     });
+  });
+
+  it('reports the effective configured model separately from the discovered catalog', async () => {
+    const result = await probe([{ id: 'older-model', displayName: 'Older model' }], {
+      configuredModel: 'newer-model',
+    });
+
+    expect(result).toMatchObject({ source: 'dynamic', configuredModelId: 'newer-model' });
+    expect(result.availableModels.map((model) => model.id)).toEqual(['default', 'older-model']);
+    expect(JSON.stringify(result)).not.toContain('private-value');
   });
 
   it('uses app-server controls when the shared runtime defaults to appServer', async () => {

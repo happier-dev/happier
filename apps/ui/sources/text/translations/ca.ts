@@ -4827,6 +4827,8 @@ deps: {
     },
 
   newSession: {
+    modelMissingFromCatalogTitle: "El model configurat no apareix a Codex",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `La llista de models de Codex no inclou ${model}, el model triat a la configuració de la CLI. Torna enrere per triar un model de la llista o actualitza Codex en aquest dispositiu.`,
     terminalHostUnavailableTitle: "Terminal no disponible",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Instal·la o actualitza ${host} i reinicia el seu servidor en aquesta màquina, o tria un altre terminal. Es conserva l’esborrany.`,
     ...newSessionMcpTranslationExtension,

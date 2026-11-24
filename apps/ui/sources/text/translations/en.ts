@@ -4777,6 +4777,8 @@ export const en = {
     },
 
     newSession: {
+        modelMissingFromCatalogTitle: "Configured model missing from Codex",
+        modelMissingFromCatalogMessage: ({ model }: { model: string }) => `The Codex model list does not include ${model}, the model set in your CLI settings. Go back to choose a listed model or update Codex on this machine.`,
       terminalHostUnavailableTitle: "Terminal host unavailable",
       terminalHostUnavailableBody: ({ host }: { host: string }) => `Install or update ${host} and restart its server on this machine, or choose another terminal host. Your draft is kept.`,
         ...newSessionMcpTranslationExtension,

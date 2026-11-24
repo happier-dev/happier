@@ -54,7 +54,7 @@ import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization/setSe
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
+import { findModelOptionForEffectiveModelId, getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
@@ -332,6 +332,7 @@ export function useCreateNewSession(params: Readonly<{
      * in-session picker would otherwise stay empty until the runtime publishes on first prompt.
      */
     preflightModels?: PreflightModelList | null;
+    preflightModelCatalogReady?: boolean;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     resumePersistedLaunchKey: string | null;
@@ -405,6 +406,30 @@ export function useCreateNewSession(params: Readonly<{
         if (trimmedEffectiveSelectedPath.length === 0) {
             Modal.alert(t('common.error'), t('newSession.noPathSelected'));
             return;
+        }
+
+        const catalog = current.preflightModels;
+        const configuredModelId = catalog?.configuredModelId;
+        if (
+            current.preflightModelCatalogReady && configuredModelId && catalog
+            && current.modelMode === 'default' && !current.persistedOperationReentry
+            && (!current.resumeSessionId.trim() || opts?.startFreshUnderNewAccount === true)
+        ) {
+            const models = catalog.availableModels.filter((entry) => entry.id !== 'default');
+            const options = models.map(({ id, extendedContextModelId }) => ({ value: id, extendedContextModelId }));
+            if (options.length > 0 && !findModelOptionForEffectiveModelId(options, configuredModelId)) {
+                createInFlightRef.current = true;
+                try {
+                    const confirmed = await Modal.confirm(
+                        t('newSession.modelMissingFromCatalogTitle'),
+                        t('newSession.modelMissingFromCatalogMessage', { model: configuredModelId }),
+                        { confirmText: t('common.continue'), cancelText: t('common.back') },
+                    );
+                    if (!confirmed || latestParamsRef.current.launchIntentSignature !== current.launchIntentSignature) return;
+                } finally {
+                    createInFlightRef.current = false;
+                }
+            }
         }
 
         const persistedOperationReentry = current.persistedOperationReentry;
