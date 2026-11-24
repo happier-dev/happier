@@ -1428,7 +1428,7 @@ class Sync {
       private resumeInFlight: Promise<void> | null = null;
       private resumeWaitController: AbortController | null = null;
       private manualResumeGeneration = 0;
-      private changesCatchUpQueuedAfterResume = false;
+      private changesCatchUpQueuedAfterResume: number | 'unknown' | null = null;
       private pendingOutboxRearmInFlightByScope = new Map<string, Promise<void>>();
       private readonly usesPersistentDesktopSync = isDesktopHost();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
@@ -2919,7 +2919,7 @@ class Sync {
         this.activeServerSessionIds.clear();
         this.changesCursor = null;
         this.resumeInFlight = null;
-        this.changesCatchUpQueuedAfterResume = false;
+        this.changesCatchUpQueuedAfterResume = null;
         this.postSubscriptionChangesCatchUpPending = false;
         if (options?.preserveSessionState !== true) {
             clearEmbedMemoryStorage();
@@ -3622,7 +3622,7 @@ class Sync {
         this.automationRunTraversalTokensByAutomationId.clear();
         this.automationsReadForCredentials = null;
         this.automationRunRefreshPending = false;
-        this.changesCatchUpQueuedAfterResume = false;
+        this.changesCatchUpQueuedAfterResume = null;
         this.postSubscriptionChangesCatchUpPending = false;
         this.sessionDraftSyncEnabled = false;
         this.sessionDraftFlushSync?.stop();
@@ -8495,7 +8495,7 @@ class Sync {
               if (!scopeIsCurrent() || this.manualResumeGeneration !== manualGeneration) return;
               // This fresh census consumes wakes queued before it entered. Wakes
               // during the new run retain their ordinary trailing callback.
-              this.changesCatchUpQueuedAfterResume = false;
+              this.changesCatchUpQueuedAfterResume = null;
               return this.resumeSync('manual');
           };
           // Register directly on the old run before reconnect can queue a wake.
@@ -8515,8 +8515,12 @@ class Sync {
           }
       }
 
-      private requestChangesCatchUp = (): void => {
+      private requestChangesCatchUp = (wakeCursor?: number): void => {
           if (isEmbedWindowContext() && !this.embedSessionScope) return;
+          if (wakeCursor !== undefined) {
+              const appliedCursor = Number(this.changesCursor);
+              if (Number.isSafeInteger(appliedCursor) && wakeCursor <= appliedCursor) return;
+          }
           if (!this.isForeground) {
               this.changesCatchUpOwedWhileAway = true;
               return;
@@ -8527,12 +8531,14 @@ class Sync {
               return;
           }
 
-          // A wake can arrive after the active resume has consumed its final
-          // changes page but before its outer cleanup releases this in-flight
-          // slot. Preserve one level-triggered follow-up through the same
-          // cursor owner; reset clears it with the Account lifetime.
-          if (this.changesCatchUpQueuedAfterResume) return;
-          this.changesCatchUpQueuedAfterResume = true;
+          // The active read can include a concurrent publication. Keep the
+          // highest requested cursor and check it once the read has settled.
+          // A wake without a cursor still needs a follow-up.
+          const queued = this.changesCatchUpQueuedAfterResume;
+          this.changesCatchUpQueuedAfterResume = wakeCursor === undefined || queued === 'unknown'
+              ? 'unknown'
+              : Math.max(queued ?? wakeCursor, wakeCursor);
+          if (queued !== null) return;
           const scopeIsCurrent = this.createServerScopeGuard();
           const manualGeneration = this.manualResumeGeneration;
           const isCurrent = () => scopeIsCurrent() && this.manualResumeGeneration === manualGeneration;
@@ -8543,11 +8549,9 @@ class Sync {
       };
 
       private runQueuedChangesCatchUp = (): void => {
-          if (!this.changesCatchUpQueuedAfterResume) {
-              return;
-          }
-          this.changesCatchUpQueuedAfterResume = false;
-          this.requestChangesCatchUp();
+          const queued = this.changesCatchUpQueuedAfterResume;
+          this.changesCatchUpQueuedAfterResume = null;
+          if (queued !== null) this.requestChangesCatchUp(queued === 'unknown' ? undefined : queued);
       };
 
       public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'changes-catch-up' | 'manual' | 'server-reachable'): Promise<void> => {
@@ -14205,10 +14209,11 @@ class Sync {
                   if (shouldContinue() && sourceServerId) {
                       publishHomeAccountChangeWake(sourceServerId, wake, 'catch-up-pending');
                   }
-                  // Catch-up still consumes every feed row. Its detailed dispatch
-                  // separately marks feedPageConsumed; advisory ids cannot stand
-                  // in for that proof while the request is held or blocked.
-                  this.requestChangesCatchUp();
+                  // The Account wake's envelope seq is its committed feed cursor.
+                  // Advisory ids and Machine payloads cannot advance that checkpoint.
+                  const wakeCursor = wake.t === 'account-change' && parsedUpdate && parsedUpdate.seq > 0
+                      ? parsedUpdate.seq : undefined;
+                  this.requestChangesCatchUp(wakeCursor);
               },
               artifactDataKeys: this.artifactDataKeys,
               applySessions: (sessions) => {

@@ -1,6 +1,7 @@
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createConcurrentCacheNetworkHarness } from '@/dev/testkit/harness/concurrentCacheNetworkHarness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { subscribeHomeAccountChange } from './homeAccountChange';
@@ -141,6 +142,85 @@ describe('stationary Account-change transport cost', () => {
         await publish(true);
         expect(h.requests('/v1/machines/read-batch').length - priorBatches).toBe(2);
         expect(readMachine()?.deploymentApp?.targetLinkId).toBe('new-link');
+    });
+
+    it('skips covered trailing Machine wakes and reads again when a queued cursor is still missing', async () => {
+        const { sync } = await import('@/sync/sync');
+        const machineA = { ...h.machine(h.homeA, 'burst-a'), daemonStateVersion: 2 };
+        const machineB = { ...h.machine(h.homeA, 'burst-b'), daemonStateVersion: 3 };
+        const machines = [machineA, machineB];
+        h.setMachines(h.homeA, machines);
+        const change = (cursor: number, entityId: string) => ({ cursor, kind: 'machine', entityId, changedAt: cursor });
+        const coveredPage = createDeferred<Response>();
+        const partialPage = createDeferred<Response>();
+        let newestCursor = 0;
+        h.setResponder(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (url.pathname === '/v2/changes') {
+                const after = Number(url.searchParams.get('after'));
+                if (newestCursor === 2 && after === 0) return coveredPage.promise;
+                if (newestCursor === 5 && after === 2) return partialPage.promise;
+                if (newestCursor === 5 && after === 3) {
+                    return Response.json({ changes: [change(5, machineB.id)], nextCursor: 5 });
+                }
+                return Response.json({ changes: [], nextCursor: after });
+            }
+            if (url.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(
+                JSON.parse(String(init?.body)), id => machines.find(row => row.id === id) ?? null);
+            return null;
+        });
+        await h.startFocused();
+        await sync.resumeSync('socket-reconnect');
+        const socket = h.socket(h.homeA);
+        const runtime = sync as unknown as { resumeInFlight: Promise<void> | null };
+        const readMachine = (id: string) => h.storage.getState().machineRecordsByServerId[h.homeA.id]?.[id];
+        const readAfter = () => h.requests('/v2/changes').map(({ url }) => url.searchParams.get('after'));
+        const wake = (id: string, seq: number, machineId?: string) => socket.trigger('update', {
+            id, seq, createdAt: 1, body: machineId
+                ? { t: 'account-change', changeKinds: ['machine'], entityIds: [machineId] }
+                : { t: 'account-change' },
+        });
+        h.httpRequests.length = 0;
+
+        try {
+            newestCursor = 2;
+            wake('a-1', 1, machineA.id);
+            await vi.waitFor(() => expect(readAfter()).toEqual(['0']));
+            wake('b-2', 2, machineB.id);
+            coveredPage.resolve(Response.json({
+                changes: [change(1, machineA.id), change(2, machineB.id)], nextCursor: 2,
+            }));
+            await vi.waitFor(() => expect(runtime.resumeInFlight).toBeNull());
+            expect.soft(readAfter(), 'one GET consumed both committed wakes').toEqual(['0']);
+
+            wake('b-2-replayed', 2, machineB.id);
+            await vi.waitFor(() => expect(runtime.resumeInFlight).toBeNull());
+            expect.soft(readAfter(), 'a replay of an applied wake needs no GET').toEqual(['0']);
+
+            h.httpRequests.length = 0;
+            newestCursor = 5;
+            machineB.daemonStateVersion = 4;
+            wake('a-3', 3, machineA.id);
+            await vi.waitFor(() => expect(readAfter()).toEqual(['2']));
+            // A Machine change collapsed over cursor 4, and its socket content was missed.
+            wake('b-5', 5, machineB.id);
+            partialPage.resolve(Response.json({ changes: [change(3, machineA.id)], nextCursor: 3 }));
+            await vi.waitFor(() => {
+                expect(readAfter()).toEqual(['2', '3']);
+                expect(readMachine(machineB.id)?.daemonStateVersion).toBe(4);
+                expect(runtime.resumeInFlight).toBeNull();
+            });
+
+            wake('legacy-coarse-wake', 0);
+            await vi.waitFor(() => {
+                expect(readAfter()).toEqual(['2', '3', '5']);
+                expect(runtime.resumeInFlight).toBeNull();
+            });
+        } finally {
+            coveredPage.resolve(Response.json({ changes: [], nextCursor: 0 }));
+            partialPage.resolve(Response.json({ changes: [], nextCursor: 2 }));
+        }
     });
 
     it('routes settings versions without inventory reads and retains exact Machine and unknown recovery reads', async () => {
