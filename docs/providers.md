@@ -403,7 +403,9 @@ and OpenCode), and Chat Completions at `/coding-agent/v1`. It uses the ordinary
 API-key connection/Saved Secret flow and remains hidden in the model picker by
 default under the shared aggregator policy. The Provider also declares a
 model-inference purpose for personal use with a Vercel OAuth Account. The Agent
-receives the local broker endpoint and Session credential. The broker supplies
+receives the local broker endpoint and Session credential. The Session retains its
+source selection for continuation, and the Provider alone admits and materializes
+the selected source. The broker supplies
 the configured team for catalog observation and sends both the `teamId` query
 parameter and the `x-vercel-ai-gateway-team` header on inference requests.
 

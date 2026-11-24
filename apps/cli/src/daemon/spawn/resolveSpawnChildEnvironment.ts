@@ -247,6 +247,7 @@ export async function resolveSpawnChildEnvironment(params: {
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   options: SpawnSessionOptions;
+  retainedConnectedServices?: SpawnSessionOptions['connectedServices'];
   existingSessionMetadata?: Readonly<Record<string, unknown>> | null;
   /** Home-written inference witness from this Session's protected attach, never Spawn options. */
   acceptedTeamCredentialBinding?: import('@happier-dev/protocol/teams/credentials/sessionBindingIntentV1').SessionTeamCredentialBindingIntentV1 | null;
@@ -296,6 +297,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   options: SpawnSessionOptions;
+  retainedConnectedServices?: SpawnSessionOptions['connectedServices'];
   existingSessionMetadata?: Readonly<Record<string, unknown>> | null;
   acceptedTeamCredentialBinding?: import('@happier-dev/protocol/teams/credentials/sessionBindingIntentV1').SessionTeamCredentialBindingIntentV1 | null;
   resolvedAgentId?: string | null;
@@ -938,7 +940,9 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   if (!params.options.existingSessionId && params.options.memoryEnabled !== undefined) {
     extraEnvForChild.HAPPIER_SESSION_INITIAL_MEMORY_ENABLED = JSON.stringify(params.options.memoryEnabled);
   }
-  const connectedServicesBindingsJson = serializeSessionConnectedServicesBindingsForEnv(params.options.connectedServices);
+  const connectedServicesBindingsJson = serializeSessionConnectedServicesBindingsForEnv(
+    params.retainedConnectedServices ?? params.options.connectedServices,
+  );
   if (connectedServicesBindingsJson) {
     extraEnvForChild[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = connectedServicesBindingsJson;
   }

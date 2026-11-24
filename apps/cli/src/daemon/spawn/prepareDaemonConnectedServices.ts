@@ -7,6 +7,7 @@ import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
+import type { PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type {
     SessionSyncPendingInputServerContractResult,
@@ -127,6 +128,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     prepareAgentIsolationMember?: PrepareAgentIsolationMember;
     signal?: AbortSignal;
     options: SpawnSessionOptions;
+    managedPurpose?: Pick<PreparedManagedPurposeLaunch, 'agentConnectedServices'>;
     normalizedExistingSessionId: string;
     requestedSessionId: string;
     effectiveResume: string;
@@ -162,7 +164,9 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     ok: false;
     result: Extract<SpawnSessionResult, { type: 'error' }>;
 }>> {
-    const admittedBindings = ConnectedServicesBindingsIngressSchema.safeParse(input.options.connectedServices);
+    const admittedBindings = ConnectedServicesBindingsIngressSchema.safeParse(
+        input.managedPurpose ? input.managedPurpose.agentConnectedServices ?? undefined : input.options.connectedServices,
+    );
     if (!admittedBindings.success) {
         return {
             ok: false,
@@ -171,7 +175,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     }
     const admittedOptions = {
         ...input.options,
-        ...(admittedBindings.data ? { connectedServices: admittedBindings.data } : {}),
+        ...(input.managedPurpose || admittedBindings.data ? { connectedServices: admittedBindings.data } : {}),
     };
     const accountPluginSettingsSource = input.options.requesterSessionBootstrap
         ? createRequesterPluginSettingsSource({ bootstrap: input.options.requesterSessionBootstrap,

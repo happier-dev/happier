@@ -1145,6 +1145,7 @@ export async function executeSpawnSessionRequest(
                     isAccountRuntimeCurrent: requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent,
                 } : {}),
                 options: launchOptions,
+                managedPurpose: daemonProviderLaunch.managedPurpose,
                 normalizedExistingSessionId: launchExistingSessionId,
                 requestedSessionId,
                 effectiveResume,

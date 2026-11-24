@@ -908,7 +908,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       : null;
     // A resumed Session carries its exact Account selection. Only a new launch
     // without that selection reads current defaults through the purpose owner.
-    if (!effectiveConnectedServices && externalPurposeDeclarations?.authorizedPurposes.length) {
+    if (!effectiveConnectedServices && activeProviderLaunch?.kind !== 'managedPurpose' && externalPurposeDeclarations?.authorizedPurposes.length) {
       if (
         !dependencies.activateSessionPurposeBindings
         || !dependencies.resolveExternalAgentSessionPurposeBindingSnapshot

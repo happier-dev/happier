@@ -1,6 +1,4 @@
 import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { filterSuppressedConnectedServiceBindings } from '@/providers/spawn/authorize';
 import { randomUUID } from 'node:crypto';
 
 import type { AgentId } from '@happier-dev/agents';
@@ -385,13 +383,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             try {
                 const providerSource = providerLaunch?.providerBinding?.source;
                 if (providerSource?.kind === 'connected_account' && providerLaunch?.connectedServices) {
-                    const remaining = filterSuppressedConnectedServiceBindings({
-                        bindings: providerLaunch.connectedServices,
-                        suppressConnectedServiceIds: [buildQualifiedPluginContributionKey(providerSource.account.service)],
-                    }).bindings;
-                    materializedConnectedServicesSelection = await resolveConnectedServicesSelection(
-                        remaining ?? { v: 2, bindingsByServiceId: {} },
-                    );
+                    materializedConnectedServicesSelection = await resolveConnectedServicesSelection(providerLaunch.connectedServices);
                 }
                 if (credentialBackendTarget && usesExecutionRunProviderModel(opts)) {
                     await assertExecutionRunStructuredAnalysisModelAllowed({

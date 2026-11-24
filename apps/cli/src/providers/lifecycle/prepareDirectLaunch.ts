@@ -105,7 +105,7 @@ export type DirectProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok
       kind: 'managedPurpose';
       agentTargetKey: string;
       selection: ConnectedAccountSessionModelRefV2;
-      connectedServices: ConnectedServiceBindingsV2;
+      connectedServices: ConnectedServiceBindingsV2 | null;
       environment: Readonly<Record<string, string>>;
       unsetEnvKeys: readonly string[];
       providerBinding: AgentSessionProviderBinding;
@@ -221,7 +221,7 @@ export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Re
       scope.register(redaction.close);
       scope.setSanitizer(redaction.redact);
       return { ok: true, kind: 'managedPurpose', agentTargetKey: prepared.agentTargetKey,
-        selection: prepared.selection, connectedServices: materialized.connectedServices,
+        selection: prepared.selection, connectedServices: prepared.agentConnectedServices,
         ...projectLaunchEnvironment(materialized.environmentOverlay), providerBinding: materialized.providerBinding,
         launchMaterialization: materialized.providerBinding.materialization,
         sanitizeDiagnosticText: redaction.redact, additionalRedactionValues: redaction.values(),

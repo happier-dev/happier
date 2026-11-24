@@ -110,6 +110,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
         options: input.options,
+        retainedConnectedServices: input.managedPurpose?.connectedServices,
         ...(existingSessionMetadata ? { existingSessionMetadata } : {}),
         acceptedTeamCredentialBinding: input.sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding,
         resolvedAgentId: input.resolvedAgentId,

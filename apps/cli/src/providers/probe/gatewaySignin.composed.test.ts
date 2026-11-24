@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, it, vi } from 'vitest';
+import { ApiClient } from '@/api/api';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
@@ -7,11 +8,14 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
+import { resolveConnectedServiceMaterializationIdentityForSpawn } from '@/daemon/connectedServices/materialization/identity';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY, parseSessionConnectedServicesBindingsJson } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
 import { resolveExecutionRunChildSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { prepareExecutionRunProviderLaunch } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import { projectRunnerExecutionRunProviderLaunch } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConnectedServices';
 import { prepareDaemonProviderLaunch } from '@/daemon/spawn/prepareDaemonProviderLaunch';
 import { prepareDaemonSpawnChildEnvironment } from '@/daemon/spawn/prepareDaemonSpawnChildEnvironment';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -253,6 +257,29 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       });
       expect(prepared).toMatchObject({ ok: true, managedPurpose: { selection: selection.ref }, attempt: null });
       if (!prepared.ok || !prepared.managedPurpose) throw new Error('Expected admitted Gateway Session launch');
+      const credentials = { token: 'fixture-home-token', encryption: null };
+      const committedOptions = { ...prepared.options, existingSessionId: 'gateway-claude-session',
+        connectedServiceMaterializationIdentityV1: resolveConnectedServiceMaterializationIdentityForSpawn({ options: prepared.options }),
+      };
+      const agentAuth = await prepareDaemonConnectedServices({
+        managedPurpose: prepared.managedPurpose,
+        options: committedOptions,
+        normalizedExistingSessionId: committedOptions.existingSessionId,
+        requestedSessionId: committedOptions.existingSessionId,
+        effectiveResume: '',
+        catalogAgentId: agentId,
+        credentials,
+        api: await ApiClient.create(credentials),
+        connectedServiceRefreshCoordinator: null,
+        processEnv: {},
+        connectedServicesMaterializationBaseDir: homeDir,
+        pluginRuntimeRegistry: fixture.registry,
+      });
+      if (!agentAuth.ok) {
+        const detail = agentAuth.result.errorDetail;
+        throw new Error(`Agent-side launch refused (${detail?.kind === 'launch_error' ? detail.code : agentAuth.result.errorCode})`);
+      }
+      expect(agentAuth.auth).toBeNull();
       const claudeExecutable = await writeExecutableShim({
         dir: homeDir,
         fileName: process.platform === 'win32' ? 'claude.cmd' : 'claude',
@@ -260,11 +287,11 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       });
       const claudeRuntime = resolveAgentCliRuntimeSpecForLookupId(agentId, { catalogSnapshot: fixture.registry.contributes });
       const child = await prepareDaemonSpawnChildEnvironment({
-        options: { ...prepared.options, existingSessionId: 'gateway-claude-session' },
+        options: agentAuth.options,
         effectiveModelSelection: selection, terminal: undefined, resolvedAgentId: agentId,
         profileEnvironmentVariables: {}, daemonSpawnHooks: null, pluginRuntimeRegistry: fixture.registry,
         processEnv: { PATH: homeDir, [resolveAgentCliOverrideEnvKey(claudeRuntime.id)]: claudeExecutable },
-        connectedServiceAuth: null, connectedServiceMaterializationIdentity: null,
+        connectedServiceAuth: agentAuth.auth, connectedServiceMaterializationIdentity: agentAuth.materializationIdentity,
         providerBindingAttempt: null, managedPurpose: prepared.managedPurpose, providerAgentTargetKey: prepared.agentTargetKey,
         providerDiagnosticRedactionLease: redaction, launchResourceScope: scope,
       });
@@ -281,6 +308,8 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
         },
       });
       const env = child.extraEnvForChild;
+      expect(parseSessionConnectedServicesBindingsJson(env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] ?? null))
+        .toEqual(connectedServices);
       const endpoint = env.ANTHROPIC_BASE_URL;
       const localToken = env.ANTHROPIC_AUTH_TOKEN;
       expect(endpoint).toBeDefined();

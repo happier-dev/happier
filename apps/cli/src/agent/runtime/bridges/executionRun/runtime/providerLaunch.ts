@@ -286,7 +286,8 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     if (direct.kind === 'native') return nativeLaunch;
     if (direct.kind === 'managedPurpose') return Object.freeze({
         environment: direct.environment, unsetEnvKeys: direct.unsetEnvKeys,
-        connectedServices: direct.connectedServices, providerBinding: direct.providerBinding,
+        connectedServices: direct.connectedServices ?? { v: 2, bindingsByServiceId: {} },
+        providerBinding: direct.providerBinding,
         sanitizeDiagnosticText: direct.sanitizeDiagnosticText, additionalRedactionValues: direct.additionalRedactionValues,
         revalidateBeforeCommit: direct.revalidateBeforeCommit, cleanupOnExit: direct.cleanupOnExit,
     });

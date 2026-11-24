@@ -21,6 +21,7 @@ import { createManagedProviderExplicitStartCustody } from '@/providers/connectio
 import { acquireBrokerSourceOperation } from '@/providers/broker/brokerSourceOperationAcquisition';
 import { startManagedProviderConsumerApplication, type ExposeManagedProviderConsumerEndpoint } from '@/providers/broker/managedProviderConsumerApplication';
 import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
+import { filterSuppressedConnectedServiceBindings } from '@/providers/spawn/authorize';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
@@ -50,7 +51,6 @@ export type MaterializedManagedPurposeLaunch = Readonly<{
   providerBinding: AgentSessionProviderBinding;
   environmentOverlay: SessionEnvOverlayV1;
   additionalRedactionValues: readonly string[];
-  connectedServices: ConnectedServiceBindingsV2;
   revalidateBeforeCommit(signal?: AbortSignal): Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
   cleanup(): Promise<void>;
 }>;
@@ -62,6 +62,8 @@ export type PreparedManagedPurposeLaunch = Readonly<{
   selection: ConnectedAccountSessionModelRefV2;
   model: AgentSessionProviderBinding['model'];
   connectedServices: ConnectedServiceBindingsV2;
+  /** Agent-side selection after the Provider takes custody of its source binding. */
+  agentConnectedServices: ConnectedServiceBindingsV2 | null;
   materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>, exposeEndpoint?: ExposeManagedProviderConsumerEndpoint): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
 }>;
 
@@ -140,9 +142,13 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     : refuse(unconfirmed ? 'provider_compatibility_unverified' : 'provider_model_not_found');
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
   const connectedServices = input.connectedServices!;
+  const agentConnectedServices = filterSuppressedConnectedServiceBindings({
+    bindings: connectedServices,
+    suppressConnectedServiceIds: [buildQualifiedPluginContributionKey(group.source.family.service)],
+  }).bindings;
   const selectedModelRef = { ...connectedRef, agentTargetKey, modelId: row.descriptor.id };
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
-    model: row.descriptor, connectedServices,
+    model: row.descriptor, connectedServices, agentConnectedServices,
     materialize: async (scope, exposeEndpoint) => {
   const exactTarget = { kind: 'account' as const, account: selection.resolved.account };
   const purpose = candidate.binding.purpose;
@@ -219,7 +225,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
         model: row.descriptor, upstream: { protocol: group.application.protocol, normalizedUrl: consumer.endpointUrl, credential: 'apiKey' },
         materialization: composed.launchMaterialization }, environmentOverlay: composed.providerEnvironmentOverlay,
       additionalRedactionValues: [consumer.credential, consumer.renderedCredential, ...composed.additionalRedactionValues],
-      connectedServices, cleanup: async () => { await cleanup(); },
+      cleanup: async () => { await cleanup(); },
       revalidateBeforeCommit: async currentSignal => !currentSignal?.aborted && consumer.isCurrent()
         && source.isCurrent()
         ? { ok: true } : refuse('provider_authorization_changed') };
