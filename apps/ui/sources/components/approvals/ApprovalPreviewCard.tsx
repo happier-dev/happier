@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupChangeGroupRow } from '@/components/settings/machines/managed/MachineSetupChangeGroupRow';
@@ -141,9 +142,9 @@ const styles = StyleSheet.create((theme) => ({
     card: {
         gap: theme.space.s4,
     },
+    // What was asked is the section's first fact, read in the ink of the facts below it, never as a muted aside.
     summary: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        lineHeight: 20,
+        ...Typography.variant('reading'),
+        color: theme.colors.text.primary,
     },
 }));

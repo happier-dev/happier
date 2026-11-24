@@ -807,3 +807,35 @@ it('keeps a declared contributed Action\'s raw input in Technical details withou
     expect(labels).toEqual(expect.arrayContaining(['Instance', 'Fields']));
     expect(labels).not.toContain('V');
 });
+
+it('leads with the changed value: the Session that asked stays in Technical details on the card and the page alike', async () => {
+    const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://asking-session-target.test' });
+    profiles.push(home.id);
+    const askingId = 'cmw-asking-session';
+    const otherId = 'cmw-other-session';
+    await act(async () => {
+        storage.setState({ settingsScope: { serverId: home.id, accountId: 'account' } });
+        storage.getState().applySessions([
+            createSessionFixture({ id: askingId, serverId: home.id, metadata: { ...createSessionFixture().metadata!, name: 'Review the storefront guide' } }),
+            createSessionFixture({ id: otherId, serverId: home.id, metadata: { ...createSessionFixture().metadata!, name: 'Checkout page review' } }),
+        ]);
+    });
+    const ask = (sessionId: string) => ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli', sessionId: askingId }, actionId: 'session.title.set', summary: 'Rename session',
+        actionArgs: { sessionId, title: 'Storefront copy, final pass' },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' }, sessionId: askingId,
+            serverId: home.id, actionId: 'session.title.set', requestId: `rename-${sessionId}` } });
+    for (const anatomy of ['card', 'page'] as const) {
+        const own = ask(askingId);
+        const screen = await renderScreen(<ActionApprovalFieldsCard request={own} presentation={describeApprovalActionFields(own)}
+            anatomy={anatomy} serverId={home.id} />);
+        // The fade on a card can never hide the new title behind a row naming the Session the card sits in.
+        expect(screen.getTextContent()).toContain('Storefront copy, final pass');
+        expect(screen.getTextContent()).not.toContain('Review the storefront guide');
+        const other = ask(otherId);
+        const elsewhere = await renderScreen(<ActionApprovalFieldsCard request={other} presentation={describeApprovalActionFields(other)}
+            anatomy={anatomy} serverId={home.id} />);
+        // Another Session is what the request changes: it stays readable by its name.
+        expect(elsewhere.getTextContent()).toContain('Checkout page review');
+    }
+});

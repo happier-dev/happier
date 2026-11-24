@@ -326,7 +326,7 @@ export function CapabilityEnableDecisionBar(props: Readonly<{
             alternative={model.alwaysLabel && !model.blocking
                 ? { testID: 'approvals.always', label: model.alwaysLabel, disabled, onPress: () => { void choose('always'); } }
                 : undefined}
-            dismiss={props.onDismiss ? { testID: 'approvals.cancel', label: t('approvals.dismiss'), disabled,
+            dismiss={props.onDismiss ? { testID: 'approvals.cancel', label: t('approvals.cancelRequest'), disabled,
                 accessibilityHint: t('approvals.dismissHint'), onPress: props.onDismiss } : undefined}
             reject={{ testID: 'approvals.reject', label: t('capabilities.session.ask.notNow'), disabled, onPress: () => { void choose('reject'); } }} />
     );

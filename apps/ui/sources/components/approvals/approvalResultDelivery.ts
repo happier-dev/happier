@@ -47,7 +47,10 @@ export function presentApprovalResultDelivery(
     return {
       kind: 'not_sent',
       detail: t('session.askRecord.notSent'),
-      subtitle: failure.reason ?? undefined,
+      // The Session that asked is gone: say that, not the message-send words for an unavailable conversation.
+      subtitle: delivery.code === 'session_input_target_unavailable'
+        ? t('approvals.deliveryAskingSessionUnavailable')
+        : failure.reason ?? undefined,
       failure,
     };
   }

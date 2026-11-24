@@ -1663,6 +1663,27 @@ describe('ApprovalDetailScreen', () => {
     expect(failure?.props.subtitle).toBeUndefined();
   });
 
+  it('says why the Action failed right after its status, before where its result went', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const open = { ...JSON.parse(artifact.body), automaticChecks: undefined };
+    const { projectApprovalExecutionFailureV2 } = await import('@happier-dev/protocol/approvals/approvalExecutionFailure');
+    const execution = projectApprovalExecutionFailureV2({ request: ApprovalRequestV2Schema.parse(open), executedAtMs: 2, failure: {
+      ok: false, errorCode: 'action_failed', error: 'action_failed', effectAttempted: true,
+      failureCause: { phase: 'execution', errorClass: 'Error', errorCode: null, httpStatus: null },
+    } });
+    const request = ApprovalRequestV2Schema.parse({ ...open, status: 'failed', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution,
+      delivery: { status: 'held', localId: 'approval-result:held', code: 'session_input_target_unavailable',
+        failureCause: { phase: 'session.input.admission', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    const order = screen.findAllByType(Item).map(node => node.props.testID)
+      .filter(id => id === 'approvals.status' || id === 'approvals.execution-failure' || id === 'approvals.result-delivery');
+    expect(order).toEqual(['approvals.status', 'approvals.execution-failure', 'approvals.result-delivery']);
+    await screen.unmount();
+  });
+
   it('names an unknown outcome once: the status says it, the failure row says what to do', async () => {
     const artifact = await createDaemonRoutedApprovalArtifact();
     const open = { ...JSON.parse(artifact.body), automaticChecks: undefined };
@@ -2003,9 +2024,8 @@ describe('ApprovalDetailScreen', () => {
     await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
     if (deliveryStatus === 'rejected') {
       expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
-      const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
-      const failure = presentActionFailureOutcome({ errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable', failureCause: cause });
-      expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(failure.reason);
+      // The asking Session is gone: the receipt names that, not a message-send mechanism.
+      expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe('approvals.deliveryAskingSessionUnavailable');
       await screen.pressByTestIdAsync('approvals.technical-details.header');
       expect(screen.getTextContent()).toContain(cause.phase);
       expect(screen.getTextContent()).toContain(cause.errorCode);
@@ -3097,7 +3117,7 @@ describe('ApprovalDetailScreen', () => {
     ).toBe('approvals.reject');
     expect(
       screen.findByTestId('approvals.cancel')?.props.accessibilityLabel,
-    ).toBe('approvals.dismiss');
+    ).toBe('approvals.cancelRequest');
   });
 
   it('shows both target replacement and exact-mirror deletion in one handoff approval that names both endpoints', async () => {

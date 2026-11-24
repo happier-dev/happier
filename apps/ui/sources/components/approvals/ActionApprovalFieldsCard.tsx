@@ -51,7 +51,25 @@ import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
 import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
 
 /** Presentation needs the carried review, not an Artifact or an approval decision record. */
-export type ApprovalFieldsRequest = Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>;
+export type ApprovalFieldsRequest = Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>
+    & Readonly<{ createdBy?: Readonly<{ sessionId?: string | null }>; executionOriginV1?: Readonly<{ sessionId?: string | null }> }>;
+
+/**
+ * The Session that asked is already said where the fields are read (its own transcript, the page's Requested by), so
+ * an ordinary same-Session target keeps only its exact id, in Technical details, and the changed value leads. A
+ * destructive target stays readable before the person acts.
+ */
+export function demoteAskingSessionTarget(presentation: ApprovalFieldsPresentation, askingSessionId: string | null | undefined): ApprovalFieldsPresentation {
+    if (!askingSessionId) return presentation;
+    const isAskingTarget = (row: ApprovalFieldRow) => row.kind === 'value' && !row.technical && row.reference?.kind === 'session'
+        && row.reference.id === askingSessionId && row.reference.presentation !== 'destructive_target';
+    if (!presentation.rows.some(isAskingTarget)) return presentation;
+    return { ...presentation, rows: presentation.rows.map(row => isAskingTarget(row) ? { ...row, technical: true as const } : row) };
+}
+
+function readAskingSessionId(request: ApprovalFieldsRequest | undefined): string | null {
+    return request?.executionOriginV1?.sessionId ?? request?.createdBy?.sessionId ?? null;
+}
 
 function readMachineReferenceTechnicalLines(request?: ApprovalFieldsRequest): readonly TechnicalDetailsLine[] {
     if (!request) return [];
@@ -126,7 +144,10 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     testID?: string;
 }>) {
     const [detailsOpen, setDetailsOpen] = React.useState(props.collapsed !== true);
-    const reading = { ...props, detailsOpen, setDetailsOpen };
+    const askingSessionId = readAskingSessionId(props.request);
+    const presentation = React.useMemo(() => demoteAskingSessionTarget(props.presentation, askingSessionId),
+        [askingSessionId, props.presentation]);
+    const reading = { ...props, presentation, detailsOpen, setDetailsOpen };
     if (props.request && isDiscussionReplyActionIdV1(props.request.actionId) && (props.anatomy === 'page' || detailsOpen)) return (
         <DiscussionReplyApprovalFields request={props.request} serverId={props.serverId ?? null}>
             {presentation => <ApprovalFieldsReading {...reading} presentation={presentation} />}
@@ -139,7 +160,7 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     );
     if ((props.request?.status === undefined || props.request.status === 'open')
         && (props.anatomy === 'page' || detailsOpen) && props.serverId
-        && props.presentation.rows.some(row => row.kind === 'value' && row.entries?.some(entry => entry.homeSetting))) {
+        && presentation.rows.some(row => row.kind === 'value' && row.entries?.some(entry => entry.homeSetting))) {
         return <HomeSettingsApprovalFields {...reading} />;
     }
     return <ApprovalFieldsReading {...reading} />;

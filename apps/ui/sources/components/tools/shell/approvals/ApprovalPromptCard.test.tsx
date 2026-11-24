@@ -953,14 +953,15 @@ describe('ApprovalPromptCard', () => {
     it('names a declared Session reference on the same Home used by the approval decision', async () => {
         const fixture = createSessionFixture();
         if (!fixture.metadata) throw new Error('Missing Session metadata fixture');
+        // Another Session than the one asking: the card sits in the asking Session, which it never names again.
         storage.getState().applySessions([createSessionFixture({
-            id: 'session-1', serverId: homeId,
+            id: 'session-2', serverId: homeId,
             metadata: { ...fixture.metadata, name: 'Release captain' },
         })]);
         const screen = await renderCard({ ...approvalRequest(), actionId: 'session.turn.cancel',
-            actionArgs: { sessionId: 'session-1' } });
+            actionArgs: { sessionId: 'session-2' } });
         expect(screen.getTextContent()).toContain('Release captain');
-        expect(screen.getTextContent()).not.toContain('session-1');
+        expect(screen.getTextContent()).not.toContain('session-2');
     });
 
     it('shows an Agent instructions edit as its proposed document diff, not raw Action fields', async () => {

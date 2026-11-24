@@ -38,7 +38,7 @@ import { ApprovalSessionConsentRow, useApprovalSessionConsentChoice } from './Ap
 import { readSessionApprovalConsentActionIdV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow, readApprovalAcceptedOperationId } from './BrowserOpenOperationStatus';
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
-import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from './ActionApprovalFieldsCard';
+import { ActionApprovalFieldsCard, ApprovalTechnicalDetails, demoteAskingSessionTarget } from './ActionApprovalFieldsCard';
 import { ApprovalReviewFacts } from './ApprovalReviewFacts';
 import { readDeploymentReviewApproval, useDeploymentReviewDecision } from './DeploymentReviewApprovalFacts';
 import {
@@ -258,14 +258,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       : parsed?.kind === 'host_action'
         ? parsed.request.sessionId
         : '';
-  // Requested by already names an ordinary same-Session target, so keep only its exact id in the
-  // disclosure. A destructive target must remain readable before the person acts.
-  const shownActionFields = React.useMemo(() => actionFields && sessionId ? {
-    ...actionFields,
-    rows: actionFields.rows.map(row => row.kind === 'value' && row.reference?.kind === 'session'
-      && row.reference.id === sessionId && row.reference.presentation !== 'destructive_target'
-      ? { ...row, technical: true as const } : row),
-  } : actionFields, [actionFields, sessionId]);
+  // Requested by already names an ordinary same-Session target: the fields' one rule keeps only its id in the disclosure.
+  const shownActionFields = React.useMemo(() => actionFields ? demoteAskingSessionTarget(actionFields, sessionId) : actionFields,
+    [actionFields, sessionId]);
   const { replayRoute } = useApprovalHome(
     { id: artifact?.id ?? props.artifactId, header: artifact?.header ?? null },
     parsed?.kind === 'built_in' || parsed?.kind === 'target' ? parsed.request : null,
@@ -675,6 +670,19 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         mode="info"
         showChevron={false}
       />
+      {/* Why it failed follows its status at once, before where its result went. A before check's refusal
+          says its reason in the checks block, once (lab wait-v-arefused). */}
+      {executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? (
+        <Item
+          testID="approvals.execution-failure"
+          // The Status row already names an unknown outcome, so this row leads with what to do instead of repeating it.
+          title={statusNamesOutcome && failureSummary ? failureSummary : failureHeadline}
+          subtitle={statusNamesOutcome ? undefined : failureSummary}
+          subtitleLines={0}
+          mode="info"
+          showChevron={false}
+        />
+      ) : null}
       {deliveryReceipt ? (
         <Item testID="approvals.result-delivery" title={t('runs.delivery.title')}
           detail={deliveryReceipt.detail} subtitle={deliveryReceipt.subtitle}
@@ -688,18 +696,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       {parsed.kind === 'built_in' ? (
         <ApprovalAcceptedOperationStatusRow request={parsed.request} serverId={approvalServerId} testID="approvals.operation" />
       ) : null}
-      {/* A before check's refusal says its reason in the checks block, once (lab wait-v-arefused). */}
-      {executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? (
-        <Item
-          testID="approvals.execution-failure"
-          // The Status row already names an unknown outcome, so this row leads with what to do instead of repeating it.
-          title={statusNamesOutcome && failureSummary ? failureSummary : failureHeadline}
-          subtitle={statusNamesOutcome ? undefined : failureSummary}
-          subtitleLines={0}
-          mode="info"
-          showChevron={false}
-        />
-      ) : null}
+      {/* The one disclosure for the failure's and the delivery's codes closes the facts it explains. */}
       {(executionFailure?.code || deliveryFailure) && !failureCodeInDetails ? (
         <ApprovalTechnicalDetails
           lines={failureTechnicalDetails}
@@ -732,7 +729,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // Why Approve is off, in the words its hint uses; a host that shows no button says the same thing.
   const approveWithheldReason = approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable')
     : approvalWithheld ? cannotRun ?? t('approvals.approveUnavailableHint') : null;
-  // Dismiss closes without an answer; Reject answers no. Consent remains with decide.
+  // Cancel request settles it as canceled (persisted, no answer); Deny records a rejection. Neither runs the Action.
   // While before checks hold the Action, the same bar answers them as the transcript card does: a shared check's
   // consent (Allow · Skip, Allow only where this Account may author it), Cancel for a running check, and
   // Approve anyway · Deny after a failed one.
@@ -759,7 +756,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       } : undefined}
       dismiss={override || (projectCommand && !checking) ? undefined : { testID: 'approvals.cancel',
         disabled: checking ? checks.cancelDisabled : isDeciding,
-        ...(checking ? { label: t('workflows.triggers.checks.cancel') } : { accessibilityHint: t('approvals.dismissHint') }),
+        ...(checking ? { label: t('workflows.triggers.checks.cancel') }
+          : { label: t('approvals.cancelRequest'), accessibilityHint: t('approvals.dismissHint') }),
         onPress: () => { void (checking ? checks.cancelChecks() : decide('cancel')); } }}
       reject={checking ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),
         disabled: isDeciding || approvalRouteUnavailable,
