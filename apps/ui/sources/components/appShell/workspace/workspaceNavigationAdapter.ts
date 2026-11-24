@@ -9,7 +9,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState, SESSION_PANE_URL_PARAM_KEYS } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { resolveSessionCockpitRouteFromPathname } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { isSessionDetailsWorkspacePath, resolveSessionCockpitRouteFromPathname } from '@/components/workspaceCockpit/session/sessionCockpitState';
 
 export type WorkspaceOpenOptions = Readonly<{
     mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown';
@@ -280,7 +280,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             // A default Project open retains the current page. An addressed open selects its requested resource.
             const addressedProject = target.kind === 'project' && !isProjectDefaultOpen(target);
             const presentationPreview = mode === 'preview' && options.reuseExisting !== false
-                && (isSessionTerminal(target) || (target.kind === 'session' && target.params.mobileSurface === 'tabs'));
+                && (isSessionTerminal(target) || (target.kind === 'session' && (
+                    target.params.mobileSurface === 'tabs'
+                    || isSessionDetailsWorkspacePath(target.params.workspacePathname)
+                )));
             // An ordinary open focuses a known destination, including when its
             // router names the source tab. Only explicit new-tab/split intent
             // creates another tab; a phone view replacement can opt out of reuse.
@@ -450,7 +453,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             // Readiness may re-admit the cold URL after initialization. Its Home
             // alias and omitted view state must not replace the same current pane.
             if (sameDestinationRef(current.target, target)
-                || (current.target.kind === target.kind && changedSessionParams?.length === 0)) {
+                || (current.target.kind === target.kind && changedSessionParams?.length === 0
+                    && current.target.params.workspacePathname === target.params.workspacePathname)) {
                 input.transport.adoptCurrent?.(current, history.index);
                 return true;
             }

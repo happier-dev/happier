@@ -87,6 +87,7 @@ import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/la
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import {
+    isSessionDetailsWorkspacePath,
     resolveSessionRightTabIdForSurface,
     type SessionMobileSurface,
 } from './sessionCockpitState';
@@ -159,7 +160,8 @@ function selectCockpitPaneFacts(scope: PaneScopeState | null) {
     };
 }
 const readHasDeepLinkedDetailsTarget = (params: Readonly<Record<string, string | string[] | undefined>>) =>
-    parseSessionPaneUrlState(params)?.details != null;
+    parseSessionPaneUrlState(params)?.details != null
+    || (typeof params.workspacePathname === 'string' && isSessionDetailsWorkspacePath(params.workspacePathname));
 
 const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurfaceScreenProps) => {
     const router = useRouter();

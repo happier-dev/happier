@@ -36,6 +36,7 @@ import type {
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 import { reconcilePersistedTerminalWorkspace } from './paneScopePersistence';
 import { placeDetailsInSideColumn } from './detailsPanePlacement';
+import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
 import { getVisibleSessionTerminalWorkspacePane, selectSessionTerminalWorkspaceHost, isSessionTerminalWorkspacePane, readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { closeTerminalDetailsTabs, moveTerminalMemberToDetails, moveTerminalWorkspaceToPage, moveTerminalWorkspaceToPane } from './terminalPaneDocking';
@@ -140,6 +141,7 @@ export type AppPaneAction =
     | { type: 'patchDetailsTabState'; scopeId: string; tabKey: string; patch: Readonly<Record<string, unknown>>; persist?: boolean }
     | { type: 'pinDetailsTab'; scopeId: string; tabKey: string; persist?: boolean }
     | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
+    | { type: 'revealDetailsWorkspace'; scopeId: string; defaultTab: DetailsTab }
     | { type: 'closeDetails'; scopeId: string }
     | Readonly<{
         type: 'openDetailsOverlay';
@@ -702,6 +704,16 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             return updateScopeDetails(state, action.scopeId, (details) => (
                 applyUnpinDetailsTab(details, action.tabKey)
             ));
+        case 'revealDetailsWorkspace':
+            return upsertScope(state, action.scopeId, scope => {
+                const workspace = buildDetailsWorkspaceStateView(scope.details);
+                if (workspace.activeTabKey && scope.details.isOpen) return scope;
+                const retainedKey = workspace.activeTabKey ?? workspace.groups.find(group => group.activeTabKey)?.activeTabKey;
+                const details = retainedKey
+                    ? { ...(workspace.activeTabKey ? scope.details : applySetActiveDetailsTab(scope.details, retainedKey)), isOpen: true }
+                    : applyOpenDetailsTab(scope.details, { tab: action.defaultTab, openAs: 'pinned' });
+                return placeDetailsInSideColumn({ ...scope, details });
+            });
         case 'closeDetails':
             return updateScopeDetails(state, action.scopeId, applyCloseDetails);
         case 'openDetailsOverlay':

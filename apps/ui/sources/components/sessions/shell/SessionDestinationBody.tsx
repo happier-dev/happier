@@ -3,6 +3,8 @@ import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRo
 import { useDestinationParams, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
@@ -10,6 +12,7 @@ import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/tran
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import {
+    isSessionDetailsWorkspacePath,
     resolveSessionMobileSurfaceIntent,
     shouldUseSessionCockpitExperience,
 } from '@/components/workspaceCockpit/session/sessionCockpitState';
@@ -107,6 +110,7 @@ export function SessionDestinationBody(props: Readonly<{
         id?: string | string[];
         serverId?: string | string[];
         mobileSurface?: string | string[];
+        workspacePathname?: string;
         jumpSeq?: string | string[];
         right?: string | string[];
         bottom?: string | string[];
@@ -153,6 +157,11 @@ export function SessionDestinationBody(props: Readonly<{
     }, [recoveryDataId]);
     const scopeId = createSessionPaneScopeId(sessionId, routeScope.serverId, instanceKey);
     const { scopeState: surfaceFacts } = useAppPaneScope(scopeId, selectSessionSurfaceFacts);
+    const dispatchPane = useAppPaneContext(value => value.dispatch);
+    const revealDetails = isSessionDetailsWorkspacePath(params.workspacePathname);
+    React.useLayoutEffect(() => {
+        if (revealDetails) dispatchPane({ type: 'revealDetailsWorkspace', scopeId, defaultTab: createSessionScmReviewDetailsTab() });
+    }, [dispatchPane, revealDetails, scopeId]);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const activeServerAccountScope = useActiveServerAccountScope();
     const activeServerSnapshot = useActiveServerSnapshot();
@@ -240,7 +249,7 @@ export function SessionDestinationBody(props: Readonly<{
                         sessionId={sessionId}
                         scopeId={scopeId}
                         surface={resolveSessionMobileSurfaceIntent({
-                            routeKind: 'index',
+                            routeKind: revealDetails ? 'details' : 'index',
                             activeRightTabId: surfaceFacts.activeRightTabId,
                             detailsTargetPresent: surfaceFacts.detailsTargetPresent,
                             persistedSurface: props.messageTarget ? 'chat' : initialMobileSurfaceHint,

@@ -335,6 +335,11 @@ export function resolveSessionCockpitRouteFromPathname(
     };
 }
 
+/** The bare Details URL names a retained Session workspace, not one resource. */
+export function isSessionDetailsWorkspacePath(pathname: string | null | undefined): boolean {
+    return resolveSessionCockpitRouteFromPathname(pathname)?.surface === 'tabs';
+}
+
 export function shouldRouteSessionCockpitSurfacePressThroughUrl(input: Readonly<{
     pathname: string | null | undefined;
     sessionId: string;

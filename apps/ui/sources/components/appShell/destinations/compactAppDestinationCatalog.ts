@@ -69,8 +69,8 @@ import {
 import { useOpenAppRightSidebarTab } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { createSessionPaneDetailsTab, parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { createSessionPaneDetailsTab, parseSessionPaneUrlState, serializeSessionPaneUrlState, SESSION_PANE_URL_PARAM_KEYS } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { isSessionDetailsWorkspacePath, resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/settingsRouteRegistry';
 import { readSessionDisplayTitle, sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { readDiscussionTitle, useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
@@ -986,10 +986,9 @@ export function resolveDestinationRefFromHref(
         if (third === 'details') {
             if (rest.length > 0) return null;
             const details = parseSessionPaneUrlState(query)?.details;
-            // Without an addressed resource, Details presents the Session's retained workspace.
-            // Keep its instance (and contributed tabs) instead of falling back to an Expo scope.
+            // The bare route reveals Details within the same retained Session instance.
             if (!details) return query.details ? null : {
-                kind: 'session', params: { ...query, id: second, mobileSurface: 'tabs' },
+                kind: 'session', params: { ...query, id: second, workspacePathname: path },
             };
             return { kind: 'sessionDetails', params: {
                 id: second,
@@ -1053,12 +1052,21 @@ export function readWorkspacePluginAppPageAddress(ref: DestinationRef) {
         ? { pluginId, localId, subPath } : null;
 }
 
+const BARE_SESSION_DETAILS_EXCLUDED_PARAMS = [
+    'id', 'workspacePathname', ...SESSION_PANE_URL_PARAM_KEYS.filter(key => key !== 'right' && key !== 'bottom'),
+];
+
 /** The inverse URL projection for the focused tab's destination. */
 export function hrefForDestinationRef(
     catalog: readonly CompactAppDestination[],
     ref: DestinationRef,
 ): string | null {
     const params = ref.params;
+    if (ref.kind === 'session' && params.id && isSessionDetailsWorkspacePath(params.workspacePathname)) {
+        // The pane URL mirror can hold a selected resource in the Session ref.
+        // Keep the workspace address bare so re-admission preserves its identity.
+        return appendQuery(`/session/${encodedSegment(params.id)}/details`, params, BARE_SESSION_DETAILS_EXCLUDED_PARAMS);
+    }
     if (params.workspacePathname) {
         const target = resolveDestinationRefFromHref(catalog, params.workspacePathname);
         if (!target || target.kind !== ref.kind) return null;

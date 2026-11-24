@@ -6,7 +6,7 @@ import { createDeferred, createMachineFixture, createSessionMessagesFixture, inv
 import type { Message } from '@happier-dev/session-core/messages';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
-import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { DestinationInstanceHost, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
@@ -39,6 +39,14 @@ import { GlassRuntimeEnvironmentProvider, GlassAtmosphereBehindSetterProvider } 
 import type { GlassMaterialEnvironment } from '@/components/ui/glass/glassMaterial';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { hrefForDestinationRef, resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
+import { createWorkspaceEmptyTab, createWorkspaceState, reduceWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { detailsTabPanelNativeId } from '@/components/appShell/panes/details/workspace/DetailsTabStrip';
+import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
+import { t } from '@/text';
 
 // Platform drawing/storage adapters, as in AtmosphereLayer's composed tests.
 vi.mock('@/components/atmosphere/BackdropCanvas', async () => import('@/components/atmosphere/BackdropCanvas.web'));
@@ -52,7 +60,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
 
 installDisconnectedServerSocketBoundary();
 
-const viewport = vi.hoisted(() => ({ width: 1400, height: 900 }));
+const viewport = vi.hoisted(() => ({ width: 1400, height: 900, followNavigation: false }));
 
 // Native SDK/navigation boundaries only; Session, hydration, pane and activation owners stay real.
 vi.mock('react-native', async () => {
@@ -63,8 +71,40 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: '/session/focused' }).module;
 });
-vi.mock('@react-navigation/native', async () =>
-    (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock({ renderInitialNavigatorScreen: true }));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    const sdk = createReactNavigationNativeMock({ renderInitialNavigatorScreen: true });
+    type TabNavigation = Readonly<{
+        navigate: (name: string) => void;
+        canGoBack: () => boolean;
+        goBack: () => void;
+        emit: () => { defaultPrevented: boolean };
+    }>;
+    type TabBarInput = Readonly<{
+        state: { index: number; routes: { name: string; key: string }[] };
+        navigation: TabNavigation;
+    }>;
+    function RoutedNavigator({ children, initialRouteName, tabBar }: React.PropsWithChildren<{
+        initialRouteName?: string;
+        tabBar?: (input: TabBarInput) => React.ReactNode;
+    }>) {
+        const screens = React.Children.toArray(children).filter(React.isValidElement<{
+            name: string;
+            children: (input: { navigation: TabNavigation }) => React.ReactNode;
+        }>);
+        const routes = screens.map(screen => ({ name: screen.props.name, key: screen.props.name }));
+        const [active, setActive] = React.useState(initialRouteName);
+        const index = Math.max(0, routes.findIndex(route => route.name === active));
+        const navigation = { navigate: setActive, canGoBack: () => false, goBack: () => {}, emit: () => ({ defaultPrevented: false }) };
+        return <><React.Fragment key={routes[index].key}>{screens[index].props.children({ navigation })}</React.Fragment>
+            {tabBar?.({ state: { index, routes }, navigation })}</>;
+    }
+    return { ...sdk, createNavigatorFactory: (navigator: unknown) => () => {
+        const initial = sdk.createNavigatorFactory(navigator)();
+        return { ...initial, Navigator: (props: React.ComponentProps<typeof RoutedNavigator>) =>
+            viewport.followNavigation ? <RoutedNavigator {...props} /> : <initial.Navigator {...props} /> };
+    } };
+});
 vi.mock('react-native-safe-area-context', async (importOriginal) => ({
     ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -74,6 +114,7 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => ({
 afterEach(async () => {
     viewport.width = 1400;
     viewport.height = 900;
+    viewport.followNavigation = false;
     await standardCleanup();
 });
 const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-shell' })).toString('base64url')}.signature` };
@@ -126,6 +167,111 @@ function WorkspaceSessionDestination(props: Readonly<{ id: string; serverId: str
         <SessionDestinationBody />
     </DestinationInstanceHost>;
 }
+
+describe('bare Session Details address', () => {
+    it.each([1440, 390])('opens the Details pane with a selected tab on a cold %ipx visit and keeps the warm selection', async width => {
+        viewport.width = width;
+        viewport.followNavigation = true;
+        const phone = width === 390;
+        await withSessionFixture(async serverId => {
+            storage.setState({ isDataReady: true, settings: {
+                ...storage.getState().settings, mobileWorkspaceExperienceV1: 'cockpit',
+            } });
+            const sessionId = 'focused';
+            const rootHref = `/session/${sessionId}?serverId=${serverId}`;
+            const detailsHref = `/session/${sessionId}/details?serverId=${serverId}`;
+            const catalog = resolveCompactAppDestinations({
+                builtins: { externalSessions: false, inbox: false, workflows: false, friends: false },
+                pages: [],
+            });
+            const createNavigation = (entryHref: string, visit: 'cold' | 'warm') => {
+                const prefix = `details-${visit}-${width}`;
+                let state = createWorkspaceState(createWorkspaceEmptyTab(prefix));
+                let nextTab = 0;
+                const listeners = new Set<() => void>();
+                const navigation = createWorkspaceNavigationAdapter({
+                    getState: () => state,
+                    getCatalog: () => catalog,
+                    dispatch: action => { state = reduceWorkspaceState(state, action); },
+                    createId: () => `${prefix}-${++nextTab}`,
+                    transport: { commit: () => {} },
+                    onChange: () => { for (const listener of listeners) listener(); },
+                });
+                navigation.initialize(entryHref);
+                return {
+                    navigation,
+                    active: () => state.tabs[state.groups[state.focusedGroupId].activeTabId],
+                    subscribe: (listener: () => void) => {
+                        listeners.add(listener);
+                        return () => { listeners.delete(listener); };
+                    },
+                };
+            };
+            let pane: ReturnType<typeof useAppPaneScope> | undefined;
+            function RetainedPaneCommands() {
+                const instanceKey = useDestinationInstanceKey();
+                pane = useAppPaneScope(createSessionPaneScopeId(sessionId, serverId, instanceKey));
+                return null;
+            }
+            function Destination({ workspace }: Readonly<{ workspace: ReturnType<typeof createNavigation> }>) {
+                const tab = React.useSyncExternalStore(workspace.subscribe, workspace.active);
+                const href = hrefForDestinationRef(catalog, tab.target);
+                if (!href) throw new Error('Expected a routable Session destination');
+                return <InjectedAuthProvider credentials={credentials}><AppPaneProvider>
+                    <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={href.split('?')[0]}
+                        focused visible phone={phone} navigation={{ push: () => {}, replace: () => {}, back: () => {},
+                            setParams: params => workspace.navigation.setParams(tab.id, params) }}>
+                        <RetainedPaneCommands />
+                        <SessionDestinationBody />
+                    </DestinationInstanceHost>
+                </AppPaneProvider></InjectedAuthProvider>;
+            }
+            const assertSelected = (screen: Awaited<ReturnType<typeof renderScreen>>, title: string) => {
+                const containerId = phone ? 'session-details-screen' : 'multi-pane-details-docked';
+                const details = screen.findHostByTestId(containerId);
+                expect(details, containerId).not.toBeNull();
+                const tabs = details!.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'tab');
+                expect(tabs.filter(node => node.props.accessibilityState?.selected).map(node => node.props.accessibilityLabel))
+                    .toEqual([t('session.detailsPanel.openTabA11y', { title })]);
+            };
+            const cold = createNavigation(detailsHref, 'cold');
+            const coldScreen = await renderScreen(<Destination workspace={cold} />);
+            try {
+                await vi.waitFor(() => assertSelected(coldScreen, t('files.toolbar.review')));
+                expect(hrefForDestinationRef(catalog, cold.active().target)).toBe(detailsHref);
+            } finally {
+                await coldScreen.unmount();
+            }
+
+            const warm = createNavigation(rootHref, 'warm');
+            const retainedId = warm.active().id;
+            const warmScreen = await renderScreen(<Destination workspace={warm} />);
+            await act(async () => {
+                pane!.openDetailsTab(createWorkspaceFileDetailsTab('first.txt'), { intent: 'pinned', present: false });
+                pane!.openDetailsTab(createWorkspaceFileDetailsTab('retained.txt'), { intent: 'pinned', present: false });
+                pane!.closeDetails();
+            });
+            expect(pane?.scopeState?.details.isOpen).toBe(false);
+            await act(async () => { expect(warm.navigation.acceptUrl(detailsHref)).toBe(true); });
+            expect(warm.active().id).toBe(retainedId);
+            await vi.waitFor(() => {
+                const state = pane?.scopeState?.details;
+                expect(state?.isOpen).toBe(true);
+                const selected = state?.tabs.find(tab => tab.key === state.activeTabKey);
+                expect(selected?.title).toBe('retained.txt');
+                const panelId = detailsTabPanelNativeId(state!.focusedGroupId!, selected!.key);
+                const container = warmScreen.findHostByTestId(phone ? 'session-details-screen' : 'multi-pane-details-docked');
+                // The phone puts the retained file's tab controls in its own header.
+                const visiblePanels = container?.findAll(node => typeof node.type === 'string'
+                    && node.props.role === 'tabpanel' && node.props.pointerEvents === 'auto');
+                expect(visiblePanels?.map(panel => panel.props.nativeID)).toEqual([panelId]);
+            });
+            await act(async () => { expect(warm.navigation.acceptUrl(rootHref)).toBe(true); });
+            expect(warm.active().id).toBe(retainedId);
+            expect(hrefForDestinationRef(catalog, warm.active().target)?.split('?')[0]).toBe(`/session/${sessionId}`);
+        });
+    });
+});
 
 describe('SessionDestinationBody workspace activation', () => {
     it('keeps a cold Session curtain until the body draws, and leaves a later Session load in the shell', async () => {
