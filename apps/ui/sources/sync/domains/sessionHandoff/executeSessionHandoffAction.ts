@@ -1,4 +1,4 @@
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionHandoffActionResultV1Schema, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { WorkspaceSyncPrepareBetweenResultV1Schema, type HandoffWorkspaceActionV1, type WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -26,6 +26,7 @@ export type ExecuteSessionHandoffActionResult =
       ok: false;
       error: string;
       errorCode?: string;
+      failureCause?: ActionFailureCauseV1;
       recovery?: unknown;
       workspacePreparation?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: false }>;
     }>;
@@ -58,6 +59,7 @@ export async function executeSessionHandoffAction(
     return {
       ok: false,
       error: normalizeNonEmptyString(actionResult.error) ?? 'failed_to_start_session_handoff',
+      ...(actionResult.failureCause ? { failureCause: actionResult.failureCause } : {}),
       ...(normalizeNonEmptyString(actionResult.errorCode) ? { errorCode: actionResult.errorCode } : {}),
       ...(detail?.success && !detail.data.ok ? { workspacePreparation: detail.data } : {}),
     };

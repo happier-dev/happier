@@ -45,6 +45,33 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (session.handoff)', () => {
+  it.each([
+    { serverId: 'env_source', serverIdentityId: 'srv_home', expected: 'srv_home' },
+    { serverId: 'srv_home', serverIdentityId: 'srv_home', expected: 'srv_home' },
+    { serverId: 'profile', expected: 'profile' },
+    { expected: 'session-home' },
+  ])('uses the destination Home identity with unchanged fallback: %j', async context => {
+    let destinationServerId: string | undefined;
+    const executor = createActionExecutor(createDeps({
+      resolveServerIdForSessionId: () => 'session-home',
+      // Target-daemon transport boundary; observe the actual preflight request.
+      sessionHandoffTargetReplacementApprovalPreflight: async request => {
+        destinationServerId = request.serverId;
+        return { type: 'not_required' };
+      },
+      sessionHandoffStart: async () => ({ handoffId: 'moved',
+        status: { handoffId: 'moved', status: 'completed', phase: 'finalizing', recoveryActions: [] },
+        workspace: { kind: 'none' } }),
+    }));
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const result = await executor.execute('session.handoff', {
+      sessionId: 'session_1', targetMachineId: 'target', targetPath: '/target',
+      workspaceAction: { kind: 'copy_once', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } },
+    }, { surface: 'ui', authority: 'present_user', actionRequestId: 'handoff-home', ...context });
+    expect(result).toMatchObject({ ok: true });
+    expect(destinationServerId).toBe(context.expected);
+  });
+
   it('keeps public callers on the same no-copy policy and rejects contradictory workspace work', async () => {
     const input = { sessionId: 'session_1', targetMachineId: 'target', stateTransfer: 'existing', workspaceAction: { kind: 'none' } };
     const copying = { ...input, workspaceAction: { kind: 'copy_once', contentPolicy: {

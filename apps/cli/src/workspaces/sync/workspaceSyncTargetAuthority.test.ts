@@ -2573,6 +2573,11 @@ describe('workspace sync target authority', () => {
       getProjectSnapshot: () => snapshot(alphaRoot, betaRoot),
     });
     try {
+      await expect(harness.authority.preflightHandoffTargetReplacementHere({
+        v: 1, serverId: 'genuinely-different-home', machineId: 'machine-b',
+        operationId: 'handoff-action-1', targetPath: betaRoot,
+      })).rejects.toMatchObject({ code: 'target_unavailable' });
+
       const result = await harness.authority.preflightHandoffTargetReplacementHere({
         v: 1,
         serverId: 'server-1',

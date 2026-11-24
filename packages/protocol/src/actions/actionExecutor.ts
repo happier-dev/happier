@@ -3576,9 +3576,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? resolveSessionIdFromInput(admittedInput, ctx)
         : null;
       const targetMachineId = normalizeId(data.targetMachineId);
-      const targetServerId = sessionId
+      // Both Action families address the target daemon by its admitted Home
+      // identity; local profile ids remain the fallback for existing callers.
+      const targetServerId = normalizeId(ctx.serverIdentityId) || (sessionId
         ? resolveServerIdForSession(deps, ctx, sessionId)
-        : normalizeId(ctx.serverIdentityId) || normalizeId(ctx.serverId) || null;
+        : normalizeId(ctx.serverId) || null);
       const operationId = normalizeId(ctx.handoffTargetReplacementApproval?.operationId)
         || normalizeId(ctx.actionRequestId);
       if ((actionId === 'session.handoff' && !sessionId) || !targetMachineId || !operationId) {

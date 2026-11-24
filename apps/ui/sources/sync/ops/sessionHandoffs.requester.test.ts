@@ -33,6 +33,7 @@ describe('human requester handoff transport', () => {
         const installationPublicKey = encodeBase64(nacl.sign.keyPair().publicKey, 'base64');
         const admissions: unknown[] = [];
         const actions: unknown[] = [];
+        const failureCause = { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'target_unavailable', httpStatus: null } as const;
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
@@ -57,7 +58,7 @@ describe('human requester handoff transport', () => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 actions.push(request);
                 if (mode === 'e2ee') return Response.json(ExternalActionHttpErrorSchema.parse({ error: 'invalid_request',
-                    code: 'target_unavailable', requestId: request.envelope.requestId }), { status: 409 });
+                    code: 'target_unavailable', requestId: request.envelope.requestId, failureCause }), { status: 409 });
                 return Response.json({ v: 1, actionId: 'session.handoff', requestId: request.envelope.requestId,
                     execution: { ok: true, result: { handoffId: 'moved', status: { handoffId: 'moved', status: 'completed',
                         phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'none' } } } });
@@ -74,6 +75,6 @@ describe('human requester handoff transport', () => {
             accountId: 'bob', custodianAccountId: 'alice', installationId: 'source-install' } } });
         expect(rawRpc).not.toHaveBeenCalled();
         expect(result).toMatchObject(mode === 'plain' ? { ok: true, result: { handoffId: 'moved' } }
-            : { ok: false, errorCode: 'target_unavailable' });
+            : { ok: false, errorCode: 'target_unavailable', failureCause });
     });
 });

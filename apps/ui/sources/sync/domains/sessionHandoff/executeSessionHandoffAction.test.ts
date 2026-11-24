@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('executeSessionHandoffAction', () => {
+  it('carries the original typed target refusal to the picker result', async () => {
+    const { executeSessionHandoffAction } = await import('./executeSessionHandoffAction');
+    const failureCause = { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'target_unavailable', httpStatus: null } as const;
+    const failure = { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable', failureCause };
+    const result = await executeSessionHandoffAction({ execute: async () => failure,
+      sessionId: 'source-session', targetMachineId: 'target', context: { surface: 'ui' } });
+    expect(result).toEqual(failure);
+  });
+
   it('preserves the explicit no-copy policy through Action admission and missing-state rejection', async () => {
     const { executeSessionHandoffAction } = await import('./executeSessionHandoffAction');
     const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'existing_session_state_unavailable', error: 'Missing native history' }));
