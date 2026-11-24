@@ -37,7 +37,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { QualifiedConnectedAccountGroupV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, getUsageAnalyticsQueryRequestKey } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAccountingReadAtMs, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createMachineFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -10054,6 +10054,148 @@ describe('usage query Work composition', () => {
     } finally {
       held.resolve();
       stop();
+    }
+  });
+
+  it('dates the mounted page and Usage Action Work answer independently through accounting updates and a held growth read', async () => {
+    const firstReadAt = Date.UTC(2026, 9, 12, 12);
+    let now = firstReadAt;
+    const machineId = 'work-currentness-machine';
+    const first = { ...workContribution, machineId };
+    const added = { ...first, id: 'more-work', sessionId: 'more-work-session' };
+    let contributions = [first];
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+      ...value, totals: { ...value.totals, eventCount: contributions.length }, contributions,
+      coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+        sources: [{ source: 'runtime', path: 'runtime', status: 'available', asOfMs: now, eventCount: contributions.length }],
+        range: { startMs: 0, endMs: 1000, complete: true } },
+    }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    const metadata = { machineId, path: '/repo', host: 'test', homeDir: '/home/test' };
+    storage.getState().applySessions([first, added].map(row => createSessionFixture({ id: row.sessionId, active: true,
+      serverId: scope.serverId, metadata })));
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: firstReadAt, presenceProtocolVersion: 1 },
+    })]);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const linked = {
+      sessionId: first.sessionId, turnId: first.turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: {
+        provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+          nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open',
+      },
+    } satisfies UsageWorkEvidence;
+    const held = createDeferred<void>();
+    let merged = false;
+    let hold = false;
+    let unavailable = false;
+    scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
+      if (hold) await held.promise;
+      if (unavailable) throw new RetryableServerResponseError(503, 'Unavailable');
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }) => ({
+        sessionId, status: 'partial', pullRequestsRead: true,
+        evidence: sessionId === first.sessionId
+          ? [{ ...linked, pullRequest: { ...linked.pullRequest, state: merged ? 'merged' : 'open' } }] : [],
+      })) });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true,
+      includeCoach: false, workProjection: 'detail' });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const readAction = async () => {
+      const response = await executor.execute('usage.query', { queries: [query] }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      });
+      if (!response.ok) throw new Error(response.errorCode);
+      return UsageQueryBatchResultSchema.parse(response.result).results[0]!;
+    };
+    const readPage = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const workSource = (slice: ReturnType<typeof readPage>) => slice?.sources.find(source => source.source === 'work');
+    const expectWork = (slice: ReturnType<typeof readPage>, asOfMs: number, mergedPrCount: number, status: 'partial' | 'pending') => {
+      expect(workSource(slice)).toMatchObject({ status, asOfMs });
+      expect(slice?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount });
+      expect(slice?.mergedOutcomes?.linkedMergedCount).toBe(mergedPrCount);
+      expect(slice?.work?.outcomes.map(row => row.pullRequest.state)).toEqual([mergedPrCount ? 'merged' : 'open']);
+    };
+    const waitForPage = async () => {
+      await expect.poll(() => readPage()?.accounting?.totals.eventCount).toBe(contributions.length);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+    };
+    const pushAccounting = () => publishHomeAccountChange(scope.serverId, [], { changeKinds: ['account'],
+      usageAccountingChange: { sessionId: null }, sessionReadinessChanges: { sessionIds: [], machineIds: [] } });
+    const release = entry.subscribe(() => {}, true);
+    try {
+      await waitForPage();
+      expect(scmTransport, 'a cold mount acquires Work once').toHaveBeenCalledTimes(1);
+      expectWork(readPage(), firstReadAt, 0, 'partial');
+      expectWork(await readAction(), firstReadAt, 0, 'partial');
+
+      merged = true;
+      for (const offset of [1_100, 2_200, 3_300]) {
+        now = firstReadAt + offset;
+        contributions = [...contributions, { ...first, id: `event-${offset}` }];
+        pushAccounting();
+        await waitForPage();
+        for (const slice of [readPage(), await readAction()]) {
+          expect(slice?.sources.find(source => source.source === 'accounting')?.asOfMs).toBe(now);
+          expectWork(slice, firstReadAt, 0, 'partial');
+        }
+        expect(readUsageAccountingReadAtMs(readPage()!)).toBe(now);
+      }
+      expect(scmTransport, 'a forge merge plus accounting-only changes never reacquires Work').toHaveBeenCalledTimes(1);
+
+      now += 1_100;
+      contributions = [...contributions, added];
+      hold = true;
+      pushAccounting();
+      await expect.poll(() => scmTransport.mock.calls.length).toBe(2);
+      await expect.poll(() => readPage()?.accounting?.totals.eventCount).toBe(contributions.length);
+      expect(scmTransport.mock.lastCall?.[0].payload.sessions.map((row: { sessionId: string }) => row.sessionId).sort())
+        .toEqual([first.sessionId, added.sessionId].sort());
+      expect.soft(workSource(readPage())).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
+      expect.soft(readPage()?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+      const pendingAction = await readAction();
+      expect.soft(workSource(pendingAction)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
+      expect.soft(pendingAction.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+      expect.soft(readPage()?.mergedOutcomes?.linkedMergedCount).toBe(0);
+      expect.soft(pendingAction.mergedOutcomes?.linkedMergedCount).toBe(0);
+      held.resolve();
+      await waitForPage();
+      expectWork(readPage(), now, 1, 'partial');
+      expectWork(await readAction(), now, 1, 'partial');
+
+      now += 1_100;
+      contributions = [...contributions, { ...first, id: 'new-turn-event', turnId: 'next-turn' }];
+      pushAccounting();
+      await waitForPage();
+      expect(scmTransport, 'a new turn on an already admitted Session reacquires Work').toHaveBeenCalledTimes(3);
+      const selector = scmTransport.mock.lastCall?.[0].payload.sessions.find((row: { sessionId: string }) => row.sessionId === first.sessionId);
+      expect(selector?.turnIds).toHaveLength(2);
+      expect(selector?.turnIds).toEqual(expect.arrayContaining(['next-turn', first.turnId]));
+
+      now += 1_100;
+      unavailable = true;
+      await entry.refresh();
+      expect(scmTransport, 'explicit Refresh reacquires unchanged selectors').toHaveBeenCalledTimes(4);
+      expect(workSource(readPage())?.status).toBe('stale');
+      unavailable = false;
+      now += 1_100;
+      await entry.refresh({ failedOnly: true });
+      expect(scmTransport, 'explicit Retry reacquires failed Work').toHaveBeenCalledTimes(5);
+      expectWork(readPage(), now, 1, 'partial');
+    } finally {
+      held.resolve();
+      release();
+      account.dispose();
+      clock.mockRestore();
     }
   });
 
