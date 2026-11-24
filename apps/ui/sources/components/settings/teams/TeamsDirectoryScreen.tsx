@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Redirect, useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { Redirect, useLocalSearchParams, useNavigation, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -78,7 +78,7 @@ const UnavailableHomes = React.memo(function UnavailableHomes(props: Readonly<{
                         testID: index === 0 ? props.retryTestID ?? 'teams-directory-retry' : `${prefix}:${home.serverId}:retry`,
                         label: t('teams.unavailable.retry'),
                         onPress: props.onRetry,
-                    } : teamsUnavailableHomeSettingsAction(home, () => router.push('/settings/actions'))}
+                    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href))}
                 />
             ))}
         </ItemGroup>

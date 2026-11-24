@@ -8,6 +8,13 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useSessionAccessDirectory } from './useSessionAccessDirectory';
+
+// Navigation is the boundary a press crosses; the testkit's router module records where it leads.
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPush } }).module;
+});
 import type { SessionAccessCandidateRowModel } from './sessionAccessEditorTypes';
 
 describe('shared directory viewer presentation', () => {
@@ -67,6 +74,11 @@ describe('shared directory viewer presentation', () => {
                         status: 'error', error: { message: message(), retryable },
                     });
                     expect(hook.getCurrent().sections.find(section => section.kind === kind)!.error?.action?.label).toBe(action());
+                    // Signing in again leads to the Home's own sign-out and its stated consequence; it never signs out here.
+                    if (action()) {
+                        hook.getCurrent().sections.find(section => section.kind === kind)!.error!.action!.onPress();
+                        expect(routerPush).toHaveBeenLastCalledWith('/settings/account');
+                    }
                 }
             });
             expect(hook.getCurrent().sections.find(section => section.kind === 'account')!.status).toBe('idle');

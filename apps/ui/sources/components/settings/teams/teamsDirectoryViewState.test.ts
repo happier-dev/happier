@@ -9,7 +9,7 @@ import { renderScreen } from '@/dev/testkit';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
-import { resolveTeamsDirectoryViewState, teamsUnavailableHomeReason, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
+import { resolveTeamsDirectoryViewState, teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
 
 function team(id: string, name: string, overrides?: Partial<TeamSummaryV1>): TeamSummaryV1 {
     return {
@@ -405,4 +405,16 @@ describe('resolveTeamsDirectoryViewState', () => {
         expect(state.partial).toBe(true);
     });
 
+});
+
+describe('teamsUnavailableHomeSettingsAction', () => {
+    it('leads a released 0.2 sign-in to the Home\'s own sign-out, where its consequence is said, never signing out on press', () => {
+        const open = vi.fn();
+        const action = teamsUnavailableHomeSettingsAction({ reason: 'sign_in_outdated', serverId: 'srv_a' }, open);
+        expect(action?.label).toBe(t('teams.errors.signInAgainAction'));
+        action?.onPress();
+        expect(open).toHaveBeenCalledWith('/settings/account');
+        teamsUnavailableHomeSettingsAction({ reason: 'turned_off', serverId: 'srv_a' }, open)?.onPress();
+        expect(open).toHaveBeenLastCalledWith('/settings/actions');
+    });
 });

@@ -109,13 +109,13 @@ function teamDirectoryFailure(error: unknown): HomeDomainFailure<string> | undef
 function teamDirectoryError(
     failure: HomeDomainFailure<string> | null | undefined,
     subject: 'team' | 'group',
-    serverId: string | null,
+    navigate: (href: string) => void,
 ): SessionAccessUiError {
     const unloaded = { code: failure?.code ?? 'session_access_directory_failed', retryable: failure?.retryable ?? true,
         message: t(subject === 'team' ? 'teams.errors.teamsLoadFailed' : 'teams.errors.groupsLoadFailed') };
     if (!failure) return unloaded;
-    if (serverId && isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) {
-        return presentTeamSignInOutdated({ code: failure.code ?? 'team_forbidden', serverId });
+    if (isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) {
+        return presentTeamSignInOutdated({ code: failure.code ?? 'team_forbidden', navigate });
     }
     if ((failure.kind === 'unknown' || failure.kind === 'invalid') && !isActionTurnedOffErrorCode(failure.code)) return unloaded;
     return { code: failure.code ?? 'session_access_directory_failed', message: teamReadFailureLabel(failure), retryable: failure.retryable };
@@ -292,6 +292,7 @@ export function useSessionAccessDirectory(input: Readonly<{
     const routerRef = React.useRef(router);
     routerRef.current = router;
     const serverId = scope?.serverId ?? null;
+    const navigateTo = React.useCallback((href: string) => routerRef.current.push(href as Href), []);
     /**
      * Each Team whose Groups the Home refused because this sign-in does not meet its rule, with that Team's own
      * reason and its sign-in step. The Team's row carries it in place of Add, which could only be refused, and no
@@ -806,7 +807,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const scoped: SessionAccessDirectorySectionModel[] = [{
                 kind: 'account' as const, title: t('session.access.people'), candidates: accountRows,
                 status: teamMembers.status === 'error' ? 'error' as const : teamMembers.status === 'loading' ? 'loading' as const : teamMembers.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,
-                ...(teamMembers.status === 'error' ? { error: teamDirectoryError(teamMembers.error && homeDomainFailureFromSnapshotError(teamMembers.error), 'team', scope?.serverId ?? null) } : {}),
+                ...(teamMembers.status === 'error' ? { error: teamDirectoryError(teamMembers.error && homeDomainFailureFromSnapshotError(teamMembers.error), 'team', navigateTo) } : {}),
                 cursor: teamMembers.hasMore ? `team-members:${teamMemberQuery}:${teamMembers.rows.length}` : null,
                 hasMore: teamMembers.hasMore, loadingMore: teamMembers.status === 'loading_more',
                 resolverKey: `${scopeKey}:team-members:${revision}:${teamMemberQuery}:${teamMembers.rows.length}:${teamMembers.status}:${operationsKey}:${viewerPresentationKey}`,
@@ -815,7 +816,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 kind: 'group' as const, title: t('session.access.groups'), candidates: groupCandidateRows,
                 resolved: teamGroups.status === 'ready',
                 status: teamGroups.status === 'error' ? 'error' as const : teamGroups.status === 'loading' ? 'loading' as const : teamGroups.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,
-                ...(teamGroups.status === 'error' ? { error: teamDirectoryError(teamGroups.error, 'group', scope?.serverId ?? null) } : {}),
+                ...(teamGroups.status === 'error' ? { error: teamDirectoryError(teamGroups.error, 'group', navigateTo) } : {}),
                 cursor: teamGroups.hasMore ? `team-groups:${teamGroups.rows.length}` : null,
                 hasMore: teamGroups.hasMore, loadingMore: teamGroups.status === 'loading_more',
                 resolverKey: `${scopeKey}:team-groups:${revision}:${teamGroups.rows.length}:${teamGroups.status}:${operationsKey}:${groupDisplayNamesKey}`,
@@ -847,7 +848,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             candidates: applyOperations(withTeamSignInRefusals(teamPage.rows, teamRefusals)),
             resolved: pages.team !== undefined,
             status: teamPage.failed ? 'error' : teamPage.loadingMore ? 'refreshing' : 'idle',
-            ...(teamPage.failed ? { error: teamDirectoryError(teamPage.failure, 'team', scope?.serverId ?? null) } : {}),
+            ...(teamPage.failed ? { error: teamDirectoryError(teamPage.failure, 'team', navigateTo) } : {}),
             cursor: teamPage.nextCursor,
             hasMore: teamPage.nextCursor !== null,
             loadingMore: teamPage.loadingMore ?? false,
@@ -882,8 +883,8 @@ export function useSessionAccessDirectory(input: Readonly<{
             status: groupFailed ? 'error' : currentGroupPage.loadingMore ? 'refreshing' : 'idle',
             // Groups are found through the Teams, so a failed Team read is named as the Teams' failure.
             ...(groupFailed ? { error: teamRefusal || currentGroupPage.teamDiscoveryFailed
-                ? teamDirectoryError(teamRefusal ?? currentGroupPage.teamDiscoveryFailure, 'team', scope?.serverId ?? null)
-                : teamDirectoryError(sourceFailure?.failure, 'group', scope?.serverId ?? null) } : {}),
+                ? teamDirectoryError(teamRefusal ?? currentGroupPage.teamDiscoveryFailure, 'team', navigateTo)
+                : teamDirectoryError(sourceFailure?.failure, 'group', navigateTo) } : {}),
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,
             hasMore: groupHasMore,
             loadingMore: currentGroupPage.loadingMore,

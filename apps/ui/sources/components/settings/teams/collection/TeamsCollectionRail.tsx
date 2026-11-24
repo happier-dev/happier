@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useGlobalSearchParams, usePathname, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -229,7 +229,7 @@ const UnavailableHomesRail = React.memo(function UnavailableHomesRail(props: Rea
                         testID: index === 0 ? `${prefix}-retry` : `${prefix}:${home.serverId}:retry`,
                         label: t('teams.unavailable.retry'),
                         onPress: props.onRetry,
-                    } : teamsUnavailableHomeSettingsAction(home, () => router.push('/settings/actions'))}
+                    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href))}
                 />
             ))}
         </>

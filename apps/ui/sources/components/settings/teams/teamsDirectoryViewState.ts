@@ -95,15 +95,15 @@ export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableH
 
 /**
  * The way forward for a Home whose answer no retry can change: the setting itself for a read turned off in
- * Settings, Actions; signing in again (through the Home's own sign-out) for a released 0.2 sign-in.
+ * Settings, Actions; signing in again (the Home's own sign-out in Account settings) for a released 0.2 sign-in.
  */
 export function teamsUnavailableHomeSettingsAction(
     home: Pick<TeamsDirectoryUnavailableHome, 'reason' | 'serverId'>,
-    openActionSettings: () => void,
+    open: (href: string) => void,
 ): Readonly<{ label: string; onPress: () => void }> | undefined {
-    if (home.reason === 'sign_in_outdated') return presentTeamSignInOutdated({ code: 'team_forbidden', serverId: home.serverId }).action;
+    if (home.reason === 'sign_in_outdated') return presentTeamSignInOutdated({ code: 'team_forbidden', navigate: open }).action;
     return home.reason === 'turned_off'
-        ? { label: t('actionConfirmations.openActionSettings'), onPress: openActionSettings }
+        ? { label: t('actionConfirmations.openActionSettings'), onPress: () => open('/settings/actions') }
         : undefined;
 }
 
