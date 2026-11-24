@@ -3,6 +3,8 @@ import type { createActionExecutor } from '@happier-dev/protocol/actions/actionE
 import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -423,6 +425,37 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
 }
 
 describe('Source admission through the default Account Action host', () => {
+    it('reads the exact shared setup Artifact through the member’s admitted Source', async () => {
+        const serverId = await homes.addHome({ name: 'Team Home', serverUrl: 'https://source-setup.test', accountId: 'member' });
+        const sourceId = 'joined-repo';
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const contentRevision = { headerVersion: 1, bodyVersion: 2 };
+        homes.answer(serverId, `/v1/projects/sources/${sourceId}`, { body: { ok: true, canManage: false,
+            source: { id: sourceId, revision: 1, name: 'Joined repository', owner: { kind: 'team', teamId: 'joined-team' },
+                createdByAccountId: 'author', audience: [], attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId }, contentRevision }] },
+        } });
+        homes.answer(serverId, '/v1/projects/sources/foreign-repo', { status: 404, body: { ok: false, error: 'source_access_denied' } });
+        const artifactPath = `/v1/artifacts/${artifactId}`;
+        homes.answer(serverId, artifactPath, { status: 404, body: { error: 'not_found' } });
+        homes.answer(serverId, `${artifactPath}?projectSourceId=${sourceId}`, { body: {
+            id: artifactId, ownerAccountId: 'author', access: 'view', encryptionMode: 'plain', publicAudience: 'none',
+            header: encodePlainArtifactStoredContent({ kind: 'project_setup.v1' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1,
+                environmentVariables: [{ name: 'API_TOKEN', kind: 'secret', required: true }],
+            } }) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ...contentRevision, seq: 2, createdAt: 1, updatedAt: 2,
+        } });
+        const executor = createDefaultActionExecutor();
+        const context = { serverId, expectedAccountId: 'member', surface: 'ui', authority: 'present_user' } as const;
+        expect(await executor.execute(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, { serverId, sourceId }, context))
+            .toEqual({ ok: true, result: { kind: 'published', names: ['API_TOKEN'],
+                provenance: { layer: 'shared', sourceId, contentRevision } } });
+        expect(await executor.execute(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, { serverId, sourceId: 'foreign-repo' }, context))
+            .toMatchObject({ ok: false });
+        expect(await executor.execute('artifact.get', { artifactId }, context))
+            .toMatchObject({ ok: true, result: { artifact: null } });
+        expect(homes.requestsFor(artifactPath)).toHaveLength(1);
+    });
     it.each(['saved', 'retired', 'unknown'] as const)('retains the captured background Account for CI renewal (%s)', async outcome => {
         const serverId = await homes.addHome({ name: 'CI workload Home', serverUrl: 'https://ci-workload.test',
             accountId: 'workload-account', currentAccount: true, active: false });

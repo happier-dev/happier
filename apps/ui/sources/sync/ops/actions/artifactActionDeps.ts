@@ -247,6 +247,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const readOnly = 'readOnly' in invocation && invocation.readOnly === true;
                     const artifact = await (readOnly ? account.readArtifact : account.fetchArtifact)(args.artifactId, { signal,
+                        projectSourceId: args.projectSourceId,
                         ...(readOnly ? { prepareRecipientKeys: false } : {}) });
                     if (!artifact) return { artifact: null };
                     if (!artifact.isDecrypted || !artifact.rawHeader || artifact.bodyVersion === undefined) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });

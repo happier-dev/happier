@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectManifestUpdateInputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { readProjectManifestDocument, ProjectManifestFileSnapshotSchema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { createPlainMachineRowFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -107,6 +109,27 @@ describe('Project definition Actions through the UI executor', () => {
             { key: { kind: 'workspace-ref', serverId: home, id: workspace.workspaceId } },
         ]);
         expect(rpc.machine).not.toHaveBeenCalled();
+
+        const sourceId = 'shared-source';
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const contentRevision = { headerVersion: 1, bodyVersion: 1 };
+        harness.answer(workspace.serverId, `/v1/projects/sources/${sourceId}`, { body: {
+            ok: true, canManage: false, source: { id: sourceId, name: 'Shared setup', revision: 1, createdByAccountId: 'author',
+                audience: [], attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId }, contentRevision }] },
+        } });
+        const path = `/v1/artifacts/${artifactId}`;
+        harness.answer(workspace.serverId, path, { status: 404, body: { error: 'not_found' } });
+        harness.answer(workspace.serverId, `${path}?projectSourceId=${sourceId}`, { body: {
+            id: artifactId, ownerAccountId: 'author', access: 'view', encryptionMode: 'plain', publicAudience: 'none',
+            header: encodePlainArtifactStoredContent({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1 }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1, manifest: { version: 1 } }) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ...contentRevision, seq: 1, createdAt: 1, updatedAt: 1,
+        } });
+        // A stale approved selection returns the setup owner's typed change, even when the
+        // member can only read its protected publication through the exact Source parent.
+        expect(await execute('projects.setup.set', { ...input, intent: { kind: 'accept', sourceId,
+            expectedSelection: { sourceId, contentRevision, digest: 'b'.repeat(64) },
+        } }, context)).toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_setup_effect_changed' } });
     });
 
     it('inspects, imports qualified references and saves exact draft bytes in the addressed Home without a Session', async () => {
