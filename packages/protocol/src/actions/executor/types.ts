@@ -3075,6 +3075,8 @@ export type ActionExecutorDeps = Readonly<{
     request: ApprovalRequest;
     signal?: AbortSignal;
     reportStale?: (reason: ApprovalStaleReason) => void;
+    /** The daemon reports this only when a portable Home passed its own currentness check. */
+    onVerifiedDaemonReplayHome?: (homeId: string) => void;
   }>) => Promise<boolean>;
   /** Reacquires host-private requester ports for a verified exact-daemon replay. Never persisted. */
   prepareApprovalExecutionAuthorization?: (args: Readonly<{

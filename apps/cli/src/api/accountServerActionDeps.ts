@@ -110,6 +110,7 @@ import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type 
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { createActionExecuteFailureError, ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { readVerifiedDaemonReplayHome } from '@happier-dev/protocol/actions/actionExecutor';
 
 export type AccountServerActionDeps = Pick<
   ActionExecutorDeps,
@@ -285,10 +286,18 @@ export function createAccountServerActionDeps(input: Readonly<{
   // supported ordinary V1 credentials are preserved while a missing
   // cryptographic identity fails closed instead of falling back to serverId.
   const serverIdentityId = input.serverIdentityId;
-  const accountServerTargetMismatch = async (actionContext: Readonly<{ serverId?: string | null }> | undefined): Promise<ActionExecuteFailure | null> =>
-    actionContext?.serverId && !await isServerProfileHomeIdentity(serverId, actionContext.serverId)
-      ? { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' }
-      : null;
+  const homeMismatch = (): ActionExecuteFailure =>
+    ({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
+  const accountServerTargetMismatch = async (actionContext: ActionExecutorContext | undefined): Promise<ActionExecuteFailure | null> => {
+    const replayHome = readVerifiedDaemonReplayHome(actionContext);
+    if (replayHome !== undefined) return replayHome === serverIdentityId ? null : homeMismatch();
+    return actionContext?.serverId && !await isServerProfileHomeIdentity(serverId, actionContext.serverId)
+      ? homeMismatch() : null;
+  };
+  const accountOperandMatchesHome = (targetServerId: string, context: ActionExecutorContext): boolean | Promise<boolean> => {
+    const replayHome = readVerifiedDaemonReplayHome(context);
+    return replayHome === undefined ? isServerProfileHomeIdentity(serverId, targetServerId) : targetServerId === replayHome;
+  };
   // Home answered 401/403: its authentication verdict. A local header refusal keeps its typed reason instead.
   const homeAuthenticationRefused = (): ActionExecuteFailure => ({
     ok: false,
@@ -308,8 +317,9 @@ export function createAccountServerActionDeps(input: Readonly<{
     const mismatch = await accountServerTargetMismatch(params.context);
     if (mismatch) return mismatch;
     if (params.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-    const snapshot = serverIdentityId ? undefined : await input.resolveServerFeaturesSnapshot?.();
-    const homeIdentity = serverIdentityId ?? (snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
+    const boundHome = readVerifiedDaemonReplayHome(params.context) ?? serverIdentityId;
+    const snapshot = boundHome ? undefined : await input.resolveServerFeaturesSnapshot?.();
+    const homeIdentity = boundHome ?? (snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
       ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId)
       : undefined);
     if (!homeIdentity) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${params.actionId}` };
@@ -446,8 +456,10 @@ export function createAccountServerActionDeps(input: Readonly<{
       };
       await assertCurrent();
       if (authored.deployment) {
-        const mismatch = await accountServerTargetMismatch({ serverId: authored.deployment.serverId });
-        if (mismatch) throw Object.assign(new Error(mismatch.errorCode), { code: mismatch.errorCode });
+        if (!await accountOperandMatchesHome(authored.deployment.serverId, context)) {
+          const mismatch = homeMismatch();
+          throw Object.assign(new Error(mismatch.error), { code: mismatch.errorCode });
+        }
       }
       const { prepareApiTokenDeploymentAuthoring, resolveInitialDeploymentApprovalV1 } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
       let initialDeployApproval: 'automatic' | 'ask' | undefined;
@@ -456,7 +468,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         const reads = createCliDeploymentActionDeps({ serverHttpBaseUrl,
           admitAccount: async requestedServerId => {
             await assertCurrent();
-            return accountServerTargetMismatch({ serverId: requestedServerId });
+            return requestedServerId && !await accountOperandMatchesHome(requestedServerId, context) ? homeMismatch() : null;
           },
           resolveRequestHeaders: (readContext, readActionId, request) => {
             const authorization = resolveRequestHeaders({ context: readContext,
@@ -800,10 +812,9 @@ export function createAccountServerActionDeps(input: Readonly<{
     projectWorkerAction: async ({ actionId, input: actionInput, context, signal }) => {
       const parsed = ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput);
       const targetServerId = 'workspace' in parsed ? parsed.workspace.serverId : parsed.serverId;
-      if (!await isServerProfileHomeIdentity(serverId, targetServerId)
-        || await accountServerTargetMismatch(context)) {
-        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
-      }
+      if (!await accountOperandMatchesHome(targetServerId, context)) return homeMismatch();
+      const mismatch = await accountServerTargetMismatch(context);
+      if (mismatch) return mismatch;
       if (actionId === 'machines.worker.policy.get' || actionId === 'machines.worker.policy.set') {
         // The incumbent metadata socket has no external Action signing carrier.
         if (context.externalActionCredential) return externalTransportUnsupported(context);
@@ -880,16 +891,9 @@ export function createAccountServerActionDeps(input: Readonly<{
         serverId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'serverId') : undefined,
         machineId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'machineId') : undefined,
       });
-      const preparesKeys = actionId === 'machines.access.prepareKeys';
-      // The approved origin already passed replay currentness. Use its portable
-      // Home with this adapter's bound Home for the reviewed key census.
-      const usesApprovedHome = preparesKeys && actionContext.approvedActionReplay?.artifactId
-        && serverIdentityId !== undefined && actionContext.serverIdentityId === serverIdentityId
-        && target.serverId === serverIdentityId;
-      if (!usesApprovedHome && (!await isServerProfileHomeIdentity(serverId, target.serverId)
-        || await accountServerTargetMismatch(actionContext))) {
-        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
-      }
+      if (!await accountOperandMatchesHome(target.serverId, actionContext)) return homeMismatch();
+      const mismatch = await accountServerTargetMismatch(actionContext);
+      if (mismatch) return mismatch;
       if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
       if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
         return { ok: false, errorCode: 'machine_access_stale_scope', error: 'machine_access_stale_scope' };
@@ -907,7 +911,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           },
         });
       };
-      if (preparesKeys) return await prepareKeys();
+      if (actionId === 'machines.access.prepareKeys') return await prepareKeys();
       const spec = getActionSpec(actionId);
       const request = bindMachineAccessActionHttpRequestV1(actionId, actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,

@@ -663,6 +663,16 @@ export type {
   WorkflowActionExecuteArgs,
 } from './executor/types.js';
 
+// Symbol-keyed so the daemon's admission stays local to the replay and its reviewed children.
+const verifiedDaemonReplayHome = Symbol('verifiedDaemonReplayHome');
+type DaemonReplayContext = ActionExecutorContext & Readonly<{
+  [verifiedDaemonReplayHome]?: string;
+}>;
+
+export function readVerifiedDaemonReplayHome(context: DaemonReplayContext | undefined): string | undefined {
+  return context?.[verifiedDaemonReplayHome];
+}
+
 type ActionExecuteFailure = Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
 
 export { projectSpokenSpawnModelChoices } from '../inputs/inputOptions.js';
@@ -1458,6 +1468,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     expectedServerIdentityId?: string | null;
     signal?: AbortSignal;
     reportStale?: (reason: ApprovalStaleReason) => void;
+    onVerifiedDaemonReplayHome?: (homeId: string) => void;
   }>): Promise<boolean> {
     const stale = (reason: ApprovalStaleReason) => { args.reportStale?.(reason); return false; };
     if (args.request.v !== 2) return stale('origin_version');
@@ -1482,6 +1493,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         request: args.request,
         ...(args.signal ? { signal: args.signal } : {}),
         reportStale,
+        onVerifiedDaemonReplayHome: args.onVerifiedDaemonReplayHome,
       }),
     });
     if (currentness.status === 'requester_home_unavailable' || currentness.status === 'read_failed') {
@@ -1744,6 +1756,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         && sameStrictJsonValue(projectApprovalExecutionOriginCaller(args.ctx.actionCaller), args.request.executionOriginV1.caller))
       && !args.ctx.externalActionExecutionAuthorization && !args.ctx.externalActionCredential
       ? { context: args.ctx, lifetime } : null;
+    let replayHome: string | undefined;
     const isOriginCurrent = async (request: ApprovalRequest, reportStale: (reason: ApprovalStaleReason) => void) => {
       if (retainsHostOperation && args.ctx.actionCaller?.kind === 'workflowRun') {
         const current = args.ctx.signal?.aborted === false;
@@ -1752,6 +1765,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       if (!retainedPluginContext) return await isApprovalExecutionOriginCurrentForRequest({ request, reportStale,
         expectedOriginServerId: args.expectedOriginServerId ?? args.artifactServerId,
+        onVerifiedDaemonReplayHome: homeId => { replayHome = homeId; },
         ...(args.expectedServerIdentityId !== undefined ? { expectedServerIdentityId: args.expectedServerIdentityId } : {}),
         ...(args.ctx.signal ? { signal: args.ctx.signal } : {}),
       });
@@ -2131,7 +2145,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? readPluginInstallApprovalPendingReview(request.preview) : null;
     const deploymentRolloutSemanticInput = actionId === null ? undefined : readDeploymentApprovalSemanticInput(actionId,
       readRecord(request.preview).deploymentRolloutSemanticInput);
-    let executionContext: ActionExecutorContext = {
+    let executionContext: DaemonReplayContext = {
+      ...(replayHome !== undefined ? { [verifiedDaemonReplayHome]: replayHome } : {}),
       approvalOrigin: request.origin ?? null,
       ...(origin?.success && origin.data.callerSurface ? { callerSurface: origin.data.callerSurface } : {}),
       ...(origin?.success && origin.data.approvalProfileId !== undefined ? { approvalProfileId: origin.data.approvalProfileId } : {}),
@@ -2580,8 +2595,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
   // A new ordinary invocation keeps the authenticated caller, never its
   // parent's consent or host-reviewed admission services.
-  const ordinaryChildContext = (context: ActionExecutorContext): ActionExecutorContext => {
-    const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
+  const ordinaryChildContext = (context: DaemonReplayContext): ActionExecutorContext => {
+    const { [verifiedDaemonReplayHome]: _parentReplayHome,
+      bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
       projectSetupSetRootInput: _parentSetupRoot,
       presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,

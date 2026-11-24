@@ -62,6 +62,7 @@ export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
   signal?: AbortSignal;
   reportStale?: (reason: DaemonApprovalExecutionOriginStaleReason) => void;
   onWorkflowRequesterAdmitted?: (requester: AdmittedWorkflowApprovalRequester) => void;
+  onVerifiedDaemonReplayHome?: (homeId: string) => void;
 }>) => Promise<boolean>;
 
 function doesCurrentPermissionModeAdmitApprovedMode(origin: ApprovalExecutionOriginV1, currentMode: string | null): boolean {
@@ -146,7 +147,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
   now?: () => number;
 }>): DaemonApprovalExecutionOriginCurrentness {
   const now = input.now ?? Date.now;
-  return async ({ origin, request, actionInput, signal, reportStale, onWorkflowRequesterAdmitted }) => withApprovalActionTrace(request ? 'approval.request.decide' : origin.actionId,
+  return async ({ origin, request, actionInput, signal, reportStale, onWorkflowRequesterAdmitted, onVerifiedDaemonReplayHome }) => withApprovalActionTrace(request ? 'approval.request.decide' : origin.actionId,
     () => timeApprovalPhase('approval.origin.currentness', async () => {
     const phase = <T>(name: string, read: () => T | Promise<T>): Promise<T> =>
       timeApprovalPhase(`approval.origin.${name}`, read);
@@ -180,6 +181,10 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       if (origin.serverIdentityId !== undefined
           ? currentMachineOrigin.serverIdentityId !== origin.serverIdentityId
           : origin.serverId !== input.serverId) return stale('home_changed');
+      const current = () => {
+        if (origin.serverIdentityId !== undefined) onVerifiedDaemonReplayHome?.(currentMachineOrigin.serverIdentityId);
+        return true;
+      };
       // The one plugin decider. Plugins are trusted code: a genuine update keeps the person's
       // approval of this exact Action and input (ruling 2026-11-02), so neither generation nor
       // source is compared. Uninstalling is the person's revocation, refused at the next execution.
@@ -259,7 +264,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             || (binding.accountId === binding.custodianAccountId && binding.target.kind === 'machine'
               && binding.actionId === origin.actionId));
         // The signature above binds the approved Action and input; plugin presence was decided above.
-        if (origin.caller.kind === 'plugin') return true;
+        if (origin.caller.kind === 'plugin') return current();
         // Home admitted the exact original turn. Accepted Session work still
         // passes the ordinary current Session/permission/Account checks below;
         // naturally ending the old turn is not itself a revocation.
@@ -280,7 +285,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             if (origin.callerPermissionMode === undefined || !doesCurrentPermissionModeAdmitApprovedMode(origin,
               approved.admission.accepted.authorization.admittedPermissionCeiling)) return stale('permission_changed');
           }
-          return true;
+          return current();
         }
       }
       if (origin.accountId !== undefined && origin.accountId !== input.accountId) return stale('account_changed');
@@ -395,7 +400,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             accountId: origin.accountId, machineId: origin.machineId, runId, requestId: origin.requestId });
         }
       }
-      return true;
+      return current();
     } catch (error) {
       rethrowRequesterHomeReadFailure(error);
       return stale('currentness_read_failed');
