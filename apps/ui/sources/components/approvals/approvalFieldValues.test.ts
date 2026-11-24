@@ -25,9 +25,9 @@ it('reads a ceiling request as binary memory, available room and the consequence
             machineMemory: { machineId: 'machine', availableBytes: 2 ** 31, totalBytes: 2 ** 33 } } };
     const presentation = describeApprovalActionFields(input);
     expect(presentation.unrepresentable).toBeNull();
-    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GB' }));
-    expect(describeApprovalRequestFields(input).rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GB' }));
-    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'room', value: '2 GB free of 8 GB' }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GiB' }));
+    expect(describeApprovalRequestFields(input).rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GiB' }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'room', value: '2 GiB free of 8 GiB' }));
     expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ifReached', value: expect.stringMatching(/stop.*resume/i) }));
     expect(presentation.rows.find(row => row.path === 'bytes')).toMatchObject({ technical: true });
     const withoutRoom = describeApprovalActionFields({ ...input, context: { formatDataBytes: formatHappierDataBytes } });
@@ -279,8 +279,9 @@ describe('describeApprovalActionFields', () => {
             actionArgs: { v: 1, teamId: 'team-acme', membershipId: 'membership-alice' },
         })).toEqual({
             rows: [
-                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme' },
-                { kind: 'value', path: 'membershipId', title: 'Membership ID', value: 'membership-alice' },
+                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
+                { kind: 'value', path: 'membershipId', title: 'Membership ID', value: 'membership-alice',
+                    reference: { kind: 'teamMembership', id: 'membership-alice', teamId: 'team-acme' } },
             ],
             unrepresentable: null,
         });
@@ -290,7 +291,7 @@ describe('describeApprovalActionFields', () => {
             actionArgs: { v: 1, teamId: 'team-acme' },
         })).toEqual({
             rows: [
-                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme' },
+                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
             ],
             unrepresentable: null,
         });
@@ -318,7 +319,8 @@ describe('describeApprovalActionFields', () => {
         expect(bearerPresentation).toEqual({
             rows: [
                 { kind: 'value', path: 'homeServerId', title: 'Home ID', value: 'srv-home-acme' },
-                { kind: 'value', path: 'continuation.teamId', title: 'Team ID', value: 'team-acme' },
+                { kind: 'unrepresentable', path: 'continuation.teamId', title: 'Team ID', reason: 'missing_required_context' },
+                { kind: 'value', path: 'continuation.teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
                 { kind: 'value', path: 'teamName', title: 'Team name', value: 'Acme Platform' },
                 { kind: 'value', path: 'role', title: 'Team role', value: 'member' },
                 { kind: 'value', path: 'historyAccess', title: 'History access', value: 'from_membership' },
@@ -326,7 +328,7 @@ describe('describeApprovalActionFields', () => {
                 { kind: 'value', path: 'expiresAt', title: 'Expires at', value: '1234' },
                 { kind: 'value', path: 'recipientEmailMask', title: 'Recipient', value: 'a•••@example.com' },
             ],
-            unrepresentable: null,
+            unrepresentable: { path: 'continuation.teamId', reason: 'missing_required_context' },
         });
         expect(JSON.stringify(bearerPresentation)).not.toContain(bearer);
 
@@ -348,7 +350,7 @@ describe('describeApprovalActionFields', () => {
         });
         expect(continuationPresentation).toEqual({
             rows: [
-                { kind: 'value', path: 'continuation.teamId', title: 'Team ID', value: 'team-acme' },
+                { kind: 'value', path: 'continuation.teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
             ],
             unrepresentable: null,
         });
@@ -369,7 +371,7 @@ describe('describeApprovalActionFields', () => {
         });
         expect(createPresentation).toEqual({
             rows: [
-                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme' },
+                { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
                 { kind: 'value', path: 'recipientEmail', title: 'Recipient email', value: 'alice@example.com' },
                 { kind: 'value', path: 'role', title: 'Team role', value: 'member' },
                 { kind: 'value', path: 'historyAccess', title: 'History access', value: 'from_membership' },
@@ -389,8 +391,9 @@ describe('describeApprovalActionFields', () => {
             },
         });
         expect(reissuePresentation.rows).toEqual([
-            { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme' },
-            { kind: 'value', path: 'invitationId', title: 'Invitation ID', value: 'invitation-alice' },
+            { kind: 'value', path: 'teamId', title: 'Team ID', value: 'team-acme', reference: { kind: 'team', id: 'team-acme' } },
+            { kind: 'value', path: 'invitationId', title: 'Invitation ID', value: 'invitation-alice',
+                reference: { kind: 'teamInvitation', id: 'invitation-alice', teamId: 'team-acme' } },
             { kind: 'value', path: 'recipientEmail', title: 'Recipient email', value: 'replacement@example.com' },
         ]);
         expect(JSON.stringify(reissuePresentation)).not.toContain('another-private-retry-key');
