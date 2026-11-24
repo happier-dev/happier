@@ -59,7 +59,7 @@ import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
 import { usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
-import { HappierDataMetric, HappierDataRows, UsagePeriodSummaryBody } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataMetric, HappierDataRows, UsageDaylight, UsagePeriodSummaryBody, UsageSkyOfDays, UsageWeekTide } from '@happier-dev/plugin-ui/presentation';
 import * as pluginResource from '@happier-dev/plugin-ui/advanced';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
@@ -2090,7 +2090,7 @@ describe('mounted Usage page scope commands', () => {
         } finally { releaseTail.resolve(); syncPerformanceTelemetry.configure({ enabled: false }); }
     });
 
-    it('reuses settled opened E2EE Session facts across How-you-work Today route projections', async () => {
+    it('uses opened E2EE Session time only for Busy time across How-you-work Today visit lenses', async () => {
         const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 }, { createSessionFixture },
             { createPlainSessionWithDisplayRecordFixture }, { createAccountEncryptionCurrentnessFixtureForCredentials },
             { normalizeSessionAccessProjection }] = await Promise.all([
@@ -2112,6 +2112,11 @@ describe('mounted Usage page scope commands', () => {
                 recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) }), 'base64'),
             metadata: await encryption.getSessionEncryption(id)!.encryptMetadata(createSessionFixture({ id }).metadata!), agentState: null };
         const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+        const hourlyAccounting = { ...accounting, contributions: [{
+            id: 'how-today-accounting', sessionId: id, turnId: 'turn', observedAtMs: nowMs - 600,
+            agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null,
+            source: 'native', tokens: totals.tokens, cost: totals.cost, eventCount: 1,
+        }] } satisfies UsageAnalyticsQueryResponse;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-how-today-settled.test', accountId: 'account-a',
             credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
@@ -2119,7 +2124,7 @@ describe('mounted Usage page scope commands', () => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (request.path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', coverage: 'complete', rows: [] });
-                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === '/v2/usage/query') return Response.json(hourlyAccounting);
                 if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
                     const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
                     return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
@@ -2137,9 +2142,11 @@ describe('mounted Usage page scope commands', () => {
             } });
         const server = home.homes.a!;
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-        let changeMetric: (metric: 'tokens' | 'cost') => void = () => {};
+        type VisitMetric = 'tokens' | 'cost' | undefined;
+        let changeMetric: (metric: VisitMetric) => void = () => {};
         function RoutePage() {
-            const [metric, setMetric] = React.useState<'tokens' | 'cost'>('tokens');
+            // Without a visit override, all three stock Rhythm widgets use their saved Busy time lens.
+            const [metric, setMetric] = React.useState<VisitMetric>();
             changeMetric = setMetric;
             return <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'today', metric, costMode: 'auto', focus: null }} />;
         }
@@ -2149,8 +2156,26 @@ describe('mounted Usage page scope commands', () => {
         </InjectedAuthProvider>);
         const { sync } = await import('@/sync/sync');
         await sync.awaitBootstrapForegroundAcquisition();
-        const facts = () => screen.findAllByType(UsageRhythmWidget).map(node => node.props.slice.howYouWork?.intervals?.agentTimeMs);
-        await waitForHomeGovernance(() => expect(facts()).toContain(300));
+        const rhythm = () => screen.findAllByType(UsageRhythmWidget).map(node => node.props);
+        const agentTimes = () => rhythm().flatMap(({ slice }) => slice.howYouWork?.intervals?.agentTimeMs ?? []);
+        const shownValues = () => {
+            const sky: React.ComponentProps<typeof UsageSkyOfDays>['model'] = screen.findByType(UsageSkyOfDays).props.model;
+            const tide: React.ComponentProps<typeof UsageWeekTide>['model'] = screen.findByType(UsageWeekTide).props.model;
+            const daylight: React.ComponentProps<typeof UsageDaylight>['model'] = screen.findByType(UsageDaylight).props.model;
+            return [
+                sky.days.reduce((sum, day) => sum + (day.value ?? 0), 0),
+                tide.grid.flat().reduce<number>((sum, value) => sum + (value ?? 0), 0),
+                daylight.hours.reduce<number>((sum, value) => sum + (value ?? 0), 0),
+            ];
+        };
+        const expectBusyTime = () => {
+            expect(rhythm().map(({ query }) => [query.metric, query.includeSessionEvidence])).toEqual([
+                ['busy', true], ['busy', true], ['busy', true],
+            ]);
+            expect(agentTimes()).toEqual([300]);
+            expect(shownValues()).toEqual([300, 300, 300]);
+        };
+        await waitForHomeGovernance(expectBusyTime);
         await flushHookEffects({ cycles: 40 });
         const reads = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH);
         const admittedReads = reads().length;
@@ -2169,14 +2194,24 @@ describe('mounted Usage page scope commands', () => {
             }] },
         })]));
         await flushHookEffects({ cycles: 40 });
-        expect(facts()).toContain(300);
+        expectBusyTime();
         expect(reads(), 'late local hydration of the already opened revision adds no evidence request').toHaveLength(admittedReads);
-        for (const metric of ['cost', 'tokens'] as const) {
+        for (const [metric, amount] of [['cost', 1], ['tokens', 15]] as const) {
             await act(async () => changeMetric(metric));
+            await waitForHomeGovernance(() => {
+                expect(rhythm().map(({ query }) => [query.metric, query.includeSessionEvidence, query.includeTranscriptEvidence]))
+                    .toEqual(Array.from({ length: 3 }, () => [metric, false, false]));
+                expect(agentTimes()).toEqual([]);
+                expect(shownValues()).toEqual([amount, amount, amount]);
+                expect(screen.findByType(UsageDaylight).props.model.night?.share ?? null).toBeNull();
+            });
             await flushHookEffects({ cycles: 40 });
-            expect(facts()).toContain(300);
-            expect(reads(), 'a new presentation of already opened unchanged Session facts adds no evidence request').toHaveLength(admittedReads);
+            expect(reads(), 'an accounting lens adds no Session evidence request').toHaveLength(admittedReads);
         }
+        await act(async () => changeMetric(undefined));
+        await waitForHomeGovernance(expectBusyTime);
+        await flushHookEffects({ cycles: 40 });
+        expect(reads(), 'returning to Busy time reuses the opened Session revision').toHaveLength(admittedReads);
         const demands = reads().flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
         expect(demands.filter(demand => !demand.query.includeTranscriptEvidence)).toHaveLength(1);
         expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
