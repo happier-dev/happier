@@ -18,6 +18,7 @@ import { homeDomainFailureFromSnapshotError } from '@/sync/domains/teams/teamSna
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { presentTeamSignInOutdated, presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
+import type { TeamSignInOriginAddress } from '@/components/teams/entry/teamSignInHome';
 import { isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 // The workspace's router: a hosted pane (the Session's Share) navigates through its destination owner.
@@ -223,8 +224,9 @@ export function useSessionAccessDirectory(input: Readonly<{
     enabled: boolean;
     teamAddress?: TeamAddress;
     principalKinds?: readonly SessionAccessDirectoryKind[];
+    teamSignInOrigin?: TeamSignInOriginAddress;
 }>): SessionAccessDirectory {
-    const { availability, operations, revision, scope, sessionId } = input;
+    const { availability, operations, revision, scope, sessionId, teamSignInOrigin } = input;
     const enabled = input.enabled && scope !== null;
     const viewerProfile = useShareViewerProfile(scope);
     const viewer = React.useMemo(() => ({ accountId: scope?.accountId, profile: viewerProfile }), [scope?.accountId, viewerProfile]);
@@ -306,11 +308,12 @@ export function useSessionAccessDirectory(input: Readonly<{
             refusals.set(source.team.teamId, presentTeamSignInRequired({
                 code: source.failure?.code ?? 'team_authentication_required', teamId: source.team.teamId, serverId,
                 accepted: source.team.authenticationPolicy?.accepted ?? [],
+                origin: teamSignInOrigin,
                 navigate: (href) => routerRef.current.push(href as Href),
             }));
         }
         return refusals;
-    }, [serverId]);
+    }, [serverId, teamSignInOrigin]);
 
     /**
      * A live add is dispatched by subject before any grant row exists, so the

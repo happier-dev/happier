@@ -5,7 +5,7 @@ import { t } from '@/text';
 
 import { readCurrentRouteAddress } from '@/components/appShell/workspace/currentRouteLocation';
 
-import { teamSignInOrigin, teamSignInReturnPath } from './teamSignInHome';
+import { teamSignInOrigin, teamSignInReturnPath, type TeamSignInOriginAddress } from './teamSignInHome';
 
 /**
  * The sign-ins a Team accepts, each named as it reads inside a sentence ("your Recovery key", "your email and
@@ -36,7 +36,7 @@ export function teamAcceptedSignInNames(
 /**
  * A Team refused because the current sign-in does not meet its rule: which sign-in it needs and the one
  * step that meets it, the Team's own sign-in. Asking again could only be refused again, so it is not retryable.
- * The sign-in returns to the page it was opened from (read when pressed), so the same Share or Start can follow.
+ * The sign-in returns to the supplied surface, or to the current page for callers that use it as their origin.
  */
 export function presentTeamSignInRequired(
   input: Readonly<{
@@ -45,6 +45,7 @@ export function presentTeamSignInRequired(
     serverId: string;
     /** The Team's accepted sign-ins as this member reads them; empty when not known here. */
     accepted: readonly TeamAcceptedAuthenticationV1[];
+    origin?: TeamSignInOriginAddress;
     navigate: (href: string) => void;
   }>,
 ): Readonly<{
@@ -67,8 +68,7 @@ export function presentTeamSignInRequired(
           teamSignInReturnPath({
             teamId: input.teamId,
             serverId: input.serverId,
-            // Read when pressed: the page and only the parameters that reopen it.
-            returnTo: teamSignInOrigin(readCurrentRouteAddress()),
+            returnTo: teamSignInOrigin(input.origin ?? readCurrentRouteAddress()),
           }),
         ),
     },

@@ -31,6 +31,7 @@ import type {
 } from './sessionAccessEditorTypes';
 
 const ACCESS_LEVEL_OPTIONS: readonly SessionAccessLevel[] = ['view', 'edit', 'admin'];
+const NEW_SESSION_SIGN_IN_ORIGIN = { pathname: '/new', search: '' } as const;
 
 function principalKindLabel(subject: PrincipalRefV1): string {
     return subject.kind === 'account' ? t('session.access.account')
@@ -152,6 +153,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     // contract; it must not cause the detailed directory to mount in the chip.
     const directory = useSessionAccessDirectory({
         scope, availability, contextTeams, operations: {}, revision,
+        teamSignInOrigin: NEW_SESSION_SIGN_IN_ORIGIN,
         enabled: editable && demanded,
     });
     const creationDecisionRevision = React.useRef(0);
@@ -241,7 +243,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         && creationRefusal === null && primaryTeamPolicy === null;
     const signInReason = React.useMemo(() => signInRefusal ? presentTeamSignInRequired({
         code: signInRefusal.code, teamId: signInRefusal.teamId, serverId: scope.serverId,
-        accepted: signInRefusal.accepted, navigate: (href) => routerRef.current.push(href as Href),
+        accepted: signInRefusal.accepted, origin: NEW_SESSION_SIGN_IN_ORIGIN, navigate: (href) => routerRef.current.push(href as Href),
     }) : null, [scope.serverId, signInRefusal]);
     // Signing in again on this Home is the natural boundary: the decision is read again then, not polled.
     React.useEffect(() => subscribeHomeCredentialChange((event) => {

@@ -5,6 +5,10 @@ import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createCollaborationSessionRecord, createSessionCollaborationHttpBoundary } from '@/dev/testkit/harness/sessionCollaborationNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { SessionSharingCompatibilityRoute } from '@/app/(app)/session/[id]/sharing';
+import { resolveTeamSignInDestination } from '@/components/teams/entry/teamSignInHome';
 
 import { createDeferred, createSessionListRenderableSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -35,6 +39,7 @@ const transport = vi.hoisted(() => ({
     requests: [] as Array<Readonly<{ origin: string; path: string; method: string; authorization: string | null }>>,
     publicationReachable: true,
     featureReadGate: null as Promise<void> | null,
+    teamShare: null as ((path: string, body: unknown) => Response | undefined) | null,
 }));
 const nativeFocus = vi.hoisted(() => ({
     findNodeHandle: vi.fn<(target: unknown) => number | null>(() => null),
@@ -42,6 +47,7 @@ const nativeFocus = vi.hoisted(() => ({
 }));
 /** The live URL this surface is mounted under, so a consumed query key is observable. */
 const route = vi.hoisted(() => ({
+    pathname: '/session/same-id',
     params: {} as Record<string, string | string[] | undefined>,
     setParams: vi.fn(),
     replace: vi.fn(),
@@ -204,7 +210,9 @@ beforeEach(async () => {
     transport.requests.length = 0;
     transport.publicationReachable = true;
     transport.featureReadGate = null;
+    transport.teamShare = null;
     credentials.unreadable = false;
+    route.pathname = '/session/same-id';
     route.params = {};
     // This module-level router mock outlives the whole file, and the consumed
     // `collaborationFocus` key each test writes back is an override that would
@@ -234,8 +242,9 @@ beforeEach(async () => {
             const payload: unknown = JSON.parse(Buffer.from(tokenPayload, 'base64url').toString('utf8'));
             if (payload && typeof payload === 'object' && 'sub' in payload && typeof payload.sub === 'string') accountId = payload.sub;
         }
-        return await network.route({ url: parsed, path: parsed.pathname, method: init?.method ?? 'GET',
-            body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined, accountId })
+        const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+        return (accountId === credentials.accountId ? transport.teamShare?.(parsed.pathname, body) : undefined)
+            ?? await network.route({ url: parsed, path: parsed.pathname, method: init?.method ?? 'GET', body, accountId })
             ?? Response.json({ error: 'not_found' }, { status: 404 });
     }));
     // The app entry installs this real facade; the discussion owner reaches it
@@ -961,6 +970,98 @@ describe('SessionCollaborationSurface', () => {
         await act(async () => { route.applyParams({ collaborationFocus: 'following' }); });
         await screen.update(element());
         await vi.waitFor(() => expect(route.push).toHaveBeenCalledTimes(2));
+    });
+
+    it.each(['deep link', 'People'] as const)('returns from Team sign-in to Share opened from %s and lets the same Team be added', async (entry) => {
+        const releaseLoader = await installRealActionExecutorModuleLoader();
+        try {
+            const home = await upsertServerProfile({ name: 'Team sign-in Home', serverUrl: 'https://collaboration-team-signin.example.test' });
+            credentials.serverId = home.id;
+            await publishCollaboration(home.id);
+            storage.setState({ profileScope: { serverId: home.id, accountId: credentials.accountId } });
+            const session = serveSession(home.id, { manageAccess: true, managePublicLink: false });
+            const team = teamSummaryFixture({ id: 'team-willow', name: 'Willow Design Studio' });
+            const subject = { kind: 'team', teamId: team.id };
+            const grant = { subject, accessLevel: 'view', canApprovePermissions: false, requiredByTeamPolicy: false };
+            let signedIn = false;
+            let grants: unknown[] = [];
+            const writeGrant = vi.fn((body: unknown) => {
+                grants = [{ grant, principal: { ...subject, name: team.name },
+                    allowedTransitions: { accessLevels: ['view', 'edit', 'admin'], canChangePermissionDelegation: false, canRemove: true } }];
+                return Response.json({ changed: true, grant });
+            });
+            transport.teamShare = (path, body) => {
+                if (path === '/v1/teams/list') return Response.json({ items: [team], nextCursor: null });
+                if (path === '/v1/teams/groups/list') return signedIn
+                    ? Response.json({ items: [], nextCursor: null })
+                    : Response.json({ error: 'team_authentication_required' }, { status: 403 });
+                if (path === '/v2/sessions/access-grants/set' && signedIn) return writeGrant(body);
+                return undefined;
+            };
+            homeFor(home.id).accessResponse = () => Response.json({ visibility: 'complete',
+                owner: { kind: 'account', accountId: credentials.accountId, firstName: null, lastName: null, username: null, avatarUrl: null },
+                effectiveAccess: session.effectiveAccess, primaryTeamId: null, grants });
+
+            const target = { serverId: home.id, sessionId: 'same-id' };
+            const shareHref = `/session/same-id/sharing?serverId=${home.id}`;
+            const mountPeople = () => renderScreen(<AppPaneProvider><SessionCollaborationSurface target={target} /></AppPaneProvider>);
+            const followShareLink = async (href: string) => {
+                const url = new URL(href, 'https://app.test');
+                expect(url.pathname).toBe('/session/same-id/sharing');
+                route.pathname = url.pathname;
+                route.resetParams();
+                route.params = { id: 'same-id', ...Object.fromEntries(url.searchParams) };
+                route.replace.mockClear();
+                const redirect = await renderScreen(<SessionSharingCompatibilityRoute />);
+                await vi.waitFor(() => expect(route.replace).toHaveBeenCalled());
+                await redirect.unmount();
+                const sessionUrl = new URL(String(route.replace.mock.lastCall?.[0]), url);
+                route.pathname = sessionUrl.pathname;
+                route.params = { id: 'same-id', ...Object.fromEntries(sessionUrl.searchParams) };
+                expect(route.params.collaborationFocus).toBe('access');
+                const screen = await mountPeople();
+                await vi.waitFor(() => expect(route.readParams().collaborationFocus).toBeUndefined());
+                return screen;
+            };
+            vi.stubGlobal('window', { location: {
+                get pathname() { return route.pathname; },
+                get search() {
+                    const query = new URLSearchParams({ serverId: home.id, right: 'collaboration' });
+                    const focus = route.readParams().collaborationFocus;
+                    if (typeof focus === 'string') query.set('collaborationFocus', focus);
+                    return `?${query}`;
+                },
+            } });
+            const before = entry === 'deep link' ? await followShareLink(shareHref) : await mountPeople();
+            if (entry === 'People') await before.pressByTestIdAsync('session-collaboration-access-card');
+            const row = 'session-access-editor:collaboration:session-access-candidate-team:team-willow';
+            const browseTeams = 'session-access-editor:collaboration:session-access-browse:team';
+            await vi.waitFor(() => expect(before.findByTestId(browseTeams)).not.toBeNull());
+            await before.pressByTestIdAsync(browseTeams);
+            const signIn = 'session-access-editor:collaboration:session-access-candidate-action:team:team-willow';
+            await vi.waitFor(() => expect(before.findByTestId(signIn)).not.toBeNull());
+            await before.pressByTestIdAsync(signIn);
+            const signInUrl = new URL(String(route.push.mock.lastCall?.[0]), 'https://app.test');
+            expect(signInUrl.pathname).toBe('/teams/team-willow/sign-in');
+            await before.unmount();
+
+            // The Home now accepts this credential. Follow the same successful destination the sign-in page uses.
+            signedIn = true;
+            const destination = resolveTeamSignInDestination({ teamId: team.id, serverId: home.id,
+                returnTo: signInUrl.searchParams.get('returnTo') });
+            expect(destination).toBe(shareHref);
+            const after = await followShareLink(destination);
+            await vi.waitFor(() => expect(after.findByTestId(browseTeams)).not.toBeNull());
+            await after.pressByTestIdAsync(browseTeams);
+            await vi.waitFor(() => expect(after.findByTestId(row)).not.toBeNull());
+            await after.pressByTestIdAsync(row);
+            await vi.waitFor(() => expect(writeGrant).toHaveBeenCalledWith(expect.objectContaining({ sessionId: target.sessionId, subject })));
+            await after.pressByTestIdAsync('session-access-editor:collaboration:list:header:leading:back-chip');
+            await vi.waitFor(() => expect(after.findByTestId('session-access-editor:collaboration:session-access-grant-team:team-willow')).not.toBeNull());
+        } finally {
+            vi.unstubAllGlobals();
+            releaseLoader();
+        }
     });
 
     it('consumes the Access focus query once so a later visit does not force Share open again', async () => {

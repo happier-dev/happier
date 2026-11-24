@@ -15,13 +15,22 @@ import type { SessionAccessCandidateRowModel } from './sessionAccessEditorTypes'
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resolveTeamSignInDestination } from '@/components/teams/entry/teamSignInHome';
 
 const shareCandidateAvailability = vi.hoisted(() => ({ value: false }));
+const routerPush = vi.hoisted(() => vi.fn());
+
+vi.mock('expo-router', async (importOriginal) => {
+    const original = await importOriginal<Record<string, unknown>>();
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return { ...original, ...createExpoRouterMock({ router: { push: routerPush } }).module };
+});
 
 afterEach(() => {
     creationDecisionNetworkMode.enabled = false;
     shareCandidateAvailability.value = false;
     resetRuntimeFetch();
+    routerPush.mockClear();
     vi.restoreAllMocks();
 });
 
@@ -938,8 +947,19 @@ describe('useNewSessionAccessDraft repository currentness', () => {
             ?.blockedReason?.message).toBe(expected));
         const context = latest!.model.context!;
         // Said once, by the refused choice itself, with the step that meets the rule: no second notice under the context.
-        expect(context.options.find((option) => option.teamId === 'team-willow')?.blockedReason?.action?.label)
-            .toBe(t('teams.errors.signInRequiredAction'));
+        const signIn = context.options.find((option) => option.teamId === 'team-willow')?.blockedReason?.action;
+        expect(signIn?.label).toBe(t('teams.errors.signInRequiredAction'));
+        // The composer may be docked over Home, so the window's route is not its re-entry point.
+        vi.stubGlobal('window', { location: { pathname: '/', search: '?unrelated=1' } });
+        try {
+            signIn!.onPress();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+        const url = new URL(String(routerPush.mock.lastCall?.[0]), 'https://app.test');
+        expect(url.pathname).toBe('/teams/team-willow/sign-in');
+        expect(resolveTeamSignInDestination({ teamId: 'team-willow', serverId: profile.id,
+            returnTo: url.searchParams.get('returnTo') })).toBe('/new');
         expect(context.unavailableReason).toBeUndefined();
         expect(latest!.model.notice).toBeUndefined();
         expect(context.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();

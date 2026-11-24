@@ -161,8 +161,10 @@ export function teamSignInReturnPath(params: Readonly<{
  */
 const TEAM_SIGN_IN_ORIGIN_PARAMS = ['serverId', 'right'] as const;
 
+export type TeamSignInOriginAddress = Readonly<{ pathname: string; search: string }>;
+
 /** The in-app page to come back to after meeting a Team's sign-in rule: its path and only the parameters above. */
-export function teamSignInOrigin(address: Readonly<{ pathname: string; search: string }> | null): string | null {
+export function teamSignInOrigin(address: TeamSignInOriginAddress | null): string | null {
     if (!address) return null;
     const current = new URLSearchParams(address.search);
     const kept = new URLSearchParams();

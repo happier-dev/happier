@@ -66,6 +66,11 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     detailsDemandedRef.current = detailsDemanded;
     const viewerProfile = useShareViewerProfile(input.scope);
     const scopeKey = `${serverAccountScopeKeySuffix(input.scope)}:${input.sessionId}:${availability}`;
+    // The Share deep link reopens Access even after the collaboration route consumes its focus request.
+    const teamSignInOrigin = React.useMemo(() => ({
+        pathname: `/session/${encodeURIComponent(input.sessionId)}/sharing`,
+        search: new URLSearchParams({ serverId: input.scope.serverId }).toString(),
+    }), [input.scope.serverId, input.sessionId]);
     const [state, dispatch] = React.useReducer(reduceSessionAccessEditorState,scopeKey,createSessionAccessEditorState);
     // The typed search lives in its own store: this controller is hosted above the whole
     // Collaboration pane, and a key must not re-render it.
@@ -395,7 +400,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         const team=teamId?directoryTeamsRef.current.find((candidate)=>candidate.teamId===teamId):undefined;
         const issue:SessionAccessUiError=teamId&&(failure.code==='session_access_authentication_required'||failure.code==='session_access_authentication_unavailable')
             ? presentTeamSignInRequired({code:failure.code,teamId,serverId:input.scope.serverId,
-                accepted:team?.authenticationPolicy?.accepted??[],navigate:(href)=>routerRef.current.push(href as Href)})
+                accepted:team?.authenticationPolicy?.accepted??[],origin:teamSignInOrigin,navigate:(href)=>routerRef.current.push(href as Href)})
             : failure;
         dispatch({type:'operation',scopeKey,key,operation:issue.retryable
             ? {kind:'error',error:issue,reconcileIntent:mutation?{kind:'set',mutation}:{kind:'remove',subject}}
@@ -404,7 +409,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         // committed. The authoritative list settles the row only when it proves
         // this exact set/remove intent; a mismatching row keeps the retryable error.
         if(issue.retryable)await refresh();
-    },[input.scope.serverId,refresh,scopeKey]);
+    },[input.scope.serverId,refresh,scopeKey,teamSignInOrigin]);
     const mutate=React.useCallback(async(subject:PrincipalRefV1,mutation:SessionGrantMutationV1|null,adds=false)=>{
         if (!lifetime.current || currentScope.current!==scopeKey) return;
         // One approval at a time, exactly like the Board: an open approval holds the editor.
@@ -536,6 +541,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         .map(row=>({teamId:row.grant.kind==='team'?row.grant.teamId:'',name:row.principal.displayName})),[projection.grants]);
     const directory=useSessionAccessDirectory({
         scope:input.scope,sessionId:input.sessionId,availability,contextTeams,
+        teamSignInOrigin,
         operations:current.operations,revision:directoryRevision,enabled:detailsDemanded&&projection.accessMode==='editable',
     });
     const [candidatePolicy, setCandidatePolicy] = React.useState<Readonly<{
