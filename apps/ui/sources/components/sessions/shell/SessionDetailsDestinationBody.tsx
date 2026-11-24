@@ -49,8 +49,9 @@ function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof Session
     </SessionBoardControllerProvider>;
 }
 
-function SessionDetailsRouteLoading() {
-    useLaunchCurtainHold(useDestinationFocus());
+function SessionDetailsRouteLoading({ initialLoading }: Readonly<{ initialLoading: boolean }>) {
+    const focused = useDestinationFocus();
+    useLaunchCurtainHold(initialLoading && focused);
     return <PaneLoadingFallback />;
 }
 
@@ -230,7 +231,7 @@ export function SessionDetailsDestinationBody() {
                         />
                 )
             ) : (
-                <SessionDetailsRouteLoading />
+                <SessionDetailsRouteLoading initialLoading={routeHydrationState.kind === 'loading'} />
             )}
         </SessionFullscreenPaneSafeAreaView>
     );

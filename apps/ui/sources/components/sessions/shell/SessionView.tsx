@@ -1905,7 +1905,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         if ((!isDataReady && !session) || routeHydrationLoading) {
             return surface(embedded
                 ? <PaneLoadingFallback testID="session-route-loading" />
-                : <SessionViewRouteLoading testID="session-route-loading" />, 'loading');
+                : <SessionViewRouteLoading testID="session-route-loading" initialLoading={routeHydrationLoading} />, 'loading');
         }
         if (!session && (routeHydrationTerminalMissing || !routeHydrationState)) {
             // An embedded mount cannot tell a deleted Session from one it may not see, and must not
