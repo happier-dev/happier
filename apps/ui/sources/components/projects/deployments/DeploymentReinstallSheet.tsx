@@ -48,7 +48,7 @@ function DeploymentReinstallSheet(
     setRefused(null);
     const outcome = await run();
     setBusy(false);
-    if (outcome.kind === 'linked') {
+    if (outcome.kind === 'reinstalled') {
       onClose();
       onReinstalled(outcome.targetLinkId);
       return;

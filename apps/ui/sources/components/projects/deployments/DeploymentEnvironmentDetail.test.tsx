@@ -653,6 +653,118 @@ it.each([true, false])('offers Reinstall on this Machine from the read, with wha
   } finally { controller.retire(); }
 });
 
+it.each(['succeeded', 'refused'] as const)('continues settled Reinstall into ordinary Deploy (%s)', async settlement => {
+  const { ModalProvider } = await import('@/modal');
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+  const base = environmentDetailForHome();
+  const runtime = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink;
+  const machineId = runtime.machines[0]!;
+  const installationId = 'current-installation';
+  const targetLinkId = 'replacement-link';
+  const environmentId = base.environment.id;
+  const detail = { ...base, content: { ...base.content, definition: { kind: 'stored' as const,
+    document: 'services: {app: {image: nginx:1}}', composeDigest: `sha256:${'a'.repeat(64)}`,
+    contentRevision: 1, profiles: [], services: ['app'],
+  } }, runtimeReinstall: { reason: 'machine_installation_replaced' as const,
+    machines: [{ machineId, retiredInstallationId: runtime.members[0]!.installationId, currentInstallationId: installationId }],
+    available: true, actionIds: ['deployments.targets.link', 'deployments.bindings.set', 'deployments.deploy'] as const,
+    savedSecrets: { reseal: [], reenter: [] } } };
+  const { controller } = controllerFor({ detail });
+  const account = await captureLazyActionAccountContext(scope.serverId);
+  const actions = createDeploymentActions(account.accountLifetime, scope.projectSourceId);
+  const effects: string[] = [];
+  const receipts: string[] = [];
+  const openRecovery = vi.fn();
+  const reviewDigest = 'R'.repeat(43);
+  const placement = { machineId, installationId, tokenEpoch: 0,
+    deploymentSource: { id: detail.environment.projectSourceId, revision: 1 } };
+  const answerHomeRead = (revision: number, linked: boolean) => {
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
+      ok: true, environment: { ...detail.environment, revision, ...(linked ? { runtimeTargetLinkId: targetLinkId } : {}) },
+      targetLinks: linked ? [{ ...runtime, id: targetLinkId,
+        members: [{ machineId, installationId, state: 'active' }], activeDeploymentId: undefined }] : [runtime],
+    } });
+  };
+  answerHomeRead(detail.environment.revision, false);
+  await answerExternalActionAccountForHome(homes, scope.serverId, { ...placement, actionId: 'deployments.targets.link',
+    execute: raw => {
+      expect(DeploymentActionInputSchemasV1['deployments.targets.link'].parse(raw)).toMatchObject({
+        environmentId, replacesLinkId: runtime.id, machines: [{ machineId, installationId }],
+      });
+      effects.push('link');
+      answerHomeRead(detail.environment.revision + 1, true);
+      return { ok: true, environmentId, revision: detail.environment.revision + 1, targetLinkId, targetLinkRevision: 1 };
+    },
+  });
+  await answerExternalActionAccountForHome(homes, scope.serverId, { ...placement, actionId: 'deployments.bindings.set',
+    execute: raw => {
+      expect(DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(raw)).toMatchObject({
+        environmentId, expectedRevision: detail.environment.revision + 1, set: [], remove: [],
+      });
+      effects.push('seal');
+      answerHomeRead(detail.environment.revision + 2, true);
+      return { ok: true, environmentId, revision: detail.environment.revision + 2 };
+    },
+  });
+  await answerExternalActionAccountForHome(homes, scope.serverId, { ...placement, actionId: 'deployments.deploy',
+    requesterInvocation: 'optional',
+    failure: result => result && typeof result === 'object' && 'reviewRequired' in result
+      ? { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+          details: { review: { actionArgs: result.reviewRequired, preview: { summary: 'Deploy to the replaced installation' } }, reviewDigest } }
+      : result && typeof result === 'object' && 'errorCode' in result && result.errorCode === 'secret_missing'
+        ? { errorCode: result.errorCode, error: result.errorCode }
+        : null,
+    execute: (raw, ctx) => {
+      const input = DeploymentActionInputSchemasV1['deployments.deploy'].parse(raw);
+      expect(input).toMatchObject({ environmentId, targetLinkId });
+      if (ctx.invocation?.presentUserConfirmation?.reviewDigest !== reviewDigest) {
+        effects.push('review');
+        return { reviewRequired: input };
+      }
+      effects.push('deploy');
+      if (settlement === 'refused') return { errorCode: 'secret_missing' };
+      return { ok: true, environmentId, revision: detail.environment.revision + 2,
+        deploymentId: 'reinstall-receipt', deploymentRevision: 1, state: 'succeeded' };
+    },
+  });
+  let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  try {
+    screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={environmentId} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={actions.deploy} review={{ ...noReview, openRecovery }} onOpenReceipt={id => receipts.push(id)}
+      lifetime={account.accountLifetime} disposition={actions} />
+    </ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.reinstall.action');
+    await screen.pressByTestIdAsync('project-deployments.environment.reinstall.action');
+    await waitForContent(screen, 'project-deployments.reinstall.confirm');
+    act(() => { screen!.pressByTestId('project-deployments.reinstall.confirm'); });
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      if (screen!.findByTestId('project-deployments.reinstall.refused-details-toggle')) {
+        await screen!.pressByTestIdAsync('project-deployments.reinstall.refused-details-toggle');
+        throw new Error(`Reinstall refused: ${screen!.findByTestId('project-deployments.reinstall.refused-details-code')?.props.children}`);
+      }
+      expect(effects).toEqual(['link', 'seal', 'review']);
+      expect(screen!.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
+    });
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await waitForHomeGovernance(() => {
+      expect(effects).toEqual(['link', 'seal', 'review', 'deploy']);
+      expect(receipts).toEqual(settlement === 'succeeded' ? ['reinstall-receipt'] : []);
+    });
+    if (settlement === 'refused') {
+      // A lagging Environment read can still carry the pre-relink notice. Keep the new Deploy remedy visible.
+      const remedy = 'project-deployments.outcome.refused.other.action';
+      await waitForHomeGovernance(() => expect(screen!.findByTestId(remedy)).not.toBeNull());
+      await screen.pressByTestIdAsync(remedy);
+      expect(openRecovery).toHaveBeenCalledWith('variables', undefined);
+    }
+  } finally { await screen?.unmount(); controller.retire(); account.dispose(); }
+});
+
 // Deploy from CI closes the Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
 it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s Environment', async kind => {
   const { ModalProvider } = await import('@/modal');

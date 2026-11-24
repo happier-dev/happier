@@ -604,9 +604,9 @@ export const DeploymentEnvironmentDetail = React.memo(
         projectSource.resolveSource, 'sourceMethod' in input ? input.sourceMethod : sourceMethod);
       return deployAction(...args);
     } : null;
-    const pressDeploy = async () => {
-      if (!deploy || availability.kind !== 'ready') return;
-      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));
+    const pressDeploy = async (targetLinkId = availability.kind === 'ready' ? availability.targetLinkId : null) => {
+      if (!deploy || !targetLinkId) return;
+      await press(() => deploy({ environmentId, targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const liveSource = active.snapshot.value?.facts?.source ?? null;
     const liveSha = liveSource?.kind === 'repository' ? liveSource.sha : null;
@@ -900,7 +900,10 @@ export const DeploymentEnvironmentDetail = React.memo(
     const latest = overview ? history.result.items[0] ?? null : null;
     const catalogUpdatePending = environment.catalogUpdate.loading
       && !environment.catalogUpdate.upstream && !environment.catalogUpdate.error;
-    const runtimeReinstall = detail.runtimeReinstall ?? null;
+    // Between settlement and refresh the held read can still describe the retired link.
+    const settledReinstall = disposition.outcome?.kind === 'reinstalled'
+      && disposition.outcome.replacedTargetLinkId === detail.environment.runtimeTargetLinkId;
+    const runtimeReinstall = settledReinstall ? null : detail.runtimeReinstall ?? null;
     const reinstallMachine = runtimeReinstall ? knownMachine(runtimeReinstall.machines[0]!.machineId) : null;
     // Reinstall on this Machine (the read's fact): relink and re-seal through the disposition owner, then the page's
     // own Deploy, so its progress and Receipt are the ordinary ones. Offered only when the read says it may run.
@@ -913,8 +916,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         run: () => disposition.reinstall(runtimeReinstall.machines, { confirmed: true }),
         // The relinked target is the one Deploy runs on; the read refreshes behind it.
         onReinstalled: (targetLinkId) => {
+          void pressDeploy(targetLinkId);
           void environment.refresh();
-          if (deploy) void press(() => deploy({ environmentId, targetLinkId, ...(onFailure ? { onFailure } : {}) }));
         },
         onApproval: review.request,
       });

@@ -21,7 +21,8 @@ export type DeploymentTargetUnlinkChoice = Readonly<{ kind: 'detachKeepRunning' 
 export type DeploymentEnvironmentDeletionOutcome = DeploymentActionOutcome
     | Readonly<{ kind: 'deleted'; detached: boolean }>
     | Readonly<{ kind: 'unlinked'; targetLinkId: string; detached: boolean }>
-    | Readonly<{ kind: 'linked'; targetLinkId: string }>;
+    | Readonly<{ kind: 'linked'; targetLinkId: string }>
+    | Readonly<{ kind: 'reinstalled'; targetLinkId: string; replacedTargetLinkId: string }>;
 /** The Machine a runtime link names, with the installation the target link records, and the retention choice made for it. */
 export type DeploymentLinkMachine = Readonly<{ machineId: string; installationId: string; retention?: DeploymentRetentionChoiceValue }>;
 export type DeploymentEnvironmentDeletionOptions = Readonly<{
@@ -147,7 +148,8 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             if (!linked.ok) return readDeploymentActionResult(linked);
             const sealed = await actions.setBindings({ environmentId: value.environment.id, expectedRevision: linked.revision,
                 set: [], remove: [] }, invoked);
-            return sealed.ok ? { kind: 'linked', targetLinkId: linked.targetLinkId } : readDeploymentActionResult(sealed, 'refused');
+            return sealed.ok ? { kind: 'reinstalled', targetLinkId: linked.targetLinkId, replacedTargetLinkId: previous.id }
+                : readDeploymentActionResult(sealed, 'refused');
         }, operation, 'manageTargets');
     }
     /**
