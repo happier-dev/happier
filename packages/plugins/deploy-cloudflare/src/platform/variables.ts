@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
@@ -265,7 +264,7 @@ async function syncWorkerTelemetryDestination(input: Sync, intent: DestinationIn
     try {
       if (intent.decision === 'allocate') {
         if (handle) continue;
-        const name = destinationNamePrefix(input.targetLinkId, type) + randomUUID();
+        const name = destinationNamePrefix(input.targetLinkId, type) + globalThis.crypto.randomUUID();
         const reply = await request(io, providerAccountId, destinationPath, 'send', ['write', 'POST'], {
           name, enabled: false, configuration: { ...configuration, logpushDataset: dataset, headers: {} },
         });
