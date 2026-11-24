@@ -74,6 +74,13 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                     : read.state === 'loading' ? t('common.loading')
                     : read.state === 'failed' ? t('common.error')
                     : t('settingsAppearance.themeProfiles.exportMissingDescription')}
+                // One header order: the page's controls, then its primary (Copy).
+                primaryAction={profile ? {
+                    testID: 'settings-theme-profile-export-copy',
+                    title: t('settingsAppearance.themeProfiles.copyExportJson'),
+                    disabled: !json,
+                    onPress: () => { void copy(); },
+                } : undefined}
                 actions={profile ? (
                     <View style={styles.headerActions}>
                         <CopiedPill
@@ -85,12 +92,6 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                             display="inverted"
                             title={t('settingsAppearance.themeProfiles.downloadExportJson')}
                             onPress={() => { void download(); }}
-                        />
-                        <RoundButton
-                            testID="settings-theme-profile-export-copy"
-                            title={t('settingsAppearance.themeProfiles.copyExportJson')}
-                            disabled={!json}
-                            onPress={() => { void copy(); }}
                         />
                     </View>
                 ) : read.state === 'failed' ? (

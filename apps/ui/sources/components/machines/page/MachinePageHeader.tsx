@@ -302,6 +302,23 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const { onRename, renaming } = props;
     const terminalInMenu = needsYouAction !== null && canOpenTerminal;
     const headerPrimary = machineHeaderPrimary({ tab: props.tab ?? 'overview', online: target.online === true, needsYou: needsYouAction !== null });
+    // The two actions that can lead: whichever leads is the header's primary, the other a quiet control beside it.
+    const needsYouPrimary = {
+        testID: 'machine-detail-needs-you-action',
+        title: needsYouAction?.label ?? '',
+        onPress: () => {
+            if (!needsYouAction) return;
+            if (target.machineId) beginMachinePageTabIntent({ serverId: target.serverId, machineId: target.machineId }, needsYouAction.tab);
+            router.setParams(machinePageTabRouteParams(needsYouAction.tab));
+        },
+    };
+    const startSessionPrimary = {
+        testID: 'machine-detail-start-session',
+        title: t('machineDetailPage.startAction'),
+        disabled: !machineCanSpawn,
+        ...(startUnavailableReason ? { disabledReason: startUnavailableReason } : {}),
+        onPress: handleStartSession,
+    };
     const menuActions = React.useMemo((): PageHeaderMenuAction[] => {
         if (!machine) return [];
         const rename: PageHeaderMenuAction = {
@@ -366,31 +383,29 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                         onPress: () => showActionFailureDetails({ code: shellFailure.errorCode,
                             context: readSafeFailureDetails(shellFailure.details) }) }} />
             ) : undefined}
+            // One header order: the page's controls, its primary (the needs-you action, or Start session), then "⋯".
+            primaryAction={machine && headerPrimary === 'needsYou' && needsYouAction ? needsYouPrimary
+                : machine && headerPrimary === 'startSession' ? startSessionPrimary : undefined}
             actions={machine ? (
                 <View style={styles.actions}>
                     {attachedPresets?.length ? <MachineAttachedPresetsChip serverId={target.serverId} attached={attachedPresets}
                         onPress={() => router.setParams(machinePageTabRouteParams({ id: 'setup' }))} /> : null}
                     {/* A machine that needs you leads with its one action; Start session steps back (MPG-5). */}
-                    {needsYouAction ? (
+                    {needsYouAction && headerPrimary !== 'needsYou' ? (
+                        <RoundButton testID={needsYouPrimary.testID} display="secondary" title={needsYouPrimary.title}
+                            onPress={needsYouPrimary.onPress} />
+                    ) : null}
+                    {headerPrimary !== 'startSession' ? (
                         <RoundButton
-                            testID="machine-detail-needs-you-action"
-                            display={headerPrimary === 'needsYou' ? undefined : 'secondary'}
-                            title={needsYouAction.label}
-                            onPress={() => {
-                                if (target.machineId) beginMachinePageTabIntent({ serverId: target.serverId, machineId: target.machineId }, needsYouAction.tab);
-                                router.setParams(machinePageTabRouteParams(needsYouAction.tab));
-                            }}
+                            testID={startSessionPrimary.testID}
+                            // An offline machine keeps the action's place but not its weight: a disabled filled button would be the page's loudest thing.
+                            display="secondary"
+                            title={startSessionPrimary.title}
+                            disabled={startSessionPrimary.disabled}
+                            disabledReason={startSessionPrimary.disabledReason}
+                            onPress={startSessionPrimary.onPress}
                         />
                     ) : null}
-                    <RoundButton
-                        testID="machine-detail-start-session"
-                        // An offline machine keeps the action's place but not its weight: a disabled filled button would be the page's loudest thing.
-                        display={headerPrimary === 'startSession' ? undefined : 'secondary'}
-                        title={t('machineDetailPage.startAction')}
-                        disabled={!machineCanSpawn}
-                        disabledReason={startUnavailableReason}
-                        onPress={handleStartSession}
-                    />
                     {editRolesHref ? (
                         <RoundButton
                             testID="machine-detail-edit-roles"
@@ -408,9 +423,9 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                             onPress={handleOpenTerminal}
                         />
                     ) : null}
-                    <PageHeaderMenu testID="machine-detail-menu" actions={menuActions} />
                 </View>
             ) : undefined}
+            menu={machine ? <PageHeaderMenu testID="machine-detail-menu" actions={menuActions} /> : undefined}
         />
     );
 });

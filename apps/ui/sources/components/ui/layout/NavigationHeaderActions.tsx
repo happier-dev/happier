@@ -185,6 +185,10 @@ export type NavigationHeaderAction = Readonly<{
     icon?: IconName;
     onPress: () => void | Promise<unknown>;
     disabled?: boolean;
+    /** Why a disabled action can't run now: the button's own reason, announced with it and shown on hover, focus or press. */
+    disabledReason?: string;
+    /** What the action does, for assistive technology (passed to the button as is). */
+    accessibilityHint?: string;
     loading?: boolean;
     testID?: string;
     /** A quiet main action (`PageHeaderPrimaryAction.presentation`): the header draws it as secondary too. */
@@ -296,6 +300,8 @@ export function useNavigationHeaderActions(input: Readonly<{
                                 title={primary.title}
                                 accessibilityLabel={primary.title}
                                 disabled={primary.disabled}
+                                {...(primary.disabledReason ? { disabledReason: primary.disabledReason } : {})}
+                                {...(primary.accessibilityHint ? { accessibilityHint: primary.accessibilityHint } : {})}
                                 loading={primary.loading}
                                 {...(primary.presentation === 'secondary' ? { display: 'secondary' as const } : {})}
                                 action={() => Promise.resolve(primaryRef.current?.onPress())}

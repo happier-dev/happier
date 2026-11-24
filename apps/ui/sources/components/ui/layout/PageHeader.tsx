@@ -259,7 +259,9 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         });
         return () => subscription.remove();
     }, [primaryDidNotFitAt]);
-    const pageButtons = (!chromeShowsTitle || primaryInPage) && (props.primaryAction || props.cancelAction) ? (
+    // A page that keeps its actions beside its identity (`actionsPlacement="page"`) keeps its primary there too.
+    const primaryInPageAlways = props.actionsPlacement === 'page';
+    const pageButtons = (!chromeShowsTitle || primaryInPage || primaryInPageAlways) && (props.primaryAction || props.cancelAction) ? (
         <>
             {props.cancelAction && !chromeShowsTitle ? <PageHeaderActionButton action={props.cancelAction} quiet /> : null}
             {props.primaryAction ? <PageHeaderActionButton action={props.primaryAction} /> : null}
@@ -311,7 +313,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     return (
         <>
         {props.primaryAction || props.cancelAction || props.actions || props.menu || props.navigationTrailing ? (
-            <NavigationHeaderActions primary={primaryInPage ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
+            <NavigationHeaderActions primary={primaryInPage || primaryInPageAlways ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
                 actions={barActions} trailing={props.navigationTrailing}
                 onPrimaryDoesNotFit={onPrimaryDoesNotFit} />
         ) : null}
@@ -391,6 +393,8 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
             title={action.title}
             accessibilityLabel={action.title}
             disabled={action.disabled}
+            {...(action.disabledReason ? { disabledReason: action.disabledReason } : {})}
+            {...(action.accessibilityHint ? { accessibilityHint: action.accessibilityHint } : {})}
             loading={action.loading}
             action={() => Promise.resolve(action.onPress())}
         />

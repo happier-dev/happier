@@ -345,6 +345,45 @@ describe('PageHeader primary action placement', () => {
         }
     });
 
+    // A page that keeps its actions beside its identity (actionsPlacement="page", a Machine's Start session) keeps its
+    // primary there too on a phone, in the one header order, rather than handing it to the navigation bar (ruling A).
+    it('keeps the primary in the page on a phone when the page keeps its actions there', async () => {
+        (router.state as { navigation: unknown }).navigation = { setOptions, getParent: () => ({ setOptions: parentSetOptions }) };
+        const screen = await renderScreen(
+            <NavigationTitleChromeProvider showsTitle>
+                <PageHeader title="Studio Mac" actionsPlacement="page" primaryAction={{ title: 'Start session', onPress: () => {}, testID: 'page-start' }}
+                    actions={<View testID="page-chip" />} menu={<PageHeaderMenu testID="page-menu" actions={[{ id: 'rename', title: 'Rename', onSelect: () => {} }]} />} />
+            </NavigationTitleChromeProvider>,
+        );
+        try {
+            expect(screen.findHostByTestId('page-start')).not.toBeNull();
+            const order = ['page-chip', 'page-start', 'page-menu.trigger'].map(id => JSON.stringify(screen.tree.toJSON()).indexOf(`"${id}"`));
+            expect(order[0]).toBeGreaterThanOrEqual(0);
+            expect(order[1]).toBeGreaterThan(order[0]!);
+            expect(order[2]).toBeGreaterThan(order[1]!);
+            const bar = lastHeaderRight();
+            if (bar) {
+                const inHeader = await renderScreen(bar as unknown as React.ReactElement);
+                expect(inHeader.findHostByTestId('page-start')).toBeNull();
+                await inHeader.unmount();
+            }
+        } finally { await screen.unmount(); }
+    });
+
+    // Why the primary can't run now is the button's own: announced with it, and shown on hover, focus or a press.
+    it('announces a disabled primary\'s reason with it', async () => {
+        const screen = await renderScreen(
+            <NavigationTitleChromeProvider showsTitle={false}>
+                <PageHeader title="Studio Mac" primaryAction={{ title: 'Start session', onPress: () => {}, testID: 'reason-start',
+                    disabled: true, disabledReason: 'Studio Mac is offline' }} />
+            </NavigationTitleChromeProvider>,
+        );
+        try {
+            const button = screen.findHostByTestId('reason-start');
+            expect(button?.props.accessibilityHint ?? button?.props['aria-description'] ?? null).toBe('Studio Mac is offline');
+        } finally { await screen.unmount(); }
+    });
+
     it('hands the primary action to the native header on phones instead of stacking it under the purpose', async () => {
         const onPress = vi.fn();
         const screen = await renderScreen(header(true, onPress));

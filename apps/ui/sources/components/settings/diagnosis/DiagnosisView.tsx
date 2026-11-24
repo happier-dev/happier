@@ -378,6 +378,14 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
         <ItemList style={{ paddingTop: 0 }} testID="diagnosis-screen">
             <SettingsPageHeader
                 description={t('diagnosis.pageDescription')}
+                // One header order: the page's controls, then its primary (Run).
+                primaryAction={{
+                    testID: 'diagnosis-run-button',
+                    title: t('diagnosis.actions.run'),
+                    accessibilityHint: t('diagnosis.actions.runSubtitle'),
+                    loading: running,
+                    onPress: runDiagnosis,
+                }}
                 actions={(
                     <View style={styles.headerActions}>
                         <CopiedPill visible={copyFeedback.isCopied('report')} testID="diagnosis-copy-feedback" />
@@ -393,13 +401,6 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                                 onPress={copyReportJson}
                             />
                         </SettingAnchor>
-                        <RoundButton
-                            testID="diagnosis-run-button"
-                            title={t('diagnosis.actions.run')}
-                            accessibilityHint={t('diagnosis.actions.runSubtitle')}
-                            loading={running}
-                            onPress={runDiagnosis}
-                        />
                     </View>
                 )}
             />
