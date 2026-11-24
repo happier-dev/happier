@@ -666,8 +666,13 @@ describe('Voice Action reference catalog', () => {
   });
   it('applies an empty accepted selection through generic Voice and the real HTTP owner', async () => {
     const serverId = await home.addHome({ name: 'Review apply Voice Home', serverUrl: 'https://review-apply-voice.test', accountId: 'alice', currentAccount: true });
-    home.answer(serverId, '/v1/reviews/comments?sessionId=review-session&runId=review-1&includeHistory=true&limit=50&stored=true', {
-      body: { items: [], cursor: null },
+    home.answer(serverId, 'GET /v1/reviews/comments', {
+      select(_body, request) {
+        expect(Object.fromEntries(new URL(request.url).searchParams)).toMatchObject({
+          sessionId: 'review-session', runId: 'review-1', includeHistory: 'true', stored: 'true',
+        });
+        return { body: { items: [], cursor: null } };
+      },
     });
     const handlers = createVoiceToolHandlers({ resolveSessionId: () => 'review-session', currentServerId: serverId });
     const applied = JSON.parse(await handlers.action_execute!({ actionId: 'review.apply', input: {
