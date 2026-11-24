@@ -3309,6 +3309,12 @@ and when its private route resolves. When the deploy starts, the executor reads
 the collector Domain topology under the accepted Receipt and uses the shared
 private origin. A missing route fails launch with `collector_route_unavailable`.
 The review carries the Machine identity without the route address or bearer.
+Home admits these launch reads for the accepted build or member child
+(`readAcceptedLaunchCollectorInTx`): the collector Machine the Environment
+selects now, placed through the Source owner's Machine admission, the
+Environment's Domain list, and the Domain content captured on that collector.
+Another Machine or Environment, a removed selection and any other route stay
+refused.
 
 The Own-server launch settles per-service telemetry facts in the serving
 Receipt's private `machineResults[].telemetrySampling`. Select the exact Machine

@@ -184,7 +184,11 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         accepted?.controller, accepted?.builder];
     if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainReview' || routing.kind === 'domainDns'
         || routing.kind === 'snapshot' || routing.kind === 'dataRole' || admitted.acceptedReceipt && !archiveOrigin) {
-        const selected = capturedMachines.find(machine => machine?.machineId === machineId);
+        let selected = capturedMachines.find(machine => machine?.machineId === machineId);
+        if (!selected && !archiveOrigin) {
+            const collector = await readAcceptedLaunchCollectorInTx(tx, admitted);
+            if (collector?.machine.machineId === machineId) selected = collector.machine;
+        }
         if (archiveOrigin || !selected) return null;
         const machine = await tx.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({ accountId: true, installationId: true,
             metadata: true, daemonState: true, dataEncryptionKey: true,
@@ -271,6 +275,23 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
     const { kind: _kind, ...codecAdmission } = admittedCodec;
     return { machineId, installationId: admittedCodec.installationId, actorAccountId: binding.accountId, routing, codecAdmission,
         ...(archiveOrigin ? { archiveOrigin } : {}) };
+}
+
+/**
+ * An accepted launch resolves its Environment's selected telemetry collector after admission. Only the collector
+ * that Environment names now is added to the job's captured Machines, placed by the Source owner's Machine
+ * admission (never the requester's). `domainPlacement` is where that collector's Domain captures live
+ * (a deployment App's controller for an App collector).
+ */
+export async function readAcceptedLaunchCollectorInTx(tx: Tx, admitted: DeploymentChildAdmission) {
+    const { routing } = admitted;
+    if (!admitted.acceptedReceipt || routing.kind !== 'build' && routing.kind !== 'member') return null;
+    const environment = await loadDeploymentEnvironmentCustodyInTx(tx, routing.input);
+    const machineId = environment.ok ? environment.row.telemetryMachineId : null;
+    if (!environment.ok || !machineId) return null;
+    const placed = await admitDeploymentMachinesInTx(tx, environment.owner, [{ machineId, role: 'telemetry' }]);
+    const machine = placed.ok ? placed.placements.get(machineId) : undefined;
+    return machine ? { machine, domainPlacement: await readDeploymentDomainCollectorPlacementInTx(tx, machineId) } : null;
 }
 
 /** ActionSpec selects preparation custody; accepted jobs retain their captured admission. */

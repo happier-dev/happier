@@ -5,7 +5,7 @@ import { DeploymentEnvironmentGetInputV1Schema, DeploymentReceiptGetInputV1Schem
 import { readMemberDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
 import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
-import type { DeploymentChildAdmission } from '@/app/deployments/deploymentChildAuthorization';
+import { readAcceptedLaunchCollectorInTx, type DeploymentChildAdmission } from '@/app/deployments/deploymentChildAuthorization';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -167,7 +167,9 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
             && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, body));
     }
     if (method !== 'GET' || proof.body !== undefined) return false;
-    if (!native && routing.kind === 'member') {
+    // Build and activation both acquire the launch runtime, which reads the Environment's Domains and opens
+    // the captures placed on this child's Machine or on the Environment's selected collector.
+    if (!native && (routing.kind === 'member' || routing.kind === 'build')) {
         const list = DeploymentDomainListInputV1Schema.safeParse(proof.routeInput);
         const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1);
         if (list.success && list.data.serverId === input.serverId && list.data.environmentId === input.environmentId
@@ -175,8 +177,13 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
                 inputSchema: spec.inputSchema, input: list.data }).path === proof.path) return true;
         const artifactId = readArtifactId(proof.path);
         if (artifactId && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: artifactId }))) {
-            const content = await readMemberDeploymentDomainContentInTx(tx, { environmentId: input.environmentId,
-                targetLinkId: input.targetLinkId, machineId: routing.machineId, installationId: routing.installationId, artifactId });
+            const read = (placement: Readonly<{ machineId: string; installationId: string }>) => readMemberDeploymentDomainContentInTx(tx, {
+                environmentId: input.environmentId, targetLinkId: input.targetLinkId, ...placement, artifactId });
+            const collector = async () => {
+                const selected = admittedChild ? await readAcceptedLaunchCollectorInTx(tx, admittedChild) : null;
+                return selected?.domainPlacement ? read(selected.domainPlacement) : null;
+            };
+            const content = await read({ machineId: routing.machineId, installationId: routing.installationId }) ?? await collector();
             if (content) return { artifactContentReference: content };
         }
     }

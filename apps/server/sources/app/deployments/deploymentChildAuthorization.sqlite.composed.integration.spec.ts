@@ -1540,6 +1540,100 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('resolves only its own Environment\'s selected remote collector during an accepted Deploy launch (%s)', async contentMode => {
+        // F14 (DBW-TELEMETRY 2026-11-24): build and activation resolve the Environment's remote collector route
+        // after admission (readTelemetryCollectorDomain): the collector Machine, the Domain list and the
+        // collector capture's Domain content, each read by the child's own forwarded carrier.
+        const f = await fixture('account', 'account', { contentMode });
+        const foreign = await fixture('account', 'account', { contentMode });
+        const collector = f.outsider;
+        expect([f.controller.id, f.member.id, f.builder.id]).not.toContain(collector.id);
+        await db.deploymentEnvironment.create({ data: { projectSourceId: f.environment.projectSourceId,
+            createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, telemetryMachineId: collector.id, ...await f.content('deployment-environment.v1') } });
+        await db.deploymentEnvironment.update({ where: { id: foreign.environment.id }, data: { telemetryMachineId: foreign.outsider.id } });
+        // A Machine grant to another requester does not make that requester's own Deploy a reader of this collector.
+        await db.machineGrant.create({ data: { machineId: collector.id, principalKind: 'account', accountId: foreign.account.id,
+            accessLevel: 'admin', createdByAccountId: f.account.id } });
+        // createDaemonDeploymentActionDeps signs these reads with the child's forwarded carrier (ApiClient.getRequesterMachine, storage, open).
+        const carrier = async (g: typeof f, child: DeploymentChildRpcV1, signer: typeof f.member) => {
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: g.authorization,
+                serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target: g.authorization.binding.target,
+                installationId: signer.installationId, privateKey: signer.keys.secretKey, rootAdmitted: true,
+                forwardedMove: { credentials: { token: 'unused-child-bearer', encryption: null }, isCurrent: async () => true },
+                forwardedDeploymentChild: child, deploymentChildExecution: g.rpc(child) });
+            if (!projected?.requesterHttpProjection) throw new Error('Expected the forwarded child HTTP projection');
+            return projected.requesterHttpProjection;
+        };
+        const buildJob = (g: typeof f): DeploymentChildRpcV1 => ({ v: 1, actionId: 'deployments.deploy', kind: 'build', input: g.input,
+            machineId: g.builder.id, installationId: g.builder.installationId, deploymentId: g.receipt.id,
+            actionOperationId: g.receipt.actionOperationId! });
+        const member = await carrier(f, f.job, f.member), build = await carrier(f, buildJob(f), f.builder);
+        const other = await carrier(foreign, foreign.job, foreign.member);
+        const launches = [{ name: 'member', projection: member }, { name: 'build', projection: build }] as const;
+        const domainList = (() => {
+            const spec = getActionSpec('deployments.domains.list');
+            if (!spec.serverTransport) throw new Error('Declared Domain list transport required');
+            return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
+                input: { serverId, environmentId: f.environment.id } }).path;
+        })();
+        // The Environment's telemetry Domain is placed privately on the collector (ownServerDomainActions telemetry target).
+        const domainContent = await f.content('deployment-domain.v1');
+        const domainId = crypto.randomUUID();
+        await db.deploymentDomain.create({ data: { id: domainId, environmentId: f.environment.id, targetLinkId: f.link.id,
+            createdByAccountId: f.account.id, state: 'active', ...domainContent, capturedPlacements: [{ desired: true,
+                content: domainContent, listener: 'privateOrigin', dockerEngineId: 'collector-engine',
+                installationPublicKey: privacyKit.encodeBase64(new Uint8Array(collector.keys.publicKey), 'base64url'),
+                placement: { serverId, accountId: f.account.id, environmentId: f.environment.id, targetLinkId: f.link.id,
+                    machineId: collector.id, installationId: collector.installationId, nativeServer: 'private',
+                    domainId, requestId: crypto.randomUUID(), actionOperationId: crypto.randomUUID() } }] } });
+        const contentPath = `/v1/artifacts/${domainContent.contentArtifactId}`;
+        await withAuthenticatedTestApp(app => { machinesRoutes(app); artifactsRoutes(app); registerDeploymentRoutes(app); }, async app => {
+            const get = async (projection: typeof member, path: string, effectActionId = 'deployments.deploy') => {
+                const headers = await projection.createRequestHeaders({ effectActionId, method: 'GET', path });
+                if (!headers) throw new Error(`Expected a signed child read: ${path}`);
+                return app.inject({ method: 'GET', url: path, headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+            };
+            const refused = (phase: string, projection: typeof member, path: string) => expectHttpRefusalWarning(
+                { phase, method: 'GET', path }, async () => { expect((await get(projection, path)).statusCode).toBe(401); },
+                [f.authorization.token, foreign.authorization.token]);
+            for (const { name, projection } of launches) {
+                const control = await get(projection, `/v1/machines/${f.controller.id}`);
+                expect(control.statusCode, `${name}: captured controller read must pass first: ${control.body}`).toBe(200);
+                // Another Environment of the same Source names this Machine; this job's Environment does not.
+                await refused('deployment_child_machine_read', projection, `/v1/machines/${collector.id}`);
+                await refused('deployment_child_http', projection, contentPath);
+            }
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: collector.id } });
+            for (const { name, projection } of launches) {
+                const machine = await get(projection, `/v1/machines/${collector.id}`);
+                expect(machine.statusCode, `${name} collector Machine: ${machine.body}`).toBe(200);
+                expect(machine.body).toContain(collector.id);
+                const domains = await get(projection, domainList);
+                expect(domains.statusCode, `${name} Domain list: ${domains.body}`).toBe(200);
+                expect(domains.body).toContain(domainId);
+                const opened = await get(projection, contentPath);
+                expect(opened.statusCode, `${name} collector Domain content: ${opened.body}`).toBe(200);
+                // Any other route on the collector Machine stays outside the child's declared reads.
+                await refused('deployment_child_http', projection, `/v1/machines/${collector.id}/content-key/transition`);
+                // Another Account's Environment collector.
+                await refused('deployment_child_machine_read', projection, `/v1/machines/${foreign.outsider.id}`);
+            }
+            // Another requester's admitted Deploy, even holding a grant on this collector.
+            await refused('deployment_child_machine_read', other, `/v1/machines/${collector.id}`);
+            await refused('deployment_child_http', other, contentPath);
+            // A selection moved to a Machine the Source owner cannot place is not admitted; removal ends the reads.
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: foreign.outsider.id } });
+            await refused('deployment_child_machine_read', member, `/v1/machines/${foreign.outsider.id}`);
+            await refused('deployment_child_machine_read', member, `/v1/machines/${collector.id}`);
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: null } });
+            for (const { projection } of launches) {
+                await refused('deployment_child_machine_read', projection, `/v1/machines/${collector.id}`);
+                await refused('deployment_child_http', projection, contentPath);
+            }
+        }, { authentication: 'real' });
+    });
+
     it.each(['member', 'controller'] as const)('admits a foreign %s custodian\'s saved-reference read only for Environments that custodian can read itself', async signer => {
         // SEC-ODEPLOY-172 F1: a Team deploy placed on another member's Machine. The
         // signing custodian may read the requester's Team Environment, never A's personal one.
