@@ -365,7 +365,7 @@ describe('local voice engine TTS behavior', () => {
 
         localVoiceSpeechTranscription.mockResolvedValueOnce('hello world');
 
-        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ error: 'send failed' }, { status: 400 }));
+        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ code: 'session_input_invalid' }, { status: 400 }));
 
         const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
@@ -375,7 +375,7 @@ describe('local voice engine TTS behavior', () => {
         // The selected TTS is daemon-synthesized; device speech alone could never observe it.
         expect(localVoiceSpeechOutputBoundary.speechSynthesizeRpc).not.toHaveBeenCalled();
         expect(expoSpeechSpeak).not.toHaveBeenCalled();
-        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'send_failed' });
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'session_input_invalid' });
     });
 
 });

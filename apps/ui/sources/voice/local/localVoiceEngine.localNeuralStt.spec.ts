@@ -351,7 +351,7 @@ describe('local voice engine local neural STT (streaming)', () => {
         },
       },
     } });
-    localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ error: 'turn_refused' }, { status: 400 }));
+    localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ code: 'session_input_invalid' }, { status: 400 }));
     const engine = await loadLocalVoiceEngineWithCompatState();
     const { getVoiceConversationRuntimeSnapshot, useVoiceConversationRuntimeStore } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
     const { voiceCaptureAdmissionController } = await import('@/voice/runtime/input/VoiceCaptureAdmissionController');
@@ -376,9 +376,9 @@ describe('local voice engine local neural STT (streaming)', () => {
         streamId: 'audio-stream-1', pcm16leBase64: 'AA==', sampleRate: 16000, channels: 1,
       });
       await waitForTestEvent(useVoiceConversationRuntimeStore.subscribe, getVoiceConversationRuntimeSnapshot,
-        snapshot => snapshot.state === 'disconnected' && snapshot.error?.reason === 'send_failed');
+        snapshot => snapshot.state === 'disconnected' && snapshot.error?.reason === 'session_input_invalid');
       expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
-        state: 'disconnected', error: { reason: 'send_failed' },
+        state: 'disconnected', error: { reason: 'session_input_invalid' },
       });
       const captureStarts = audioStreamStart.mock.calls.length;
       expect(audioStreamStop).toHaveBeenCalledTimes(captureStarts);

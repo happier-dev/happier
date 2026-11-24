@@ -1159,6 +1159,7 @@ describe('voiceQaController', () => {
     const controller = prepareLocalQaSession({ welcome: true });
     await controller.start({ sessionAddress: qaAddress('s1') });
     expect(localVoiceAgentRpc.readRetainedRun()).toMatchObject({ intent: 'voice_agent', status: 'running' });
+    expect(localVoiceAgentRpc.readRetainedRun()).toMatchObject({ intent: 'voice_agent', status: 'running' });
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
       voice: { ...storage.getState().settings.voice, providerId: 'happier.voice.elevenlabs/realtime-elevenlabs' },
     }, storage.getState().settings));

@@ -226,7 +226,7 @@ describe('Voice default-target lifecycle', () => {
         getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: 'top_bar' } }));
         getStorage().setState({ sessions: { 'keyboard-history': createSessionFixture({ id: 'keyboard-history', serverId: account.home.id, encryptionMode: 'plain', active: false,
             metadata: { path: '/voice-history', host: 'test', ...buildVoiceTranscriptHistorySessionMetadata() } }),
-            'session-a': createSessionFixture({ id: 'session-a', serverId: account.home.id, encryptionMode: 'plain', metadata: { path: '/project', host: 'test' } }) } });
+            'session-a': createSessionFixture({ id: 'session-a', serverId: account.home.id, active: true, encryptionMode: 'plain', metadata: { path: '/project', host: 'test' } }) } });
         voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             conversationSessionId: 'keyboard-history', conversationSessionAddress: { serverId: account.home.id, sessionId: 'keyboard-history' },
             targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
@@ -257,11 +257,13 @@ describe('Voice default-target lifecycle', () => {
         dismissVoiceSessionEndedAttempt();
         let toggle: () => boolean = () => false;
         let glanceToggle = () => {};
+        let glanceRecover = () => {};
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         function Invoke() {
             const execute = useKeyboardCommand();
             const model = useVoiceSurfaceModel({ variant: 'sidebar' });
             glanceToggle = () => model?.attemptControl.onToggle();
+            glanceRecover = () => model?.attemptControl.onPrimaryAction();
             toggle = () => execute('voice.toggle');
             return null;
         }
@@ -308,15 +310,19 @@ describe('Voice default-target lifecycle', () => {
             await act(async () => { setFocusedSessionId('session-b', 'server-b'); expect(toggle()).toBe(true); });
             await waitForStatus('connected');
             expect(starts.slice(-2)).toEqual([explicitTarget, explicitTarget]);
-            // A provider failure is still the admitted Session attempt. The
-            // rebound keyboard command must not apply the idle Global default.
+            // The shortcut controls Start and End. A terminal provider error
+            // keeps its admitted target through the surface's explicit Retry.
             await act(async () => { expect(toggle()).toBe(true); });
             await waitForStatus('disconnected');
             sdk.startSession.mockRejectedValueOnce(Object.assign(new Error('provider unavailable'), { code: 'provider_unavailable' }));
-            await act(async () => { await expect(controller.toggle(explicitTarget)).rejects.toMatchObject({ code: 'provider_unavailable' }); });
-            expect(getVoiceSessionSnapshot().errorRecoveryAction).toBe('retry');
+            await act(async () => { await controller.toggle(explicitTarget); });
+            expect(getVoiceSessionSnapshot()).toMatchObject({ errorCode: 'voice_service_unavailable', errorRecoveryAction: 'retry' });
+            const beforeRecovery = starts.length;
             await act(async () => { expect(toggle()).toBe(true); });
-            await waitForStatus('connected');
+            expect(starts).toHaveLength(beforeRecovery);
+            await act(async () => { await glanceRecover(); });
+            expect(getVoiceSessionSnapshot().status).toBe('connected');
+            expect(starts).toHaveLength(beforeRecovery + 1);
             expect(starts.at(-1)).toEqual(explicitTarget);
             await act(async () => { expect(toggle()).toBe(true); });
             await waitForStatus('disconnected');

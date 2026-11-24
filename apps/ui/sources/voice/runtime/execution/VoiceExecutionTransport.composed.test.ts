@@ -326,17 +326,16 @@ describe('real Local Voice Agent activation', () => {
         }
     });
 
-    it('stops an unanswered activation and permits a new activation on the same session', async () => {
+    it('retires an admitted activation whose acknowledgement arrives during Stop', async () => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
-        const unanswered = createDeferred<never>();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
         let stall = false;
-        let entered!: () => void;
-        const entering = new Promise<void>(resolve => { entered = resolve; });
         const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: async (method, input) => {
             if (stall && (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
                 || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
-                entered();
-                return await unanswered.promise;
+                entered.resolve();
+                await release.promise;
             }
             return daemon.dispatch(method, input);
         } });
@@ -345,19 +344,21 @@ describe('real Local Voice Agent activation', () => {
         try {
             stall = true;
             const pending = transport.ensureRunning(fixture.sessionId).then(() => 'resolved', () => 'cancelled');
-            await entering;
+            await Promise.race([entered.promise, pending.then(() => {
+                throw new Error('Activation settled before the daemon received the request');
+            })]);
             const stopping = transport.stop(fixture.sessionId);
+            stall = false;
+            release.resolve();
             expect(await pending).toBe('cancelled');
             await stopping;
             expect(transport.isActive(fixture.sessionId)).toBe(false);
-            // The remote responder can settle after Fetch has already aborted.
-            // Its late failure must remain observed by the transport boundary.
-            unanswered.reject(new Error('Remote responder failed after cancellation'));
-            stall = false;
+            expect(daemon.readRetainedRun()).toBeNull();
             await transport.ensureRunning(fixture.sessionId);
             expect(transport.isActive(fixture.sessionId)).toBe(true);
         } finally {
-            stall = false;
+            release.resolve();
+            await transport.stop(fixture.sessionId);
             await fixture.dispose();
         }
     });

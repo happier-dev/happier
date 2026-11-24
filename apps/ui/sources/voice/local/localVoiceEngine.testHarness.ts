@@ -1284,6 +1284,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
                 pendingVersion: 0, pendingCount: 0,
                 metadata: { flavor: 'claude', host: 'test', machineId: 'machine-1', path: '/project' } }) },
             sessionMessages: {},
+            deletedSessionIds: {},
             machines: {
                 'machine-1': machine,
             },

@@ -301,13 +301,12 @@ describe('local voice engine device STT (experimental)', () => {
     it('releases the playback capture when the recognized turn fails to send', async () => {
         await configureDuplexDeviceSpeech(false);
         speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
-        const failure = new Error('network_send_failed');
-        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ error: failure.message }, { status: 400 }));
+        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ code: 'session_input_invalid' }, { status: 400 }));
         const engine = await loadLocalVoiceEngineWithCompatState();
         await engine.toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'explain the forecast', confidence: 0.9 }] });
         await expect(engine.toggleLocalVoiceTurn('s1')).rejects.toBeInstanceOf(Error);
-        expect(engine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'send_failed' });
+        expect(engine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'session_input_invalid' });
         // Both actual native recognizer generations must be stopped, not just
         // the initial turn whose transcript was submitted.
         expect(speechRecStart).toHaveBeenCalledTimes(2);
@@ -318,7 +317,7 @@ describe('local voice engine device STT (experimental)', () => {
     it('surfaces an automatic endpoint send failure without an unhandled rejection and permits a fresh capture', async () => {
         await configureDuplexDeviceSpeech(true);
         speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
-        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ error: 'request timed out' }, { status: 400 }));
+        localVoicePendingEnqueue.mockResolvedValueOnce(Response.json({ code: 'session_input_invalid' }, { status: 400 }));
         const unhandled: unknown[] = [];
         const observeUnhandled = (error: unknown) => { unhandled.push(error); };
         process.on('unhandledRejection', observeUnhandled);
@@ -326,8 +325,8 @@ describe('local voice engine device STT (experimental)', () => {
         try {
             await engine.toggleLocalVoiceTurn('s1');
             emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'explain the forecast', confidence: 0.9 }] });
-            await waitForLocalVoiceState(state => state.status === 'idle' && state.error === 'send_failed');
-            expect(engine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'send_failed' });
+            await waitForLocalVoiceState(state => state.status === 'idle' && state.error === 'session_input_invalid');
+            expect(engine.getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'session_input_invalid' });
             await new Promise<void>(resolve => setTimeout(resolve, 0));
             expect(unhandled).toEqual([]);
             await engine.toggleLocalVoiceTurn('s1');
