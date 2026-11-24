@@ -59,8 +59,9 @@ it('publishes only a fresh, paired Deployment receipt from the listening Home', 
     const occurredAt = source.listeningSince()!;
     const completion = (state: 'failed' | 'succeeded', time: number, deploymentId = receipt.deploymentId) =>
         buildDeploymentReceiptCompletionWakeV1(receipt.environmentId, deploymentId, { state, revision: receipt.revision, occurredAt: time });
+    // Receipt settlement also updates its content Artifact in the same commit.
     const publish = (home: string, ...entityIds: string[]) => publishHomeAccountChangeWake(home,
-        { t: 'account-change', changeKinds: ['account'], entityIds }, 'catch-up-pending');
+        { t: 'account-change', changeKinds: ['artifact', 'account'], entityIds: ['receipt-artifact', ...entityIds] }, 'catch-up-pending');
 
     publish('unrelated-home', wake, completion('failed', occurredAt));
     publish(serverId, wake);

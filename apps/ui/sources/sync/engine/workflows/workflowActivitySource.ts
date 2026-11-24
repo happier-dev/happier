@@ -1,7 +1,4 @@
 import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentReceiptCompletionWakeV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
-
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -190,33 +187,14 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             publish(batch);
         }));
         detach.push(subscribeHomeAccountChange(event => {
-            const entityIds = event.entityIds;
-            if (!entityIds?.length) return;
             const batch: WorkflowActivityLiveFact[] = [];
-            if ((event.source === 'catch-up-pending' || event.source === 'socket') && event.changeKinds?.includes('account')) {
-                // The committed completion wake carries the outcome. Its companion receipt
-                // wake carries the exact Source address used to open the receipt.
-                const completions = entityIds.flatMap(entityId => {
-                    const receipt = readDeploymentReceiptCompletionWakeV1(entityId);
-                    return receipt?.completion?.state === 'failed' && receipt.completion.occurredAt >= listeningSince
-                        ? [{ ...receipt, completion: receipt.completion }] : [];
-                });
-                if (completions.length > 0) {
-                    const addresses = new Map<string, string>();
-                    for (const entityId of entityIds) {
-                        const address = readDeploymentAccountChangeV1({ kind: 'account', entityId });
-                        if (address?.deploymentId && address.projectSourceId) {
-                            addresses.set(JSON.stringify([address.environmentId, address.deploymentId]), address.projectSourceId);
-                        }
-                    }
-                    const homeServerIdentityId = resolvePortableServerIdentityForRoutingId(serverId);
-                    for (const { environmentId, deploymentId, completion } of completions) {
-                        const projectSourceId = addresses.get(JSON.stringify([environmentId, deploymentId]));
-                        if (!projectSourceId) continue;
-                        batch.push({ kind: 'deployment', event: 'failed', homeServerIdentityId, projectSourceId, environmentId, deploymentId,
-                            sourceRevision: completion.revision, occurredAt: completion.occurredAt, coverage: 'live',
-                            key: serverAccountScopedResourceKey(lifetime.scope, 'deployment', environmentId, deploymentId, 'failed', String(completion.revision)) });
-                    }
+            if (event.deploymentReceiptCompletions?.length) {
+                const homeServerIdentityId = resolvePortableServerIdentityForRoutingId(serverId);
+                for (const { projectSourceId, environmentId, deploymentId, completion } of event.deploymentReceiptCompletions) {
+                    if (completion.state !== 'failed' || completion.occurredAt < listeningSince) continue;
+                    batch.push({ kind: 'deployment', event: 'failed', homeServerIdentityId, projectSourceId, environmentId, deploymentId,
+                        sourceRevision: completion.revision, occurredAt: completion.occurredAt, coverage: 'live',
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'deployment', environmentId, deploymentId, 'failed', String(completion.revision)) });
                 }
             }
             if (!event.workflowRunsMaterialized) {
@@ -226,7 +204,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             const changedRuns: WorkflowRunSummaryV1[] = [];
             let memberRemoved = false;
             const frontier = page?.runs.at(-1);
-            for (const entityId of entityIds) {
+            for (const entityId of event.entityIds ?? []) {
                 const id = readWorkflowRunAccountChangeRunId(entityId);
                 if (!id) continue;
                 const row = storage.getState().workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]?.summary;

@@ -4,6 +4,8 @@ import { isProviderAccountUsageChangeEntityIdV1, readProviderAccountUsageChangeR
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { UpdateBody } from '@happier-dev/protocol/updates';
+import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentReceiptCompletionWakeV1, type DeploymentReceiptCompletionV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { WorkflowDefinitionIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { SessionListRowMembershipFacets } from '@/sync/domains/session/listing/sessionListQuerySelection';
@@ -45,6 +47,13 @@ import {
 } from './changesPlanner';
 import { log } from '@/log';
 
+type HomeDeploymentReceiptCompletion = Readonly<{
+    projectSourceId: string;
+    environmentId: string;
+    deploymentId: string;
+    completion: DeploymentReceiptCompletionV1;
+}>;
+
 /**
  * Observers of the content-free Account-change wake this owner already receives
  * on each Home socket.
@@ -67,6 +76,8 @@ export type HomeAccountChangeEvent = Readonly<{
     changesCatchUp?: true;
     /** Advisory committed ids are routing facts, not proof that a feed page was consumed. */
     entityIds?: readonly string[];
+    /** Exact receipt completions from the server wake, including mixed-domain commits. */
+    deploymentReceiptCompletions?: readonly HomeDeploymentReceiptCompletion[];
     /** Follow receiver demand selected by the Account change planner. */
     sessionFollowSourceIds?: readonly string[];
     /** The detailed page passed planner dispatch, not a cursor checkpoint or materialization proof. */
@@ -166,6 +177,7 @@ type HomeAccountChangeDetails = Readonly<{
     artifactKinds?: readonly string[];
     resourceSpaceMembershipSpaceIds?: readonly string[];
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
+    deploymentReceiptCompletions?: HomeAccountChangeEvent['deploymentReceiptCompletions'];
     sessionListQueryAffects?: boolean | 'structural';
     sessionListRowFacets?: SessionListRowMembershipFacets | null;
     sessionAccessAffects?: HomeAccountChangeEvent['sessionAccessAffects'];
@@ -431,6 +443,28 @@ export function publishHomeAccountChange(
 
 export type HomeAccountChangeWake = Extract<UpdateBody, { t: 'account-change' | 'account-settings-changed' }>;
 
+function readDeploymentReceiptCompletions(entityIds: readonly string[] | undefined): readonly HomeDeploymentReceiptCompletion[] | undefined {
+    const completions = entityIds?.flatMap(entityId => {
+        const receipt = readDeploymentReceiptCompletionWakeV1(entityId);
+        return receipt?.completion ? [{ ...receipt, completion: receipt.completion }] : [];
+    });
+    if (!entityIds || !completions?.length) return undefined;
+
+    // The outcome and exact Source address are companions from the same transaction.
+    const sourcesByReceipt = new Map<string, string>();
+    for (const entityId of entityIds) {
+        const address = readDeploymentAccountChangeV1({ kind: 'account', entityId });
+        if (address?.deploymentId && address.projectSourceId) {
+            sourcesByReceipt.set(JSON.stringify([address.environmentId, address.deploymentId]), address.projectSourceId);
+        }
+    }
+    const receipts = completions.flatMap(receipt => {
+        const projectSourceId = sourcesByReceipt.get(JSON.stringify([receipt.environmentId, receipt.deploymentId]));
+        return projectSourceId === undefined ? [] : [{ ...receipt, projectSourceId }];
+    });
+    return receipts.length === 0 ? undefined : Object.freeze(receipts);
+}
+
 /** Both Home ingress paths retain producer facts without claiming feed materialization. */
 export function publishHomeAccountChangeWake(
     serverId: string,
@@ -450,6 +484,7 @@ export function publishHomeAccountChangeWake(
         }) : undefined;
         return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
             source, changeKinds: wake.changeKinds, artifactKinds: wake.artifactKinds, sessionSystemRecords: wake.sessionSystemRecords,
+            deploymentReceiptCompletions: wake.changeKinds?.includes('account') ? readDeploymentReceiptCompletions(wake.entityIds) : undefined,
             ...(source === 'socket' && discussionSettingsChangedIds ? { discussionSettingsChangedIds } : {}),
             ...(recordIds?.length ? { providerAccountUsageRecordIds: recordIds } : {}),
         }, isSessionListMember);
@@ -574,6 +609,7 @@ export function publishHomeAccountChangeForRouting(
         ...((details?.source === 'connected' || details?.source === 'socket') && details.changesCatchUp
             ? { changesCatchUp: true as const } : {}),
         ...(admittedIds ? { entityIds: Object.freeze([...new Set(admittedIds)]) } : {}),
+        ...(details?.deploymentReceiptCompletions ? { deploymentReceiptCompletions: details.deploymentReceiptCompletions } : {}),
         ...(sessionFollowSourceIds ? { sessionFollowSourceIds: Object.freeze([...sessionFollowSourceIds]) } : {}),
         ...(admittedIds?.length && changeKinds?.length && changeKinds.every(kind => kind === 'artifact')
             ? { changedWorkflowDefinitionIds: Object.freeze([...new Set(admittedIds)]
