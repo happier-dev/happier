@@ -22,10 +22,15 @@ installPopoverCommonModuleMocks({
 });
 
 // Safe-area measurements come from the device SDK; overlay and glance policy remain real.
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 24, right: 0, bottom: 34, left: 0 }),
-    initialWindowMetrics: null,
-}));
+vi.mock('react-native-safe-area-context', async () => {
+    const { createContext } = await import('react');
+    const insets = { top: 24, right: 0, bottom: 34, left: 0 };
+    return {
+        SafeAreaInsetsContext: createContext(insets),
+        useSafeAreaInsets: () => insets,
+        initialWindowMetrics: null,
+    };
+});
 
 // Collect the real UI graph after installing platform mocks, before timing interactions.
 const { VoiceGlanceOverlay } = await import('./VoiceGlancePopover');

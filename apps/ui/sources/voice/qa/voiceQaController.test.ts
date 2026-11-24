@@ -5,7 +5,7 @@ const qaAddress = (sessionId: string): SessionAddress => ({ serverId: getActiveS
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
+import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
@@ -166,6 +166,7 @@ describe('voiceQaController', () => {
     sessionRpcWithServerScope.mockImplementation(async request => {
       if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
         const input = ExecutionRunTurnStreamStartV2RequestSchema.parse(request.payload);
+        if (streams.size >= 4) throw new Error('Unexpected extra Voice tool round-trip');
         const streamId = `qa-tool-stream-${streams.size + 1}`;
         streams.set(streamId, input);
         return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId });
@@ -174,7 +175,7 @@ describe('voiceQaController', () => {
         const input = ExecutionRunTurnStreamReadRequestSchema.parse(request.payload);
         const start = streams.get(input.streamId);
         if (!start) return await dispatch(request);
-        const followUp = start.message.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX);
+        const followUp = parseVoiceToolResultsFollowUp(start.displayMessage) !== null;
         const failedAction = start.message.includes('Answer the absent request') || start.message.includes('"answerUserActionRequest"');
         return ExecutionRunTurnStreamReadResponseSchema.parse({ streamId: input.streamId, nextCursor: 1, done: true,
           events: [{ t: 'done', assistantText: followUp
@@ -203,9 +204,10 @@ describe('voiceQaController', () => {
     }
     expect(starts[0]?.userTranscript).toEqual({ mode: 'suppress', localId: body.localId });
     expect(starts[1]?.userTranscript).toEqual({ mode: 'suppress' });
-    const followUp = starts[1]?.message;
-    if (!followUp?.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX)) throw new Error('Expected actual tool-result custody');
-    expect(JSON.parse(followUp.slice(VOICE_TOOL_RESULTS_JSON_PREFIX.length).trim().split('\n')[0]!)).toMatchObject({
+    const followUp = starts[1]?.displayMessage;
+    if (!followUp) throw new Error('Expected actual tool-result custody');
+    expect(starts[1]?.message.endsWith(followUp)).toBe(true);
+    expect(parseVoiceToolResultsFollowUp(followUp)).toMatchObject({
       toolResults: [{ t: 'listAgentBackends', result: { ok: true, items: expect.arrayContaining([
         expect.objectContaining({ agentId: 'claude' }), expect.objectContaining({ agentId: 'codex' }),
         expect.objectContaining({ agentId: 'opencode' }),
