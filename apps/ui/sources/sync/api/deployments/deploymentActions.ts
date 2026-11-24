@@ -72,12 +72,15 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
     // The root returned its failed step and recovery; an uncertain child is not a lost root reply.
     if (readDeploymentTemplateInstantiationPartialV1(execution)) return execution;
     const spec = getActionSpec(actionId);
+    const isCreate = actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1;
     if (!spec.operation || isDeploymentTemplatePreviewInputV1(actionId, input)
-        || (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && !isDeploymentCatalogCreateApplyV1(input))) return execution;
+        || (isCreate && !isDeploymentCatalogCreateApplyV1(input))) return execution;
     try {
         const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
             serverId: account.serverId, accountId: account.accountId, machineId, signal,
             requestIdentity: { actionId, requestId: readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId },
+            // A lost Create can precede publication. If no operation was found, the wizard can offer Check result.
+            waitForPublication: !isCreate,
         }));
         account.assertCurrent();
         if (!operation) return execution;

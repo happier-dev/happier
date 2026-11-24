@@ -19,14 +19,21 @@ type OperationObservation = Readonly<{
 }>;
 
 type RequestIdentity = NonNullable<ActionOperationListV2Request['requestIdentity']>;
+type RequestObservation = Readonly<{
+    requestIdentity: RequestIdentity;
+    /** Keep following an issued request after its exact lookup returns no operation. */
+    waitForPublication?: boolean;
+    operationId?: never;
+    actionId?: never;
+}>;
 
-export function observeActionOperationByRequestId(input: OperationObservation & Readonly<{ requestIdentity: RequestIdentity }>): Promise<ActionOperationSnapshotV1 | null> {
+export function observeActionOperationByRequestId(input: OperationObservation & RequestObservation): Promise<ActionOperationSnapshotV1 | null> {
     return observeActionOperation(input);
 }
 
 /** Follow an issued request or accepted operation through reconnect, then join its existing finite runner. */
 export function observeActionOperation(input: OperationObservation & (
-    Readonly<{ requestIdentity: RequestIdentity; operationId?: never; actionId?: never }>
+    RequestObservation
     | Readonly<{ operationId: string; actionId: string; requestIdentity?: never }>
 )): Promise<ActionOperationSnapshotV1 | null> {
     return new Promise(resolve => {
@@ -71,8 +78,11 @@ export function observeActionOperation(input: OperationObservation & (
                     // A push may have located this request while the list was in flight.
                     retained ??= page.items.find(matches) ?? null;
                     if (retained) input.onUpdate?.(retained);
-                    // A request-filtered response naming other work cannot establish this request's outcome.
-                    if (!retained && page.items.length > 0) { finish(null); return; }
+                    // A missing operation leaves the outcome unknown. Discovery-only callers can present recovery now.
+                    if (!retained && (page.items.length > 0 || input.waitForPublication === false)) {
+                        finish(null);
+                        return;
+                    }
                 }
                 const selected = retained;
                 const operationId = selected?.operationId ?? input.operationId;
