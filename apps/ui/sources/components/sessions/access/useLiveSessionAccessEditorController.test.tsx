@@ -23,7 +23,7 @@ import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamGroupFixture, teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { encodeBase64 } from '@/encryption/base64';
@@ -326,7 +326,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
                     principal: { kind: 'team', teamId, name: teamId },
                 })), ...(state.includeContextGroupGrant ? [{
                     grant: { subject: { kind: 'group', teamId: 'team-acme', groupId: 'reviewers' }, accessLevel: 'view', canApprovePermissions: false },
-                    principal: { kind: 'group', teamId: 'team-acme', groupId: 'reviewers', name: 'Reviewers', teamName: 'Product Reliability' },
+                    principal: { kind: 'group', teamId: 'team-acme', groupId: 'reviewers', name: teamGroupFixture({ name: 'Reviewers' }).name, teamName: 'Product Reliability' },
                     allowedTransitions: { accessLevels: ['view'], canChangePermissionDelegation: false, canRemove: true },
                 }] : [])],
                 effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: CAPABILITIES },

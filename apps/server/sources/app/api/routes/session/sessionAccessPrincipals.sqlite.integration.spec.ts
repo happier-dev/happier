@@ -1,4 +1,6 @@
-import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { projectPrivateLabelForRecipientV1 } from "@happier-dev/protocol/crypto/privateLabelV1";
+import { TeamGroupNameProjectionV1Schema } from "@happier-dev/protocol/teams";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -9,6 +11,13 @@ import { admitTeamMemberInTx } from "@/app/teams/memberships/membershipService";
 import { resolveSessionAccessPrincipalsInTx } from "@/app/session/access/sessionAccessPrincipalResolution";
 import { registerSessionAccessGrantRoutes } from "./registerSessionAccessGrantRoutes";
 import { SessionAccessCandidatesInspectResponseV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+
+function expectedPlainGroupName(value: string, recipientAccountId: string) {
+    return TeamGroupNameProjectionV1Schema.parse({
+        kind: "available",
+        label: projectPrivateLabelForRecipientV1({ stored: plainPrivateLabel(value), recipientAccountId }),
+    });
+}
 
 describe("Selected Session access principals (SQLite HTTP integration)", () => {
     let harness: LightSqliteHarness;
@@ -70,7 +79,7 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         expect(response.json()).toEqual({ v: 1, principals: [
             { kind: "account", accountId: friend.id, name: null, username: "principal-friend", firstName: null, lastName: null, avatarUrl: null },
             { kind: "team", teamId: team.id, name: "Visible Team" },
-            { kind: "group", teamId: team.id, groupId: group.id, name: "Visible Group", teamName: "Visible Team" },
+            { kind: "group", teamId: team.id, groupId: group.id, name: expectedPlainGroupName("Visible Group", actor.id), teamName: "Visible Team" },
         ] });
         expect(response.body).not.toContain(hidden.username);
         expect(response.body).not.toContain(unrequestedGroup.id);
@@ -120,7 +129,7 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         expect(admitted.statusCode).toBe(200);
         expect(admitted.json().principals).toEqual([
             { kind: "team", teamId: team.id, name: team.name },
-            { kind: "group", teamId: team.id, groupId: group.id, name: group.name, teamName: team.name },
+            { kind: "group", teamId: team.id, groupId: group.id, name: expectedPlainGroupName("Restricted selected Group", actor.id), teamName: team.name },
         ]);
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: actor.id } }, data: { status: "suspended" } });
         expect((await resolve(true)).json()).toEqual({ v: 1, principals: [] });
