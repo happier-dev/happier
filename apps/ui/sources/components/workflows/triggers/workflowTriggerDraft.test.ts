@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowDraftTriggerSnapshotV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 import {
     EMPTY_WORKFLOW_TRIGGER_DRAFT,
@@ -140,6 +142,33 @@ describe('workflow trigger draft', () => {
             // The set's own machine and folder, not the editor's: one machine per trigger set.
             ['add', { workflow: 'wf-1', project: PROJECT, trigger: { ...schedule('0 7 * * *'), enabled: true } }],
         ]);
+    });
+
+    it('carries the saved Workflow id and authored configuration into the existing trigger before Arm', async () => {
+        const workflow = '11111111-1111-4111-8111-111111111111';
+        const configuration = {
+            workflow: null, project: PROJECT, serverId: 'home', environmentId: 'production',
+            serviceName: 'api', observationDelayMs: 300_000, windowMs: 600_000, changePercent: 20,
+        };
+        const diagnosis = { kind: 'role', roleId: 'regression-investigator' };
+        const withInputs = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT,
+            { kind: 'setContext', context: { inputs: { configuration, diagnosis } } });
+        const eventRef = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded;
+        const trigger = { kind: 'pluginEvent', enabled: false, eventRef, sourceInstanceId: 'environment:production',
+            sourceContractVersion: 1, sourceConfig: { v: 1, serverId: 'home', environmentId: 'production', observingSince: 1 },
+            displayLabel: 'Production', filter: null, maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: PROJECT.machineId, pluginId: eventRef.pluginId, materializationId: 'receipt-observer',
+            } } } as const satisfies AutomationTriggerDefinitionInput;
+        const draft = editWorkflowTriggerDraft(withInputs, { kind: 'add', clientId: 'regression', trigger });
+        const { writer, calls } = recordingWriter();
+
+        const saved = await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: null, draft,
+            writer: { ...writer, add: async request => writer.add(WorkflowTriggerAddRequestV1Schema.parse(request)) } });
+
+        expect(saved.kind).toBe('saved');
+        expect(calls).toEqual([['add', { workflow, project: PROJECT, trigger,
+            inputs: { configuration: { ...configuration, workflow }, diagnosis } }]]);
     });
 
     it('creates the set on the editor Where for a workflow without triggers', async () => {

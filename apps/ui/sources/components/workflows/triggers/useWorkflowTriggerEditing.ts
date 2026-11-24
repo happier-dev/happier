@@ -1,5 +1,6 @@
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import * as React from 'react';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -248,10 +249,15 @@ export function useWorkflowTriggerEditing(params: Readonly<{
                 // Public Event rows omit their private definition. The admitted input is
                 // the comparison baseline; retain the prior one for pending history rebases.
                 capturedIdentities.rowIdentities.knownDefinitions = acknowledgedDefinitions;
-                setState((latest) => latest.identity === captured.identity
-                    ? { ...latest, draft: restoreWorkflowTriggerSnapshot(acknowledgedSet,
-                        captureWorkflowTriggerSnapshot(beforeSet, latest.draft, capturedIdentities.identify, beforeDefinitions), acknowledgedDefinitions) }
-                    : latest);
+                setState((latest) => {
+                    if (latest.identity !== captured.identity) return latest;
+                    const snapshot = captureWorkflowTriggerSnapshot(beforeSet, latest.draft, capturedIdentities.identify, beforeDefinitions);
+                    const inputs = edit.kind === 'setContext' && edit.context.inputs !== undefined
+                        && sameStrictJsonValue(snapshot.inputs, captured.draft.context?.inputs)
+                        ? edit.context.inputs : snapshot.inputs;
+                    return { ...latest, draft: restoreWorkflowTriggerSnapshot(acknowledgedSet,
+                        { ...snapshot, inputs }, acknowledgedDefinitions) };
+                });
             },
         }).finally(() => { if (pendingSave.current === pending) pendingSave.current = null; });
         if (!current()) return 'stale';
