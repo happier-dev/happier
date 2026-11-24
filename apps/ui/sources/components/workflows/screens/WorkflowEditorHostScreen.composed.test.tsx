@@ -885,7 +885,8 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 } }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
     triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
     sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = [],
-    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable' | (() => Promise<Response>)) {
+    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable' | (() => Promise<Response>),
+    publicFeatures?: () => Promise<Response> | undefined) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -964,7 +965,8 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         }
         if (request.path === '/v1/machines/machine-a') return Response.json({
             machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }) });
-        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(features);
+        if (request.path === '/v1/features') return await publicFeatures?.() ?? Response.json(features);
+        if (request.path === '/v1/features/authenticated') return Response.json(features);
         if (request.path === '/v1/account/encryption/currentness') {
             return Response.json(currentness);
         }
@@ -1603,6 +1605,57 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { readPresentationNotices } = await import('@/components/sessions/presentation/presentationNotices');
         await vi.waitFor(() => expect(readPresentationNotices().map(notice => notice.message))
             .toContain(t('workflows.triggers.checks.notChecked')));
+    });
+
+    it('waits for the shared features read and visibly checks Automations when that read is inconclusive', async () => {
+        const features = createDeferred<Response>();
+        const index = createDeferred<Response>();
+        const featuresRequested = createDeferred<void>();
+        let holdFeatures = false;
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-features-held',
+            undefined, 'plain', [], [], () => index.promise, () => {
+                if (!holdFeatures) return undefined;
+                featuresRequested.resolve();
+                return features.promise;
+            });
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Wait for Action admission' }); });
+        const indexReads = () => boundary.requests.filter(request => request.method === 'GET' && request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        holdFeatures = true;
+        resetServerFeaturesClientForTests();
+        const snapshot = getServerFeaturesSnapshot({ serverId: boundary.scope.serverId });
+        try {
+            await featuresRequested.promise;
+            await screen.pressByTestIdAsync('workflow-editor-save');
+            await vi.waitFor(() => expect(screen.findByTestId('workflow-editor-save-cancel')).not.toBeNull());
+            expect(screen.findByTestId('workflow-editor-save-status-text')?.props.children).toBe(t('workflows.triggers.checks.checking'));
+            expect(boundary.updates).toHaveLength(0);
+            expect(indexReads()).toHaveLength(0);
+            await act(async () => { features.resolve(Response.json('invalid features payload')); });
+            expect(await snapshot).toMatchObject({ status: 'unsupported', reason: 'invalid_payload' });
+            await vi.waitFor(() => expect(indexReads()).toHaveLength(1));
+            expect(screen.findByTestId('workflow-editor-save-cancel')).not.toBeNull();
+            expect(screen.findByTestId('workflow-editor-save-status-text')?.props.children).toBe(t('workflows.triggers.checks.checking'));
+            expect(boundary.updates).toHaveLength(0);
+            // Workflow writes have their own feature gate. Let that observation recover
+            // after admission has already started the index read with an unknown snapshot.
+            await act(async () => {
+                holdFeatures = false;
+                expect(await getServerFeaturesSnapshot({ serverId: boundary.scope.serverId, force: true }))
+                    .toMatchObject({ status: 'ready' });
+            });
+            await act(async () => { index.resolve(Response.json({ error: 'temporarily_unavailable' }, { status: 503 })); });
+            await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' }));
+            expect(boundary.updates).toHaveLength(1);
+            expect(screen.findByTestId('workflow-editor-save-cancel')).toBeNull();
+            const { readPresentationNotices } = await import('@/components/sessions/presentation/presentationNotices');
+            await vi.waitFor(() => expect(readPresentationNotices().map(notice => notice.message))
+                .toContain(t('workflows.triggers.checks.notChecked')));
+        } finally {
+            features.resolve(Response.json('invalid features payload'));
+            index.resolve(Response.json({ error: 'temporarily_unavailable' }, { status: 503 }));
+        }
     });
 
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {

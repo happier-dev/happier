@@ -26,7 +26,7 @@ export function createUiActionAutomationPortV1(account: LazyActionAccountContext
   if (current?.token === account.credentials.token) return bind(current.port);
   current?.port.dispose();
   const port = createActionAutomationHttpPortV1({ accountId: account.accountId,
-    readHomeFeatures: signal => getReadyServerFeatures({ serverId: account.serverId, signal }),
+    readHomeFeatures: (signal, onWait) => getReadyServerFeatures({ serverId: account.serverId, signal, onWait }),
     subscribe: (_apply, invalidate) => subscribeHomeAccountChange(event => {
       if (event.changesCatchUp || event.feedPageConsumed) return;
       if (event.source === 'connected' || event.source === 'snapshot'

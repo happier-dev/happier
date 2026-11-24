@@ -183,7 +183,7 @@ export function projectActionAutomationSubjectsV1(args: ActionAutomationSelectAr
   return Object.freeze([...unique.values()]);
 }
 
-type ReadHomeFeatures = (signal?: AbortSignal) => Promise<Pick<FeaturesResponse, 'features'> | null>;
+type ReadHomeFeatures = (signal?: AbortSignal, onWait?: () => void) => Promise<Pick<FeaturesResponse, 'features'> | null>;
 type IndexAvailability = Readonly<{ status: 'disabled' | 'ready' } | { status: 'unavailable'; reason: string }>;
 
 /** One Account index; existing transport recovery selects changed scopes or invalidates an unknown snapshot. */
@@ -294,25 +294,31 @@ export function createActionAutomationPortV1(options: Readonly<{
     buckets.clear(); rowsByAutomation.clear(); consents.clear(); changedWhileSeeding.clear();
   };
   const readHomeFeatures = options.readHomeFeatures;
-  const indexEnabled = readHomeFeatures && (async (signal?: AbortSignal) => {
-    const features = await readHomeFeatures(signal);
+  const indexEnabled = readHomeFeatures && (async (signal?: AbortSignal, onWait?: () => void) => {
+    const features = await readHomeFeatures(signal, onWait);
     signal?.throwIfAborted();
-    if (features && readServerEnabledBit(features, 'workflows') === true) return true;
+    if (features === null || readServerEnabledBit(features, 'workflows') === true) return true;
     invalidate();
     return false;
   });
   const ensureLoaded = async (signal?: AbortSignal,
     progress?: ActionExecutorContext['operationProgress']): Promise<IndexAvailability> => {
     signal?.throwIfAborted();
-    if (indexEnabled && !await indexEnabled(signal)) return { status: 'disabled' };
-    // Home can recover transaction acquisition while the socket stays connected.
-    if (state === 'unavailable' && failureReason === 'database_connection_unavailable') loading = undefined;
-    if ((state === 'unavailable' || state === 'ready') && loading === undefined) resetIndex();
-    let refusal = state === 'unavailable' ? failureReason : undefined;
-    if (state === 'unloaded' || state === 'loading') {
+    let checking = false;
+    const showChecking = progress && (() => {
+      if (checking) return;
+      checking = true;
       progress?.update({ label: 'Checking automations…' });
       progress?.automationIndexPending?.(true);
-      try {
+    });
+    try {
+      if (indexEnabled && !await indexEnabled(signal, showChecking)) return { status: 'disabled' };
+      // Home can recover transaction acquisition while the socket stays connected.
+      if (state === 'unavailable' && failureReason === 'database_connection_unavailable') loading = undefined;
+      if ((state === 'unavailable' || state === 'ready') && loading === undefined) resetIndex();
+      let refusal = state === 'unavailable' ? failureReason : undefined;
+      if (state === 'unloaded' || state === 'loading') {
+        showChecking?.();
         const pending = load();
         if (signal) {
           refusal = await new Promise<string | undefined>((resolve, reject) => {
@@ -322,12 +328,12 @@ export function createActionAutomationPortV1(options: Readonly<{
             if (signal.aborted) abort();
           });
         } else refusal = await pending;
-      } finally {
-        progress?.automationIndexPending?.(false);
       }
+      signal?.throwIfAborted();
+      return refusal === undefined ? { status: 'ready' } : { status: 'unavailable', reason: refusal };
+    } finally {
+      if (checking) progress?.automationIndexPending?.(false);
     }
-    signal?.throwIfAborted();
-    return refusal === undefined ? { status: 'ready' } : { status: 'unavailable', reason: refusal };
   };
   return {
     async hasAfterActions(actionIds: readonly string[]) {

@@ -6638,9 +6638,10 @@ reads invocation provenance, while raw input, output and exception text have no
 declared path. After evidence includes its terminal status. The trigger owner
 supplies the same declaration to stored, intended and inline validation.
 
-Action admission uses the Home's published `workflows` feature decision. A Home
-without that enabled bit runs Actions without reading the Action-trigger index.
-On an enabled Home, a failed index read preserves the Action's result and adds
+Action admission skips the Action-trigger index when a ready Home feature snapshot
+reports `workflows` disabled or omits its enabled bit. When the snapshot is
+unknown, admission still uses the existing index load. If that index read fails,
+the Action keeps its result and includes
 an `action_automations_not_checked` notice. Its `reason` is `server_unreachable`
 for a classified transport failure without an HTTP response. A Home that responds
 with an error retains its typed code, such as `database_connection_unavailable`

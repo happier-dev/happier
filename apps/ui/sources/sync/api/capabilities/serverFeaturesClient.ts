@@ -789,12 +789,13 @@ async function waitForServerFeaturesSnapshot(
     waitBudgetMs: number | undefined,
     signal: AbortSignal | undefined,
     /** An active-projection read; an explicit-URL probe answers its own cache before it waits. */
-    read?: Readonly<{ projection: ActiveFeatureProjection; serverId?: string; force?: boolean }>,
+    read?: Readonly<{ projection: ActiveFeatureProjection; serverId?: string; force?: boolean; onWait?: () => void }>,
 ): Promise<ServerFeaturesSnapshot> {
     if (signal?.aborted) return { status: 'error', reason: 'network' };
     // A known fresh answer needs no wait, observer, deadline or shared-request demand.
     const known = read ? readKnownServerFeaturesSnapshotForProjection(read) : null;
     if (known) return known;
+    read?.onWait?.();
     return await new Promise<ServerFeaturesSnapshot>((resolve, reject) => {
         const observer = new AbortController();
         let settled = false;
@@ -886,12 +887,14 @@ export async function getServerFeaturesSnapshot(params?: {
     serverId?: string;
     /** Cancels this waiter without aborting other consumers' shared request. */
     signal?: AbortSignal;
+    /** Signals that this caller has no fresh snapshot and is waiting for one. */
+    onWait?: () => void;
 }): Promise<ServerFeaturesSnapshot> {
     return await waitForServerFeaturesSnapshot(
         (signal) => getServerFeaturesSnapshotWithRetry({ ...params, signal, projection: 'public' }),
         params?.timeoutMs,
         params?.signal,
-        { projection: 'public', serverId: params?.serverId, force: params?.force },
+        { projection: 'public', serverId: params?.serverId, force: params?.force, onWait: params?.onWait },
     );
 }
 

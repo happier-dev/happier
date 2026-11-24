@@ -31,11 +31,13 @@ const operands = {
 } as const;
 
 /** The real executor and admission selector over one real Before row; only the effect and Run transport are boundaries. */
-function setup(actionId: string, onFailure: 'refuse' | 'ask' = 'refuse') {
+function setup(actionId: string, onFailure: 'refuse' | 'ask' = 'refuse',
+  readHomeFeatures?: Parameters<typeof createActionAutomationPortV1>[0]['readHomeFeatures']) {
   const runMachines: (string | undefined)[] = [];
   let seeds = 0;
   const port = createActionAutomationPortV1({
     accountId: 'actor',
+    readHomeFeatures,
     seed: async () => {
       seeds++;
       return {
@@ -120,6 +122,21 @@ function context(
 }
 
 describe('Before checks on the Action operand Machine', () => {
+  it('runs the Before check from a usable index when Home features are unknown and retains the index', async () => {
+    const { port, executor, effect, runMachines, seeds } = setup(TERMINAL_OPEN, 'refuse', async () => null);
+    try {
+      for (const front of ['ui', 'voice'] as const) {
+        const result = await executor.execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], context(TERMINAL_OPEN, front));
+        expect(result).toMatchObject({ ok: false });
+      }
+      expect(runMachines).toEqual(['operand-machine', 'operand-machine']);
+      expect(effect).not.toHaveBeenCalled();
+      expect(seeds()).toBe(1);
+    } finally {
+      port.dispose();
+    }
+  });
+
   it.each(
     [BEGIN_CONNECT, TERMINAL_OPEN].flatMap((actionId) =>
       (['voice', 'ui'] as const).map((front) => ({ actionId, front })),

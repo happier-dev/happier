@@ -3,6 +3,9 @@ import { AxiosError } from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import axios from '@/api/client/credentialAxios';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { createActionAutomationPrivateMatchingV1 } from '@happier-dev/protocol/actions/executor/actionAutomationPrivateMatching';
 import { readAccountStoredActionTriggerV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -45,6 +48,38 @@ it.each([
   expect(await port.select({ actionId: 'machines.command.run', input: {}, context: {} })).toMatchObject({
     before: [], after: [], notices: [{ code: 'action_automations_not_checked', reason }],
   });
+});
+
+it.each([
+  { featuresStatus: 'network', indexReason: 'server_unreachable' },
+  { featuresStatus: 429, indexReason: 'database_connection_unavailable' },
+  { featuresStatus: 503, indexReason: 'database_connection_unavailable' },
+  { featuresStatus: 'invalid_payload', indexReason: 'database_connection_unavailable' },
+] as const)('runs the Action with an index notice when the feature read returns $featuresStatus', async ({ featuresStatus, indexReason }) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    if (featuresStatus === 'network') throw new TypeError('Failed to fetch');
+    if (featuresStatus === 'invalid_payload') return Response.json('invalid features payload');
+    return new Response(null, { status: featuresStatus });
+  });
+  const request = vi.spyOn(axios, 'request');
+  if (indexReason === 'server_unreachable') request.mockRejectedValue(new AxiosError('Connection refused', 'ECONNREFUSED'));
+  else request.mockResolvedValue({ status: 503, data: { error: indexReason } });
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  const serverHttpBaseUrl = `https://unknown-features-${featuresStatus}.test`;
+  const port = createCliActionAutomationPortV1({ token, serverHttpBaseUrl });
+  if (!port) throw new Error('Expected the Account Action port');
+  const profile = { name: 'Updated', firstName: 'Updated', lastName: null, timestamp: 1 };
+  const executor = createActionExecutor({ actionAutomations: port, homeDomainAction: async () => profile });
+  const result = await executor.execute('account.name.set', { name: profile.name }, {
+    surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner',
+    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'account.name.set': ['cli'] } }),
+  });
+  expect(result).toEqual({
+    ok: true, result: profile, automationNotices: [{ code: 'action_automations_not_checked', reason: indexReason }],
+  });
+  expect(request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    method: 'GET', url: `${serverHttpBaseUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`,
+  }));
 });
 
 it('keeps retained Action consumers on the same Account index when another credential for that Account is bound', async () => {
