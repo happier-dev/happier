@@ -203,8 +203,8 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     }
     return primaryTypeReferences.get(context.configPath);
   };
-  const authored = resolved => /\.(?:json|[cm]?tsx?)$/.test(resolved.resolvedFileName)
-    || (original.parsed.options.allowJs && !resolved.isExternalLibraryImport
+  const authored = (resolved, context) => /\.(?:json|[cm]?tsx?)$/.test(resolved.resolvedFileName)
+    || (context.parsed.options.allowJs && !resolved.isExternalLibraryImport
       && !/[\\/]node_modules[\\/]/.test(resolved.resolvedFileName)
       && /\.(?:[cm]?js|jsx)$/.test(resolved.resolvedFileName));
   const dependenciesFor = (file, context) => {
@@ -231,7 +231,7 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
       const dependencies = [...specifiers].flatMap(fileName => {
         const resolved = ts.resolveModuleName(fileName, file, context.parsed.options, ts.sys, moduleCache(context)).resolvedModule;
         recordWorkspaceImport(fileName, resolved?.resolvedFileName);
-        return resolved && authored(resolved) ? [resolve(resolved.resolvedFileName)] : [];
+        return resolved && authored(resolved, context) ? [resolve(resolved.resolvedFileName)] : [];
       });
       for (const { fileName } of info.referencedFiles) {
         const path = resolve(dirname(file), fileName);

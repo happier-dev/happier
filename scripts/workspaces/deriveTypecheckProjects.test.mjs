@@ -723,6 +723,38 @@ test('CLI build scripts do not make Server declarations depend on CLI source', a
   await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
 });
 
+test('a foreign declaration producer uses its own JavaScript compiler setting', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-compiler-producer-javascript-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ui = join(root, 'apps/ui');
+  const javascript = join(root, 'packages/tools/match.cjs');
+  const files = {
+    'apps/ui/src/entry.ts': 'export { value } from "../../server/src/entry";',
+    'apps/server/src/entry.ts': 'import "../../../packages/tools/match.cjs"; export const value = true;',
+    'packages/tools/match.cjs': 'module.exports = { value: true };',
+    ...Object.fromEntries(['ui', 'server'].map(name => [`apps/${name}/tsconfig.json`,
+      JSON.stringify({ compilerOptions: { allowJs: name === 'ui', module: 'esnext', moduleResolution: 'bundler', types: [],
+        paths: { '@/*': ['./src/*'] } }, include: ['src/**/*.ts'] }),
+    ])),
+  };
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
+  const names = ['foundation', 'core', 'source', 'test'];
+  for (const name of names) await writeFile(join(ui, `tsconfig.${name}.json`), JSON.stringify({
+    extends: './tsconfig.json', include: [], files: name === 'test' ? [] : ['src/entry.ts'],
+  }));
+  const inventory = await deriveTypecheckProjects(ui, { sourceNames: names.slice(0, -1), testNames: ['test'] });
+  const projects = inventory.map(item => ({ project: item.configPath, authoredProject: join(ui, `tsconfig.${item.project}.json`) }));
+  const producers = await prepareReferencedTypecheckDeclarations(projects, ui, inventory);
+  const server = producers.find(project => project.authoredProject === join(root, 'apps/server/tsconfig.json'));
+  assert.ok(server);
+  const { parsed } = readTypecheckProject(server.project);
+  assert.ok(parsed.fileNames.includes(join(root, 'apps/server/src/entry.ts')));
+  assert.ok(!parsed.fileNames.includes(javascript));
+});
+
 test('a project reference cycle names every member and its authored owner', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-reference-cycle-'));
   t.after(() => rm(root, { recursive: true, force: true }));
