@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 export type HomeDomainHttpRequestV1 = Readonly<{
@@ -13,6 +14,11 @@ const HomeDomainConfirmedRollbackV1Schema = z.union([
     transactionOutcome: z.literal('rolled_back') }),
 ]);
 type HomeDomainConfirmedRollbackV1 = z.infer<typeof HomeDomainConfirmedRollbackV1Schema>;
+
+/** The Home's typed rollback causes, without HTTP evidence or diagnostic text. */
+export const HomeDomainConfirmedRollbackErrorCodeV1Schema = lazyZodSchema(() => z.union(
+  HomeDomainConfirmedRollbackV1Schema.def.options.map(schema => schema.shape.error),
+));
 
 /**
  * Read the Home's global confirmation that a transaction rolled back after a

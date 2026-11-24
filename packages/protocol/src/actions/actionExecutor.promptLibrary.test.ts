@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { projectConfirmedActionHttpRefusal } from './executor/actionFailureEnvelope.js';
 import { RpcError } from '../rpc/errors.js';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from './actionExecutionResult.js';
 import { createPromptDocInLibrary, createPromptBundleInLibrary, updatePromptDocInLibrary, updatePromptBundleInLibrary, installPromptRegistryItemInLibrary, listPromptLibrary, setPromptDocFavorite, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
@@ -1026,6 +1027,36 @@ describe('createActionExecutor (prompt library actions)', () => {
     selected = 'memory'; enabled = false;
     expect(await executor.execute('memory.remember', reviewed, context)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
     expect(artifacts.get('memory')).toBe(before);
+  });
+
+  it('retains the first Memory document and the typed Home refusal from its attachment', async () => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>();
+    const rollback = { error: 'database_transaction_conflict_exhausted', statusCode: 503 } as const;
+    const executor = createExecutor({
+      memoryLibrary: {
+        serverId: 'home', randomId: () => 'fact-1',
+        store: {
+          read: async id => artifacts.get(id) ?? null,
+          create: async input => {
+            const id = `memory-${artifacts.size + 1}`;
+            artifacts.set(id, { id, ...input, revision: { headerVersion: 1, bodyVersion: 1 } });
+            return id;
+          },
+          update: async () => { throw new Error('Unexpected update'); },
+        },
+        readScopeContext: async () => ({ entries: [], safety: 'safe', attachMemory: async () => {
+          const refusal = projectConfirmedActionHttpRefusal<{ ok: false; errorCode: string; error: string }>(
+            { ok: false, errorCode: 'action_failed', error: 'Home refused Source update' }, rollback.statusCode, rollback);
+          throw createActionExecuteFailureError(refusal);
+        } }),
+      },
+    });
+    const receipt = await executor.execute('memory.remember', {
+      scope: 'project', projectRef: { serverId: 'home', projectKey: 'source-project' }, text: 'Keep the first fact',
+    }, { serverId: 'home', surface: 'cli', authority: 'account_automation' });
+    expect(receipt).toMatchObject({ ok: true, result: { artifactId: 'memory-1', factId: 'fact-1', attachment: 'conflict',
+      attachmentFailure: { errorCode: rollback.error } } });
+    expect([...artifacts.keys()]).toEqual(['memory-1']);
   });
 
   it('creates memory only on first remember, reuses the reserved attachment and retains an attach-conflicted fact', async () => {

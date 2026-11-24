@@ -10293,10 +10293,11 @@ A failed attachment preserves
 the fact and returns the created document reference. Its retained
 `attachment: 'conflict'` receipt means the document is saved but attachment was
 not confirmed; an optional strict `attachmentFailure.errorCode` distinguishes
-an unavailable or denied attachment from a revision conflict. For example, an
-explicit Home transaction-conflict exhaustion is `source_backend_unavailable`,
-not evidence that the memory document changed. UI receipt classification keeps
-this `saved_unattached` outcome separate from an unsaved write conflict.
+an unavailable or denied attachment from a revision conflict. A Home transaction
+that confirms rollback carries its typed code, such as
+`database_transaction_conflict_exhausted`, through the attachment receipt.
+UI receipt classification keeps this `saved_unattached` outcome separate from an
+unsaved write conflict.
 Recovery attaches that
 known reference through the existing scope context writer at a fresh reviewed
 revision, then resumes remember against the actual attachment; it must not blindly

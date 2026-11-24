@@ -5,6 +5,7 @@ import { MemoryDocArtifactHeaderV1Schema, MemoryDocIndexV1Schema, MemoryTopicRea
 import { QualifiedProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { CoordinationMessageRefV1Schema } from '../../discussions/messageRefs.js';
 import { ProjectSourcesFailureV1Schema } from '../../projects/sources/projectSourceV1.js';
+import { HomeDomainConfirmedRollbackErrorCodeV1Schema } from '../../actions/homeDomainHttpBinding.js';
 
 export const MEMORY_DOCUMENT_ACTION_IDS_V1 = ['memory.remember', 'memory.decision.save', 'memory.update', 'memory.forget', 'memory.read', 'memory.list'] as const;
 export type MemoryDocumentActionIdV1 = typeof MEMORY_DOCUMENT_ACTION_IDS_V1[number];
@@ -61,6 +62,7 @@ export const MemoryListInputV1Schema = lazyZodSchema(() => z.strictObject({ serv
 /** Safe owner error codes only; transport/database prose never enters a saved-fact receipt. */
 export const MemoryAttachmentFailureV1Schema = lazyZodSchema(() => z.strictObject({ errorCode: z.union([
   ProjectSourcesFailureV1Schema.shape.error,
+  HomeDomainConfirmedRollbackErrorCodeV1Schema,
   z.enum(['project_context_unavailable', 'project_context_access_denied', 'action_account_scope_changed', 'cancelled',
     'outcome_unknown', 'home_unreachable', 'memory_target_unavailable']),
 ]) }));

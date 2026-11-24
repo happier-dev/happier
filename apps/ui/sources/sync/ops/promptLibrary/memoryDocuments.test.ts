@@ -10,7 +10,7 @@ import { ProjectSourcesUpdateInputV1Schema, type ProjectSourceV1 } from '@happie
 import { memoryDocumentActions, readMemoryActionOutcome, readMemoryCreationReceipt, readMemoryDuplicateReview } from './memoryDocuments';
 
 describe('memory Action receipts', () => {
-  it.each([null, 'database_transaction_conflict_exhausted', 'unrecognized_failure'])('retains the first Source-bound memory and recovers without another create after Source failure: %s', async sourceError => {
+  it.each([null, 'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'unrecognized_failure'])('retains the first Source-bound memory and recovers without another create after Source failure: %s', async sourceError => {
     const unavailable = sourceError !== null;
     let source: ProjectSourceV1 = { id: 'qa-memory-source', revision: 3, name: 'QA Memory Source', createdByAccountId: 'artifact-account', audience: [],
       repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -28,7 +28,10 @@ describe('memory Action receipts', () => {
         }));
         if (path.startsWith('/v1/projects/sources/' + source.id)) {
           if (init?.method === 'PATCH') {
-            if (sourceUnavailable) return Response.json({ error: sourceError }, { status: 503 });
+            if (sourceUnavailable) return Response.json({
+              error: sourceError, statusCode: 503,
+              ...(sourceError === 'database_transaction_timeout' ? { transactionOutcome: 'rolled_back' } : {}),
+            }, { status: 503 });
             const input = ProjectSourcesUpdateInputV1Schema.parse(JSON.parse(String(init.body)));
             if (input.expectedRevision !== source.revision) return Response.json({ ok: false, error: 'source_conflict', current: source }, { status: 409 });
             if (input.patch.attachment?.kind !== 'attach') throw new Error('Expected attachment');
@@ -45,7 +48,7 @@ describe('memory Action receipts', () => {
       await fixture.hydrateAccountSettings();
       const result = await memoryDocumentActions.rememberInScope({ scope: 'project', projectRef: { serverId: homeId, projectKey: 'qa-project' } },
         { text: 'QA use the canonical context attachment.' }, homeId);
-      const failure = { errorCode: sourceError === 'database_transaction_conflict_exhausted' ? 'source_backend_unavailable' : 'outcome_unknown' };
+      const failure = { errorCode: sourceError === 'unrecognized_failure' ? 'outcome_unknown' : sourceError };
       expect(result).toMatchObject({ ok: true, result: { attachment: unavailable ? 'conflict' : 'attached', ref: { kind: 'doc', serverId: homeId },
         ...(unavailable ? { attachmentFailure: failure } : {}) } });
       const saved = fixture.boundary.list().filter(row => fixture.boundary.readPlainBody(row.id)?.includes('QA use the canonical context attachment.'));
