@@ -1,4 +1,5 @@
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ProviderWireProtocol } from '@happier-dev/protocol/providers/capabilities/v1';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
@@ -199,6 +200,8 @@ export type SessionModelPickerProps = Readonly<{
     connectedServices?: ConnectedServiceBindingsV2 | null;
     /** The host applies the Provider-purpose binding with its model selection. */
     includeProviderConnectedAccounts?: boolean;
+    /** A runner may support a narrower transport set than the Agent itself. */
+    providerProtocols?: readonly ProviderWireProtocol[];
     nativeModels: readonly SessionNativeModelOption[];
     providerGroups: readonly SessionModelProjectionGroup[];
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
@@ -420,6 +423,7 @@ function SessionModelSourceBrowse(props: Readonly<{
             sourceBrowse={picker.sourceBrowse}
             nativeModels={EMPTY_NATIVE_MODELS}
             providerGroups={projection.data?.groups ?? EMPTY_PROJECTION_GROUPS}
+            providerProtocols={picker.providerProtocols}
             providerProjectionAuthoritative={projection.status === 'success'}
             providerProjectionResolving={projection.status === 'pending'}
             projectionError={projection.error ?? authorizationError}
@@ -527,6 +531,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         declarationContext,
         nativeModels: props.nativeModels,
         providerGroups: props.providerGroups,
+        providerProtocols: props.providerProtocols,
         hiddenNativeModelKeys: props.hiddenNativeModelKeys ?? new Set<string>(),
         canConfirmExperimental,
         providerProjectionAuthoritative: props.providerProjectionAuthoritative,
@@ -558,6 +563,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         props.nativeModels,
         canConfirmExperimental,
         props.providerGroups,
+        props.providerProtocols,
         props.providerProjectionAuthoritative,
         props.selected,
         props.selectedTeamCredentialModel,
@@ -770,6 +776,11 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             const binding = row?.gatewaySlots?.find(slot => qualifiedPurposeKey(slot.purpose) === purposeKey);
             if (binding) return props.onSelect(ref, binding);
             return;
+        }
+        if (ref && ref.providerConnectionId === null) {
+            const row = findSessionModelProjectionRow(props.providerGroups, sessionModelSelectionKey(ref));
+            const binding = row?.gatewaySlots?.[0];
+            if (binding) return props.onSelect(ref, binding);
         }
         return props.onSelect(!props.clearOption && ref && isNativeAutomaticModelSelectionInputV1(ref) ? null : ref);
     }, [props.clearOption, props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel, props.providerGroups]);

@@ -18,6 +18,7 @@ import { formatLimitResetUtc, limitMetricLabel, sourceKindLabel, teamCredentialR
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import type { buildSessionModelPickerSections, SessionModelPickerOption, SessionModelPickerSection } from './buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
+import { sessionModelProtocolEligible } from './sessionModelProtocolEligibility';
 
 function teamCredentialDeliveryUnavailableReason(reason: ProviderErrorCodeV1, deliveryMode?: TeamCredentialProviderModelSelectionV1['deliveryMode'], short = false): string {
     if (short) return t(presentProviderError(reason).titleKey);
@@ -74,11 +75,12 @@ function isTeamCredentialModelIncompatible(row: TeamCredentialResourceCatalogEnt
 
 /** Share exact-Agent admission between offered rows and retained-selection recovery. */
 export function createTeamCredentialModelEligibility(
-    input: Pick<Parameters<typeof buildSessionModelPickerSections>[0], 'agentTargetKey' | 'declarationContext'>,
+    input: Pick<Parameters<typeof buildSessionModelPickerSections>[0], 'agentTargetKey' | 'declarationContext' | 'providerProtocols'>,
 ): (row: TeamCredentialResourceCatalogEntryV1['providerModels'][number] | null) => boolean {
     const requirements = resolveAccountAgentProviderRequirements(input.agentTargetKey, input.declarationContext);
     return row => requirements.kind === 'known' && (!row || (
         row.selection.agentTargetKey === input.agentTargetKey
+        && sessionModelProtocolEligible(input.providerProtocols, row.compatibility?.result, row.selection)
         && !isTeamCredentialModelIncompatible(row)
         && !resolveProviderModelCapabilityCompatibilityV1({
             required: requirements.requirements.required, model: row.descriptor,

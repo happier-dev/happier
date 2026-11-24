@@ -71,6 +71,14 @@ function gatewayRow(modelId: string, name: string) {
 }
 
 const { SessionModelPicker } = await import('./SessionModelPicker');
+const { useNewSessionAgentAuthoringOptionsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionAgentAuthoringOptionsState');
+const { useNewSessionAgentPickerEngineSelectionState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerEngineSelectionState');
+const { useNewSessionBackendTargetState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState');
+const { buildNewSessionAgentPickerOptionInteractions } = await import('@/components/sessions/new/hooks/screenModel/buildNewSessionAgentPickerOptionInteractions');
+const { AgentInputChipPickerPanel } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPanel');
+const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
+const { formatBackendTargetKeyV2 } = await import('@/agents/backendCatalog/backendTargetKeyV2');
+const { useProviderModelProjection } = await import('@/providers/hooks/useProviderModelProjection');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { SessionModelSourceBrowseHandoffContext } = await import('./SessionModelSourceBrowseHandoff');
 const { NewSessionConnectedServicesSelectionContent } = await import('@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent');
@@ -96,6 +104,29 @@ beforeEach(async () => {
 });
 
 describe('SessionModelPicker source browsing', () => {
+  it.each([true, false])('retains the runner protocol restriction when browsing a hidden Provider (allowed: %s)', async (allowed) => {
+    const row = gatewayRow('gateway-model', 'Gateway model');
+    describeProviderModels.mockImplementation((payload: { sourceConnectionId?: string }) => ({
+      ...createProviderModelProjectionFixture({ agentTargetKey: AGENT, groups: payload.sourceConnectionId
+        ? [createProviderModelProjectionGroupFixture({ connectionId: GATEWAY, rows: [row] })] : [] }),
+      hiddenSources: payload.sourceConnectionId ? [] : [{ connectionId: GATEWAY,
+        providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named',
+        connectionDisplayNameMode: 'custom', modelCount: 1 }],
+    }));
+    const projection = describeProviderModels({});
+    const screen = await renderScreen(<SessionModelPicker agentTargetKey={AGENT} declarationContext={{ kind: 'account' }}
+      nativeModels={[{ value: 'native-model', label: 'Machine model' }]} providerGroups={[]} providerProjectionAuthoritative
+      hiddenSources={projection.hiddenSources} providerProtocols={allowed ? ['openai-responses'] : []}
+      selected={null} onSelect={vi.fn()} sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }} />);
+    await screen.pressByTestIdAsync(`model-picker-hidden-source:${GATEWAY}`);
+    await waitForHomeGovernance(() => expect(projectionRequests.some(request =>
+      (request.payload as { sourceConnectionId?: string }).sourceConnectionId === GATEWAY)).toBe(true));
+    await flushHookEffects();
+    const option = screen.findByTestId('model-picker-overlay-option:' + sessionModelSelectionKey(row.ref));
+    if (allowed) expect(option).not.toBeNull();
+    else expect(option).toBeNull();
+  });
+
   it.each([
     ['pi', 'openai-responses'], ['opencode', 'openai-responses'], ['codex', 'openai-responses'], ['claude', 'anthropic'],
   ] as const)('selects a managed Muse model from the CLIProxyAPI purpose for %s', async (agentId, protocol) => {
@@ -154,6 +185,92 @@ describe('SessionModelPicker source browsing', () => {
     expect(choose).not.toHaveBeenCalled();
     await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(exact)}`);
     expect(choose).toHaveBeenCalledWith(exact, binding);
+  });
+  it('retains a hidden gateway model through the real Agent panel and target-scoped New Session owner', async () => {
+    const row = gatewayRow('gateway-codex-model', 'Codex');
+    describeProviderModels.mockImplementation((payload: { agentTargetKey: string; sourceConnectionId?: string }) => {
+      const response = createProviderModelProjectionFixture({ agentTargetKey: payload.agentTargetKey, groups:
+        payload.sourceConnectionId ? [createProviderModelProjectionGroupFixture({ connectionId: GATEWAY,
+          providerName: 'CLIProxyAPI', connectionName: 'Main gateway', rows: [row] })] : [] });
+      return Promise.resolve({ ...response, hiddenSources: payload.sourceConnectionId ? [] : [{ connectionId: GATEWAY,
+        providerName: 'CLIProxyAPI', connectionName: 'Main gateway', connectionRole: 'default',
+        connectionDisplayNameMode: 'automatic', modelCount: 1 }] });
+    });
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude', 'codex'] });
+    const claude = entries.find(entry => entry.backendTargetKey === 'agent:happier.agent.claude/claude');
+    if (!claude) throw new Error('Expected the bundled Claude Agent');
+    let current: ReturnType<typeof useNewSessionAgentAuthoringOptionsState> | null = null;
+    let currentTarget = '';
+    const closed = vi.fn();
+    function Composer() {
+      const { backendTarget, setBackendTarget } = useNewSessionBackendTargetState({ entries,
+        routeBackendTarget: claude!.backendTarget, machineTarget: { machineId: CUSTOM_PROVIDER_MACHINE,
+          serverId, load: false } });
+      const targetKey = formatBackendTargetKeyV2(backendTarget);
+      const selectedEntry = entries.find(entry => entry.backendTargetKey === targetKey)!;
+      const authoring = useNewSessionAgentAuthoringOptionsState({ agentType: selectedEntry.agentId,
+        backendTargetKey: targetKey, hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+        implicitProfileModelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: claude!.backendTargetKey,
+          providerConnectionId: null, modelId: 'haiku' } } });
+      current = authoring;
+      currentTarget = targetKey;
+      const engine = useNewSessionAgentPickerEngineSelectionState({ selectedBackendEntry: selectedEntry,
+        selectedBackendTargetKey: targetKey, setBackendTarget, ...authoring,
+        modelSelectionIsExplicit: authoring.modelSelectionForPersistence !== undefined });
+      const projection = useProviderModelProjection({ enabled: true, machineId: CUSTOM_PROVIDER_MACHINE,
+        serverId, agentTargetKey: targetKey, ...(authoring.modelSelection ? { currentSelection: authoring.modelSelection.ref } : {}) });
+      const options = entries.map(entry => ({ id: entry.backendTargetKey, label: entry.title,
+        ...buildNewSessionAgentPickerOptionInteractions({ entry, disabled: false,
+          selectedMachineId: CUSTOM_PROVIDER_MACHINE, capabilityServerId: serverId, selectedPath: null,
+          ...(entry.backendTargetKey === targetKey ? { connectedServices: null } : {}),
+          providerProjection: projection, ...engine }) }));
+      return <AgentInputChipPickerPanel title="Models" options={options} selectedOptionId={targetKey}
+        onSelect={id => engine.selectBackendTarget(entries.find(entry => entry.backendTargetKey === id)!)}
+        onRequestClose={closed} />;
+    }
+    const screen = await renderScreen(<Composer />);
+    expect(current!.modelMode).toBe('haiku');
+    await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${AGENT}`);
+    expect(currentTarget).toBe(AGENT);
+    expect(closed).not.toHaveBeenCalled();
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`model-picker-hidden-source:${GATEWAY}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`model-picker-hidden-source:${GATEWAY}`);
+    await waitForHomeGovernance(() => expect(projectionRequests.find(request =>
+      (request.payload as { sourceConnectionId?: string }).sourceConnectionId === GATEWAY)?.payload)
+      .toMatchObject({ machineId: CUSTOM_PROVIDER_MACHINE, agentTargetKey: AGENT, sourceConnectionId: GATEWAY }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(row.ref)}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(row.ref)}`);
+    expect(current!.modelSelection?.ref).toEqual(row.ref);
+    expect(current!.modelSelectionForPersistence?.ref).toEqual(row.ref);
+    expect(current!.modelMode).toBe(row.ref.modelId);
+  });
+  it('retains a hidden gateway model in the real New Session authoring owner after the picker closes', async () => {
+    const row = gatewayRow('gateway-codex-model', 'Codex');
+    describeProviderModels.mockResolvedValue(createProviderModelProjectionFixture({ agentTargetKey: AGENT,
+      groups: [createProviderModelProjectionGroupFixture({ connectionId: GATEWAY, providerName: 'CLIProxyAPI',
+        connectionName: 'Main gateway', rows: [row] })] }));
+    let current: ReturnType<typeof useNewSessionAgentAuthoringOptionsState> | null = null;
+    function Composer() {
+      const authoring = useNewSessionAgentAuthoringOptionsState({ agentType: 'codex', backendTargetKey: AGENT,
+        hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null });
+      current = authoring;
+      const [open, setOpen] = React.useState(true);
+      return open ? <SessionModelPicker agentTargetKey={AGENT} nativeModels={[{ value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' }]}
+        providerGroups={[]} providerProjectionAuthoritative selected={authoring.modelSelection?.ref ?? null}
+        hiddenSources={[{ connectionId: GATEWAY, providerName: 'CLIProxyAPI', connectionName: 'Main gateway',
+          connectionRole: 'default', connectionDisplayNameMode: 'automatic', modelCount: 1 }]}
+        sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }} onSelect={ref => {
+          authoring.setModelSelection(ref ? { v: 1, updatedAt: 1, ref } : null);
+          setOpen(false);
+        }} /> : null;
+    }
+    const screen = await renderScreen(<Composer />);
+    await screen.pressByTestIdAsync(`model-picker-hidden-source:${GATEWAY}`);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(row.ref)}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(row.ref)}`);
+    expect(current!.modelSelection?.ref).toEqual(row.ref);
+    expect(current!.modelSelectionForPersistence?.ref).toEqual(row.ref);
+    expect(screen.findByTestId('model-picker-overlay-selection-list')).toBeNull();
   });
   it.each(['authorization', 'action'] as const)('shows the typed %s refusal instead of declaring the scoped Provider empty', async (source) => {
     const connectionId = 'pc_ca67d5e0-7dda-481e-a394-a5351ae770b9';

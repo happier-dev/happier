@@ -204,6 +204,7 @@ let reviewCostEngineId = 'claude';
 let uninstalledAgentId: string | null = null;
 let omittedMachineAgentId: string | null = null;
 let reviewProfileIds: Readonly<Record<string, string>> = {};
+let reviewRunners: Readonly<Record<string, Pick<ReturnType<typeof ReviewEngineListItemSchema.parse>, 'runnerAgents' | 'runnerSelection'>>> = {};
 let executionRunProfiles: readonly unknown[] = [];
 let protocolSupported = true;
 let detachedScopeSupported = true;
@@ -360,7 +361,7 @@ async function showAgentChoices() {
     if (screen.findByTestId('second-opinion.reviewers-more')) await screen.pressByTestIdAsync('second-opinion.reviewers-more');
 }
 function roleLabel() { return screen.root.findAll(node => node.props.testID === 'contextual-start-who-accessory'
-    && typeof node.props.label === 'string')[0]?.props.label; }
+    && typeof node.props.accessibilityLabel === 'string')[0]?.props.accessibilityLabel; }
 async function selectEngine(id: string) {
     await showAgentChoices();
     const row = agentRows().find(option => option.id === id)!;
@@ -429,6 +430,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         uninstalledAgentId = null;
         omittedMachineAgentId = null;
         reviewProfileIds = {};
+        reviewRunners = {};
         executionRunProfiles = [];
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
@@ -608,6 +610,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                         ...(!backends[engineId]!.available ? { available: false, unavailableCode: 'notInstalled', readiness: 'notInstalled' } : {}),
                         capabilities: { structuredNarration: true },
                         ...(reviewProfileIds[engineId] ? { profileId: reviewProfileIds[engineId] } : {}),
+                        ...reviewRunners[engineId],
                         ...(engineId === reviewCostEngineId && reviewCostConsent ? { costConsent: reviewCostConsent } : {}),
                     })) } },
                 }));
@@ -709,6 +712,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         if (block?.kind !== 'action') throw new Error('Expected the ordinary Review start Action');
         expect(block.actionId).toBe('review.start');
         const savedInput = Object.fromEntries(Object.entries(block.input).map(([key, binding]) => {
+            if (binding.kind === 'input') return [key, seed.inputValues?.[binding.name]];
+            if (binding.kind === 'input' && key === 'sourceSession') {
+                expect(binding.name).toBe('sourceSession');
+                return [key, seed.inputValues?.sourceSession];
+            }
             if (binding.kind !== 'literal') throw new Error('Expected retained Review input');
             return [key, binding.value];
         }));
@@ -757,6 +765,29 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await footerScreen.pressByTestIdAsync('review-start-footer-use-selection');
         await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reviewComposition' })));
         expect(emittedStarts).toEqual([]);
+    });
+
+    it('adds an independently configured panel member through the shared runner model picker', async () => {
+        backends.roborev = { available: true, intents: ['review'] };
+        const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        reviewRunners = { roborev: { runnerSelection: 'perMember', runnerAgents: [{ agentTarget: runnerAgentTarget, providerProtocols: ['openai-responses'] }] } };
+        await mount({ intent: 'review', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'roborev', runnerAgentTarget }] } });
+        const engine = agentRows().find(option => option.testID === 'contextual-start-agent:roborev');
+        if (!engine) throw new Error('Expected the panel reviewer');
+        await screen.pressByTestIdAsync(`contextual-start-change:${engine.id}`);
+        await waitFor(() => expect(screen.findByTestId('review-runner-add-member')).not.toBeNull());
+        const ref = { agentTargetKey: canonicalTargetKey('codex'), providerConnectionId: null, modelId: 'gpt-6.1-luna' };
+        const modelId = `model-picker-overlay-option:${JSON.stringify([ref.agentTargetKey, null, ref.modelId])}`;
+        await waitFor(() => expect(screen.findByTestId(modelId)).not.toBeNull());
+        await screen.pressByTestIdAsync(modelId);
+        await screen.pressByTestIdAsync('review-runner-add-member');
+        const draftKey = composer().launcherDraftKey;
+        await waitFor(() => expect(getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey!, 'selection'))?.value).toMatchObject({ actionInput: { reviewers: [
+                { kind: 'engine', engineId: 'roborev', runnerAgentTarget, modelSelection: ref, connectedServices: null },
+                { kind: 'engine', engineId: 'roborev', runnerAgentTarget, modelSelection: ref, connectedServices: null },
+            ] } }));
     });
 
     it('edits only declared profile options of the opened reviewer while retaining the mixed roster and consent', async () => {

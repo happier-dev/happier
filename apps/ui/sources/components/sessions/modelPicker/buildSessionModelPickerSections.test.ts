@@ -68,6 +68,17 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('retains native Connected Account catalog rows when a runner supports no Provider transport', () => {
+        const group = providerGroup({ connectionId: 'connected-source:codex', modelId: 'gpt-5' });
+        const row = group.rows[0]!;
+        const native = { ...row.ref, providerConnectionId: null };
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: row.ref.agentTargetKey, nativeModels: [], providerProtocols: [],
+            providerGroups: [group, { ...group, connectionId: 'connected-source:native-codex', rows: [{ ...row, ref: native }] }],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true });
+        expect(sections.flatMap(section => section.options).map(option => option.value)).toEqual([native]);
+    });
+
     it('retains the exact sign-in choice beside the same model from a key or another endpoint', () => {
         const group = providerGroup({ connectionId: 'gateway-key', modelId: 'openai/gpt-4' });
         const row = group.rows[0]!;

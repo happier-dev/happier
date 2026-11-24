@@ -128,3 +128,29 @@ function synchronizeReviewLauncherSteps(input: Record<string, unknown>): Record<
     return Array.isArray(input.steps) ? { ...input, steps: readReviewLauncherSteps(input).map((step, index) => index === 0
         ? { ...step, reviewers: input.reviewers } : step) } : input;
 }
+
+/** Panel members are ordinary roster slots, each retaining its own launch configuration. */
+export function appendReviewLauncherEngineMember(input: Record<string, unknown>, index: number): Record<string, unknown> {
+    const reviewers = readReviewLauncherReviewers(input);
+    const member = reviewers[index];
+    const first = member?.kind === 'engine' ? reviewers.find(reviewer => reviewer.kind === 'engine' && reviewer.engineId === member.engineId) : null;
+    return member?.kind === 'engine'
+        ? synchronizeReviewLauncherSteps({ ...input, reviewers: [...reviewers, { ...first }] }) : input;
+}
+
+/** Scope the existing scalar controls to exactly one intentional invocation. */
+export function updateReviewLauncherReviewerInput(input: Record<string, unknown>, index: number,
+    update: React.SetStateAction<Record<string, unknown>>): Record<string, unknown> {
+    const reviewers = readReviewLauncherReviewers(input);
+    const current = reviewers[index];
+    if (current?.kind !== 'engine') return input;
+    const next = updateReviewLauncherEngineConfiguration({ ...input, reviewers: [current] }, projected => {
+        // Scalar controls do not own the roster; projecting it twice can erase a new account choice.
+        const { reviewers: roster, ...configuration } = projected;
+        const updated = typeof update === 'function' ? update(configuration) : update;
+        return { ...updated, reviewers: roster };
+    });
+    const selected = readReviewLauncherReviewers(next)[0];
+    if (!selected) return input;
+    return synchronizeReviewLauncherSteps({ ...input, reviewers: reviewers.map((reviewer, at) => at === index ? selected : reviewer) });
+}

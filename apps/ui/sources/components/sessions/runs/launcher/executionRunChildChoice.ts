@@ -1,7 +1,10 @@
 import { ExecutionRunStartFailureDetailsV1Schema, readExecutionRunStartRunCreation,
     type ExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import type { QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings } from '@happier-dev/protocol/account/settings/connected-services';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams/credentials/providerModelCatalogV1';
 
 import { updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
@@ -34,7 +37,7 @@ export function readExecutionRunFanoutMembers(result: ActionExecuteResult): read
     });
 }
 
-export type ExecutionRunChildSelection = 'agentDefault' | ProviderBoundModelRef
+export type ExecutionRunChildSelection = 'agentDefault' | PersonalSessionModelRef
     | Readonly<{ teamCredentialModel: TeamCredentialProviderModelSelectionV1 }>;
 
 /** A start input with no model or route of its own: the session's (attached omission inherits at admission). */
@@ -49,13 +52,29 @@ export function clearExecutionRunChildSelection<T extends Record<string, unknown
     return Array.isArray(input.reviewers) ? updateReviewLauncherEngineConfiguration(input, clearChildConfiguration) : clearChildConfiguration(input);
 }
 
+/** Switching runners drops the preceding Agent's model, account and native options. */
+export function selectReviewLauncherRunner(input: Record<string, unknown>, runnerAgentTarget: AgentExecutionTargetV1): Record<string, unknown> {
+    const { sessionConfigOptionOverrides: _config, ...rest } = clearChildConfiguration(input);
+    return { ...rest, runnerAgentTarget };
+}
+
 /** A start input carrying exactly one child choice: the Agent's Account default or an exact model. */
-export function applyExecutionRunChildSelection<T extends Record<string, unknown>>(input: T, selection: ExecutionRunChildSelection): Record<string, unknown> {
+export function applyExecutionRunChildSelection<T extends Record<string, unknown>>(input: T, selection: ExecutionRunChildSelection,
+    connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1): Record<string, unknown> {
     const apply = (configuration: Record<string, unknown>) => {
         const rest = clearChildConfiguration(configuration);
-        return selection === 'agentDefault' ? { ...rest, childSelection: 'agentDefault' }
-            : 'teamCredentialModel' in selection ? { ...rest, teamCredentialModel: selection.teamCredentialModel }
-            : { ...rest, modelSelection: selection, ...(selection.providerConnectionId === null ? { connectedServices: null } : {}) };
+        if (selection === 'agentDefault') return { ...rest, childSelection: 'agentDefault' };
+        if ('teamCredentialModel' in selection) return { ...rest, teamCredentialModel: selection.teamCredentialModel };
+        return { ...rest, modelSelection: selection, ...(connectedAccountBinding ? {
+            connectedServices: projectAgentConnectedAccountPurposeDefaultsToSessionBindings([{
+                ...connectedAccountBinding,
+                service: connectedAccountBinding.target.kind === 'account'
+                    ? connectedAccountBinding.target.account.service : connectedAccountBinding.target.service,
+                // Personal model-source bindings exclude Team selections, whose picker owns its own callback.
+                teamResource: null,
+            }]),
+        } : !('source' in selection) && selection.providerConnectionId === null
+            ? { connectedServices: configuration.connectedServices ?? null } : {}) };
     };
     return Array.isArray(input.reviewers) ? updateReviewLauncherEngineConfiguration(input, apply) : apply(input);
 }

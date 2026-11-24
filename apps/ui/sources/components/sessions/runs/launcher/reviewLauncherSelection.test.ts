@@ -1,9 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema, type ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
-import { applyExecutionRunChildSelection } from './executionRunChildChoice';
-import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput } from './reviewLauncherSelection';
+import { applyExecutionRunChildSelection, selectReviewLauncherRunner } from './executionRunChildChoice';
+import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput, updateReviewLauncherReviewerInput, appendReviewLauncherEngineMember } from './reviewLauncherSelection';
 
 describe('review launcher submission', () => {
+    it('changes the runner without carrying the previous Agent account or model into the next invocation', () => {
+        const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const changed = selectReviewLauncherRunner({ roleId: 'reviewer', modelId: 'sonnet',
+            connectedServices: { account: 'claude' }, modelSelection: { modelId: 'sonnet' },
+            teamCredentialModel: { resourceId: 'claude-team' } }, runnerAgentTarget);
+        expect(changed).toEqual({ roleId: 'reviewer', runnerAgentTarget });
+    });
+    it('edits one repeated panel member without sharing its selected account with another member', () => {
+        const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const member = { kind: 'engine', engineId: 'roborev', runnerAgentTarget, connectedServices: { v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'first' },
+        } } };
+        const input = appendReviewLauncherEngineMember({ reviewers: [member] }, 0);
+        const modelSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6.1-luna' };
+        const changed = updateReviewLauncherReviewerInput(input, 1, previous =>
+            applyExecutionRunChildSelection(previous, modelSelection));
+        expect(changed.reviewers).toEqual([member, { ...member, modelSelection }]);
+    });
+    it('defaults a new panel member to the first member of that engine when added from another member', () => {
+        const first = { kind: 'engine', engineId: 'roborev', connectedServices: { account: 'first' } };
+        const otherEngine = { kind: 'engine', engineId: 'clawpatch', connectedServices: { account: 'other' } };
+        const second = { ...first, connectedServices: { account: 'second' } };
+        const input = { reviewers: [otherEngine, first, second] };
+        expect(appendReviewLauncherEngineMember(input, 2).reviewers).toEqual([otherEngine, first, second, first]);
+    });
     it('compiles the chosen reviewer exact native model and explicit native route through the start schema', () => {
         const reviewer = { kind: 'engine', engineId: 'claude' };
         const modelSelection = { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'sonnet' };

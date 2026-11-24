@@ -44,6 +44,21 @@ function availableReviewEngine(engineId: string): ReviewEngineListItem {
 }
 const REVIEW_ENGINES = ['claude', 'codex'].map(availableReviewEngine);
 
+it('retains a model belonging to an engine runner when its Agent differs from the engine', async () => {
+    const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const modelSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6.1-luna' };
+    const reviewer = { kind: 'engine', engineId: 'roborev', runnerAgentTarget, modelSelection, connectedServices: null };
+    const hook = await renderHook(() => {
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [reviewer] });
+        useExecutionRunLauncherOptionsModel({ sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
+            enabledAgentIds: ['codex'], executionRunsBackends: null, reviewEngines: [availableReviewEngine('roborev')],
+            acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' } });
+        return actionInput;
+    });
+    expect(hook.getCurrent().reviewers).toEqual([reviewer]);
+});
+
 it('keeps each reviewer model when another reviewer is added', async () => {
     const selected = ProviderBoundModelRefSchema.parse({
         agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'review-source', modelId: 'review-model',

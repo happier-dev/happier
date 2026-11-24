@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import type { PluginUiSelectActionInputHostActionV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
-import type { SessionModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { SessionModelPicker, type SessionModelPickerProps } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -79,25 +79,31 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
         selectedBackendChoice: chosenBackend, hasBackendChoices: params.backendChoices.length > 0, actionInput: launchInput,
         setActionInput: setLaunchInput, inheritedSelection: params.inheritedSelection, onSelectionChange: params.onSelectionChange });
     const selectedModel = React.useMemo(() => {
-        const parsed = ProviderBoundModelRefSchema.safeParse(launchInput.modelSelection);
+        const parsed = PersonalSessionModelRefSchema.safeParse(launchInput.modelSelection);
         return parsed.success ? parsed.data : null;
     }, [launchInput.modelSelection]);
     const inheritedModel = launcher.inheritedModelSelection;
+    const connectedServices = React.useMemo(() => {
+        if (launchInput.connectedServices == null) return launchInput.connectedServices;
+        const parsed = ConnectedServiceBindingsV2Schema.safeParse(launchInput.connectedServices);
+        return parsed.success ? parsed.data : undefined;
+    }, [launchInput.connectedServices]);
     const displayedModel = selectedModel ?? (chosenBackend && inheritedModel
         && backendTargetKeysMatch(inheritedModel.agentTargetKey, chosenBackend.backendTarget) ? inheritedModel : null);
     const model = useExactModelChoice({
         agentTargetKey: chosenBackend?.targetKey ?? null, agentId: chosenBackend?.agentId ?? null,
         machineId, serverId: params.serverId, selected: displayedModel,
+        includeProviderConnectedAccounts: true,
+        connectedServices,
         title: t('agentInput.model.title'), fallbackLabel: t('settingsAgents.defaultModelTitle'),
         clearOptionLabel: t('settingsAgents.defaultModelTitle'),
         enabled: chosenBackend !== null && params.modelSelectionEnabled !== false && !params.credentialSelectionOnly,
         teamModelChoice: teamCredential.pickerProps,
     });
-    const onSelectModel = React.useCallback((selection: SessionModelPickerValue) => {
-        if (selection && !('providerConnectionId' in selection)) return;
+    const onSelectModel = React.useCallback<SessionModelPickerProps['onSelect']>((selection, binding) => {
         params.onSelectionChange?.();
         params.setActionInput(previous => selection
-            ? applyExecutionRunChildSelection(previous, selection) : clearExecutionRunChildSelection(previous));
+            ? applyExecutionRunChildSelection(previous, selection, binding) : clearExecutionRunChildSelection(previous));
     }, [params.onSelectionChange, params.setActionInput]);
     // Native, Provider and Team offers share the exact Agent's existing catalog owner.
     const modelChoice = params.credentialSelectionOnly ? teamCredential.picker

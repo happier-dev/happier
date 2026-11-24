@@ -7,6 +7,16 @@ import { isMachineAgentExecutionStateBlockingV1 } from '@happier-dev/protocol/ca
 import { formatMachineAgentExecutionState } from '@/components/machines/agents/machineAgentCopy';
 import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 
+/** Declared runner targets consume the same Agent rows and readiness as ordinary reviewers. */
+export function reviewEngineRunnerChoices(runners: NonNullable<ReviewEngineListItem['runnerAgents']>,
+    choices: readonly ExecutionRunLauncherBackendChoice[]) {
+    return runners.flatMap(runner => {
+        const key = buildBackendTargetKeyV2(runner.agentTarget);
+        const choice = choices.find(candidate => candidate.targetKey === key);
+        return choice ? [{ ...runner, choice }] : [];
+    });
+}
+
 import {
     getResolvedBackendCatalogEntries,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -23,6 +33,7 @@ import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRu
 import { findMachineAgentForBackendTargetKey } from '@/agents/machineAgents/machineAgentCatalog';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { resolveMachineAgentSetupRow, type MachineAgentSetupRow } from '@/components/sessions/agentPicker/machineAgentSetupRow';
+import { resolveAgentCatalogProjection, type ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 
 export type ExecutionRunLauncherBackendChoice = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
@@ -33,6 +44,8 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
     reviewInventoryItem?: ReviewEngineListItem;
     /** Operational Agent identity that owns this selected backend. */
     agentId: string;
+    /** The Agent owner's native Account purposes and exact identity. */
+    agentCatalogEntry?: ResolvedAgentCatalogEntry;
     title: string;
     disabled: boolean;
     /** The daemon inventory's prerequisite reason, even without a MachineAgent setup descriptor. */
@@ -157,6 +170,12 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 targetKey,
                 backendId,
                 agentId,
+                agentCatalogEntry: resolveAgentCatalogProjection(agentId, {
+                    enabledAgentIds: params.enabledAgentIds,
+                    acpCatalogSnapshot: params.acpCatalogSnapshot,
+                    mergedBackendProjectionById: params.mergedBackendProjectionById,
+                    mergedProviderProjectionById: params.mergedProviderProjectionById,
+                }),
                 title: item.label,
                 disabled: !item.enabled,
                 ...(!item.enabled && item.readiness && isMachineAgentExecutionStateBlockingV1(item.readiness)
@@ -202,6 +221,7 @@ function resolveCatalogBackendChoices(params: ResolveBackendChoicesParams): read
             targetKey: entry.backendTargetKey,
             backendId,
             agentId: entry.agentId,
+            agentCatalogEntry: entry.agentCatalogEntry,
             title: entry.title,
             disabled: !isAvailable,
         };

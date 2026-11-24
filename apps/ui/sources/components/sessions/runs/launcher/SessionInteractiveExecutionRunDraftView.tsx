@@ -1,3 +1,6 @@
+import { ExecutionRunAgentModelPicker } from './ExecutionRunAgentModelPicker';
+import { ExecutionRunEngineRunnerPicker } from './ExecutionRunEngineRunnerPicker';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
@@ -63,7 +66,7 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
-import { readReviewLauncherEngineIds, readReviewLauncherReviewers, readReviewLauncherSteps, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
+import { readReviewLauncherEngineIds, readReviewLauncherReviewers, readReviewLauncherSteps, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration, updateReviewLauncherReviewerInput, appendReviewLauncherEngineMember } from './reviewLauncherSelection';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { ExecutionRunLauncherOptions, ExecutionRunProfileOptionFields } from './ExecutionRunLauncherOptions';
 import {
@@ -98,7 +101,7 @@ import { ReviewChangeTypeSchema, type ReviewChangeType } from '@happier-dev/prot
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 import { useDetachedExecutionRunProtocolSupport } from './useDetachedExecutionRunProtocolSupport';
-import { ExactModelChoicePicker, useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
+import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
 import { useExecutionRunChildChoice } from './useExecutionRunChildChoice';
 import {
     applyExecutionRunChildSelection,
@@ -159,39 +162,6 @@ function ExecutionRunReviewSource(props: Readonly<{
     </View>;
 }
 
-/** Mount the exact Agent's Team demand only while its model detail is open. */
-function ExecutionRunAgentModelPicker(props: Readonly<{
-    choice: ExecutionRunLauncherBackendChoice;
-    sessionId: string | null;
-    serverId: string | null;
-    machineId: string | null;
-    actionInput: Record<string, unknown>;
-    selected: ProviderBoundModelRef | null;
-    inheritedTeamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
-    selectBackend: (targetKey: string) => void;
-    setActionInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
-}>) {
-    const setSelection = React.useCallback<React.Dispatch<React.SetStateAction<Record<string, unknown>>>>(update => {
-        props.selectBackend(props.choice.targetKey);
-        props.setActionInput(update);
-    }, [props.choice.targetKey, props.selectBackend, props.setActionInput]);
-    const team = useExecutionRunTeamCredentialModel({ ...props, selectedBackendChoice: props.choice,
-        inheritedSelection: props.inheritedTeamCredentialModel,
-        // Browsing another Agent does not normalize or commit the draft.
-        hasBackendChoices: false, setActionInput: setSelection });
-    return <ExactModelChoicePicker
-        agentTargetKey={buildBackendTargetKeyV2(props.choice.backendTarget)}
-        agentId={props.choice.agentId}
-        machineId={props.machineId}
-        serverId={props.serverId}
-        selected={props.selected}
-        teamModelChoice={team.pickerProps}
-        title={t('agentInput.model.title')}
-        fallbackLabel={t('runPage.menu.selectionChoose')}
-        onSelect={ref => setSelection(previous => ref
-            ? applyExecutionRunChildSelection(previous, ref) : clearExecutionRunChildSelection(previous))}
-    />;
-}
 
 type DraftIdentity = Readonly<{ correlationId: string; inputLocalId: string }>;
 
@@ -1269,25 +1239,25 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const choice = options.backendChoices.find(candidate => (candidate.reviewEngineId ?? candidate.backendId) === reviewer.engineId);
             if (!choice) continue;
             const engineInput = reviewLauncherEngineConfiguration({ ...input, reviewers: [reviewer] });
-            const parsed = ProviderBoundModelRefSchema.safeParse(engineInput.modelSelection);
-            const setEngineInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update => setInput(previous => {
-                const roster = readReviewLauncherReviewers(previous);
-                const current = roster[index];
-                if (!current || current.kind !== 'engine') return previous;
-                const updated = updateReviewLauncherEngineConfiguration({ ...previous, reviewers: [current] }, update);
-                return { ...previous, reviewers: roster.map((value, at) => at === index ? readReviewLauncherReviewers(updated)[0]! : value) };
-            });
+            const parsed = PersonalSessionModelRefSchema.safeParse(engineInput.modelSelection);
+            const setEngineInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update => setInput(previous =>
+                updateReviewLauncherReviewerInput(previous, index, update));
             const profileId = choice.reviewInventoryItem?.profileId;
             const profile = parseQualifiedPluginContributionKey(profileId);
             const profileChoice = options.profileChoices.find(candidate => candidate.id === profileId);
-            const renderDetail = () => <><ExecutionRunAgentModelPicker choice={choice}
+            const renderDetail = () => <>{choice.reviewInventoryItem?.runnerAgents?.length ? <ExecutionRunEngineRunnerPicker engine={choice}
+                choices={options.backendChoices} sessionId={props.sessionId} serverId={serverId} machineId={machineId}
+                actionInput={engineInput} selected={parsed.success ? parsed.data : null} setActionInput={setEngineInput}
+                onAddMember={choice.reviewInventoryItem.runnerSelection === 'perMember'
+                    ? () => setInput(previous => appendReviewLauncherEngineMember(previous, index)) : undefined} />
+                : <ExecutionRunAgentModelPicker choice={choice}
                 sessionId={props.sessionId} serverId={serverId} machineId={machineId} actionInput={engineInput}
                 selected={parsed.success ? parsed.data : null} inheritedTeamCredentialModel={null}
-                selectBackend={() => undefined} setActionInput={setEngineInput} />
+                selectBackend={() => undefined} setActionInput={setEngineInput} />}
                 {profileChoice ? <ExecutionRunProfileOptionFields profile={profileChoice}
                     options={reviewer.options ?? EMPTY_REVIEW_ENGINE_OPTIONS} editable={editable}
                     onPatch={patch => setEngineInput(previous => ({ ...previous, options: {
-                        ...readReviewLauncherReviewers(previous).find(candidate => candidate.kind === 'engine')!.options,
+                        ...(previous.options && typeof previous.options === 'object' ? previous.options : {}),
                         ...patch,
                     } }))} /> : null}
                 {profile && profileId && serverId ? <ReviewEngineOptionsPluginContent pluginId={profile.pluginId}

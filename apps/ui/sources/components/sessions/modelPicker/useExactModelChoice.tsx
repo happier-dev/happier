@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { providerDeclarationContext, PROVIDER_DECLARATION_CONTEXT_SECTIONS } from '@/providers/catalog/accountProviderDeclarations';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -39,6 +40,9 @@ function ExactModelChoiceModal(
     clearOption?: SessionModelPickerProps['clearOption'];
     declarationContext: NonNullable<SessionModelPickerProps['declarationContext']>;
     sourceBrowse?: SessionModelPickerProps['sourceBrowse'];
+    connectedServices?: SessionModelPickerProps['connectedServices'];
+    includeProviderConnectedAccounts?: boolean;
+    providerProtocols?: SessionModelPickerProps['providerProtocols'];
     nativeModels: readonly {
       value: string;
       label: string;
@@ -54,9 +58,9 @@ function ExactModelChoiceModal(
     probe: SessionModelPickerProps['probe'];
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys: ReadonlySet<string>;
-    selected: ProviderBoundModelRef | null;
+    selected: PersonalSessionModelRef | null;
     experimentalConfirmation: SessionModelPickerExperimentalConfirmationController;
-    onSelect: (selection: ProviderBoundModelRef | null) => void;
+    onSelect: SessionModelPickerProps['onSelect'];
     onClose: () => void;
   }> & Omit<TeamModelChoiceProps, 'experimentalConfirmation'>,
 ) {
@@ -67,6 +71,9 @@ function ExactModelChoiceModal(
       clearOption={props.clearOption}
       declarationContext={props.declarationContext}
       sourceBrowse={props.sourceBrowse}
+      connectedServices={props.connectedServices}
+      includeProviderConnectedAccounts={props.includeProviderConnectedAccounts}
+      providerProtocols={props.providerProtocols}
       nativeModels={props.nativeModels}
       providerGroups={props.providerGroups}
       providerProjectionAuthoritative={props.providerProjectionAuthoritative}
@@ -87,9 +94,8 @@ function ExactModelChoiceModal(
       teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
       selectedTeamCredentialModel={props.selectedTeamCredentialModel}
       onSelectTeamCredentialModel={props.onSelectTeamCredentialModel}
-      onSelect={(selection) => {
-        if (selection && 'source' in selection) return;
-        props.onSelect(selection);
+      onSelect={(selection, binding) => {
+        props.onSelect(selection, binding);
         props.onClose();
       }}
     />
@@ -101,15 +107,18 @@ function ExactModelChoiceModal(
  * profile's preferred model, the Account default, a Run that cannot follow its Session. The row
  * reads `presentation`; `open` shows the same model picker the composer uses, in a card.
  */
-export function useExactModelChoice(
-  params: Readonly<{
+type ExactModelChoiceParams = Readonly<{
     agentTargetKey: string | null;
     purpose?: SessionModelPickerProps['purpose'];
     /** The Agent whose own models lead the picker; null offers Provider sources only. */
     agentId: string | null;
     machineId: string | null;
     serverId: string | null;
-    selected: ProviderBoundModelRef | null;
+    selected: PersonalSessionModelRef | null;
+    /** Execution hosts apply the exact purpose binding alongside the selected model. */
+    includeProviderConnectedAccounts?: boolean;
+    connectedServices?: SessionModelPickerProps['connectedServices'];
+    providerProtocols?: SessionModelPickerProps['providerProtocols'];
     title: string;
     fallbackLabel: string;
     /** Offers clearing the choice as the picker's first row (it selects `null`). */
@@ -118,8 +127,23 @@ export function useExactModelChoice(
     enabled?: boolean;
     /** Team-capable callers supply the same catalog and selection owner as Session authoring. */
     teamModelChoice?: TeamModelChoiceProps;
-  }>,
-) {
+  }>;
+
+type ExactModelChoice = ReturnType<typeof useExactModelChoiceOwner>;
+type ProviderModelChoice = Omit<ExactModelChoice, 'open'> & Readonly<{
+  open: (onSelect: (selection: ProviderBoundModelRef | null) => void) => void;
+}>;
+
+export function useExactModelChoice(params: ExactModelChoiceParams & { includeProviderConnectedAccounts: true }): ExactModelChoice;
+export function useExactModelChoice(params: Omit<ExactModelChoiceParams, 'selected' | 'includeProviderConnectedAccounts'> & {
+  selected: ProviderBoundModelRef | null;
+  includeProviderConnectedAccounts?: false;
+}): ProviderModelChoice;
+export function useExactModelChoice(params: ExactModelChoiceParams): ExactModelChoice {
+  return useExactModelChoiceOwner(params);
+}
+
+function useExactModelChoiceOwner(params: ExactModelChoiceParams) {
   const providersEnabled = useFeatureEnabled('providers', {
     scopeKind: 'spawn',
     serverId: params.serverId,
@@ -232,6 +256,9 @@ export function useExactModelChoice(
       clearOption,
       declarationContext,
       sourceBrowse: { machineId: params.machineId, serverId: params.serverId },
+      connectedServices: params.connectedServices,
+      includeProviderConnectedAccounts: params.includeProviderConnectedAccounts,
+      providerProtocols: params.providerProtocols,
       nativeModels,
       providerGroups,
       providerProjectionAuthoritative,
@@ -259,6 +286,9 @@ export function useExactModelChoice(
       params.fallbackLabel,
       params.purpose,
       params.machineId,
+      params.connectedServices,
+      params.includeProviderConnectedAccounts,
+      params.providerProtocols,
       params.serverId,
       params.selected,
       params.teamModelChoice,
@@ -275,7 +305,7 @@ export function useExactModelChoice(
   const openDialog = React.useRef<Readonly<{
     id: string;
     agentTargetKey: string;
-    onSelect: (selection: ProviderBoundModelRef | null) => void;
+    onSelect: SessionModelPickerProps['onSelect'];
   }> | null>(null);
   // Popovers may retain an opener while its catalogs settle before any modal
   // exists. Read current owner data on invocation as well as while open.
@@ -288,12 +318,13 @@ export function useExactModelChoice(
     }
   }, [live]);
   const open = React.useCallback(
-    (onSelect: (selection: ProviderBoundModelRef | null) => void) => {
+    (onSelect: SessionModelPickerProps['onSelect']) => {
       const { agentTargetKey, title, live: currentLive } = openState.current;
       if (!agentTargetKey) return;
-      const selectAndRelease = (selection: ProviderBoundModelRef | null) => {
+      const selectAndRelease: SessionModelPickerProps['onSelect'] = (selection, binding) => {
         openDialog.current = null;
-        onSelect(selection);
+        if (binding) onSelect(selection, binding);
+        else onSelect(selection);
       };
       const id = Modal.show({
         component: ExactModelChoiceModal,
@@ -324,11 +355,9 @@ export function useExactModelChoice(
 }
 
 /** The same exact-model owner in an Agent popover's existing detail pane. */
-export function ExactModelChoicePicker(props: Parameters<typeof useExactModelChoice>[0] & Readonly<{
-  onSelect: (selection: ProviderBoundModelRef | null) => void;
+export function ExactModelChoicePicker(props: ExactModelChoiceParams & Readonly<{
+  onSelect: SessionModelPickerProps['onSelect'];
 }>) {
-  const { pickerProps } = useExactModelChoice(props);
-  return pickerProps ? <SessionModelPicker {...pickerProps} multiColumn fillAvailableSpace onSelect={(selection) => {
-    if (!selection || !('source' in selection)) props.onSelect(selection);
-  }} /> : null;
+  const { pickerProps } = useExactModelChoiceOwner(props);
+  return pickerProps ? <SessionModelPicker {...pickerProps} multiColumn fillAvailableSpace onSelect={props.onSelect} /> : null;
 }

@@ -3,6 +3,7 @@ import { isNativeAutomaticModelSelectionInputV1, serializeModelVisibilityRefV1, 
 import { isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
+import type { ProviderWireProtocol } from '@happier-dev/protocol/providers/capabilities/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import type { TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
@@ -28,6 +29,7 @@ import {
     type SessionModelPickerValue,
 } from './sessionModelSelectionKey';
 import { resolveSessionModelPickerSourceState, type SessionModelPickerSourceState } from './selectSessionModelPickerSourceGroups';
+import { sessionModelProtocolEligible } from './sessionModelProtocolEligibility';
 
 export type SessionModelProjectionGroup = Extract<
     DaemonProviderModelProjectionResponseV1,
@@ -172,6 +174,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     clearOption?: Readonly<{ label: string; description?: string }>;
     providerGroups: readonly SessionModelProjectionGroup[];
     hiddenNativeModelKeys: ReadonlySet<string>;
+    providerProtocols?: readonly ProviderWireProtocol[];
     canConfirmExperimental?: boolean;
     providerProjectionAuthoritative: boolean;
     selected?: SessionModelPickerValue;
@@ -263,6 +266,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     const providerSections = input.providerGroups.flatMap((group): SessionModelPickerSection[] => {
         const source = { label: sessionModelConnectionTitle(group), native: false };
         const entries = group.rows.flatMap((row): { row: typeof row; option: SessionModelPickerOption }[] => {
+            if (!sessionModelProtocolEligible(input.providerProtocols, row.compatibility.result, row.ref)) return [];
             const hiddenCurrentSelection = row.visibility === 'hidden_current_selection';
             if (row.visibility !== 'visible' && !hiddenCurrentSelection) return [];
             const presentation = presentProviderModelRow({

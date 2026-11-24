@@ -1,5 +1,7 @@
-import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -183,18 +185,20 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     }, [catalogReady, machineAnswered, params.setActionInput, requestedProfileId, selectedProfileChoice, selectedProfileMatchesSelectedBackend]);
 
     // A model belongs to the Agent it was chosen for; choosing another Agent drops it.
-    const draftModelSelection = ProviderBoundModelRefSchema.safeParse(params.actionInput.modelSelection);
+    const draftModelSelection = PersonalSessionModelRefSchema.safeParse(params.actionInput.modelSelection);
     const draftModelAgentTargetKey = draftModelSelection.success && draftModelSelection.data ? draftModelSelection.data.agentTargetKey : null;
+    const runner = params.intent === 'review' ? AgentExecutionTargetV1Schema.safeParse(params.actionInput.runnerAgentTarget) : null;
+    const modelAgentTargetKey = runner?.success ? buildBackendTargetKeyV2(runner.data) : selectedBackendChoice?.targetKey;
     React.useEffect(() => {
         if (!draftModelAgentTargetKey) return;
         if (params.intent === 'review' && selectedValues.length !== 1) return;
-        if (!selectedBackendChoice || backendTargetKeysMatch(draftModelAgentTargetKey, selectedBackendChoice.backendTarget)) return;
+        if (!modelAgentTargetKey || backendTargetKeysMatch(draftModelAgentTargetKey, modelAgentTargetKey)) return;
         if (params.intent === 'review') {
             rawParams.setActionInput(clearExecutionRunChildSelection);
             return;
         }
         params.setActionInput(({ modelSelection: _modelSelection, ...rest }) => rest);
-    }, [draftModelAgentTargetKey, params.intent, params.setActionInput, selectedBackendChoice, selectedValues.length]);
+    }, [draftModelAgentTargetKey, modelAgentTargetKey, params.intent, params.setActionInput, selectedValues.length]);
 
     const permissionModeOptions = React.useMemo(() => {
         const agentId = resolveExecutionRunPermissionAgentId({ selectedBackendChoices, fallbackAgentId: params.fallbackAgentId });
