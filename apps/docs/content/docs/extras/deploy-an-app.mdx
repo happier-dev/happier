@@ -261,6 +261,10 @@ setup recorded in the Environment. If that collector is reinstalled, or the
 Environment's telemetry was set up before this check existed, reads stop with
 a collector key error until you run telemetry setup again.
 
+An Environment manager can choose **Clear capture** in the **Telemetry** tab
+and confirm to delete that Environment's retained capture. New telemetry can
+still arrive while the app continues exporting.
+
 Happier leaves the app's SDK sampling default unchanged unless you choose a
 sampling ratio. An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under

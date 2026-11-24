@@ -15,9 +15,11 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
-  isDatabaseActionIdV1, telemetryCollectorReadSourceV1 } from '../actions/actionIdsDatabaseV1.js';
+  isDatabaseActionIdV1, telemetryCollectorActionSourceV1 } from '../actions/actionIdsDatabaseV1.js';
 import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
 import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
+import { DatabaseAgentLevelV1Schema } from './deploymentEnvironmentDeployerV1.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentTelemetryCapabilitiesV1Schema } from './deploymentTelemetryV1.js';
 export { isDeploymentReadActionIdV1, isDeploymentNativeReadActionIdV1, isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 
@@ -28,9 +30,18 @@ const telemetryCollector = z.strictObject({ serverId: id, environmentIds: z.arra
 const telemetryEnvironment = z.object({ serverId: id, environmentId: id });
 const telemetryEnvironmentSource = z.extend(telemetryEnvironment, { kind: z.literal('environment') });
 
-/** Home's accepted metadata for the sealed read. No Environment content is required on this carrier. */
+/** The same selected Environment operand drives collector placement and Clear approval scope. */
+export function readDeploymentTelemetryEnvironmentSourceV1(input: unknown) {
+  return telemetryEnvironmentSource.safeParse(readRecord(input).source);
+}
+
+/** Home's accepted metadata for the sealed collector Action. No Environment content crosses this carrier. */
 export const DeploymentTelemetryReadFactsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
   environmentId: id, revision, capabilities: DeploymentTelemetryCapabilitiesV1Schema,
+  clearApproval: z.optional(z.strictObject({
+    purpose: z.enum(['standard', 'preview']), previewTemplateEnvironmentId: z.optional(id),
+    previewCompanionOfEnvironmentId: z.optional(id), dataAgentAccess: DatabaseAgentLevelV1Schema,
+  })),
 })).check(z.minLength(1)));
 
 /** Structural credential scope only; SQL, search inputs and parameters remain sealed. */
@@ -56,7 +67,7 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.union([z.di
       || scope.databaseTarget.kind === 'managed_deployment' && scope.access === 'write');
   })),
   z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
-    z.refine(action => telemetryCollectorReadSourceV1(formatQualifiedPluginActionId(action)) !== undefined)),
+    z.refine(action => telemetryCollectorActionSourceV1(formatQualifiedPluginActionId(action)) !== undefined)),
     telemetryCollector })]));
 
 export type DeploymentReadAdmissionV1 = z.infer<typeof DeploymentReadAdmissionV1Schema>;
@@ -96,7 +107,7 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
     const invoked = ActionInvokeInputSchema.safeParse(input);
     if (!invoked.success || invoked.data.input === undefined) return undefined;
     const qualifiedId = formatQualifiedPluginActionId(invoked.data.action);
-    const sourceKind = telemetryCollectorReadSourceV1(qualifiedId);
+    const sourceKind = telemetryCollectorActionSourceV1(qualifiedId);
     if (sourceKind) {
       const operands = invoked.data.input;
       if (sourceKind === 'metrics' && operands && typeof operands === 'object' && 'environmentIds' in operands) {
@@ -106,7 +117,7 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
         } } : undefined;
       }
       const selected = sourceKind === 'source'
-        ? telemetryEnvironmentSource.safeParse(operands && typeof operands === 'object' && 'source' in operands ? operands.source : undefined)
+        ? readDeploymentTelemetryEnvironmentSourceV1(operands)
         : telemetryEnvironment.safeParse(operands);
       return selected.success ? { actionId, action: invoked.data.action,
         telemetryCollector: { serverId: selected.data.serverId, environmentIds: [selected.data.environmentId] } } : undefined;

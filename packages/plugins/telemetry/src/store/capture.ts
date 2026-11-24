@@ -78,6 +78,14 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
   ...metricStore,
   ...createCaptureWorktrees(db, queryPage),
   ...createCostStore(queryPage),
+  async lastReceivedAt(partition: string): Promise<number | null> {
+   // Skip the partition's loss marker. Exceptions accompany a retained span or log.
+   const [row] = await db.query<{ at: number | null }>(`SELECT MAX(at) AS at FROM (
+    SELECT MAX(at) AS at FROM captureSummaries WHERE worktree = ? AND kind != 'coverage'
+    UNION ALL SELECT MAX(at) AS at FROM metricPoints WHERE worktree = ?
+   )`, [partition, partition]);
+   return row?.at ?? null;
+  },
   async listPartitions(): Promise<readonly string[]> {
    const partitions: string[] = [];
    let after = '';

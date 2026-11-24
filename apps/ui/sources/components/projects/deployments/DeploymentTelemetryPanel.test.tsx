@@ -58,7 +58,7 @@ function setUpDetail(role: 'manager' | 'reader' = 'manager', collectorId = 'coll
     environment: {
       ...base.environment,
       telemetryMachineId: collectorId,
-      capabilities: { ...base.environment.capabilities, role },
+      capabilities: { ...base.environment.capabilities, role, manage: role === 'manager', manageBindings: role === 'manager' },
     },
     content: {
       ...base.content,
@@ -128,6 +128,7 @@ async function settle() {
 function panel(
   invoke: ReturnType<typeof collector>['invoke'],
   detail: ReturnType<typeof setUpDetail>,
+  demand?: { telemetryApplied?: boolean; active?: boolean },
 ) {
   return (
     <AppPresentationPlatformProvider><ModalProvider>
@@ -137,6 +138,7 @@ function panel(
           lifetime={lifetime}
           environmentName="Production"
           onChanged={() => {}}
+          {...demand}
         />
       </TelemetryCaptureInvokeContext.Provider>
     </ModalProvider></AppPresentationPlatformProvider>
@@ -201,6 +203,45 @@ const answers = (call: Call) => {
 };
 
 describe('Environment Telemetry tabs', () => {
+  it('distinguishes deployment settlement from accepted data and reads only while presented', async () => {
+    let lastReceivedAt: number | null = null;
+    const { invoke, calls } = collector(call => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, lastReceivedAt }
+      : answers(call));
+    const detail = setUpDetail();
+    const screen = await renderScreen(panel(invoke, detail, { active: false, telemetryApplied: false }));
+    const status = () => screen.findByTestId('project-deployments.telemetry.collector')?.props.children;
+    try {
+      await settle();
+      expect(calls).toHaveLength(0);
+      await screen.update(panel(invoke, detail, { active: true, telemetryApplied: false }));
+      await settle();
+      expect(status()).toContain('Changes apply at the next deploy.');
+      expect(calls.map(call => call.actionId)).toEqual(['happier.telemetry/actions/capture/endpoints/list']);
+
+      await screen.update(panel(invoke, detail, { active: true, telemetryApplied: true }));
+      await settle();
+      expect(status()).toContain('Waiting for first data');
+      expect(calls.filter(call => call.actionId.endsWith('/capture/status'))).toEqual([
+        expect.objectContaining({ collectorMachineId: 'collector', input: { source } }),
+      ]);
+
+      await screen.update(panel(invoke, detail, { active: false, telemetryApplied: true }));
+      const whileHidden = calls.length;
+      lastReceivedAt = request.at;
+      await settle();
+      expect(calls).toHaveLength(whileHidden);
+      await screen.update(panel(invoke, detail, { active: true, telemetryApplied: true }));
+      await settle();
+      expect(status()).toContain('Receiving');
+      expect(calls.slice(whileHidden).map(call => call.actionId).sort()).toEqual([
+        'happier.telemetry/actions/capture/endpoints/list', 'happier.telemetry/actions/capture/status',
+      ]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('reads the open list once on the collector with the Environment as its source, and each tab reads its own list', async () => {
     const { invoke, calls } = collector(answers);
     const screen = await mount(invoke);
@@ -397,16 +438,41 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('offers Telemetry settings without Clear to an Environment manager', async () => {
-    const { invoke } = collector(answers);
+  it('clears the selected Environment for a manager and refreshes its list', async () => {
+    let cleared = false;
+    const refreshed = createDeferred<void>();
+    const clearId = 'happier.telemetry/actions/capture/clear';
+    const { invoke, calls } = collector(call => {
+      if (call.actionId === clearId) {
+        cleared = true;
+        return { ok: true };
+      }
+      if (cleared && call.actionId.endsWith('/capture/endpoints/list')) {
+        refreshed.resolve();
+        return { ok: true, source, items: [] };
+      }
+      return answers(call);
+    });
     const screen = await mount(invoke);
     try {
       await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
       expect(screen.findByTestId('project-deployments.telemetry.menu.settings')).not.toBeNull();
-      expect(screen.findByTestId('project-deployments.telemetry.menu.clear')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.menu.clear');
+      await refreshed.promise;
+      expect(calls.filter(call => call.actionId === clearId)).toEqual([expect.objectContaining({
+        collectorMachineId: 'collector',
+        input: { source },
+      })]);
+      expect(calls.filter(call => call.actionId.endsWith('/capture/endpoints/list'))).toHaveLength(2);
     } finally {
       await screen.unmount();
+    }
+    const viewer = await mount(collector(answers).invoke, 'reader');
+    try {
+      expect(viewer.findByTestId('project-deployments.telemetry.menu')).toBeNull();
+    } finally {
+      await viewer.unmount();
     }
   });
 

@@ -14,7 +14,8 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
-import { DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { databaseActionOperationClass } from '@happier-dev/protocol/actions/databaseActionMetadata';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { enableOwnServerPostgresqlStatisticsForHost } from './ownServer/dataRoleBootstrap';
 import { withOwnServerDataQueryNativeForHost } from './ownServer/dataQueryNative';
@@ -345,6 +346,30 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             return { environment: { serverId: environment.serverId, environmentId: environment.id, revision: environment.revision },
                 collectorMachineId: admission.host.machineId,
                 capabilities: resolveDeploymentTelemetryCapabilitiesV1(admission.detail.content.telemetry) };
+        },
+        async admitTelemetryClear(request) {
+            if (!context) return refuse('deployment_target_role_unavailable');
+            const requester = resolveDatabaseRequesterKindV1({ agentCaller: isAgentCaller(context), authority: context.authority });
+            if (!requester) return refuse('deployment_target_role_unavailable');
+            let agentAccess;
+            if (binding) {
+                const accepted = read && 'telemetryCollector' in read
+                    && formatQualifiedPluginActionId(read.action) === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1
+                    && telemetryCollector?.serverId === request.serverId
+                    ? telemetryFacts?.get(request.environmentId)?.clearApproval : undefined;
+                if (!accepted) return refuse('source_access_denied');
+                agentAccess = accepted.dataAgentAccess;
+            } else {
+                const { detail: { environment }, host } = await readEnvironment(
+                    { kind: 'environment', environment: request }, undefined, { nativeMember: true });
+                if (environment.telemetryMachineId !== host.machineId) return refuse('machine_unavailable');
+                if (!environment.capabilities.manage) return refuse('source_access_denied');
+                agentAccess = environment.dataAgentAccess;
+            }
+            const operation = databaseActionOperationClass(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+                { source: { kind: 'environment', ...request } });
+            const decision = decideDatabaseAccessV1({ requester, person: { mayWrite: true, editingOff: false }, agentAccess, operation });
+            if (!decision.ok) return refuse(decision.refusal);
         },
         async admit(request, operation) {
             const { admission, summary } = await admitTarget(request, operation);

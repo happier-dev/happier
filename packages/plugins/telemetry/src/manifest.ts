@@ -18,8 +18,7 @@ import { TELEMETRY_WIDGET_RENDERERS, TELEMETRY_WIDGET_VIEWS } from './widgets.js
 
 /** Local sources (the requester's own Machine and worktrees) are admitted for the Account that
  * recorded them: the source must be on this executing Machine, and the requester's Account selects
- * its own partition. Environment telemetry keeps R16 host admission (D39). Clear deletes data, so it
- * is local only: a reader of shared Environment telemetry cannot clear it for the team. */
+ * its own partition. Environment telemetry uses host admission for the selected action. */
 function localCaptureOwner(machineId: string, context: PluginInvocationContext): string {
  const accountId = context.requesterAccount?.accountId;
  if (!accountId || context.chosenMachine?.machineId !== machineId) throw new PluginError({ code: 'capture_source_unavailable' });
@@ -32,8 +31,8 @@ const capture = createCapturePublicActionProducers({
   if (source.kind === 'worktree') {
    return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };
   }
-  if (actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) throw new PluginError({ code: 'capture_source_unavailable' });
-  const admit = context.services.deploymentDatabases?.admitTelemetryRead;
+  const deployments = context.services.deploymentDatabases;
+  const admit = actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 ? deployments?.admitTelemetryClear : deployments?.admitTelemetryRead;
   if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
   await admit({ serverId: source.serverId, environmentId: source.environmentId });
   return { source, partition: captureSourcePartition(source, undefined) };

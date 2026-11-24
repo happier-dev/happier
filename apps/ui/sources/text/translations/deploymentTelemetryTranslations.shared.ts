@@ -17,6 +17,8 @@ export type Copy = Readonly<{
     title: string;
     keptOn: (p: MachineName) => string;
     nextDeploy: string;
+    waiting: string;
+    receiving: (p: Readonly<{ time: string }>) => string;
   }>;
   state: Readonly<{ on: string; off: string }>;
   tabs: Readonly<{
@@ -27,7 +29,7 @@ export type Copy = Readonly<{
     queries: string;
   }>;
   window: Readonly<{ label: string; hour: string; day: string; week: string }>;
-  menu: Readonly<{ settings: string }>;
+  menu: Readonly<{ settings: string; clear: string; clearFailed: string }>;
   offline: Readonly<{
     title: (p: MachineName) => string;
     reason: string;
@@ -90,6 +92,8 @@ const en: Copy = {
     title: 'Recording',
     keptOn: ({ machine }) => `Kept on ${machine}.`,
     nextDeploy: 'Changes apply at the next deploy.',
+    waiting: 'Waiting for first data',
+    receiving: ({ time }) => `Receiving · ${time}`,
   },
   state: { on: 'On', off: 'Off' },
   tabs: {
@@ -100,7 +104,7 @@ const en: Copy = {
     queries: 'Queries',
   },
   window: { label: 'Time window', hour: '1 h', day: '24 h', week: '7 d' },
-  menu: { settings: 'Telemetry settings…' },
+  menu: { settings: 'Telemetry settings…', clear: 'Clear capture…', clearFailed: 'Capture could not be cleared.' },
   offline: {
     title: ({ machine }) => `${machine} isn’t answering`,
     reason: 'your app keeps running; this is what Happier last read',

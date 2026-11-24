@@ -5,7 +5,7 @@ import { DeploymentEnvironmentHeaderV1Schema } from './deploymentActionsV1.js';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '../actions/actionSettings.js';
 import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
 
 function environment(id: string, preview = false) {
   return DeploymentEnvironmentHeaderV1Schema.parse({
@@ -114,6 +114,25 @@ describe('preview template approval scope', () => {
 });
 
 describe('database Action approval scope (P3 U3)', () => {
+  it('routes Environment capture Clear through the agent level and leaves Worktree Clear local', async () => {
+    const actionId = DATABASE_CAPTURE_CLEAR_ACTION_ID_V1;
+    const input = { source: { kind: 'environment', serverId: 'home', environmentId: 'staging' } };
+    const context = { surface: 'agent', authority: 'account_automation' } as const;
+    const resolve = createDeploymentApprovalScopeResolverV1(async () => ({ ok: true,
+      environment: { ...environment('staging'), dataAgentAccess: 'readWriteAsk' }, targetLinks: [] }));
+    const admitted = await resolve({ actionId, input, context, phase: 'prepare' });
+    expect(admitted).toEqual({ scope: { kind: 'environment', environmentId: 'staging' },
+      targetApproval: { databaseAgentLevel: 'readWriteAsk' } });
+    if ('ok' in admitted) throw new Error(admitted.errorCode);
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'action.invoke': ['agent'] } });
+    expect(resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: actionId,
+      spec: getActionSpec('action.invoke'), input, settings, context,
+      approvalScope: admitted.scope ?? undefined, targetApproval: admitted.targetApproval }).required).toBe(true);
+    expect(await resolve({ actionId, input: { source: { kind: 'worktree', serverId: 'home',
+      machineId: 'machine', projectId: 'project', workspaceId: 'workspace' } }, context, phase: 'prepare' }))
+      .toEqual({ scope: null });
+  });
+
   const editsApply = 'happier.database/actions/edits/apply';
   const deploymentTarget = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'staging',
     projectSourceId: 'source' }, deploymentId: 'deployment', targetLinkId: 'staging-runtime', serviceId: 'db', database: 'app' };

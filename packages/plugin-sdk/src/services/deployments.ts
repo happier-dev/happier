@@ -59,6 +59,8 @@ export interface DeploymentDatabasesServiceV1 {
         collectorMachineId: string;
         capabilities: DeploymentTelemetryCapabilitiesV1;
     }>>;
+    /** Admits a destructive partition clear as the Environment manager; a read admission cannot authorize it. */
+    admitTelemetryClear?(input: Readonly<{ serverId: string; environmentId: string }>): Promise<void>;
     listTargets(input: DatabaseTargetsListInputV1): Promise<DatabaseTargetsListResultV1>;
     resolve(input: DatabaseOperationInputV1, access: DatabaseOperationClassV1): Promise<DeploymentDatabaseResolutionV1>;
     /** This request's access through the server's current Environment authorization, without a credential or

@@ -217,8 +217,11 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 serviceVersion: input.serviceVersion, granularity: input.granularity,
             }) };
         },
-        async captureStatus(input: database.DatabaseCaptureStatusInputV1) {
-            return { ok: true as const, source: selected.source, coverage: selected.runtime.ingest.coverage(selected.partition) };
+        async captureStatus(_input: database.DatabaseCaptureStatusInputV1) {
+            return { ok: true as const, source: selected.source, coverage: selected.runtime.ingest.coverage(selected.partition),
+                ...(selected.source.kind === 'environment'
+                    ? { lastReceivedAt: await selected.runtime.store.lastReceivedAt(selected.partition) }
+                    : {}) };
         },
         async listCapturedQueries(input: database.DatabaseCaptureQueriesListInputV1) {
             return page(await selected.runtime.store.list({ ...input.page, since: input.since, until: input.until,

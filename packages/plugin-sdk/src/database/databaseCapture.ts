@@ -57,6 +57,8 @@ export const DatabaseCaptureStatusInputV1Schema = z.strictObject(sourceInput);
 export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Schema, z.extend(status, {
     ok: z.literal(true),
     enabled: z.optional(z.boolean()),
+    /** Environment status: the newest retained observation, null until the collector stores data. */
+    lastReceivedAt: z.optional(z.nullable(time)),
 })]);
 export const DatabaseCaptureQueriesListInputV1Schema = z.strictObject({ ...selectedPage, traceId: z.optional(id) });
 export const DatabaseCaptureQueriesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);

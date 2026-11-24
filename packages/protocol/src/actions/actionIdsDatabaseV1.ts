@@ -45,9 +45,10 @@ export const TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1 = 'happier.teleme
 export const TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/transition' as const;
 export const TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/refresh' as const;
 
-/** Collector-hosted reads whose inputs name their Environment directly. */
-export function telemetryCollectorReadSourceV1(id: string): 'source' | 'environment' | 'metrics' | undefined {
+/** Collector-hosted Actions whose inputs name their Environment directly. */
+export function telemetryCollectorActionSourceV1(id: string): 'source' | 'environment' | 'metrics' | undefined {
     switch (id) {
+        case DATABASE_CAPTURE_CLEAR_ACTION_ID_V1:
         case DATABASE_CAPTURE_STATUS_ACTION_ID_V1:
         case DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1:
         case DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1:

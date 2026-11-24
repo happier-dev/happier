@@ -120,7 +120,7 @@ const databaseActionDeclarations = {
     [database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured logs' },
     [database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured endpoints' },
     [database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1]: {
-        ...write, dangerLevel: 'destructive', title: 'Clear database capture', placementBindings: ['contextMenu'],
+        ...write, dangerLevel: 'destructive', title: 'Clear database capture', placementBindings: ['contextMenu'], approvalScope: 'environment',
         confirmation: { title: 'Delete the captured database activity?' },
     },
     [database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1]: {

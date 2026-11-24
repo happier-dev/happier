@@ -1,15 +1,19 @@
 import * as React from 'react';
 import {
+  DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+  DatabaseCaptureClearResultV1Schema,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
+  DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
   DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
   DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
   DatabaseCaptureEndpointsListResultV1Schema,
   DatabaseCaptureLogsListResultV1Schema,
   DatabaseCaptureQueriesListResultV1Schema,
   DatabaseCaptureQueryGetResultV1Schema,
+  DatabaseCaptureStatusResultV1Schema,
   DatabaseCaptureTraceGetResultV1Schema,
   DatabaseCaptureTracesListResultV1Schema,
   type DatabaseCaptureEndpointCursorV1,
@@ -30,6 +34,8 @@ import { HappyError } from '@/utils/errors/errors';
  * per request that this viewer may read the Environment; there is no timer and no retry loop here.
  */
 export type TelemetryCaptureActionId =
+  | typeof DATABASE_CAPTURE_CLEAR_ACTION_ID_V1
+  | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1
@@ -133,6 +139,18 @@ export function createTelemetryCaptureReads(
     });
   const window = (since: number, until: number) => ({ since, until });
   return {
+    async clear() {
+      return settle(DatabaseCaptureClearResultV1Schema.safeParse(
+        await call(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, { source: source(environment) }),
+      ));
+    },
+    async status(signal?: AbortSignal) {
+      return settle(
+        DatabaseCaptureStatusResultV1Schema.safeParse(
+          await call(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source: source(environment) }, signal),
+        ),
+      );
+    },
     async endpoints(
       since: number,
       until: number,

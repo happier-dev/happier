@@ -58,7 +58,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
     ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
     TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -120,14 +120,15 @@ describe('current Source deployment authority', () => {
             },
         }), async app => {
             const route = `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}`;
-            const makeRead = (accountId: string, machineId: string, regression = false) => {
+            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'regression' | 'clear' = 'list') => {
                 const target = { kind: 'machine' as const, machineId };
                 const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
-                const input = regression
+                const input = operation === 'regression'
                     ? { action: parseQualifiedPluginActionId(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1),
                         input: { serverId, environmentId: environment.id, serviceName: 'app', measure: 'http.error_rate', windowMs: 1000 } }
-                    : { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
-                        input: { source: { kind: 'environment', serverId, environmentId: environment.id }, page: { limit: 6 } } };
+                    : { action: parseQualifiedPluginActionId(operation === 'clear' ? DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 : DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
+                        input: { source: { kind: 'environment', serverId, environmentId: environment.id },
+                            ...(operation === 'list' ? { page: { limit: 6 } } : {}) } };
                 const envelope = sealExternalActionRequestV2({ material, input, randomBytes: nacl.randomBytes,
                     projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                     binding: { accountId, serverIdentityId: serverId, actionId: ACTION_INVOKE_ACTION_ID_V1, target,
@@ -169,12 +170,31 @@ describe('current Source deployment authority', () => {
             expect((await admit(outsiderToken, makeRead(outsider.id, collector.id).body)).statusCode).toBe(403);
             expect((await admit(readerToken, makeRead(teammate.id, unrelated.id).body)).statusCode).toBe(403);
             const nonRead = { ...body, envelope: { ...body.envelope, deploymentReadAdmission: {
-                ...body.envelope.deploymentReadAdmission, action: parseQualifiedPluginActionId(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1),
+                ...body.envelope.deploymentReadAdmission, action: parseQualifiedPluginActionId(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1),
             } } };
             expect((await admit(readerToken, nonRead)).statusCode).toBe(400);
 
+            const clearRequest = makeRead(owner.id, collector.id, 'clear');
+            const managerClear = await admit(ownerToken, clearRequest.body);
+            expect(managerClear.statusCode).toBe(200);
+            const { telemetryReadInstallationPublicKey: clearPublicKey, ...clear } =
+                ExternalActionExecutionAuthorizationV1Schema.parse(managerClear.json());
+            expect(clearPublicKey).toBe(Buffer.from(collectorKey).toString('base64url'));
+            expect(clear.binding).toMatchObject({
+                deploymentReadAdmission: { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1),
+                    telemetryCollector: { serverId, environmentIds: [environment.id] } },
+                deploymentTelemetryRead: [{ environmentId: environment.id, clearApproval: { dataAgentAccess: environment.dataAgentAccess } }],
+            });
+            const clearAuthorization = sealManagedControllerActionCodecV1({ authorization: clear, material: clearRequest.material,
+                installationPublicKey: collectorKey, randomBytes: nacl.randomBytes, ...(mode === 'e2ee' ? { collectorKeyPins } : {}) });
+            await post(ownerToken, route, { ...clearRequest.body, executionAuthorization: clearAuthorization });
+            expect(relayed.map(row => row.machineId)).toEqual([collector.id, collector.id]);
+            const readerClear = await admit(readerToken, makeRead(teammate.id, collector.id, 'clear').body);
+            expect(readerClear.statusCode).toBe(403);
+            expect(readerClear.json()).toMatchObject({ error: 'invalid_request', code: 'source_access_denied' });
+
             const regression = ExternalActionExecutionAuthorizationV1Schema.parse((await admit(readerToken,
-                makeRead(teammate.id, collector.id, true).body)).json());
+                makeRead(teammate.id, collector.id, 'regression').body)).json());
             const readReceipts = (root: typeof regression, environmentId: string) => {
                 const target = root.binding.target;
                 const effectActionId = 'deployments.receipts.list';
@@ -194,7 +214,7 @@ describe('current Source deployment authority', () => {
             await db.teamMembership.delete({ where: { id: membership.id } });
             expect((await admit(readerToken, makeRead(teammate.id, collector.id).body)).statusCode).toBe(403);
             expect((await post(readerToken, route, { ...body, executionAuthorization })).statusCode).toBe(403);
-            expect(relayed).toHaveLength(1);
+            expect(relayed).toHaveLength(2);
             expect((await readReceipts(regression, environment.id))?.acceptedDeploymentReceipt?.read)
                 .toStrictEqual({ environmentId: environment.id });
         }, { authentication: 'real' });

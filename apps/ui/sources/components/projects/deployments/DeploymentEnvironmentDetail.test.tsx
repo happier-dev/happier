@@ -517,6 +517,40 @@ it('leads the deployed Overview with what runs, then one Definition with one Com
   } finally { controller.retire(); }
 });
 
+it('waits for the serving receipt to confirm delivery of managed telemetry before asking for first data', async () => {
+  const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
+  const { TelemetryCaptureInvokeContext } = await import('./telemetryCaptureReads');
+  const { createDeferred } = await import('@/dev/testkit');
+  const { t } = await import('@/text');
+  const collectorId = 'collector';
+  const detail = environmentDetailForHome({ environment: environmentHeaderForHome({ telemetryMachineId: collectorId }) });
+  const servingId = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
+  if (!servingId) throw new Error('Expected a serving receipt in the fixture');
+  const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
+  const receipt = createDeferred<Awaited<ReturnType<DeploymentReadTransportV1['readReceipt']>>>();
+  const { controller } = controllerFor({ detail, receipt: serving, readReceipt: () => receipt.promise });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  const source = { kind: 'environment', serverId: scope.serverId, environmentId: detail.environment.id };
+  const invoke = vi.fn(async ({ actionId }: { actionId: string }) => actionId.endsWith('/capture/status')
+    ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, lastReceivedAt: null }
+    : { ok: true, source, items: [] });
+  const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryCaptureInvokeContext.Provider value={invoke}>
+    <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+      accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+      onOpenReceipt={() => {}} lifetime={lifetime} />
+    </TelemetryCaptureInvokeContext.Provider></AppPresentationPlatformProvider>);
+  try {
+    await selectEnvironmentTab(screen, 'telemetry');
+    await waitForContent(screen, 'project-deployments.telemetry.collector');
+    expect(invoke.mock.calls.map(([call]) => call.actionId)).toEqual(['happier.telemetry/actions/capture/endpoints/list']);
+    await act(async () => receipt.resolve({ ok: true, value: { ...serving, content: {
+      ...serving.content, machineResults: serving.content.machineResults.map(member => ({ ...member, currentDeploymentId: servingId,
+        telemetryMachineId: collectorId, telemetryTokenHash: 'a'.repeat(64) })),
+    } } }));
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('deploymentTelemetry.recording.waiting')));
+  } finally { await screen.unmount(); controller.retire(); }
+});
+
 // ENV-REINSTALL-1123 (owner 11-23): a reinstalled Machine keeps its Environment. The read's `runtimeReinstall` is the
 // trigger; the Overview offers one "Reinstall on this Machine", or says why it can't when someone else controls it.
 it.each([true, false])('offers Reinstall on this Machine from the read, with what stays and which secrets re-seal (available: %s)', async available => {

@@ -9,6 +9,7 @@ import type {
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import {
   CaptureEndpoints,
   CaptureLogs,
@@ -42,6 +43,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { createDeploymentActions } from './deploymentActions';
 import { showDeploymentTelemetrySheet } from './DeploymentTelemetrySheet';
 import {
@@ -62,6 +64,9 @@ export function DeploymentTelemetryPanel(
     detail: DeploymentEnvironmentDetailV1;
     lifetime: ServerAccountScopeLifetime | null;
     environmentName: string;
+    active?: boolean;
+    /** Whether the serving native deployment delivered this collector's bindings, when observed. */
+    telemetryApplied?: boolean;
     /** Re-read the Environment after a save, so the next save carries its new revision. */
     onChanged: () => void;
   }>,
@@ -69,8 +74,6 @@ export function DeploymentTelemetryPanel(
   const { detail, lifetime } = props;
   const environment = detail.environment;
   const collectorId = environment.telemetryMachineId ?? null;
-  // The Action answers redeploy_required: the saved choice is a fact until the next deploy applies it.
-  const [savedThisVisit, setSavedThisVisit] = React.useState(false);
   const canManage = environment.capabilities.manageBindings;
   const open = React.useCallback(() => {
     if (!lifetime) return;
@@ -79,10 +82,8 @@ export function DeploymentTelemetryPanel(
       lifetime,
       environmentName: props.environmentName,
       setTelemetry: input => createDeploymentActions(lifetime, environment.projectSourceId).setTelemetry(environment, input),
-      onSaved: () => {
-        setSavedThisVisit(true);
-        props.onChanged();
-      },
+      setBindings: input => createDeploymentActions(lifetime, environment.projectSourceId).setBindings(input),
+      onSaved: props.onChanged,
     });
   }, [detail, environment, lifetime, props.environmentName, props.onChanged]);
   if (!collectorId) {
@@ -114,7 +115,8 @@ export function DeploymentTelemetryPanel(
       detail={detail}
       lifetime={lifetime}
       collectorId={collectorId}
-      savedThisVisit={savedThisVisit}
+      active={props.active ?? true}
+      telemetryApplied={props.telemetryApplied}
       onOpenSettings={canManage && lifetime ? open : null}
     />
   );
@@ -154,21 +156,21 @@ type ListState = Readonly<{
  * One page of the open list for the chosen window, read while the tab shows it. Coming back to a list shows what it
  * last read this visit while it reads again; Retry keeps the rows until the answer lands. Show older appends a page.
  */
-function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: TelemetryCaptureList, windowMs: number, attempt: number) {
+function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, active: boolean, list: TelemetryCaptureList, windowMs: number, attempt: number) {
   const key = `${list}\u0000${windowMs}`;
   const [state, setState] = React.useState<ListState>({ reads, key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
   // Last settled answers belong to the current collector, Environment and captured Account lifetime.
   const retained = React.useMemo(() => new Map<string, Readonly<{ data: ListItems; readAt: number }>>(), [reads]);
-  const windowRef = React.useRef<Readonly<{ since: number; until: number }>>({ since: 0, until: 0 });
+  const windowRef = React.useRef<Readonly<{ since: number; until: number; signal: AbortSignal }> | null>(null);
   React.useEffect(() => {
-    if (!reads) return;
+    if (!reads || !active) return;
     const controller = new AbortController();
     const until = Date.now();
     const since = Math.max(0, until - windowMs);
-    windowRef.current = { since, until };
+    windowRef.current = { since, until, signal: controller.signal };
     const kept = retained.get(key);
     setState(current => current.reads === reads && current.key === key
-      ? { ...current, reading: true }
+      ? { ...current, reading: true, loadingMore: false }
       : { reads, key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false });
     const read: Promise<ListItems> = list === 'endpoints'
       ? reads.endpoints(since, until, null, controller.signal).then(page => ({ list, ...page }))
@@ -188,36 +190,47 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
       },
     );
     return () => controller.abort();
-  }, [reads, list, key, windowMs, attempt, retained]);
+  }, [reads, active, list, key, windowMs, attempt, retained]);
   const kept = retained.get(key);
   const shown = state.reads === reads && state.key === key ? state
     : { reads, key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false };
   const more = React.useCallback(() => {
     const data = shown.data;
-    if (!reads || !data?.nextCursor || shown.loadingMore) return;
-    const { since, until } = windowRef.current;
+    if (!reads || !active || !data?.nextCursor || shown.reading || shown.loadingMore || !windowRef.current) return;
+    const { since, until, signal } = windowRef.current;
     setState(current => ({ ...current, loadingMore: true }));
     const next: Promise<ListItems> = data.list === 'endpoints'
-      ? reads.endpoints(since, until, data.nextCursor, undefined).then(page => ({ list: 'endpoints' as const,
+      ? reads.endpoints(since, until, data.nextCursor, signal).then(page => ({ list: 'endpoints' as const,
         items: [...data.items, ...page.items], nextCursor: page.nextCursor }))
-      : reads.summaries(data.list, since, until, data.nextCursor, undefined).then(page => ({ list: data.list,
+      : reads.summaries(data.list, since, until, data.nextCursor, signal).then(page => ({ list: data.list,
         items: [...data.items, ...page.items], nextCursor: page.nextCursor }));
     next.then(
-      merged => setState(current => current.reads === reads && current.key === key ? { ...current, data: merged, loadingMore: false } : current),
-      () => setState(current => current.reads === reads && current.key === key ? { ...current, loadingMore: false } : current),
+      merged => {
+        if (!signal.aborted) setState(current => current.reads === reads && current.key === key ? { ...current, data: merged, loadingMore: false } : current);
+      },
+      () => {
+        if (!signal.aborted) setState(current => current.reads === reads && current.key === key ? { ...current, loadingMore: false } : current);
+      },
     );
-  }, [reads, shown.data, shown.loadingMore, key]);
-  return { state: shown, more };
+  }, [reads, active, shown.data, shown.reading, shown.loadingMore, key]);
+  const forget = () => {
+    retained.clear();
+    setState(current => current.reads === reads
+      ? { ...current, data: null, readAt: null, failure: null, loadingMore: false }
+      : current);
+  };
+  return { state: shown, more, forget };
 }
 
 function DeploymentTelemetryTabs(props: Readonly<{
   detail: DeploymentEnvironmentDetailV1;
   lifetime: ServerAccountScopeLifetime | null;
   collectorId: string;
-  savedThisVisit: boolean;
+  active: boolean;
+  telemetryApplied: boolean | undefined;
   onOpenSettings: (() => void) | null;
 }>) {
-  const { detail, lifetime, collectorId } = props;
+  const { detail, lifetime, collectorId, active, telemetryApplied } = props;
   const environment = detail.environment;
   const serverId = lifetime?.scope.serverId ?? null;
   const locale = getPreferredLanguage();
@@ -231,6 +244,24 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const [tab, setTab] = React.useState<TelemetryCaptureList>('endpoints');
   const [windowId, setWindowId] = React.useState<WindowId>('day');
   const [attempt, setAttempt] = React.useState(0);
+  const [collectorStatus, setCollectorStatus] = React.useState<Readonly<{
+    reads: TelemetryCaptureReads;
+    lastReceivedAt?: number | null;
+    failure?: string;
+  }> | null>(null);
+  React.useEffect(() => {
+    if (!active || !reads || telemetryApplied !== true) return;
+    const controller = new AbortController();
+    reads.status(controller.signal).then(
+      status => {
+        if (!controller.signal.aborted) setCollectorStatus({ reads, lastReceivedAt: status.lastReceivedAt });
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted) setCollectorStatus({ reads, failure: telemetryCaptureFailureCode(error) });
+      },
+    );
+    return () => controller.abort();
+  }, [active, reads, telemetryApplied, attempt]);
   const [openTrace, setOpenTrace] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     request: DatabaseCaptureSummaryV1;
@@ -239,10 +270,25 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (reads) setOpenTrace({ reads, request });
   }, [reads]);
   const [addingCheck, setAddingCheck] = React.useState<KeyFlowRoute | null>(null);
-  const { state, more } = useTelemetryCaptureList(reads, tab, WINDOW_MS[windowId], attempt);
+  const { state, more, forget } = useTelemetryCaptureList(reads, active, tab, WINDOW_MS[windowId], attempt);
   const retry = React.useCallback(() => setAttempt(value => value + 1), []);
+  const clear = reads && environment.capabilities.manage ? async () => {
+    try {
+      await reads.clear();
+    } catch (error) {
+      const code = telemetryCaptureFailureCode(error);
+      if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE) {
+        alertActionFailure({ code, reason: t('deploymentTelemetry.menu.clearFailed') });
+      }
+      return;
+    }
+    if (!lifetime?.isCurrent()) return;
+    forget();
+    setOpenTrace(current => current?.reads === reads ? null : current);
+    retry();
+  } : null;
   const offline = collectorOnline === false;
-  const readLogBody = React.useCallback((id: string) => reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [reads]);
+  const readLogBody = React.useCallback((id: string) => active && reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);
 
   // Checks are set up by the Environment's managers, in the same editor Settings → Checks and alerts opens.
   const canAddCheck = environment.capabilities.role === 'manager' && lifetime !== null;
@@ -252,6 +298,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
 
   const data = state.data;
   const failed = state.failure !== null && !state.reading;
+  const status = telemetryApplied && collectorStatus?.reads === reads ? collectorStatus : null;
+  const keptOn = t('deploymentTelemetry.recording.keptOn', { machine });
+  const collectorLabelText = telemetryApplied === false ? `${keptOn} ${t('deploymentTelemetry.recording.nextDeploy')}`
+    : status?.lastReceivedAt === null ? t('deploymentTelemetry.recording.waiting')
+    : typeof status?.lastReceivedAt === 'number' ? t('deploymentTelemetry.recording.receiving', {
+      time: new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(status.lastReceivedAt),
+    }) : keptOn;
   const body = failed && data === null ? (
     <SurfaceStateCard
       testID={offline ? 'project-deployments.telemetry.offline' : 'project-deployments.telemetry.unavailable'}
@@ -264,6 +317,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   ) : tab === 'traces' && openTrace && openTrace.reads === reads ? (
     <TelemetryRequestDetail
       reads={openTrace.reads}
+      active={active}
       request={openTrace.request}
       locale={locale}
       onBack={() => setOpenTrace(null)}
@@ -290,6 +344,10 @@ function DeploymentTelemetryTabs(props: Readonly<{
     <PageContentColumn testID="project-deployments.telemetry.recording">
     <View style={styles.panel}>
       <View style={styles.lines}>
+      {!failed && status?.failure ? (
+        <SurfaceStateCard kind="unavailable" size="line" title={t('deploymentTelemetry.unavailable.title')}
+          diagnosticCode={status.failure} action={{ label: t('common.retry'), onPress: retry }} />
+      ) : null}
       {failed && data !== null ? (
         <SurfaceFreshnessLine
           testID={offline ? 'project-deployments.telemetry.offline' : 'project-deployments.telemetry.stale'}
@@ -316,9 +374,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
         <View style={styles.barEnd}>
           {/* The tab's state, once, at the bar's trailing edge (lab p7Flows-mark "Receiving · 18:51"). */}
           <Text variant="meta" style={styles.facts} numberOfLines={1} testID="project-deployments.telemetry.collector">
-            {props.savedThisVisit
-              ? `${t('deploymentTelemetry.recording.keptOn', { machine })} ${t('deploymentTelemetry.recording.nextDeploy')}`
-              : t('deploymentTelemetry.recording.keptOn', { machine })}
+            {collectorLabelText}
           </Text>
           <SegmentedTabBar<WindowId>
             role="radiogroup"
@@ -331,7 +387,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
               { id: 'week', label: t('deploymentTelemetry.window.week') }]}
             onSelectTab={(id) => { setWindowId(id); setOpenTrace(null); }}
           />
-          {props.onOpenSettings ? <TelemetryMenu onOpenSettings={props.onOpenSettings} /> : null}
+          {props.onOpenSettings || clear
+            ? <TelemetryMenu onOpenSettings={props.onOpenSettings} onClear={clear} /> : null}
         </View>
       </View>
       </View>
@@ -366,9 +423,18 @@ function DeploymentTelemetryTabs(props: Readonly<{
   );
 }
 
-function TelemetryMenu(props: Readonly<{ onOpenSettings: () => void }>) {
+function TelemetryMenu({ onOpenSettings, onClear }: Readonly<{
+  onOpenSettings: (() => void) | null;
+  onClear: (() => Promise<void>) | null;
+}>) {
   const [open, setOpen] = React.useState(false);
-  const items = [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings', title: t('deploymentTelemetry.menu.settings') }];
+  const [clearing, setClearing] = React.useState(false);
+  const items = [
+    ...(onOpenSettings ? [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings',
+      title: t('deploymentTelemetry.menu.settings') }] : []),
+    ...(onClear ? [{ id: 'clear', testID: 'project-deployments.telemetry.menu.clear',
+      title: t('deploymentTelemetry.menu.clear'), destructive: true, disabled: clearing }] : []),
+  ];
   return (
     <DropdownMenu
       open={open}
@@ -377,9 +443,13 @@ function TelemetryMenu(props: Readonly<{ onOpenSettings: () => void }>) {
       matchTriggerWidth={false}
       placement="bottom"
       popoverAccessibilityLabel={t('common.more')}
-      onSelect={() => {
+      onSelect={id => {
         setOpen(false);
-        props.onOpenSettings();
+        if (id === 'settings') onOpenSettings?.();
+        if (id === 'clear' && onClear && !clearing) {
+          setClearing(true);
+          void onClear().finally(() => setClearing(false));
+        }
       }}
       trigger={({ toggle }) => (
         <IconButton testID="project-deployments.telemetry.menu" iconName="dots-three" variant="plain"
@@ -397,17 +467,19 @@ type RequestRead =
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 function TelemetryRequestDetail(props: Readonly<{
   reads: TelemetryCaptureReads;
+  active: boolean;
   request: DatabaseCaptureSummaryV1;
   locale: string;
   onBack: () => void;
   onAddCheck?: (route: KeyFlowRoute) => void;
 }>) {
-  const { reads, request, locale, onAddCheck } = props;
+  const { reads, active, request, locale, onAddCheck } = props;
   const { serviceName, endpointMethod, endpointRoute } = request;
   const traceId = request.traceId ?? null;
   const [read, setRead] = React.useState<RequestRead>({ kind: 'loading' });
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
+    if (!active) return;
     if (!traceId) {
       setRead({ kind: 'unavailable', code: 'telemetry_trace_missing' });
       return;
@@ -421,8 +493,8 @@ function TelemetryRequestDetail(props: Readonly<{
       },
     );
     return () => controller.abort();
-  }, [reads, traceId, attempt]);
-  const readBody = React.useCallback((id: string) => reads.logBody(id), [reads]);
+  }, [reads, active, traceId, attempt]);
+  const readBody = React.useCallback((id: string) => active ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);
   const queries = read.kind === 'ready' ? read.trace.summaries.filter(summary => summary.kind === 'query').length : null;
   const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [

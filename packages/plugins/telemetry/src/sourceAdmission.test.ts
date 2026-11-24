@@ -1,5 +1,6 @@
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { describe, expect, it } from 'vitest';
-import type { PluginServices } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import * as database from '@happier-dev/database-protocol';
@@ -27,7 +28,7 @@ const owner = {
 };
 const other = { ...owner, requesterAccount: { accountId: 'bob' } };
 const local = (actionId: database.DatabaseActionIdV1) =>
-  database.databaseActionLocalIdV1(actionId);
+  databaseActionLocalIdV1(actionId);
 const page = { limit: 10 };
 
 function memoryAccountStorage(): Readonly<{
@@ -70,7 +71,7 @@ function memoryAccountStorage(): Readonly<{
   return { storage, values };
 }
 
-async function setup() {
+async function setup(canClear = false) {
   const fixture = createCaptureSqliteFixture(),
     lifetime = new AbortController();
   for (const migration of captureMigrations) await migration.up(fixture.db);
@@ -81,6 +82,9 @@ async function setup() {
   } as unknown as PluginServices['storage'];
   let telemetryReads = 0;
   const deploymentDatabases = {
+    async admitTelemetryClear() {
+      if (!canClear) throw new PluginError({ code: 'source_access_denied' });
+    },
     async admitTelemetryRead() {
       telemetryReads++;
       return {
@@ -168,8 +172,8 @@ describe('R2-A3 local capture Source/project admission through the real manifest
     }
   });
 
-  it("reaches Clear for the owner's worktree source and refuses Clear of shared Environment telemetry", async () => {
-    const f = await setup();
+  it.each([true, false])("clears only the selected partitions with Environment write admission (%s)", async canClear => {
+    const f = await setup(canClear);
     try {
       const mine = captureSourcePartition(source, 'alice'),
         theirs = captureSourcePartition(source, 'bob');
@@ -197,16 +201,20 @@ describe('R2-A3 local capture Source/project admission through the real manifest
           limit: 10,
         }),
       ).toHaveLength(1);
-      await expect(
-        f.host.invokeAction(clear, { source: environment }, owner),
-      ).rejects.toMatchObject({ code: 'capture_source_unavailable' });
+      if (canClear) {
+        expect(await f.host.invokeAction(clear, { source: environment }, owner)).toEqual({ ok: true });
+      } else {
+        await expect(f.host.invokeAction(clear, { source: environment }, owner))
+          .rejects.toMatchObject({ code: 'source_access_denied' });
+      }
+      expect(f.telemetryReads()).toBe(0);
       expect(
         await f.lease.runtime.store.list({
           worktree: shared,
           kind: 'query',
           limit: 10,
         }),
-      ).toHaveLength(1);
+      ).toHaveLength(canClear ? 0 : 1);
     } finally {
       await f.close();
     }

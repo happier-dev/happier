@@ -1467,6 +1467,12 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           ) : tab === 'telemetry' ? (
             <DeploymentTelemetryPanel detail={detail} lifetime={props.lifetime ?? null}
+              active={props.demand.mounted && props.demand.visible && props.demand.focused}
+              telemetryApplied={runtime?.source.kind === 'plugin' ? undefined : activeId === null ? false
+                : activeReceipt?.deployment.id === activeId ? activeReceipt.content.machineResults.some(member =>
+                  member.activation === 'succeeded' && member.currentDeploymentId === activeId
+                  && member.telemetryMachineId === detail.environment.telemetryMachineId && Boolean(member.telemetryTokenHash))
+                : undefined}
               environmentName={detail.content.name} onChanged={() => { void environment.refresh(); }} />
           ) : tab === 'permissions' ? (
             <DeploymentPermissionsPanel

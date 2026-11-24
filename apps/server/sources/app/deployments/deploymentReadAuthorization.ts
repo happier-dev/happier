@@ -9,9 +9,11 @@ import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/p
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeploymentReadScopeV1 } from '@happier-dev/protocol/actions/specs/deploymentReadScope';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { loadDeploymentEnvironmentInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { loadDeploymentTargetRowsInTx, readCurrentManagedDataTargetLinksInTx } from './deploymentTargetLinkService';
 import { resolveProjectSourceAccessInTx, resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { canEditDeploymentEnvironmentData, projectDeploymentRuntimeInstallationReplacedFailure, type DeploymentAuthentication } from './deploymentAdmission';
@@ -25,7 +27,7 @@ import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments
 type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
     deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
     deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'] }>
-    | Readonly<{ ok: false; code: 'source_changed' }>
+    | Readonly<{ ok: false; code: 'source_changed' | 'source_access_denied' }>
     | Readonly<{ ok: false; placement: ActionExecuteFailure }> | null;
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
@@ -103,6 +105,22 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         if ('telemetryCollector' in admission) {
             if (admission.telemetryCollector.serverId !== binding.serverIdentityId) return null;
             const { environmentIds } = admission.telemetryCollector;
+            if (formatQualifiedPluginActionId(admission.action) === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) {
+                const [environmentId] = environmentIds;
+                if (!environmentId || environmentIds.length !== 1) return null;
+                const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId, environmentId, authentication);
+                if (!loaded.ok || loaded.row.deletedAt || loaded.row.telemetryMachineId !== binding.machineId
+                    || !loaded.admission.canManage) return { ok: false, code: 'source_access_denied' };
+                const row = loaded.row;
+                const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(row);
+                return { ok: true, artifactIds: [], deploymentTelemetryRead: [{
+                    environmentId, revision: row.revision, capabilities: { metrics: row.telemetryMetricsEnabled,
+                        appLlmCost: row.telemetryAppLlmCostEnabled, exceptions: row.telemetryExceptionsEnabled },
+                    clearApproval: { purpose: row.purpose, dataAgentAccess: row.dataAgentAccess,
+                        ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
+                        ...(row.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: row.previewCompanionOfEnvironmentId } : {}) },
+                }] };
+            }
             const rows = new Map<string, { projectSourceId: string; revision: number; telemetryMetricsEnabled: boolean;
                 telemetryAppLlmCostEnabled: boolean; telemetryExceptionsEnabled: boolean }>();
             for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {

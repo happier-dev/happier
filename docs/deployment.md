@@ -3220,8 +3220,14 @@ and the Environment's collector assignment. The tab retains results for the
 selected collector, Environment and Account read lifetime. Trace selection opens
 the shared request view, which follows the trace into query and correlated log
 details.
-Settings uses the Environment binding owner. The capture owner supports Clear
-for the caller's Machine worktree and refuses it for an Environment source.
+For a native rollout, the tab reads the serving receipt for confirmation that
+the application received its managed collector bindings. Once the receipt
+confirms delivery, collector status distinguishes waiting for data from the
+timestamp of the latest retained observation. The tab reads status and the
+selected list while it is visible and focused.
+Settings uses the Environment binding owner. Clear capture deletes retained data
+for the selected Machine worktree or managed Environment after confirmation.
+Environment agents use the Environment's Database Agent Level and approval policy.
 The Environment tab shows an unreachable collector as unavailable.
 
 In the Services Apps list, the optional [Requests column](collection-presentation.md#model-and-presentation)

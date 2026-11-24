@@ -6,6 +6,7 @@ import { createCaptureRuntime } from './runtime.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { createTelemetryAssignments } from './telemetry/assignments.js';
+import { createCaptureSelectedSourceReaders } from './actions.js';
 
 const partition = 'environment:production';
 const token = 'fixture-exporter-token';
@@ -27,6 +28,22 @@ function post(endpoint: string, index: number) {
 }
 
 describe('authenticated collector writer admission through HTTP and SQLite', () => {
+    it('reports the selected Environment’s latest accepted observation through capture status', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });
+        const source = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
+        const status = createCaptureSelectedSourceReaders({ source, partition, runtime: f.runtime }).captureStatus;
+        try {
+            f.runtime.ingest.recordLoss(partition, 'invalid_telemetry');
+            await f.runtime.ingest.write([{ id: 'other', worktree: 'environment:other', kind: 'span', source: 'otlp', at: 1700000000001 }]);
+            expect(await status({ source })).toMatchObject({ ok: true, lastReceivedAt: null });
+            expect((await post(receiver.endpoint, 1)).status).toBe(200);
+            expect(await status({ source })).toMatchObject({ ok: true, lastReceivedAt: 1700000000000 });
+            await f.runtime.clear(partition);
+            expect(await status({ source })).toMatchObject({ ok: true, lastReceivedAt: null });
+        } finally { await receiver.release(); f.close(); }
+    });
+
     it('returns redacted log bodies at rest from one authenticated batch and one list query', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });
