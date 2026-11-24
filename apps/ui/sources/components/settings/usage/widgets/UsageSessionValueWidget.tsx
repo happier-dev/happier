@@ -32,6 +32,7 @@ import { UsageWorkAutopsy } from './UsageWorkAutopsy';
 import {
   UsageWorkMarks,
   UsageWorkSectionTitle,
+  usageWorkLinksNotice,
   usageWorkSessionOutcomeLine,
 } from './UsageWorkParts';
 
@@ -64,14 +65,15 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
         ? t('usage.board.work.valueCaption', { count: summary.sessions.length })
         : usagePeriodPhrase(props.query),
   );
-  if (!summary)
+  if (!summary) {
+    const notice = usageWorkLinksNotice(props.slice);
     return (
       <View style={styles.body}>
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}
           replacesContent={false}
-          title={t('usage.board.work.workUnavailableTitle')}
-          reason={t('usage.board.work.workUnavailableReason')}
+          title={notice.title}
+          reason={notice.cause ?? t('usage.board.work.workUnavailableReason')}
         />
         <UsageCoverageLine
           slice={props.slice}
@@ -84,6 +86,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
         <UsageWorkAutopsy {...props} unavailableSaid testID={`${props.testID}.autopsy`} />
       </View>
     );
+  }
   if (summary.sessions.length === 0)
     return (
       <View><UsageBodyInsufficient

@@ -6,6 +6,7 @@ import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
+import { isUsageCoverageFailure } from '@/sync/api/account/usageReadFailure';
 import type {
   UsageWorkAllocation,
   UsageWorkProjection,
@@ -122,18 +123,23 @@ function sessionIdentity(sessionId: string, row: SessionIdentityAccumulator): Us
 }
 
 type UsageWorkOutcomesPresentation = Readonly<{ kind: 'ready' }> | Readonly<{
-  kind: 'reading' | 'unavailable' | 'empty' | 'noPrs';
+  kind: 'reading' | 'partial' | 'unavailable' | 'empty' | 'noPrs';
   sessions: readonly UsageWorkSessionIdentity[];
   machineIds: readonly string[];
 }>;
 
+/**
+ * The one Work coverage decision every Work body consumes: observed, still reading, settled with some Sessions unread
+ * (`partial`: an offline Machine, never a failure, and waiting will not finish it), or unavailable (a failed read).
+ */
 export function readUsageWorkOutcomesEvidence(
   slice: UsageQueryResultSlice, projection: 'work' | 'mergedOutcomes',
-): 'observed' | 'reading' | 'unavailable' {
-  const status = slice.sources.find(source => source.source === 'work')?.status;
+): 'observed' | 'reading' | 'partial' | 'unavailable' {
+  const source = slice.sources.find(row => row.source === 'work');
   // The query projection decides whether an empty result was observed.
   if (slice[projection] !== undefined && slice.workSummary?.pullRequestsRead === true) return 'observed';
-  return status === 'pending' || status === 'not_loaded' ? 'reading' : 'unavailable';
+  if (source?.status === 'pending' || source?.status === 'not_loaded') return 'reading';
+  return source?.status === 'partial' && !isUsageCoverageFailure(source) ? 'partial' : 'unavailable';
 }
 
 /** Empty Outcomes consumes identities and evidence, never monetary or Project detail. */

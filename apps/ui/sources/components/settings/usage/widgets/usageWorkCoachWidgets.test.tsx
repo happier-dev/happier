@@ -55,6 +55,7 @@ import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/mac
 import { UsageWorkMarks, UsageWorkSectionTitle } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
+import { UsageWorkAutopsy } from './UsageWorkAutopsy';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
@@ -2052,5 +2053,94 @@ describe('Work and Coach widget bodies', () => {
     expect(hidden.findByTestId('coach.hidden-header')).toBeTruthy();
     await hidden.pressByTestIdAsync('coach.hidden-header');
     expect(hidden.findByTestId('coach.hidden.compaction_storms.restore')).toBeTruthy();
+  });
+});
+
+describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', () => {
+  const offline = { source: 'work', status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1011 } } as const;
+  const workStates = [
+    { state: 'reading', source: { source: 'work', status: 'pending' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
+    { state: 'partly read', source: offline, footer: () => `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOffline', { count: (1011).toLocaleString() })}` },
+    { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
+  ];
+  const unreadSlice = (source: UsageQueryResultSlice['sources'][number]): UsageQueryResultSlice => ({ ...slice,
+    workSummary: projectUsageWorkSummary(work.outcomes, false, work),
+    sources: [{ source: 'accounting', status: 'available' }, source] });
+
+  // Tokens: an unknown token part reads "not measured yet", the placeholder the production frame printed on each row.
+  const tokensQuery = normalizeUsageQuery({ ...query, metric: 'tokens' });
+  it.each(workStates)('the ledger says the $state state once, at the total, and keeps every measured amount', async ({ state, source, footer }) => {
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={tokensQuery} slice={unreadSlice(source)} id="usage_project_ledger" testID="ledger" />);
+    const label = screen.findByTestId('ledger.conservation')?.props.accessibilityLabel as string;
+    expect(label).toContain(footer());
+    if (state === 'partly read') expect(label).not.toContain(t('usage.board.work.workUnavailableTitle'));
+    const text = screen.getTextContent();
+    // A row carries only what is known about it: its amount and its linked PR, never a placeholder for the unknown part.
+    expect(text).not.toContain(t('usage.board.page.notMeasuredYet'));
+    expect(text).toContain(t('usage.board.work.ledgerRowLine', { sessions: 2, prs: 1 }));
+    expect(screen.findByType(HappierDataRows).props.rows[0][1]).toBe(42);
+    expect(text.split(footer())).toHaveLength(2);
+  });
+
+  it('the ledger keeps its read state unchanged: the linked and not linked parts add back to the total', async () => {
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={tokensQuery} id="usage_project_ledger" testID="ledger" />);
+    const label = screen.findByTestId('ledger.conservation')?.props.accessibilityLabel as string;
+    expect(label).toContain(t('usage.board.work.conservation', { allocated: '14', unallocated: '28' }));
+    expect(label).not.toContain(t('usage.board.work.workPartialTitle'));
+    expect(screen.getTextContent()).toContain(t('usage.board.work.notLinkedPart', { amount: '28' }));
+  });
+
+  it('names each typed cause the owner gives and the plain partial without a count', async () => {
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props}
+      slice={unreadSlice({ source: 'work', status: 'partial', unreadSessions: { failed: 1, timed_out: 2 } })} id="usage_project_ledger" testID="ledger" />);
+    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(
+      `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: '3' })}`);
+    await screen.update(<UsageProjectLedgerWidget {...props}
+      slice={unreadSlice({ source: 'work', status: 'partial', errorCode: 'machine_offline' })} id="usage_project_ledger" testID="ledger" />);
+    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnreadOfflineSome'));
+  });
+
+  it.each(['outcomes', 'value', 'autopsy'] as const)('the %s widget titles a partly read Work read as incomplete, with its cause', async widget => {
+    const partial = { ...slice, work: undefined, workSummary: undefined, sources: [{ source: 'accounting', status: 'available' }, offline] } satisfies UsageQueryResultSlice;
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
+    const screen = await renderScreen(widget === 'outcomes'
+      ? <UsageOutcomesWidget {...props} slice={partial} id="usage_outcomes" testID="w" />
+      : widget === 'value' ? <UsageSessionValueWidget {...props} slice={partial} id="usage_session_value" testID="w" />
+        // Without accounting the autopsy itself says why it has no Work facts (with accounting it shows the summary).
+        : <UsageWorkAutopsy {...props} query={sessionQuery} slice={{ ...partial, accounting: undefined, shownQuery: sessionQuery }} testID="w" />);
+    const text = screen.getTextContent();
+    expect(text).toContain(t('usage.board.work.workPartialTitle'));
+    expect(text).toContain(t('usage.board.work.workUnreadOffline', { count: (1011).toLocaleString() }));
+    expect(text).not.toContain(t('usage.board.work.workUnavailableTitle'));
+  });
+
+  it('says a one-commit branch range once: "Commit 027cb70 · +1 / −0" (acceptance 1122 #59)', async () => {
+    const sha = '027cb70'.padEnd(40, 'e');
+    const branch = { ref: 'refs/heads/usage-outcome-01', headSha: sha };
+    const branchWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [contribution('one', 's1', 't1')], evidence: [],
+      branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'repo', checkpointRef: 'checkpoint/s1/t1',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: sha, attributionScope: 'no_happier_checkpoint_overlap_observed', branch,
+        retainedChange: { targetSha: sha, method: 'changed_file_tree_comparison', status: 'retained', addedLines: 1, removedLines: 0 } }] }));
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: branchWork }} id="usage_project_ledger" testID="ledger" />);
+    const text = screen.getTextContent();
+    expect(text).toContain(`${t('usage.board.work.commit')} 027cb70`);
+    expect(text).toContain('+1 / −0');
+    expect(text.split('027cb70')).toHaveLength(2);
+  });
+
+  it('on the Tokens lens the Session cost basis is said once; the Cost over time caption keeps only the currency (acceptance 1122 #58)', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, metric: 'tokens', session: 's1', costBasis: 'api_equivalent' });
+    const cost = (usd: number) => ({ reportedUsd: 0, estimatedUsd: 0, apiEquivalentUsd: usd, currency: 'USD' });
+    const rows = [5, 3, 1].map((usd, index) => ({ ...contribution(`turn-${index}`, 's1', `t${index}`),
+      observedAtMs: 1 + index * 60_000, cost: cost(usd / 1000) }));
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery,
+        accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 3, cost: cost(0.009) }, contributions: rows },
+        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
+      id="usage_session_value" testID="value" />);
+    const costFact = screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.cost'));
+    expect(costFact?.props.caption).toContain(usageCostKindPhrase('api_equivalent'));
+    const timeline = screen.findAllByType(UsageWorkSectionTitle).find(node => node.props.children === t('usage.board.work.costOverTime'));
+    expect(timeline?.props.caption).toBe('USD');
   });
 });

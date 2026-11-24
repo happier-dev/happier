@@ -297,7 +297,7 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   if (!model || model.total === 0) {
     const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
     if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
-    if (evidence === 'unavailable')
+    if (evidence === 'unavailable' || evidence === 'partial')
       return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} />;
     return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={t('usage.board.charts.shippedEmptyReason')} />;
   }

@@ -13,6 +13,8 @@ import { t } from '@/text';
 import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
 import type {
   UsageWorkIdentities,
   UsageWorkSessionPart,
@@ -29,12 +31,37 @@ export function usageWorkShortCommit(sha: string): string {
   return sha.slice(0, 7);
 }
 
-/** Each count names its immutable comparison target; never sum snapshots into authorship. */
-export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedChange[]): string {
+/**
+ * Each count names its immutable comparison target; never sum snapshots into authorship. A one-commit range names its
+ * commit once, and not at all when the row already says that commit (`saidCommit`): "Commit 027cb70 · +1 / −0".
+ */
+export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedChange[], saidCommit?: string): string {
   // Nothing witnessed kept is not information: the cell stays empty rather than saying "Not recorded".
-  return changes.length === 0 ? '' : changes.map(change =>
-    `${usageWorkShortCommit(change.commitSha)} → ${usageWorkShortCommit(change.targetSha)}: +${change.addedLines} / −${change.removedLines}`
-    + (change.status === 'partial' ? ` · ${t('usage.board.work.linesKeptPartial')}` : '')).join(' · ');
+  return changes.length === 0 ? '' : changes.map(change => {
+    const range = change.commitSha !== change.targetSha
+      ? `${usageWorkShortCommit(change.commitSha)} → ${usageWorkShortCommit(change.targetSha)}: `
+      : change.commitSha === saidCommit ? '' : `${usageWorkShortCommit(change.commitSha)}: `;
+    return `${range}+${change.addedLines} / −${change.removedLines}`
+      + (change.status === 'partial' ? ` · ${t('usage.board.work.linesKeptPartial')}` : '');
+  }).join(' · ');
+}
+
+/**
+ * What a Work body says while Work links are not read whole, from the one Work coverage decision. A settled partial
+ * read is never "not loaded yet": it says links are incomplete and gives the owner's typed cause and count (`cause`),
+ * or null for a read still going or failed, whose own wording and Retry stay as they are.
+ */
+export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
+  if (readUsageWorkOutcomesEvidence(slice, 'work') !== 'partial') return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  const source = slice.sources.find(row => row.source === 'work');
+  const unread = source?.unreadSessions ?? {};
+  const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
+  const cause = [
+    unread.machine_unavailable ? t('usage.board.work.workUnreadOffline', { count: unread.machine_unavailable.toLocaleString() })
+      : source?.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadOfflineSome') : null,
+    other > 0 ? t('usage.board.work.workUnreadOther', { count: other.toLocaleString() }) : null,
+  ].filter(Boolean).join(' · ');
+  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
 }
 
 export function usageWorkBranchName(ref: string): string {

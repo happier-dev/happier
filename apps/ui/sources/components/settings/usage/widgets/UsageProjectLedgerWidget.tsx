@@ -41,6 +41,7 @@ import {
   usageWorkPullRequestState,
   usageWorkPullRequestTitle,
   usageWorkShortCommit,
+  usageWorkLinksNotice,
   usageWorkRetainedChangeLine,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
@@ -96,13 +97,15 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     presentation?.footprint.width === 'half' ||
     presentation?.footprint.width === 'compact' ||
     (presentation?.geometry?.width ?? Number.POSITIVE_INFINITY) < 420;
+  // Work links not read whole: still reading, settled with some Sessions unread, or failed (one decision, one wording).
+  const linksNotice = usageWorkLinksNotice(props.slice);
   if (!summary)
     return (
       <View style={styles.body}>
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}
-          title={t('usage.board.work.workUnavailableTitle')}
-          reason={t('usage.board.work.workUnavailableReason')}
+          title={linksNotice.title}
+          reason={linksNotice.cause ?? t('usage.board.work.workUnavailableReason')}
         />
         <UsageCoverageLine
           slice={props.slice}
@@ -155,7 +158,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const allocationRead = props.slice.workSummary?.pullRequestsRead === true;
   const noneLinked = !anyLinked && summary.allocated === 0 && summary.total !== null && summary.total > 0;
   const showAllocationParts = allocationRead && !noneLinked;
-  const allocationStatus = !allocationRead ? t('usage.board.work.workUnavailableTitle')
+  // An unread or partly read set of links is said once, here at the total, with the owner's cause; never on a row.
+  const allocationStatus = !allocationRead ? [linksNotice.title, linksNotice.cause].filter(Boolean).join(' · ')
     : noneLinked ? t('usage.board.work.noneLinked') : null;
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
@@ -200,7 +204,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
       ? ''
       : t('usage.board.work.perSession', { amount: format(row.perSession, row.moneyBasis) }),
     `${t('usage.board.work.commit')} ${usageWorkShortCommit(row.branch.branch.headSha)}`,
-    usageWorkRetainedChangeLine(row.retainedChanges),
+    usageWorkRetainedChangeLine(row.retainedChanges, row.branch.branch.headSha),
     row.linkedPullRequests.map(usageWorkPullRequestTitle).join(' · ') || t('usage.board.work.noOutcome'),
   ];
   const branchColumns = [
@@ -369,7 +373,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           { label: t('usage.board.work.allProjects') },
           { label: metricLabel, proportion: true },
           { label: t('usage.board.work.funnelSessions') },
-          ...(anyLinked ? [{ label: t('usage.board.work.notLinked') }] : []),
+          ...(anyLinked && allocationRead ? [{ label: t('usage.board.work.notLinked') }] : []),
         ]}
         rows={projects.map((row) => [
           projectLabel(row.projectKey),
@@ -379,8 +383,9 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
             // Token totals added up from their parts are said once, by the total below, never on a row (USAGE-ACCEPT 1121 #13).
             projectPlace(row.projectKey)].filter(Boolean).join(' · '),
-          ...(anyLinked
-            ? [!allocationRead ? format(null) : row.unallocated === null || row.unallocated > 0
+          // Unread links leave each row's unlinked part unknown: the total says so once (acceptance 1122 #57).
+          ...(anyLinked && allocationRead
+            ? [row.unallocated === null || row.unallocated > 0
               ? t('usage.board.work.notLinkedPart', { amount: format(row.unallocated, row.unallocatedBasis) })
               : '']
             : []),

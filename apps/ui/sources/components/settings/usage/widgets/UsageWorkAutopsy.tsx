@@ -34,7 +34,7 @@ import { useUsageChartDetails } from './usageMountedControls';
 import { usageCostKindPhrase, usagePageCostCaption } from '../usageCostPresentation';
 import { useSessionMetadata } from '@/sync/store/hooks';
 import { findModelOptionForEffectiveModelId, getModelOptionsForSession } from '@/sync/domains/models/modelOptions';
-import { summarizeUsageWorkSession, type UsageWorkTurnRow } from './usageWorkPresentation';
+import { summarizeUsageWorkSession, type UsageWorkMoneyBasis, type UsageWorkTurnRow } from './usageWorkPresentation';
 import {
   formatUsageDuration,
   readUsageWorkSessionId,
@@ -47,6 +47,7 @@ import {
   usageWorkPullRequestState,
   usageWorkPullRequestTitle,
   usageWorkShortCommit,
+  usageWorkLinksNotice,
   usageWorkRetainedChangeLine,
 } from './UsageWorkParts';
 
@@ -88,6 +89,7 @@ export function UsageWorkAutopsy(
         ? props.query.session[0]!
         : null;
   const work = props.slice.work;
+  const linksNotice = usageWorkLinksNotice(props.slice);
   const { metric, costBasis } = props.query;
   const autopsy = React.useMemo(
     () => (selected && work ? summarizeUsageWorkSession(work, { metric, costBasis }, selected) : null),
@@ -217,6 +219,12 @@ export function UsageWorkAutopsy(
   const pageBasis = metric === 'cost' && cost?.amountUsd != null ? cost.selection : null;
   const saidOnce = (basis: { kind: string; currency: string } | null | undefined) =>
     Boolean(pageBasis && basis && basis.kind === pageBasis.kind && basis.currency === pageBasis.currency);
+  // On the Tokens lens the Cost fact's caption names the basis; the cost plot then says only its currency (acceptance 1122 #58).
+  const costFactBasis = metric !== 'cost' && cost?.amountUsd != null ? cost.selection : null;
+  const costTimelineCaption = (basis: UsageWorkMoneyBasis | null) => saidOnce(basis) ? undefined
+    : !basis ? t('usage.board.recap.money_unpriced')
+      : costFactBasis?.kind === basis.kind && costFactBasis.currency === basis.currency ? basis.currency
+        : `${usageCostKindPhrase(basis.kind)} · ${basis.currency}`;
   const amountText = (value: number | null, basis: { kind: string; currency: string } | null = summary?.moneyBasis ?? null) =>
     value !== null && saidOnce(basis) ? formatUsageCost(value, basis!.currency) : format(value, basis);
   const metricLabel = metric === 'cost' ? t('usage.cost') : t('usage.tokens');
@@ -331,16 +339,14 @@ export function UsageWorkAutopsy(
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}
           replacesContent={false}
-          title={t('usage.board.work.workUnavailableTitle')}
-          reason={t('usage.board.work.workUnavailableReason')}
+          title={linksNotice.title}
+          reason={linksNotice.cause ?? t('usage.board.work.workUnavailableReason')}
         />
       )}
       {/* A Session with no priced moment draws no empty plot: its Cost fact already says the money is unknown. */}
       {autopsy && pricedTimeline ? (
         <View style={styles.section}>
-          <UsageWorkSectionTitle caption={saidOnce(autopsy.costTimelineBasis) ? undefined : autopsy.costTimelineBasis
-            ? `${usageCostKindPhrase(autopsy.costTimelineBasis.kind)} · ${autopsy.costTimelineBasis.currency}`
-            : t('usage.board.recap.money_unpriced')}>{t('usage.board.work.costOverTime')}</UsageWorkSectionTitle>
+          <UsageWorkSectionTitle caption={costTimelineCaption(autopsy.costTimelineBasis)}>{t('usage.board.work.costOverTime')}</UsageWorkSectionTitle>
           {plottedTimeline ? <StackedSeriesChart
             {...details}
             theme={theme}

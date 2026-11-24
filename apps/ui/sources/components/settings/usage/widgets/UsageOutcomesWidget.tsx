@@ -26,6 +26,7 @@ import {
   UsageWorkSectionTitle,
   UsageWorkSessionRows,
   usageWorkPullRequestState,
+  usageWorkLinksNotice,
   usageWorkPullRequestTitle,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
@@ -62,17 +63,18 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
 }>) {
   const { presentation } = props;
   useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
-  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
+  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'partial' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
     : t('usage.board.page.noneLinkedByEvidence'));
   if (presentation.kind === 'reading')
     return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
-  if (presentation.kind === 'unavailable')
+  if (presentation.kind === 'unavailable' || presentation.kind === 'partial') {
+    const notice = usageWorkLinksNotice(props.slice);
     return (
       <View style={styles.body}>
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}
-          title={t('usage.board.work.workUnavailableTitle')}
-          reason={t('usage.board.work.workUnavailableReason')}
+          title={notice.title}
+          reason={notice.cause ?? t('usage.board.work.workUnavailableReason')}
         />
         <UsageCoverageLine
           slice={props.slice}
@@ -82,6 +84,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
         />
       </View>
     );
+  }
   if (presentation.kind === 'empty')
     return (
       <UsageBodyInsufficient
