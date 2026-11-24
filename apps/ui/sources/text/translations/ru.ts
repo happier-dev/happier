@@ -20179,6 +20179,19 @@ settingsSession: {
           restoresPrevious: "Прежний релиз возвращается автоматически.",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} вернётся автоматически.`,
           staysDown: "Остаётся остановленным, пока вы не откатите.",
+          domainSetupTitle: "Настройка домена",
+          domainSetup: {
+            authorized: "Доступ администратора готов к настройке.",
+            accessRequired: "Настройте доступ администратора, чтобы добавить этот домен.",
+            attendanceRequired: "Для настройки нужен пароль администратора.",
+            unavailable: "Не удалось проверить требования к настройке.",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Запускает выбранную версию на ${machine} и сохраняет текущие данные.` : "Текущие данные остаются на месте.",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Запускает выбранную версию на ${machine} и заменяет текущие данные выбранной копией.` : "Выбранная копия заменяет текущие данные.",
+          telemetryCollector: "Сборщик телеметрии",
+          telemetryCollectorAtLaunch: "Частный маршрут определяется при запуске развертывания.",
         },
     },
     identity: {

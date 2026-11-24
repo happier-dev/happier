@@ -985,11 +985,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Не удалось прочитать варианты ${platform}`,
     choicesFailedBody: "Проверьте, что подключению видны ваши проекты, и повторите.",
     connection: "Подключение",
-    hostNeedsSetup: ({ machine }) => `${machine} ещё не готова принимать развёртывания`,
+    hostNeedsSetup: "Эта машина еще не настроена для размещения развертываний",
     hostSetupBody: "Вы проверяете каждое изменение до запуска. Сохранение этого окружения может подождать.",
     hostSetupAction: ({ machine }) => `Настроить ${machine}`,
     hostReviewShort: 'Проверить настройку',
-    hostUnchecked: ({ machine }) => `Не удалось проверить, может ли ${machine} принимать развёртывания`,
+    hostUnchecked: "Не удалось проверить, может ли эта машина размещать развертывания",
+    hostUncheckedBody: ({ machine }) => `«Проверить настройку» открывает настройку ${machine}, где Happier проверяет, может ли она собирать и запускать приложения.`,
+    platformProject: ({ platform }) => `Проект ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ru">;
 

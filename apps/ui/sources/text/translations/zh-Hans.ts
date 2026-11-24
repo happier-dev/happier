@@ -19845,6 +19845,19 @@ settingsSession: {
           restoresPrevious: "上一个版本会自动恢复。",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} 会自动恢复。`,
           staysDown: "保持停止，直到你回滚。",
+          domainSetupTitle: "域名设置",
+          domainSetup: {
+            authorized: "设置所需的管理员访问权限已就绪。",
+            accessRequired: "设置管理员访问权限以添加此域名。",
+            attendanceRequired: "设置需要管理员密码。",
+            unavailable: "无法检查设置要求。",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `在 ${machine} 上运行所选版本，并保留你当前的数据。` : "你当前的数据保持不变。",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `在 ${machine} 上运行所选版本，并用所选备份替换你当前的数据。` : "所选备份将替换你当前的数据。",
+          telemetryCollector: "遥测收集器",
+          telemetryCollectorAtLaunch: "私有路由会在部署开始时解析。",
         },
     },
     identity: {

@@ -20099,6 +20099,19 @@ settingsSession: {
           restoresPrevious: "La version précédente revient automatiquement.",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} revient automatiquement.`,
           staysDown: "Il reste arrêté jusqu’à un retour en arrière.",
+          domainSetupTitle: "Configuration du domaine",
+          domainSetup: {
+            authorized: "L’accès administrateur est prêt pour la configuration.",
+            accessRequired: "Configurez l’accès administrateur pour ajouter ce domaine.",
+            attendanceRequired: "La configuration demande le mot de passe de l’administrateur.",
+            unavailable: "Les prérequis de configuration n’ont pas pu être vérifiés.",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Exécute la version choisie sur ${machine} et garde vos données actuelles.` : "Vos données actuelles restent en place.",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Exécute la version choisie sur ${machine} et remplace vos données actuelles par la sauvegarde choisie.` : "La sauvegarde choisie remplace vos données actuelles.",
+          telemetryCollector: "Collecteur de télémétrie",
+          telemetryCollectorAtLaunch: "La route privée est résolue au démarrage du déploiement.",
         },
     },
     identity: {

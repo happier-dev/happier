@@ -970,11 +970,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `无法读取你的 ${platform} 选项`,
     choicesFailedBody: "请确认该连接能看到你的项目，然后重试。",
     connection: "连接",
-    hostNeedsSetup: ({ machine }) => `${machine} 尚未设置为可托管部署`,
+    hostNeedsSetup: "这台机器尚未设置为可托管部署",
     hostSetupBody: "在任何操作运行前，你都会审核每项更改。保存此环境可以等到那时再进行。",
     hostSetupAction: ({ machine }) => `设置 ${machine}`,
     hostReviewShort: '查看设置',
-    hostUnchecked: ({ machine }) => `无法检查 ${machine} 是否可以托管部署`,
+    hostUnchecked: "无法检查这台机器能否托管部署",
+    hostUncheckedBody: ({ machine }) => `“检查设置”会打开 ${machine} 的设置，Happier 会在那里检查它能否构建和运行应用。`,
+    platformProject: ({ platform }) => `${platform} 项目`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hans">;
 

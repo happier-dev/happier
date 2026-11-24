@@ -983,11 +983,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Nie udało się odczytać opcji ${platform}`,
     choicesFailedBody: "Sprawdź, czy połączenie widzi Twoje projekty, i spróbuj ponownie.",
     connection: "Połączenie",
-    hostNeedsSetup: ({ machine }) => `${machine} nie jest jeszcze gotowa do hostowania wdrożeń`,
+    hostNeedsSetup: "Ta maszyna nie jest jeszcze przygotowana do hostowania wdrożeń",
     hostSetupBody: "Przeglądasz każdą zmianę, zanim cokolwiek się uruchomi. Zapisanie tego środowiska może poczekać.",
     hostSetupAction: ({ machine }) => `Skonfiguruj ${machine}`,
     hostReviewShort: 'Przejrzyj konfigurację',
-    hostUnchecked: ({ machine }) => `Nie udało się sprawdzić, czy ${machine} może hostować wdrożenia`,
+    hostUnchecked: "Nie udało się sprawdzić, czy ta maszyna może hostować wdrożenia",
+    hostUncheckedBody: ({ machine }) => `„Sprawdź konfigurację” otwiera konfigurację ${machine}, gdzie Happier sprawdza, czy może budować i uruchamiać aplikacje.`,
+    platformProject: ({ platform }) => `Projekt ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "pl">;
 

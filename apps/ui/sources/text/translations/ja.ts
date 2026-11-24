@@ -20139,6 +20139,19 @@ settingsSession: {
           restoresPrevious: "以前のリリースが自動的に戻ります。",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} が自動的に戻ります。`,
           staysDown: "ロールバックするまで停止したままです。",
+          domainSetupTitle: "ドメインの設定",
+          domainSetup: {
+            authorized: "設定に必要な管理者アクセスの準備ができています。",
+            accessRequired: "このドメインを追加するには管理者アクセスを設定してください。",
+            attendanceRequired: "設定には管理者のパスワードが必要です。",
+            unavailable: "設定の要件を確認できませんでした。",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `選択したバージョンを ${machine} で実行し、現在のデータを保持します。` : "現在のデータはそのまま残ります。",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `選択したバージョンを ${machine} で実行し、現在のデータを選択したバックアップで置き換えます。` : "選択したバックアップで現在のデータを置き換えます。",
+          telemetryCollector: "テレメトリーコレクター",
+          telemetryCollectorAtLaunch: "プライベートルートはデプロイの開始時に解決されます。",
         },
     },
     identity: {

@@ -20227,6 +20227,19 @@ settingsSession: {
           restoresPrevious: "La release precedente torna automaticamente.",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} torna automaticamente.`,
           staysDown: "Resta fermo finché non fai il rollback.",
+          domainSetupTitle: "Configurazione del dominio",
+          domainSetup: {
+            authorized: "L’accesso amministratore è pronto per la configurazione.",
+            accessRequired: "Configura l’accesso amministratore per aggiungere questo dominio.",
+            attendanceRequired: "La configurazione richiede la password dell’amministratore.",
+            unavailable: "Non è stato possibile verificare i requisiti di configurazione.",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Esegue la versione scelta su ${machine} e mantiene i dati attuali.` : "I dati attuali restano dove sono.",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Esegue la versione scelta su ${machine} e sostituisce i dati attuali con il backup scelto.` : "Il backup scelto sostituisce i dati attuali.",
+          telemetryCollector: "Collettore di telemetria",
+          telemetryCollectorAtLaunch: "Il percorso privato viene risolto all’avvio del deployment.",
         },
     },
     identity: {

@@ -971,11 +971,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `無法讀取你的 ${platform} 選項`,
     choicesFailedBody: "請確認該連線能看到你的專案，然後重試。",
     connection: "連線",
-    hostNeedsSetup: ({ machine }) => `${machine} 尚未設定為可託管部署`,
+    hostNeedsSetup: "這台機器尚未設定為可託管部署",
     hostSetupBody: "在任何操作執行前，你都會審核每項變更。儲存此環境可以等到那時再進行。",
     hostSetupAction: ({ machine }) => `設定 ${machine}`,
     hostReviewShort: '檢視設定',
-    hostUnchecked: ({ machine }) => `無法檢查 ${machine} 是否可以託管部署`,
+    hostUnchecked: "無法檢查這台機器能否託管部署",
+    hostUncheckedBody: ({ machine }) => `「檢查設定」會開啟 ${machine} 的設定，Happier 會在那裡檢查它能否建置和執行應用程式。`,
+    platformProject: ({ platform }) => `${platform} 專案`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hant">;
 

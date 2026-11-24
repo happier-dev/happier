@@ -993,11 +993,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `No s’han pogut llegir les opcions de ${platform}`,
     choicesFailedBody: "Comprova que la connexió pot veure els teus projectes i torna-ho a provar.",
     connection: "Connexió",
-    hostNeedsSetup: ({ machine }) => `${machine} encara no està preparada per allotjar desplegaments`,
+    hostNeedsSetup: "Aquesta màquina encara no està preparada per allotjar desplegaments",
     hostSetupBody: "Revises cada canvi abans que s’executi res. Desar aquest entorn pot esperar fins aleshores.",
     hostSetupAction: ({ machine }) => `Prepara ${machine}`,
     hostReviewShort: 'Revisa la preparació',
-    hostUnchecked: ({ machine }) => `No s’ha pogut comprovar si ${machine} pot allotjar desplegaments`,
+    hostUnchecked: "No s’ha pogut comprovar si aquesta màquina pot allotjar desplegaments",
+    hostUncheckedBody: ({ machine }) => `«Revisa la configuració» obre la configuració de ${machine}, on Happier comprova que pot compilar i executar apps.`,
+    platformProject: ({ platform }) => `Projecte de ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ca">;
 

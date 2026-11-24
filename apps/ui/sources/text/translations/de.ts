@@ -20335,6 +20335,19 @@ settingsSession: {
               restoresPrevious: "Das vorherige Release kommt automatisch zurück.",
               restoresVersion: ({ revision }: { revision: string }) => `${revision} kommt automatisch zurück.`,
               staysDown: "Es bleibt aus, bis du zurückrollst.",
+              domainSetupTitle: "Domain-Einrichtung",
+              domainSetup: {
+                authorized: "Der Administratorzugriff für die Einrichtung ist bereit.",
+                accessRequired: "Richte den Administratorzugriff ein, um diese Domain hinzuzufügen.",
+                attendanceRequired: "Die Einrichtung braucht das Passwort des Administrators.",
+                unavailable: "Die Voraussetzungen für die Einrichtung konnten nicht geprüft werden.",
+              },
+              rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Führt die gewählte Version auf ${machine} aus und behält deine aktuellen Daten.` : "Deine aktuellen Daten bleiben erhalten.",
+              rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Führt die gewählte Version auf ${machine} aus und ersetzt deine aktuellen Daten durch die gewählte Sicherung.` : "Die gewählte Sicherung ersetzt deine aktuellen Daten.",
+              telemetryCollector: "Telemetrie-Collector",
+              telemetryCollectorAtLaunch: "Die private Route wird beim Start des Deployments aufgelöst.",
             },
         },
         identity: {

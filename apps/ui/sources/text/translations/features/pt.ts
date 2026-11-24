@@ -992,11 +992,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Não foi possível ler suas opções do ${platform}`,
     choicesFailedBody: "Verifique se a conexão vê seus projetos e tente novamente.",
     connection: "Conexão",
-    hostNeedsSetup: ({ machine }) => `${machine} ainda não está pronta para hospedar implantações`,
+    hostNeedsSetup: "Esta máquina ainda não está preparada para alojar implantações",
     hostSetupBody: "Você revisa cada mudança antes de qualquer execução. Salvar este ambiente pode esperar até lá.",
     hostSetupAction: ({ machine }) => `Preparar ${machine}`,
     hostReviewShort: 'Rever a preparação',
-    hostUnchecked: ({ machine }) => `Não foi possível verificar se ${machine} pode hospedar implantações`,
+    hostUnchecked: "Não foi possível verificar se esta máquina pode alojar implantações",
+    hostUncheckedBody: ({ machine }) => `«Rever configuração» abre a configuração de ${machine}, onde o Happier verifica se consegue compilar e executar apps.`,
+    platformProject: ({ platform }) => `Projeto ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "pt">;
 

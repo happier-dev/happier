@@ -14228,6 +14228,19 @@ settingsSession: {
                     host_bind: '掛載機器上的資料夾',
                     non_loopback_publish: '向其他機器開放連接埠',
                 },
+                domainSetupTitle: "網域設定",
+                domainSetup: {
+                  authorized: "設定所需的管理員存取權已就緒。",
+                  accessRequired: "設定管理員存取權以新增此網域。",
+                  attendanceRequired: "設定需要管理員密碼。",
+                  unavailable: "無法檢查設定需求。",
+                },
+                rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `在 ${machine} 上執行所選版本，並保留你目前的資料。` : "你目前的資料會保持不變。",
+                rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `在 ${machine} 上執行所選版本，並以所選備份取代你目前的資料。` : "所選備份會取代你目前的資料。",
+                telemetryCollector: "遙測收集器",
+                telemetryCollectorAtLaunch: "私人路由會在部署開始時解析。",
             },
         },
         authoring: {

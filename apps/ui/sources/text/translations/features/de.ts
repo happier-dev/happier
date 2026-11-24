@@ -987,11 +987,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `${platform}-Auswahl konnte nicht gelesen werden`,
     choicesFailedBody: "Prüfe, ob die Verbindung deine Projekte sieht, und versuche es erneut.",
     connection: "Verbindung",
-    hostNeedsSetup: ({ machine }) => `${machine} ist noch nicht für Deployments eingerichtet`,
+    hostNeedsSetup: "Diese Maschine ist noch nicht für Deployments eingerichtet",
     hostSetupBody: "Du prüfst jede Änderung, bevor etwas läuft. Das Speichern dieser Umgebung kann so lange warten.",
     hostSetupAction: ({ machine }) => `${machine} einrichten`,
     hostReviewShort: 'Einrichtung prüfen',
-    hostUnchecked: ({ machine }) => `Konnte nicht prüfen, ob ${machine} Deployments hosten kann`,
+    hostUnchecked: "Konnte nicht prüfen, ob diese Maschine Deployments hosten kann",
+    hostUncheckedBody: ({ machine }) => `„Einrichtung prüfen“ öffnet die Einrichtung von ${machine}; dort prüft Happier, ob Apps gebaut und ausgeführt werden können.`,
+    platformProject: ({ platform }) => `${platform}-Projekt`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "de">;
 

@@ -981,11 +981,13 @@ const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `${platform} の選択肢を読み込めませんでした`,
     choicesFailedBody: "接続からプロジェクトが見えることを確認して、もう一度お試しください。",
     connection: "接続",
-    hostNeedsSetup: ({ machine }) => `${machine} はまだデプロイを受け入れる準備ができていません`,
+    hostNeedsSetup: "このマシンはまだデプロイをホストする設定になっていません",
     hostSetupBody: "実行前にすべての変更を確認できます。この環境の保存はそれまで待てます。",
     hostSetupAction: ({ machine }) => `${machine} をセットアップ`,
     hostReviewShort: 'セットアップを確認',
-    hostUnchecked: ({ machine }) => `${machine} がデプロイを受け入れられるか確認できませんでした`,
+    hostUnchecked: "このマシンがデプロイをホストできるか確認できませんでした",
+    hostUncheckedBody: ({ machine }) => `「設定を確認」で ${machine} の設定が開き、Happier がアプリをビルドして実行できるか確認します。`,
+    platformProject: ({ platform }) => `${platform} のプロジェクト`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ja">;
 

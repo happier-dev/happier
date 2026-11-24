@@ -20050,6 +20050,19 @@ settingsSession: {
           restoresPrevious: "Poprzednie wydanie wraca automatycznie.",
           restoresVersion: ({ revision }: { revision: string }) => `${revision} wraca automatycznie.`,
           staysDown: "Pozostaje wyłączone, dopóki nie cofniesz.",
+          domainSetupTitle: "Konfiguracja domeny",
+          domainSetup: {
+            authorized: "Dostęp administratora jest gotowy do konfiguracji.",
+            accessRequired: "Skonfiguruj dostęp administratora, aby dodać tę domenę.",
+            attendanceRequired: "Konfiguracja wymaga hasła administratora.",
+            unavailable: "Nie udało się sprawdzić wymagań konfiguracji.",
+          },
+          rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Uruchamia wybraną wersję na ${machine} i zachowuje bieżące dane.` : "Bieżące dane pozostają na miejscu.",
+          rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Uruchamia wybraną wersję na ${machine} i zastępuje bieżące dane wybraną kopią.` : "Wybrana kopia zastępuje bieżące dane.",
+          telemetryCollector: "Kolektor telemetrii",
+          telemetryCollectorAtLaunch: "Prywatna trasa jest ustalana przy starcie wdrożenia.",
         },
     },
     identity: {

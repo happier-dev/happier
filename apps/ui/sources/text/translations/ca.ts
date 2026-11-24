@@ -19029,6 +19029,19 @@ La meva pregunta: `,
               restoresPrevious: "La versió anterior torna automàticament.",
               restoresVersion: ({ revision }: { revision: string }) => `${revision} torna automàticament.`,
               staysDown: "Queda aturat fins que facis rollback.",
+              domainSetupTitle: "Configuració del domini",
+              domainSetup: {
+                authorized: "L’accés d’administrador ja està a punt per a la configuració.",
+                accessRequired: "Configura l’accés d’administrador per afegir aquest domini.",
+                attendanceRequired: "La configuració requereix la contrasenya de l’administrador.",
+                unavailable: "No s’han pogut comprovar els requisits de configuració.",
+              },
+              rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Executa la versió triada a ${machine} i conserva les dades actuals.` : "Les dades actuals es mantenen.",
+              rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Executa la versió triada a ${machine} i substitueix les dades actuals per la còpia triada.` : "La còpia triada substitueix les dades actuals.",
+              telemetryCollector: "Col·lector de telemetria",
+              telemetryCollectorAtLaunch: "La ruta privada es resol quan comença el desplegament.",
             },
         },
         identity: {
