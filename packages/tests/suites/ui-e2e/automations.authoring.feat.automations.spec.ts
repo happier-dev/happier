@@ -721,7 +721,14 @@ test.describe('ui e2e: automations authoring', () => {
         };
         expect(await readRuns()).toEqual([]);
         await arrive();
-        await expect.poll(async () => (await readRuns()).map(row => row.state), { timeout: 180_000 }).toEqual(['succeeded']);
+        // F2 ends when the daemon starts the saved Workflow. A queued row has not reached the daemon.
+        await expect.poll(async () => (await readRuns()).map(row => ({
+            started: row.state === 'running' || row.state === 'succeeded',
+            machineId: row.machineId,
+            origin: row.origin.kind,
+        })), { timeout: 180_000 }).toEqual([
+            { started: true, machineId: context.machineId, origin: 'automation' },
+        ]);
     });
 
     test('P04.F3 sentence verbs create ordinary Workflows', async ({ page }) => {
