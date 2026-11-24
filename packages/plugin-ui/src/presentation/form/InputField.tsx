@@ -2,7 +2,7 @@ import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
-import type { HappierStyleProp } from '../portableTypes.js';
+import type { HappierFocusable, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierUiPalette, useOptionalHappierUiPalette, useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { resolveHappierActionFieldPresentation, resolveHappierChoiceControl, type HappierActionInputField } from './actionInputFields.js';
 import {
@@ -62,6 +62,10 @@ export type HappierInputFieldProps<Value> = Readonly<{
   frame?: 'field' | 'none';
   /** A Toggle's accessible name when it should say more than the field title. */
   toggleLabel?: string;
+  /** Spoken reading when the visible reading omits context supplied beside the control. */
+  accessibilityReading?: string;
+  /** Ref to the typed editor's focus target. */
+  controlRef?: (instance: HappierFocusable | null) => void;
   /** The control's test id (text input or toggle). */
   controlTestID?: string;
   testID?: string;
@@ -89,6 +93,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
   const { field, theme } = props;
   // The unit symbol is not a translation: a byte-size integer is entered in GiB, and its label says so.
   const label = `${field.prompt ?? field.title}${field.widget === 'integer' && field.unit === 'bytes' ? ' (GiB)' : ''}`;
+  const spokenLabel = props.accessibilityReading === undefined ? label : `${label}: ${props.accessibilityReading}`;
   const presentation = resolveHappierActionFieldPresentation<Value>(field, props.value, props.selection);
   const optionsSettled = props.optionsStatus === undefined || props.optionsStatus === 'ready';
   const picker = useHappierInputPicker({
@@ -127,6 +132,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
     control = (
       <HappierToggle
         label={props.toggleLabel ?? label}
+        accessibilityLabel={props.accessibilityReading === undefined ? undefined : spokenLabel}
+        controlRef={props.controlRef}
         value={presentation.value}
         disabled={disabled}
         theme={theme}
@@ -145,7 +152,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
     });
     control = (
       <HappierSegmentedChoice
-        accessibilityLabel={label}
+        accessibilityLabel={spokenLabel}
+        controlRef={props.controlRef}
         segments={plan.options.map((entry) => ({
           key: entry.key,
           label: entry.option.label,
@@ -177,6 +185,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
       // A picker-only type has no list to show: its field box reads the value and opens the picker.
       <HappierChoiceField<Value>
         label={label}
+        accessibilityReading={props.accessibilityReading}
+        controlRef={props.controlRef}
         options={options}
         value={presentation.value}
         placeholder={picker.affordance?.label}
@@ -192,6 +202,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
     )) : (
       <HappierChoiceField<Value>
         label={label}
+        accessibilityReading={props.accessibilityReading}
+        controlRef={props.controlRef}
         options={options}
         value={presentation.value}
         multiple={presentation.multiple}
@@ -218,7 +230,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
   } else {
     control = (
       <HappierTextField
-        label={label}
+        label={spokenLabel}
+        controlRef={props.controlRef}
         // The same field box as a choice field's trigger beside it, never a borderless well.
         appearance="field"
         fieldColors={resolveHappierFieldTextColors(palette, theme)}

@@ -7,6 +7,7 @@ import {
   useOptionalHappierUiPalette,
 } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
+import type { HappierFocusable } from '../portableTypes.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { settleHappierRaisedEdge } from '../layout/raisedEdge.js';
@@ -57,6 +58,9 @@ const CHOICE_SEARCH_MIN_OPTIONS = 8;
 export function HappierChoiceField<Value = string>(
   props: Readonly<{
     label: string;
+    /** Spoken reading when the visible reading omits context supplied alongside the field. */
+    accessibilityReading?: string | undefined;
+    controlRef?: ((instance: HappierFocusable | null) => void) | undefined;
     options: readonly HappierSelectOption<Value>[];
     value: Value | readonly Value[] | undefined;
     multiple?: boolean;
@@ -252,7 +256,8 @@ export function HappierChoiceField<Value = string>(
               : `${props.testID}.trigger`
         }
         accessibilityRole="button"
-        accessibilityLabel={`${props.label}: ${summary ?? placeholder}`}
+        accessibilityLabel={`${props.label}: ${props.accessibilityReading ?? summary ?? placeholder}`}
+        controlRef={props.controlRef}
         disabled={disabled}
         expanded={props.onOpen === undefined ? open : undefined}
         onPress={() => {

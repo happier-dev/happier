@@ -63,7 +63,9 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(screen.findByTestId('setup.note.input')?.props.value).toBe('');
         await screen.pressByTestIdAsync('setup.note.trigger');
         expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
-            { id: 'follow', title: 'This page' }, { id: 'own', title: 'widgetAdd.ownValue' },
+            { title: 'widgetFrame.followingGroup', checked: true },
+            { id: 'follow', title: 'This page', checked: false },
+            { id: 'own', title: 'widgetAdd.ownValue', checked: false },
         ]);
         await screen.update(render({ entry: { field, follow, inherited }, row: { kind: 'pinned', value: null, label: 'Personal note' }, plainValue: 'Personal note' }));
         expect(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.ownValue']);
@@ -72,6 +74,8 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(bindingText(screen, 'setup.note')).toEqual(['This page', 'Shared note']);
         await screen.update(render({ entry: { field, follow: { ...follow, values: [] } }, row: needed, plainValue: undefined }));
         expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.needed']);
+        await screen.pressByTestIdAsync('setup.note.trigger');
+        expect(screen.findByType(DropdownMenu).props.items.filter((item: { checked?: boolean }) => item.checked)).toEqual([]);
     });
 
     it('keeps the resolved group value at the leading edge of the Edit inputs trigger and option', async () => {
@@ -102,7 +106,7 @@ describe('widget setup fields share the typed-field owners', () => {
         expect.soft(bindingText(screen, 'edit.period')).toEqual([reading]);
         expect.soft(screen.findByTestId('edit.period.trigger')?.props.accessibilityLabel).toBe(`Period, ${reading}`);
         await screen.pressByTestIdAsync('edit.period.trigger');
-        expect.soft(screen.findByType(DropdownMenu).props.items[0]).toMatchObject({ id: 'follow', title: reading });
+        expect.soft(screen.findByType(DropdownMenu).props.items[0]).toMatchObject({ id: 'follow', title: reading, checked: true });
         expect.soft(screen.getTextContent()).toContain(reading);
         await screen.update(render({ ...setup.initial, bindings: { period: { kind: 'value', value: ownValue } } }, ownValue));
         expect(bindingText(screen, 'edit.period')).toEqual(['widgetAdd.ownValue']);
@@ -162,10 +166,12 @@ describe('widget setup fields share the typed-field owners', () => {
                 expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetFrame.followingGroup']);
                 expect.soft(colorOf(screen, single.valueLabel)).toBe(quiet);
                 expect.soft(colorOf(screen, singleReading)).toBeUndefined();
+                expect.soft(screen.findByTestId('inherited.control.trigger')?.props.accessibilityLabel).toBe(`Field: ${singleReading}`);
                 await screen.update(render({ field, follow, inherited: several }, longChoices));
                 expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetFrame.followingGroup']);
                 expect.soft(colorOf(screen, 'widgetAdd.severalValues')).toBe(quiet);
                 expect.soft(colorOf(screen, severalReading)).toBeUndefined();
+                expect.soft(screen.findByTestId('inherited.control.trigger')?.props.accessibilityLabel).toBe(`Field: ${severalReading}`);
                 await screen.update(render({ field }, longChoices));
                 expect(colorOf(screen, 'Authored prompt')).toBeTypeOf('string');
                 await screen.update(render({ field: { ...field, widget: 'select' }, inherited: single }, longChoices, 'one'));
@@ -270,7 +276,7 @@ describe('widget setup fields share the typed-field owners', () => {
         await act(async () => screen.update(<WidgetSetupFieldRow entry={entry} row={{ kind: 'pinned', value: null, label: 'Claude' }}
             options={options} optionsStatus="ready" plainValue={['claude']} phone={false}
             onChange={change => changes.push(change)} testID="setup.agents" />));
-        await screen.pressByTestIdAsync('setup.agents.control.trigger');
+        expect(screen.findByTestId('setup.agents.option.1')).not.toBeNull();
         await screen.pressByTestIdAsync('setup.agents.option.1');
         expect(changes.at(-1)).toEqual({ kind: 'pin', value: ['claude', 'codex'] });
         await act(async () => screen.update(<WidgetSetupFieldRow entry={entry} row={{ kind: 'pinned', value: null, label: 'Claude · Codex' }}

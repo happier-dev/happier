@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation, resolveHappierChoiceControl, useHappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation, resolveHappierChoiceControl, useHappierInputPickerPort, type HappierFocusable } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -30,6 +30,7 @@ import {
 } from './widgetSetupModel';
 
 const FOLLOW_ID = 'follow';
+const INHERIT_GROUP_ID = 'inherit-group';
 const OWN_ID = 'own';
 
 function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource = true): string {
@@ -37,9 +38,22 @@ function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource 
     return includeSource ? t('widgetAdd.inheritedValue', { value, source: t('widgetFrame.followingGroup') }) : value;
 }
 
-/** Whether the input reads the surface's value (one control) rather than its own (control + editor). */
-function followsSurface(row: WidgetSetupRow): boolean {
-    return row.kind === 'follows' || (row.kind === 'invalid' && row.follows === true);
+type WidgetBindingInForce =
+    | Readonly<{ kind: 'group'; source: string; inherited?: WidgetSetupInheritedReading }>
+    | Readonly<{ kind: 'page'; source: string }>
+    | Readonly<{ kind: 'own' }>
+    | Readonly<{ kind: 'unset' }>;
+
+function bindingInForce({ entry, row, plainValue }: React.ComponentProps<typeof WidgetSetupFieldRow>): WidgetBindingInForce {
+    if (row.kind === 'follows' || (row.kind === 'invalid' && row.follows === true)) {
+        const source = row.label ?? entry.follow?.label ?? entry.field.title;
+        return { kind: entry.follow?.group ? 'group' : 'page', source };
+    }
+    if (plainValue !== undefined || row.kind === 'pinned' || row.kind === 'choices') return { kind: 'own' };
+    if (row.kind === 'needed' && entry.inherited) {
+        return { kind: 'group', source: t('widgetFrame.followingGroup'), inherited: entry.inherited };
+    }
+    return { kind: 'unset' };
 }
 export type WidgetSetupFieldChange =
     | Readonly<{ kind: 'follow'; slot: string }>
@@ -100,7 +114,9 @@ function NeededTag(): React.ReactElement {
  * from what the surface had, so the value is never shown twice.
  */
 function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFieldRow> & Readonly<{
-    inheritedSource?: string | undefined;
+    binding: WidgetBindingInForce;
+    onChooseOwn: () => void;
+    controlRef: (node: HappierFocusable | null) => void;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const follow = props.entry.follow;
@@ -108,8 +124,12 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     const groupReading = follow?.group && valueLabel && valueLabel !== follow.label
         ? formatGroupReading({ kind: 'single', valueLabel }) : undefined;
     const [open, setOpen] = React.useState(false);
-    const following = followsSurface(props.row);
-    const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading, props.inheritedSource);
+    const { binding } = props;
+    const implicit = binding.kind === 'group' && binding.inherited !== undefined;
+    const selectedId = binding.kind === 'own' ? OWN_ID
+        : implicit ? INHERIT_GROUP_ID
+        : binding.kind === 'unset' ? null : FOLLOW_ID;
+    const trigger = describeTrigger(binding, props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
     const commands = useCurrentUiContextLocalCommands(follow && !props.disabled ? [{ key: 'open',
         title: [props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', '),
         invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }] : [], { unbound: 'local' });
@@ -118,20 +138,24 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         testID={props.testID}
         open={open}
         onOpenChange={next => { void commands.invoke('open', next); }}
-        items={[{ id: FOLLOW_ID, title: groupReading ?? follow.label, checked: following, testID: `${props.testID}.binding.follow`,
-            ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
-            icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
-        { id: OWN_ID, title: t('widgetAdd.ownValue'), subtitle: t('widgetAdd.ownValueHint'), checked: !following,
-            testID: `${props.testID}.binding.own`,
-            icon: <Icon name="pencil-simple" size={16} color={theme.colors.text.secondary} /> }]}
+        items={[
+            ...(implicit ? [{ id: INHERIT_GROUP_ID, title: binding.source, checked: true,
+                testID: `${props.testID}.binding.inherit-group`,
+                icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> }] : []),
+            { id: FOLLOW_ID, title: selectedId === FOLLOW_ID ? trigger.detail : groupReading ?? follow.label,
+                checked: selectedId === FOLLOW_ID,
+                testID: `${props.testID}.binding.follow`,
+                ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
+                icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
+            { id: OWN_ID, title: t('widgetAdd.ownValue'), subtitle: t('widgetAdd.ownValueHint'), checked: selectedId === OWN_ID,
+                testID: `${props.testID}.binding.own`,
+                icon: <Icon name="pencil-simple" size={16} color={theme.colors.text.secondary} /> },
+        ]}
         onSelect={(id) => {
-            if (id === FOLLOW_ID) props.onChange({ kind: 'follow', slot: follow.slot });
-            else if (following) {
-                const current = follow.values[0]?.value;
-                props.onChange(current === undefined ? { kind: 'clear' } : { kind: 'pin', value: current });
-            }
+            if (id === FOLLOW_ID && selectedId !== FOLLOW_ID) props.onChange({ kind: 'follow', slot: follow.slot });
+            if (id === OWN_ID) props.onChooseOwn();
         }}
-        selectedId={following ? FOLLOW_ID : OWN_ID}
+        selectedId={selectedId}
         placement="bottom"
         matchTriggerWidth={false}
         // The binding is a control inside the input's row, never a second row: its field box stands on
@@ -143,6 +167,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
                 disabled={props.disabled}
                 accessibilityRole="button"
                 accessibilityLabel={[props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', ')}
+                controlRef={props.controlRef}
                 expanded={open}
                 hasPopup="menu"
                 style={styles.bindingTrigger}
@@ -165,58 +190,34 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     />;
 }
 
-function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string, inheritedSource?: string): Readonly<{
-    detail: string | null;
+function describeTrigger(binding: WidgetBindingInForce, row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string): Readonly<{
+    detail: string;
     spoken: string;
     field: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
 }> {
-    switch (row.kind) {
-        case 'follows': {
-            // What it follows, then what that is now (lab IN "🔗 This session  happier"); a value that
-            // reads the same as its source is said once.
-            const value = row.valueLabel === row.label ? null : row.valueLabel;
-            return {
-                detail: groupReading ?? row.label,
-                spoken: groupReading ?? [row.label, value].filter(Boolean).join(' '),
-                field: { leading: <Icon name="link" size={15} color={secondary} />,
-                    secondary: groupReading ? null : value, quietValue: true },
-            };
-        }
-        case 'invalid':
-            if (row.follows) return {
-                detail: row.label ?? t('widgetAdd.invalidValue'),
-                spoken: `${row.label ?? ''} ${t('widgetAdd.invalidValue')}`.trim(),
-                field: {
-                    leading: <Icon name="warning" size={15} color={danger} />,
-                    secondary: row.label ? t('widgetAdd.invalidValue') : null,
-                    invalid: true,
-                },
-            };
-            // The editor beneath holds the value that stopped resolving; the binding only says whose it is.
-            return {
-                detail: t('widgetAdd.ownValue'),
-                spoken: `${t('widgetAdd.ownValue')} ${t('widgetAdd.invalidValue')}`,
-                field: { leading: <Icon name="warning" size={15} color={danger} />, invalid: true },
-            };
-        case 'needed': {
-            const label = inheritedSource ?? t('widgetAdd.needed');
-            return {
-                detail: label,
-                spoken: label,
-                field: { leading: inheritedSource ? <Icon name="link" size={15} color={secondary} /> : undefined },
-            };
-        }
-        case 'pinned':
-        case 'choices':
-            // The value itself is the editor's beneath; the binding says only that it is this widget's own.
-            return {
-                detail: t('widgetAdd.ownValue'),
-                spoken: t('widgetAdd.ownValue'),
-                field: { leading: <Icon name="pencil-simple" size={15} color={secondary} /> },
-            };
-        case 'viewer':
-            return { detail: null, spoken: t('widgetAdd.needed'), field: {} };
+    if (binding.kind === 'group' || binding.kind === 'page') {
+        const { source } = binding;
+        const reading = row.kind === 'follows' ? groupReading : undefined;
+        const value = row.kind === 'follows' && row.valueLabel !== source ? row.valueLabel : null;
+        const invalid = row.kind === 'invalid';
+        const detail = reading ?? source;
+        const extra = invalid ? t('widgetAdd.invalidValue') : reading ? null : value;
+        return {
+            detail,
+            spoken: extra ? `${detail} ${extra}` : detail,
+            field: invalid
+                ? { leading: <Icon name="warning" size={15} color={danger} />, secondary: extra, invalid: true }
+                : { leading: <Icon name="link" size={15} color={secondary} />, secondary: extra, quietValue: true },
+        };
     }
+    const detail = binding.kind === 'own' ? t('widgetAdd.ownValue') : t('widgetAdd.needed');
+    return {
+        detail,
+        spoken: row.kind === 'invalid' ? `${detail} ${t('widgetAdd.invalidValue')}` : detail,
+        field: row.kind === 'invalid'
+            ? { leading: <Icon name="warning" size={15} color={danger} />, invalid: true }
+            : binding.kind === 'own' ? { leading: <Icon name="pencil-simple" size={15} color={secondary} /> } : {},
+    };
 }
 
 /**
@@ -249,6 +250,10 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const placeholderInk = useOptionalHappierUiPalette(presentationTheme)?.placeholder ?? presentationTheme.colors.mutedText;
     const picker = useHappierInputPickerPort();
     const { entry, row } = props;
+    const binding = bindingInForce(props);
+    const groupReading = binding.kind === 'group' ? binding.inherited : undefined;
+    const surfaceOnly = entry.follow !== undefined
+        && (binding.kind === 'page' || (binding.kind === 'group' && groupReading === undefined));
     const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
     const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
     const selection = choices ? value : undefined;
@@ -261,14 +266,13 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
         testID: `${props.testID}.option.${index}`,
     })), [choicesOptions, props.testID]);
     const presentation = resolveHappierActionFieldPresentation(entry.field, value, selection);
-    const groupReading = row.kind === 'needed' && value === undefined ? entry.inherited : undefined;
-    const inheritedSource = groupReading && entry.follow ? t('widgetFrame.followingGroup') : undefined;
-    const inherited = groupReading ? formatGroupReading(groupReading, inheritedSource === undefined) : undefined;
+    const inherited = groupReading ? formatGroupReading(groupReading, entry.follow === undefined) : undefined;
     const subtitleOnly = inherited !== undefined && (presentation.kind === 'toggle'
         || (presentation.kind === 'select' && entry.field.allowCustomValue !== true
             && (resolveHappierChoiceControl(presentation, options) === 'segmented'
                 || (options.length === 0 && picker?.describe(entry.field) != null))));
     const inheritedSubtitle = subtitleOnly ? inherited : undefined;
+    const accessibilityReading = groupReading && (entry.follow || subtitleOnly) ? formatGroupReading(groupReading) : undefined;
     const placeholder = inheritedSubtitle === undefined ? inherited : undefined;
     const isInheritedPopup = placeholder !== undefined && presentation.kind === 'select';
     // RN Web reads the existing placeholder token from CSS rather than the native color prop.
@@ -288,14 +292,23 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
         }
         return entry.field;
     }, [entry.field, placeholder]);
-    // The shared field exposes no focus handle, so the row hands the keyboard to the first control
-    // the field drew (web only; a native keyboard arrives with the person's own tap).
-    const controlHost = React.useRef<View>(null);
+    const controlRef = React.useRef<HappierFocusable | null>(null);
+    const registerControl = React.useCallback((node: HappierFocusable | null) => { controlRef.current = node; }, []);
+    const bindingRef = React.useRef<HappierFocusable | null>(null);
+    const registerBinding = React.useCallback((node: HappierFocusable | null) => { bindingRef.current = node; }, []);
+    const [ownRequest, requestOwnEditor] = React.useReducer((request: number) => request + 1, 0);
+    const openRequest = (props.focusRequest ?? 0) + (props.autoOpen ? 1 : 0) + ownRequest;
     React.useEffect(() => {
-        if (!(props.focusRequest || props.autoOpen) || Platform.OS !== 'web') return;
-        const host = controlHost.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
-        host?.querySelector?.('input, textarea, [role="radio"], [role="checkbox"], [role="switch"], button')?.focus?.();
-    }, [props.autoOpen, props.focusRequest]);
+        // An Add/repair hand-off stays in the row while the typed choice is unavailable.
+        if (openRequest) (controlRef.current ?? bindingRef.current)?.focus();
+    }, [openRequest, surfaceOnly]);
+    const chooseOwn = () => {
+        if (surfaceOnly) {
+            const current = entry.follow?.values[0]?.value;
+            props.onChange(current === undefined ? { kind: 'clear' } : { kind: 'pin', value: current });
+        }
+        requestOwnEditor();
+    };
     const subtitle = row.kind === 'invalid' && !entry.follow && row.label
         ? `${row.label} · ${rowSubtitle(props)}`
         : choices || inheritedSubtitle !== undefined || (row.kind === 'needed' && entry.neededHint)
@@ -309,12 +322,12 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
     // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
     // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
-    if (!(row.kind === 'needed' && inherited !== undefined) && field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
-        optionCount: choicesOptions.length, value, follows: followsSurface(row) })) {
+    if (inherited === undefined && field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
+        optionCount: choicesOptions.length, value, follows: binding.kind === 'group' || binding.kind === 'page' })) {
         return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
             phone={props.phone} testID={props.testID} />;
     }
-    if (entry.follow && followsSurface(row)) {
+    if (surfaceOnly) {
         // Following the surface: the binding control is the row's one control and names the value.
         return (
             <Item
@@ -325,7 +338,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 titleAccessory={titleAccessory}
                 showChevron={false}
                 accessoryLayout={props.phone ? 'stacked' : 'inline'}
-                rightElement={<WidgetBindingControl {...props} />}
+                rightElement={<WidgetBindingControl {...props} binding={binding} onChooseOwn={chooseOwn} controlRef={registerBinding} />}
             />
         );
     }
@@ -346,11 +359,11 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             // The label stands at the top of its row beside a control that grows taller (a segmented choice, a field).
             contentAlign="start"
             rightElement={(
-                <View ref={controlHost} collapsable={false} style={textPlaceholderStyle}>
+                <View style={textPlaceholderStyle}>
                 <HappierInputField<JsonValue>
                     frame="none"
                     leading={entry.follow ? <WidgetBindingControl {...props}
-                        inheritedSource={inheritedSource} /> : undefined}
+                        binding={binding} onChooseOwn={chooseOwn} controlRef={registerBinding} /> : undefined}
                     field={field}
                     value={value}
                     selection={selection as JsonValue | readonly JsonValue[] | undefined}
@@ -359,7 +372,9 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                     renderPicker={control => <WidgetPickerControl control={control} label={field.prompt ?? field.title} />}
                     {...(valueLabel === undefined ? {} : { valueLabel })}
                     // A repair, or ↵ with this input still needed, opens its choices where the request lands.
-                    openRequest={(props.focusRequest ?? 0) + (props.autoOpen ? 1 : 0)}
+                    openRequest={openRequest}
+                    controlRef={registerControl}
+                    {...(accessibilityReading === undefined ? {} : { accessibilityReading })}
                     optionsStatus={props.optionsStatus}
                     disabled={props.disabled === true}
                     isEqual={sameStrictJsonValue}

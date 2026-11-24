@@ -811,6 +811,7 @@ export function HappierToggle(props: Readonly<{
   minimumTouchTarget?: number;
   /** How far the switch's hit area may reach past it on each side (see `HappierSwitchProps.hitReach`). */
   hitReach?: HappierSwitchProps['hitReach'];
+  controlRef?: HappierSwitchProps['controlRef'];
   theme: HappierUiTheme;
   testID?: string;
 }>) {
@@ -845,6 +846,7 @@ export function HappierToggle(props: Readonly<{
       minimumTouchTarget={minimumTouchTarget}
       hitReach={props.hitReach}
       testID={props.testID}
+      controlRef={props.controlRef}
     />
   );
 }

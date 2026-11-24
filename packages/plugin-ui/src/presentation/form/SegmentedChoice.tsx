@@ -67,6 +67,8 @@ export type HappierSegmentedChoiceSegment = Readonly<{
 export type HappierSegmentedChoiceProps = Readonly<{
   /** The group's accessible name (a page row's title names it visibly). */
   accessibilityLabel: string;
+  /** Focus target for the control's existing tab stop. */
+  controlRef?: ((instance: HappierFocusable | null) => void) | undefined;
   segments: readonly HappierSegmentedChoiceSegment[];
   /** Called with the pressed or arrowed-to segment's index; the caller owns what it means. */
   onSelect: (index: number) => void;
@@ -222,6 +224,7 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
             controlRef={(node) => {
               if (node) segmentRefs.current.set(segment.key, node);
               else segmentRefs.current.delete(segment.key);
+              if (index === tabStopIndex) props.controlRef?.(node);
             }}
             onPress={() => { props.onSelect(index); }}
             onKeyDown={(key) => {

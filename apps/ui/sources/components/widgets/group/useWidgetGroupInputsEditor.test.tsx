@@ -8,6 +8,7 @@ import {
   resolveWidgetBindingsV1, type WidgetInputBindingsV1, type WidgetLayoutGroupV1,
 } from '@happier-dev/protocol/widgets';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import type { WidgetCandidate } from '../widgetCatalog';
 import type { WidgetSetupSubmitResult } from '../add/widgetSetupModel';
@@ -16,6 +17,8 @@ import { runWidgetSetupCommand, type WidgetSurfaceContext } from '../surface/wid
 import { WidgetSetupPopover } from '../add/WidgetSetupPopover';
 import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
 
+vi.mock('@/components/ui/popover/Popover', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal as never) as never);
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -164,7 +167,10 @@ it('shows inherited values as placeholders without setting group overrides', asy
   if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover) || popover.type !== WidgetSetupPopover) {
     throw new Error('Missing widget setup popover');
   }
-  const screen = await renderScreen(<WidgetSetupStep setup={popover.props.setup()} phone={false} testID="edit" onDone={popover.props.onDone ?? popover.props.onRequestClose} />);
+  const focus = vi.fn();
+  const screen = await renderScreen(<WidgetSetupStep setup={popover.props.setup()} phone={false} testID="edit" onDone={popover.props.onDone ?? popover.props.onRequestClose} />, {
+    createNodeMock: ({ props }) => props.testID === 'edit.field.project.input' ? { focus } : null,
+  });
   const project = screen.findByTestId('edit.field.project.input')!;
   expect(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel).toBe('Project, widgetFrame.followingGroup');
   expect(project.props.placeholder).toBe('Example project');
@@ -173,8 +179,33 @@ it('shows inherited values as placeholders without setting group overrides', asy
   expect(period.props.value).toBe('Today');
   expect(period.props.placeholder ?? '').not.toContain('Yesterday');
   expect(screen.findByTestId('edit.field.basis.control.trigger')?.props.accessibilityLabel).toBe('Cost basis: common.choose');
+  expect(project.props.accessibilityLabel).toBe('Project: widgetAdd.inheritedValue(value=Example project,source=widgetFrame.followingGroup)');
+  const projectMenu = () => screen.root.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'edit.field.project')!;
+  const openProjectMenu = async () => {
+    await screen.pressByTestIdAsync('edit.field.project.trigger');
+    await vi.waitFor(() => expect(projectMenu().props.open).toBe(true));
+  };
+  await openProjectMenu();
+  expect(projectMenu().props.items.filter((item: { checked?: boolean }) => item.checked))
+    .toMatchObject([{ title: 'widgetFrame.followingGroup' }]);
+  await screen.pressByTestIdAsync('edit.field.project.binding.own');
+  await vi.waitFor(() => expect(focus).toHaveBeenCalled());
+  expect(screen.findByTestId('edit.field.project.input')?.props.value).toBe('');
+  expect(setInputs).not.toHaveBeenCalled();
+
+  await act(async () => screen.changeTextByTestId('edit.field.project.input', 'Personal project'));
+  await openProjectMenu();
+  expect(projectMenu().props.items.filter((item: { checked?: boolean }) => item.checked))
+    .toMatchObject([{ title: 'widgetAdd.ownValue' }]);
+  await screen.pressByTestIdAsync('edit.field.project.binding.follow');
+  await vi.waitFor(() => expect(screen.findByTestId('edit.field.project.input')).toBeNull());
+  expect(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel).toBe('Project, This page Example project');
+  await openProjectMenu();
+  expect(projectMenu().props.items.filter((item: { checked?: boolean }) => item.checked))
+    .toMatchObject([{ title: 'This page' }]);
+  expect(setInputs).not.toHaveBeenCalled();
   await screen.pressByTestIdAsync('edit.submit');
-  expect(setInputs).toHaveBeenCalledWith({ period: { kind: 'value', value: 'Today' } });
+  expect(setInputs).toHaveBeenCalledWith({ project: { kind: 'context', slot: 'project' }, period: { kind: 'value', value: 'Today' } });
 });
 
 describe('group inherited readings', () => {
@@ -313,7 +344,7 @@ describe('group inherited readings', () => {
   it('uses the one inherited list to read a count of two Projects in a popup field', async () => {
     const { screen } = await mount([{ projects: follow('work') }]);
     expect(screen.findByTestId('edit.field.projects.control.trigger')?.props.accessibilityLabel)
-      .toBe('Projects: 2 projects');
+      .toBe(`Projects: ${inherited('2 projects')}`);
   });
 
   it('shows a set short choice as selected radios with no inherited claim', async () => {
