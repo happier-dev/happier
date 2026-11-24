@@ -7138,6 +7138,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               action_outcome_unknown: "無法確認外部操作的結果。請在重試前檢查其狀態。",
               no_eligible_member: "沒有可用的合格連結帳戶。請檢查連結帳戶，然後重試工作階段。",
               no_eligible_group_member: "沒有可用的合格連結帳戶。請檢查連結帳戶，然後重試工作階段。",
+              broker_unavailable: "啟動工作階段時無法連線至團隊憑證代理。請稍後再試，或聯絡憑證擁有者尋求協助。",
               provider_incompatible_with_agent: "此代理程式不支援所選的憑證類型或經代理的 Team 來源。對於僅支援原生登入的代理程式，請使用你自己的登入，或選擇支援經代理供應商的代理程式。",
               teamCredential: "共用的 Team 憑證拒絕了該請求。",
             },

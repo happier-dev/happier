@@ -10045,6 +10045,7 @@ const enSession = {
       action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
       no_eligible_member: "No eligible Connected Account is available. Review Connected Accounts, then retry the session.",
       no_eligible_group_member: "No eligible Connected Account is available. Review Connected Accounts, then retry the session.",
+      broker_unavailable: "The Team credential broker couldn’t be reached for this start. Try again shortly or ask the credential’s owner for help.",
       provider_incompatible_with_agent: "This Agent does not support the selected credential kind or brokered Team source. For a native-only Agent, use your own login or choose an Agent that supports brokered providers.",
       teamCredential: 'The shared Team credential refused the request.',
       // Isolation causes share errors.agentIsolationUnavailable in the presentation owner.

@@ -8320,6 +8320,7 @@ export const zhHans: TranslationStructure = {
         action_outcome_unknown: "无法确认外部操作的结果。请在重试前检查其状态。",
         no_eligible_member: "没有可用的合格关联账户。请检查关联账户，然后重试会话。",
         no_eligible_group_member: "没有可用的合格关联账户。请检查关联账户，然后重试会话。",
+        broker_unavailable: "启动会话时无法连接团队凭据代理。请稍后重试，或联系凭据所有者寻求帮助。",
         provider_incompatible_with_agent: "此智能体不支持所选的凭据类型或经代理的 Team 来源。对于仅支持原生登录的智能体，请使用你自己的登录，或选择支持经代理提供方的智能体。",
         teamCredential: "共享的 Team 凭据拒绝了该请求。",
       },
