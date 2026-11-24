@@ -1130,6 +1130,53 @@ describe('Database workbench surfaces', () => {
     }
   });
 
+  it('dispatches capture from the declared Databases panel and preserves a typed refusal', async () => {
+    const project = { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey };
+    const source = { kind: 'worktree', ...project, workspaceId: scope.workspace.workspaceId };
+    const configure = databaseActionLocalIdV1(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1);
+    const status = databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
+    const manifest = PLUGIN_MANIFEST.contributes.ui;
+    const view = manifest?.views?.find(candidate => candidate.id === 'databases-panel');
+    const renderer = manifest?.renderers?.find(candidate => view && 'renderer' in view && candidate.id === view.renderer);
+    if (renderer?.kind !== 'reactNative' || !Array.isArray(renderer.requiredHostMethods))
+      throw new Error('Expected the declared Databases panel');
+    const daemon = daemonAnswers([descriptor]);
+    const captureWrite = vi.fn(async () => ({ ok: true as const, result: {
+      ok: false, status: 'unavailable', code: 'capture_source_unavailable', reason: 'This machine cannot capture this project.',
+    } }));
+    const actionControl = createPluginUiActionControlTestHost(captureWrite);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'capture-refused', mountNonce: 'capture-refused' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPanel,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'databases-panel' }, container: 'servicesPanel' },
+        target: { kind: 'services' },
+      }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        async executeAction(request) {
+          if (typeof request.action !== 'string' && request.action.localId === status)
+            return { ok: true, source, enabled: false, coverage: { lostObservations: 0, reason: null } };
+          return daemon(request);
+        },
+        ...(renderer.requiredHostMethods.includes('actionControl') ? { actionControl: actionControl.handler } : {}),
+      },
+    });
+    try {
+      await settle();
+      await fixture.getByText('Capture is off');
+      await act(async () => actionControl.press('Turn on capture'));
+      expect(captureWrite).toHaveBeenCalledWith(expect.objectContaining({
+        action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true },
+      }));
+      expect(await fixture.getByText('This machine cannot capture this project.')).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+      expect(await fixture.getByText('capture_source_unavailable')).toBeTruthy();
+      expect(await fixture.getByText('Capture is off')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('uses the checkout’s project for capture configuration and its worktree for reviewed clear', async () => {
     const project = { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey };
     const source = { kind: 'worktree', ...project, workspaceId: scope.workspace.workspaceId };

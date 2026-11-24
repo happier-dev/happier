@@ -94,7 +94,7 @@ export const plugin = definePlugin({
         ],
         renderers: [{
             id: WORKBENCH_PANEL_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_PANEL_ARTIFACT_ID,
-            requiredHostMethods: ['executeAction', 'openSurface'],
+            requiredHostMethods: ['executeAction', 'openSurface', 'actionControl'],
         }, {
             id: WORKBENCH_PAGE_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_PAGE_ARTIFACT_ID,
             requiredHostMethods: ['executeAction', 'actionControl', 'replacePageLocation', 'setUnsavedChanges', 'deviceState', 'notify'],

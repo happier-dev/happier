@@ -39,7 +39,7 @@ export function CaptureConfiguration({ scope }: Readonly<{
     source: { kind: 'worktree', serverId, machineId, projectId, workspaceId },
   }), [serverId, machineId, projectId, workspaceId]);
   const { execute: readStatus, execution } = useExecutePluginAction(statusAction, input);
-  const [notice, setNotice] = React.useState<Readonly<{ error: boolean; text: string }> | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ error: boolean; text: string; code?: string }> | null>(null);
   React.useEffect(() => { if (active) void readStatus(); }, [active, readStatus]);
   const parsed = execution.status === 'success' ? DatabaseCaptureStatusResultV1Schema.safeParse(execution.result) : null;
   const status = parsed?.success && parsed.data.ok ? parsed.data : null;
@@ -60,14 +60,22 @@ export function CaptureConfiguration({ scope }: Readonly<{
     if (settled.status === 'success') {
       const confirmation = (kind === 'configure' ? DatabaseCaptureConfigureResultV1Schema : DatabaseCaptureClearResultV1Schema)
         .safeParse(settled.result);
-      if (confirmation.success && confirmation.data.ok) {
-        setNotice(kind === 'clear' ? { error: false, text: t('plugins.database.capture.cleared', 'Capture cleared for this worktree.') } : null);
-        if (active) void readStatus();
+      if (confirmation.success) {
+        const result = confirmation.data;
+        if (result.ok) {
+          setNotice(kind === 'clear' ? { error: false, text: t('plugins.database.capture.cleared', 'Capture cleared for this worktree.') } : null);
+          if (active) void readStatus();
+        } else {
+          setNotice({ error: true, code: result.code,
+            text: ('reason' in result && typeof result.reason === 'string' ? result.reason : undefined)
+              ?? t('plugins.database.capture.changeFailed', 'The capture change could not be confirmed.') });
+        }
         return;
       }
     }
     setNotice({ error: true, text: 'message' in settled ? settled.message
-      : t('plugins.database.capture.changeFailed', 'The capture change could not be confirmed.') });
+      : t('plugins.database.capture.changeFailed', 'The capture change could not be confirmed.'),
+      ...('code' in settled ? { code: settled.code } : {}) });
   };
   const toggleInput = enabled === undefined ? null : projectNativeJsonValueForTransport({ project, enabled: !enabled });
   const retryInput = projectNativeJsonValueForTransport({ project, enabled: true, retry: true });
@@ -86,7 +94,7 @@ export function CaptureConfiguration({ scope }: Readonly<{
       {status && status.coverage.lostObservations > 0 ? <Text tone="secondary" value={t(
         'plugins.database.capture.lost', '{count} observations were missed', { count: String(status.coverage.lostObservations) },
       )} /> : null}
-      {notice?.error ? <ErrorState layout="line" title={notice.text} /> : notice ? <Text tone="secondary" value={notice.text} /> : null}
+      {notice?.error ? <ErrorState layout="line" title={notice.text} details={notice.code} /> : notice ? <Text tone="secondary" value={notice.text} /> : null}
       <Row gap="small" wrap>
         {toggleInput === null ? null : <Action.Control action={configureAction} variant="secondary"
           title={enabled ? t('plugins.database.capture.turnOff', 'Turn off capture') : t('plugins.database.capture.turnOn', 'Turn on capture')}
