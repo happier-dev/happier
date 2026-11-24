@@ -203,7 +203,7 @@ describe('selected capture reads through SQLite', () => {
             expect(next).toEqual([expect.objectContaining({ route: '/widgets/:id', databaseTimeMs: expected.get('request-b') })]);
             const shadow = await reader.endpoints({ worktree, since: 10, limit: 1, pageSize: 2, before: { serviceName: 'api', method: 'GET', route: '/widgets/:id' } });
             expect(shadow).toEqual([expect.objectContaining({ route: '/zz-shadow', databaseTimeMs: 0 })]);
-            expect([...expected.values()]).toEqual([2, 14]);
+            expect([...expected.values()]).toEqual([2, 26]);
         } finally { f.close(); }
     });
 });

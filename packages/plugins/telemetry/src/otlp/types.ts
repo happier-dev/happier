@@ -19,6 +19,7 @@ export interface NormalizedDatabaseStatement {
 export type NormalizeDatabaseStatement = (
     sql: string,
     parameters: Readonly<Record<string, TelemetryValue>>,
+    observeBlockComment?: (comment: string) => void,
 ) => NormalizedDatabaseStatement;
 
 export interface NormalizedResourceIdentity {
@@ -61,7 +62,7 @@ export interface NormalizedSpan extends NormalizedResourceIdentity {
     status: 'unset' | 'ok' | 'error';
     endpoint?: { method: string; route: string };
     httpStatusCode?: number;
-    database?: NormalizedDatabaseStatement & { callsite?: string };
+    database?: NormalizedDatabaseStatement & { callsite?: string; executionIdentity?: string };
     /** Exception events keyed by their position in the span's event list. */
     exceptions?: readonly (NormalizedException & { eventIndex: number })[];
     /** Selected numeric usage only; never prompt, completion or tool-call content. */

@@ -9,6 +9,7 @@ import { createCaptureIngest } from './store/ingest.js';
 import type { NormalizeDatabaseStatement, NormalizedException, NormalizedResourceIdentity, NormalizedTelemetryBatch, OtlpAdmission, OtlpSignal } from './otlp/types.js';
 import type { IncomingMessage } from 'node:http';
 import type { WireObservation } from './wire/tracker.js';
+import { DATABASE_EXECUTION_ID_ATTRIBUTE, readSqlCommenterExecutionIdentity, type SqlCommenterExecutionIdentity } from './analysis/executionIdentity.js';
 
 /** `capabilities` are the Environment's opt-ins, admitted once with the exporter token. */
 export type CapturePartition = Readonly<{ partition: string; physicalRootIdentity?: string; capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
@@ -47,7 +48,7 @@ export function createCaptureRuntime(input: {
    ...(context.capabilities?.appLlmCost === true && span.genAi ? { genAi: span.genAi } : {}),
    endpointMethod: span.endpoint?.method, endpointRoute: span.endpoint?.route, httpStatusCode: span.httpStatusCode,
    statementKind: span.database?.statementKind, parameterIdentity: span.database?.parameterIdentity,
-   callsite: span.database?.callsite,
+   callsite: span.database?.callsite, executionIdentity: span.database?.executionIdentity,
    // Stacks are stored once, as exception occurrences, and only when selected.
    detail: { span: (({ exceptions: _exceptions, genAi: _genAi, ...rest }) => rest)(span) },
   })),
@@ -91,12 +92,18 @@ export function createCaptureRuntime(input: {
     return;
    }
    const parameters = Object.fromEntries(observation.parameters.map(value => [String(value.ordinal), { ...value }]));
-   const normalized = observation.sqlUnavailable ? { shape: null, fingerprint: null, maskedSql: null, maskedParameters: null, statementKind: 'unknown' as const, parameterIdentity: undefined } : input.normalizeStatement(observation.rawSql, parameters);
+   const tagged: { identity?: SqlCommenterExecutionIdentity | null } | undefined =
+    observation.rawSql.includes(DATABASE_EXECUTION_ID_ATTRIBUTE) ? {} : undefined;
+   const normalized = observation.sqlUnavailable ? { shape: null, fingerprint: null, maskedSql: null, maskedParameters: null, statementKind: 'unknown' as const, parameterIdentity: undefined }
+    : input.normalizeStatement(observation.rawSql, parameters, tagged && (comment => {
+     const candidate = readSqlCommenterExecutionIdentity(comment);
+     if (candidate) tagged.identity = tagged.identity === undefined ? candidate : null;
+    }));
    ingest.offer([{ id: observation.id, worktree: partition, kind: 'query', source: 'wire', at: observation.startedAt,
     physicalRootIdentity,
     shape: normalized.shape, durationMs: observation.durationMs, outcome: observation.outcome,
     statementKind: normalized.statementKind, parameterIdentity: normalized.parameterIdentity,
-    executionIdentity: observation.id, transactionId: observation.transactionId, connectionId: observation.connectionId,
+    ...(normalized.shape && tagged?.identity), transactionId: observation.transactionId, connectionId: observation.connectionId,
     detail: { sql: normalized.maskedSql, parameters: normalized.maskedParameters ?? null,
      transactionId: observation.transactionId, rowCount: observation.rowCount,
      error: observation.error ? maskPostgresqlObservationError(observation.error) : null },

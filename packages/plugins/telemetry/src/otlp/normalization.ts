@@ -2,6 +2,7 @@ import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import { resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
+import { DATABASE_EXECUTION_ID_ATTRIBUTE, readDatabaseExecutionId } from '../analysis/executionIdentity.js';
 import type { MetricDimensions, MetricTemporality, NormalizeDatabaseStatement, NormalizedException, NormalizedLog, NormalizedMetricPoint, NormalizedResourceIdentity, NormalizedSpan, NormalizedTelemetryBatch, OtlpSignal, TelemetryValue } from './types.js';
 
 export class OtlpDecodeError extends Error {}
@@ -213,6 +214,7 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
     const httpStatusCode = typeof rawHttpStatus === 'string' && /^\d+$/.test(rawHttpStatus) ? Number(rawHttpStatus) : rawHttpStatus;
     const parameters = Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith('db.query.parameter.')));
     const normalized = statement === undefined ? undefined : normalizeStatement(statement, parameters);
+    const executionIdentity = isDatabase ? readDatabaseExecutionId(values[DATABASE_EXECUTION_ID_ATTRIBUTE]) : undefined;
     const callsite = attributeText(values, 'code.function.name', 'code.function');
     const exceptions = spanExceptions(input.events, scopeName);
     const genAi = genAiUsage(values, input.attributes);
@@ -228,6 +230,7 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
         ...(isDatabase ? { database: {
             ...(normalized ?? { shape: null, fingerprint: null, statementKind: 'unknown' as const, maskedSql: null }),
             ...(callsite ? { callsite } : {}),
+            ...(executionIdentity ? { executionIdentity } : {}),
         } } : {}),
         ...(exceptions.length > 0 ? { exceptions } : {}),
         ...(genAi ? { genAi } : {}),

@@ -185,6 +185,15 @@ queries through eligible PostgreSQL connections and receive traces and logs
 from an instrumented service. A collector you configure in the service's
 environment takes precedence over Happier's local OpenTelemetry endpoint.
 
+To correlate a PostgreSQL execution with its OpenTelemetry database span,
+generate a fresh UUIDv4 for each execution. Add it as the span's
+`happier.db.execution_id` attribute and put both the same ID and the database
+span's W3C `traceparent` in a SQL commenter block before the statement's
+terminating semicolon. For example, the block accepts
+`/*traceparent='00-<trace-id>-<database-span-id>-01',happier.db.execution_id='<uuid>'*/`.
+Capture retains both observations and counts a proven pair once in the request.
+Matching SQL or a reused ID leaves the observations separate.
+
 Use **Check capture status** for the selected worktree. **Retry capture**
 resumes recording after a coverage failure. **Clear capture** clears data for
 that worktree. Turning off capture stops recording and keeps running services

@@ -46,10 +46,11 @@ function mask(value: PostgresqlObservationValue, redact: boolean): PostgresqlObs
  * equality token permits comparison without persisting a guessable hash of a password. */
 export function createPostgresqlObservationNormalizer() {
  const equalityKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
- return (sql: string, parameters: Readonly<Record<string, PostgresqlObservationValue>> = {}): PostgresqlObservation => {
+ return (sql: string, parameters: Readonly<Record<string, PostgresqlObservationValue>> = {}, observeBlockComment?: (comment: string) => void): PostgresqlObservation => {
   const tokens: PostgresqlLexicalToken[] = [];
   let normalized: ReturnType<typeof normalizePostgresqlStatement>;
-  try { normalized = normalizePostgresqlStatement(sql, { token: token => tokens.push(token) }); }
+  try { normalized = normalizePostgresqlStatement(sql, { token: token => tokens.push(token),
+   ...(observeBlockComment && { blockComment: ({ start, end }) => observeBlockComment(sql.slice(start + 2, end - 2)) }) }); }
   catch (error) {
    if (!(error instanceof PostgresqlInputError)) throw error;
    return { shape:null, fingerprint:null, statementKind:'unknown', maskedSql:null, maskedParameters:mask({...parameters},true) };

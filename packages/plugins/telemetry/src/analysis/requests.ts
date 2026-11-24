@@ -44,33 +44,37 @@ export interface AttributedDatabaseExecution extends LogicalDatabaseExecution {
 
 /** Only explicit trace/span plus execution identity can combine independent source observations. */
 export function correlateDatabaseExecutions(executions: readonly DatabaseExecutionEvidence[]): readonly LogicalDatabaseExecution[] {
-    const result: LogicalDatabaseExecution[] = [];
-    const linked = new Map<string, LogicalDatabaseExecution>();
-    for (const evidence of executions) {
+    const tagged = new Map<string, LogicalDatabaseExecution[]>();
+    const observations = executions.map(evidence => {
+        const logical = { evidence, observationIds: [evidence.observationId] };
         const identity = evidence.executionIdentity && evidence.traceId && evidence.spanId
             ? JSON.stringify([evidence.traceId, evidence.spanId, evidence.executionIdentity]) : undefined;
-        const previous = identity ? linked.get(identity) : undefined;
-        if (previous) {
-            previous.observationIds.push(evidence.observationId);
-            // Wire timing measures the database execution itself; application spans may include wrapper work.
-            const timing = previous.evidence.source === 'wire' ? previous.evidence : evidence;
-            const known = previous.evidence;
-            previous.evidence = {
-                ...known, ...evidence, source: timing.source, observationId: timing.observationId, durationMs: timing.durationMs,
-                shape: timing.shape ?? evidence.shape ?? known.shape,
-                statementKind: evidence.statementKind === 'unknown' ? known.statementKind : evidence.statementKind,
-                parameterIdentity: evidence.parameterIdentity ?? known.parameterIdentity,
-                callsite: evidence.callsite ?? known.callsite,
-                parentSpanId: evidence.parentSpanId ?? known.parentSpanId,
-                retryOf: evidence.retryOf ?? known.retryOf,
-            };
-        } else {
-            const logical = { evidence, observationIds: [evidence.observationId] };
-            result.push(logical);
-            if (identity) linked.set(identity, logical);
+        if (identity) {
+            const group = tagged.get(identity);
+            if (group) group.push(logical);
+            else tagged.set(identity, [logical]);
         }
+        return logical;
+    });
+    const paired = new Set<LogicalDatabaseExecution>();
+    for (const group of tagged.values()) {
+        // A cached statement or reused tag can name several executions. It does not prove a pair.
+        const [first, second] = group;
+        if (group.length !== 2 || !first || !second || first.evidence.source === second.evidence.source) continue;
+        const [wire, app] = first.evidence.source === 'wire' ? [first.evidence, second.evidence] : [second.evidence, first.evidence];
+        first.observationIds.push(second.evidence.observationId);
+        first.evidence = {
+            ...app, ...wire,
+            shape: wire.shape ?? app.shape,
+            statementKind: wire.statementKind === 'unknown' ? app.statementKind : wire.statementKind,
+            parameterIdentity: wire.parameterIdentity ?? app.parameterIdentity,
+            callsite: app.callsite ?? wire.callsite,
+            parentSpanId: app.parentSpanId ?? wire.parentSpanId,
+            retryOf: app.retryOf ?? wire.retryOf,
+        };
+        paired.add(second);
     }
-    return result;
+    return observations.filter(observation => !paired.has(observation));
 }
 
 function requestResolver(spans: readonly RequestSpanEvidence[]) {
@@ -109,10 +113,9 @@ export function attributeDatabaseExecutions(spans: readonly RequestSpanEvidence[
 }
 
 /** SQLite boundary projection of the same attribution rules. captureEvidence is
- * summary metadata in the selected requests' traces, ordered by at DESC,id DESC
- * in the in-memory reader. Keep timing/parent precedence equivalent to that
- * order: first wire timing, otherwise last application timing, and last known
- * parent. UNION terminates ancestry cycles just as requestResolver's seen set.
+ * summary metadata in the selected requests' traces. Like the in-memory reader,
+ * one wire/OTLP pair uses wire timing and the application parent. Ambiguous tags
+ * retain every source observation. UNION terminates ancestry cycles just as requestResolver's seen set.
  * Materialize executions once so joining spans cannot rescan their window functions.
  * The store supplies captureEvidence; this projection never reads detail bodies. */
 export const REQUEST_SPANS_SQL_CTES = `
@@ -145,18 +148,20 @@ executionEvidence AS (
 ),
 orderedExecutions AS (
  SELECT *,
+ COUNT(*) OVER executionGroup AS candidateCount,
+ COUNT(*) FILTER (WHERE source = 'wire') OVER executionGroup AS wireCount,
  ROW_NUMBER() OVER (
-  PARTITION BY linked,CASE WHEN linked THEN traceId ELSE id END,CASE WHEN linked THEN spanId ELSE '' END,CASE WHEN linked THEN executionIdentity ELSE '' END
-  ORDER BY CASE WHEN source = 'wire' THEN 0 ELSE 1 END,CASE WHEN source = 'wire' THEN at END DESC,CASE WHEN source = 'wire' THEN id END DESC,at,id
+  executionGroup ORDER BY source DESC
  ) AS timingOrder,
  FIRST_VALUE(parentSpanId) OVER (
-  PARTITION BY linked,CASE WHEN linked THEN traceId ELSE id END,CASE WHEN linked THEN spanId ELSE '' END,CASE WHEN linked THEN executionIdentity ELSE '' END
-  ORDER BY CASE WHEN parentSpanId IS NULL THEN 1 ELSE 0 END,at,id
- ) AS knownParentSpanId
+  executionGroup ORDER BY parentSpanId IS NULL,source
+ ) AS pairedParentSpanId
  FROM executionEvidence
+ WINDOW executionGroup AS (PARTITION BY linked,CASE WHEN linked THEN traceId ELSE id END,CASE WHEN linked THEN spanId ELSE '' END,CASE WHEN linked THEN executionIdentity ELSE '' END)
 ),
 logicalExecutions AS MATERIALIZED (
- SELECT id,traceId,spanId,knownParentSpanId,COALESCE(durationMs,0) AS durationMs FROM orderedExecutions WHERE timingOrder = 1
+ SELECT id,traceId,spanId,CASE WHEN candidateCount = 2 AND wireCount = 1 THEN pairedParentSpanId ELSE parentSpanId END AS knownParentSpanId,
+ COALESCE(durationMs,0) AS durationMs FROM orderedExecutions WHERE timingOrder = 1 OR candidateCount <> 2 OR wireCount <> 1
 ),
 ${REQUEST_ANCESTRY_SQL_CTE}
 requestDatabaseTimes AS (

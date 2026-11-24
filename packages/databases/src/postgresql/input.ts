@@ -24,12 +24,14 @@ export type PostgresqlStatementRange = Readonly<{ start: number; end: number }>;
 export function psqlInputScanner(mode: 'query' | 'dump' | 'statements', observe?: Readonly<{
     token?(token: PostgresqlLexicalToken): void;
     statement?(range: PostgresqlStatementRange): void;
+    blockComment?(range: PostgresqlStatementRange): void;
 }>) {
     const identifier = (char: string) => /[a-zA-Z0-9_$\u0080-\uFFFF]/.test(char);
     let quote: "'" | '"' | undefined;
     let escapeString = false;
     let dollar: string | undefined;
     let block = 0;
+    let blockStart = 0;
     let lineComment = false;
     let ended = false;
     let statementEnd: number | undefined;
@@ -134,7 +136,10 @@ export function psqlInputScanner(mode: 'query' | 'dump' | 'statements', observe?
                 if (block) {
                     if (!next && !final && (char === '/' || char === '*')) break;
                     if (char === '/' && next === '*') { block++; advance(2); }
-                    else if (char === '*' && next === '/') { block--; advance(2); }
+                    else if (char === '*' && next === '/') {
+                        block--; advance(2);
+                        if (block === 0) observe?.blockComment?.({ start: blockStart, end: position });
+                    }
                     else advance();
                     continue;
                 }
@@ -174,7 +179,7 @@ export function psqlInputScanner(mode: 'query' | 'dump' | 'statements', observe?
                 flushWord();
                 if (!next && !final && /[-/:$]/.test(char)) break;
                 if (char === '-' && next === '-') { lineComment = true; advance(2); continue; }
-                if (char === '/' && next === '*') { block = 1; advance(2); continue; }
+                if (char === '/' && next === '*') { block = 1; blockStart = position; advance(2); continue; }
                 if (/\s/.test(char)) { advance(); continue; }
                 if (char === '\\') {
                     if (mode !== 'dump' || !physicalLineStart) refuse('unsupported_action', 'psql_client_command');

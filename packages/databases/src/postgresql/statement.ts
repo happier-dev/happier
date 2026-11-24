@@ -2,17 +2,22 @@ import { fingerprintDatabaseStatement, normalizeDatabaseTokens, type NormalizedD
 import { PostgresqlInputError, psqlInputScanner, type PostgresqlLexicalToken, type PostgresqlStatementRange } from './input.js';
 import { postgresqlStatementWords } from './identifiers.js';
 
-function scan(sql: string, observe?: Readonly<{ token?(token: PostgresqlLexicalToken): void }>) {
+type StatementObserver = Readonly<{
+    token?(token: PostgresqlLexicalToken): void;
+    blockComment?(range: PostgresqlStatementRange): void;
+}>;
+
+function scan(sql: string, observe?: StatementObserver) {
     const tokens: PostgresqlLexicalToken[] = [];
     const ranges: PostgresqlStatementRange[] = [];
-    const scanner = psqlInputScanner('statements', { token: token => { tokens.push(token); observe?.token?.(token); }, statement: range => ranges.push(range) });
+    const scanner = psqlInputScanner('statements', { ...observe, token: token => { tokens.push(token); observe?.token?.(token); }, statement: range => ranges.push(range) });
     scanner.write(sql, true);
     return { tokens, ranges };
 }
 
 export { postgresqlStatementRanges } from '../statements.js';
 
-export function normalizePostgresqlStatement(sql: string, observe?: Readonly<{ token?(token: PostgresqlLexicalToken): void }>): NormalizedDatabaseStatement {
+export function normalizePostgresqlStatement(sql: string, observe?: StatementObserver): NormalizedDatabaseStatement {
     const { tokens, ranges } = scan(sql, observe);
     if (ranges.length === 1) return normalizeDatabaseTokens(sql, tokens);
     let tokenIndex = 0;
