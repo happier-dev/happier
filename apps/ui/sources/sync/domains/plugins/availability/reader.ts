@@ -1881,9 +1881,10 @@ function retainUiMaterializations(previous: readonly PluginMachineMaterializatio
     // identity so insertion, removal and reordered reports keep peer rows.
     const preceding = new Map(previous?.map(row => [materializationLookupKey(row), row] as const));
     const rows = next.map(row => {
-        const before = preceding.get(materializationLookupKey(row));
-        return before && samePluginUiMaterializationFacts(before, row) ? before : row;
-    }).sort((left, right) => compareCodeUnits(materializationLookupKey(left), materializationLookupKey(right)));
+        const key = materializationLookupKey(row);
+        const before = preceding.get(key);
+        return { key, row: before && samePluginUiMaterializationFacts(before, row) ? before : row };
+    }).sort((left, right) => compareCodeUnits(left.key, right.key)).map(({ row }) => row);
     return previous?.length === rows.length && rows.every((row, index) => row === previous[index])
         ? previous : Object.freeze(rows);
 }
@@ -1902,15 +1903,16 @@ function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['ins
         const previousInstallations = new Map(prior?.installations.map(installation =>
             [materializationLookupKey(installation.materialization), installation] as const));
         const installations = plugin.installations.map(installation => {
-            const before = previousInstallations.get(materializationLookupKey(installation.materialization));
+            const key = materializationLookupKey(installation.materialization);
+            const before = previousInstallations.get(key);
             const execution = retainIfEqual(before?.execution, installation.execution);
-            if (before && samePluginUiMaterializationFacts(before.materialization, installation.materialization)
+            const unchanged = before && samePluginUiMaterializationFacts(before.materialization, installation.materialization)
                 && before.declaration === installation.declaration && before.contributorDeclaration === installation.contributorDeclaration
                 && before.release === installation.release
                 && before.declarationState === installation.declarationState && before.uiDeclarationState === installation.uiDeclarationState
-                && before.uiModel === installation.uiModel && before.execution === execution) return before;
-            return installation;
-        }).sort((left, right) => compareCodeUnits(materializationLookupKey(left.materialization), materializationLookupKey(right.materialization)));
+                && before.uiModel === installation.uiModel && before.execution === execution;
+            return { key, installation: unchanged ? before : installation };
+        }).sort((left, right) => compareCodeUnits(left.key, right.key)).map(({ installation }) => installation);
         return prior?.installations.length === installations.length
             && installations.every((installation, rowIndex) => installation === prior.installations[rowIndex])
             ? prior : Object.freeze({ ...plugin, installations: Object.freeze(installations) });

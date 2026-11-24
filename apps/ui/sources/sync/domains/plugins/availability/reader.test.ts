@@ -133,6 +133,58 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it('orders cold and changed Account census rows with linear identity serialization', () => {
+        const machineIds = Array.from({ length: 370 }, (_, index) => `machine-${String(index).padStart(3, '0')}`);
+        const pluginIds = ['com.acme.fixture', 'com.acme.peer'];
+        const base = snapshot().materializations[0]!;
+        const census = (availabilityCursor: number, disabledMachine: string | undefined) => {
+            const snapshots = machineIds.map(machineId => ({
+                machineId,
+                serverIdentityId: base.serverIdentityId,
+                materializations: pluginIds.map(pluginId => ({
+                    ...base, machineId, pluginId, sourceClass: 'bundledFirstParty' as const, portableRelease: false,
+                    enabled: pluginId !== pluginIds[0] || machineId !== disabledMachine, trustState: 'trusted' as const,
+                })),
+            }));
+            return snapshot({ availabilityCursor, snapshots, materializations: snapshots.flatMap(entry => entry.materializations) });
+        };
+        const store = createPluginAccountAvailabilityReaderStore();
+        const reader = store.bind(scope);
+        const originalStringify = JSON.stringify;
+        let identityKeys = 0;
+        const stringify = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value) && value.length === 4 && pluginIds.includes(value[0])
+                && value[1] === base.serverIdentityId && value[3] === base.materializationId) identityKeys++;
+            return originalStringify(...args);
+        });
+        onTestFinished(() => stringify.mockRestore());
+        const initial = census(42, undefined);
+        store.replace({ scope, snapshot: initial });
+        const coldKeys = identityKeys;
+        const before = reader.readUiProjectionInputs()!;
+        expect(before.materializations.map(row => [row.pluginId, row.machineId])).toEqual(
+            pluginIds.flatMap(pluginId => machineIds.map(machineId => [pluginId, machineId])));
+        expect(before.installedPlugins?.[0]?.installations.map(row => row.materialization.machineId)).toEqual(machineIds);
+        identityKeys = 0;
+        const disabledMachine = machineIds[185]!;
+        store.replace({ scope, snapshot: census(43, disabledMachine) });
+        const changedKeys = identityKeys;
+        stringify.mockRestore();
+        const after = reader.readUiProjectionInputs()!;
+        expect(after.materializations.find(row => row.pluginId === pluginIds[0] && row.machineId === disabledMachine)?.enabled).toBe(false);
+        expect(after.installedPlugins?.[0]?.installations[185]?.materialization.enabled).toBe(false);
+        expect(after.installedPlugins?.[1]).toBe(before.installedPlugins?.[1]);
+        if (process.env.PLUGIN_UI_COLD_COUNTS) console.info('Availability census sort', {
+            rows: initial.materializations.length, coldKeys, changedKeys,
+        });
+        // A cold row can be keyed at ingress, in the identity index, in installed
+        // admission, and in each of the two ordered UI projections. A refresh
+        // can also key the held rows to retain their identities.
+        expect.soft(coldKeys).toBeLessThanOrEqual(5 * initial.materializations.length);
+        expect(changedKeys).toBeLessThanOrEqual(9 * initial.materializations.length);
+    });
+
     it('diffs a rebuilt census before projecting unchanged plugin installations', () => {
         const focus = 'com.acme.fixture';
         const peer = 'com.acme.peer';
