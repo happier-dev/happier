@@ -7929,6 +7929,12 @@ door; source plugins supply content and configuration adapters. The
 [Session input owner](runtime-core.md#session-input-and-inline-references) owns
 destination, creation and delivery behavior.
 
+In 0.3 development, `spawnSessionInputDestinationV1` exposes a validated
+native refusal as the `type: 'error'` arm of
+`PluginActionResultById['session.spawn_new']`. A refusal can carry the Agent
+identity, native launch details, and typed Action failure cause. Unclassified
+throws still use the caller's same-creation-key recovery.
+
 In 0.3 development source, Session-targeted Action declarations project the
 same `sessionTarget` operand/cardinality metadata through built-in and contributed
 catalogs. Plugin callers submit selector intent to the Actions front door;

@@ -1,3 +1,6 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+
 import type { ActionExecutionOptions, PluginActionInputById, PluginActionResultById } from '../actions/index.js';
 import type { ActionFailureCauseV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import { isPluginError, readPluginErrorRequestIdV1 } from '../errors.js';
@@ -47,8 +50,8 @@ export type SessionInputOpenInvokerV1 = (actionId: 'session.open', input: Plugin
 export type SessionInputSpawnInvokerV1 = (actionId: 'session.spawn_new', input: PluginActionInputById['session.spawn_new'],
     options?: ActionExecutionOptions) => Promise<PluginActionResultById['session.spawn_new']>;
 
-/** A documented pre-creation refusal is terminal; all other throws retain
- * the caller's same-key creation recovery rather than inventing a settlement. */
+/** Return the Action's validated refusal details when the host rejects with them.
+ * Unclassified throws keep the caller's same-key creation recovery. */
 export async function spawnSessionInputDestinationV1(input: Readonly<{
     execute: SessionInputSpawnInvokerV1;
     spawn: PluginActionInputById['session.spawn_new'];
@@ -56,9 +59,19 @@ export async function spawnSessionInputDestinationV1(input: Readonly<{
 }>): Promise<PluginActionResultById['session.spawn_new']> {
     try { return await input.execute('session.spawn_new', input.spawn, input.signal ? { signal: input.signal } : undefined); }
     catch (error) {
-        if (isPluginError(error) && error.code === 'target_unavailable') return {
-            type: 'error', code: 'target_unavailable', retryable: error.retryable,
-        };
+        if (isPluginError(error)) {
+            const refusal = SessionSpawnNewActionResultV1Schema.safeParse(error.details);
+            if (refusal.success && refusal.data.type === 'error' && refusal.data.code === error.code) {
+                const result = refusal.data;
+                if (!('details' in result || 'reason' in result) && result.failureCause === undefined) {
+                    const cause = ActionFailureCauseV1Schema.safeParse(error.data.failureCause);
+                    if (cause.success) return { ...result, failureCause: cause.data };
+                }
+                return result;
+            }
+            // The Action also documents this pre-creation refusal without a settlement body.
+            if (error.code === 'target_unavailable') return { type: 'error', code: error.code, retryable: error.retryable };
+        }
         throw error;
     }
 }
