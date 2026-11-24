@@ -243,7 +243,7 @@ describe("registerExternalActionRoutes", () => {
                         payload: suffix ? { v: 1, machineId: 'machine-1', envelope } : envelope,
                     });
                     expect(response.statusCode, candidate.actionId + suffix).toBe(403);
-                    expect(response.json()).toEqual({ error: 'credential_scope_denied' });
+                    expect(response.json()).toEqual({ error: 'credential_scope_denied', authorizationRefusal: 'credential_action_admission' });
                 }
             }
             expect(dispatch).not.toHaveBeenCalled();
@@ -502,7 +502,7 @@ describe("registerExternalActionRoutes", () => {
             });
 
             expect(signedAccountResponse.statusCode).toBe(403);
-            expect(signedAccountResponse.json()).toEqual({ error: "credential_scope_denied" });
+            expect(signedAccountResponse.json()).toEqual({ error: "credential_scope_denied", authorizationRefusal: "credential_action_admission" });
             expect(daemonTokenResponse.statusCode).toBe(401);
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
@@ -565,7 +565,7 @@ describe("registerExternalActionRoutes", () => {
             });
 
             expect(response.statusCode).toBe(403);
-            expect(response.json()).toEqual({ error: "credential_scope_denied" });
+            expect(response.json()).toEqual({ error: "credential_scope_denied", authorizationRefusal: "credential_action_admission" });
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
             await app.close();

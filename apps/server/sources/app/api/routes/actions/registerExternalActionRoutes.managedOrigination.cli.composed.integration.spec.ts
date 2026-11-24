@@ -717,7 +717,9 @@ describe('ordinary Account managed Action origination', () => {
                         payload: url.endsWith('/execution-authorization')
                             ? { v: 1, machineId: selected.controller.machineId, envelope } : envelope });
                     expect(response.statusCode, response.body).toBe(403);
-                    expect(response.json()).toMatchObject({ error: 'credential_scope_denied' });
+                    // The refusal names the credential-admission location rather than a bare code.
+                    expect(response.json()).toMatchObject({ error: 'credential_scope_denied',
+                        authorizationRefusal: 'credential_action_admission' });
                 }
             }
         } finally { await instance.close(); }
@@ -788,9 +790,19 @@ describe('ordinary Account managed Action origination', () => {
             expect(current.json()).toMatchObject({ execution: { ok: true, result } });
             await db.machine.update({ where: { id: selected.controller.machineId }, data: { installationId: crypto.randomUUID(),
                 installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey) } });
-            const retired = await relay();
+            const records: Record<string, unknown>[] = [];
+            const stream = (logger as unknown as { [symbols.streamSym]: DestinationStream })[symbols.streamSym];
+            const capture = vi.spyOn(stream, 'write').mockImplementation(message => { records.push(JSON.parse(message)); return true; });
+            let retired: Awaited<ReturnType<typeof relay>>;
+            try { retired = await relay(); } finally { capture.mockRestore(); }
             expect(retired.statusCode, retired.body).toBe(403);
-            expect(retired.json()).toMatchObject({ error: 'credential_scope_denied' });
+            // A relay refusal names the root re-entry location and logs it once, without the root token.
+            expect(retired.json()).toMatchObject({ error: 'credential_scope_denied',
+                authorizationRefusal: 'machine_admission_after_principal' });
+            expect(records.filter(record => record.module === 'external-action-authorization-refusal')).toEqual([
+                expect.objectContaining({ phase: 'machine_admission_after_principal', method: 'POST', path: `/v1/actions/${actionId}` }),
+            ]);
+            expect(JSON.stringify(records)).not.toContain(executionAuthorization.token);
             expect(await verifyMachineRead()).toBeNull();
             expect(delivered).toHaveLength(2);
         } finally { await instance.close(); }

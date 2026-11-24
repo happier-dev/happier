@@ -65,8 +65,9 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
     verifyWorkflowExternalActionRequesterAuthorization,
-    projectExternalActionMachineAdmissionRefusalCause,
+    projectExternalActionMachineAdmissionRefusalCause, refuseExternalActionExecutionRequest,
     projectExternalActionMintInput, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
+import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ManagedMachineError, hasBoundManagedLifecycle, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedCreationSetup, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
@@ -235,6 +236,22 @@ function sendExternalActionHttpError(
     return sendExternalActionJson(reply, error.statusCode, error.payload);
 }
 
+/**
+ * A Home credential-scope refusal names the admission location that refused, on the reply and in
+ * one warn with only that phase and the redacted route; never tokens, roots or Action input.
+ */
+function sendExternalActionCredentialScopeRefusal(reply: FastifyReply, request: FastifyRequest,
+    authorizationRefusal: ExternalActionAuthorizationRefusalPhase, requestId?: string): FastifyReply {
+    refuseExternalActionExecutionRequest(authorizationRefusal, { method: request.method, path: request.url });
+    const error = projectExternalActionHttpError('credential_scope_denied', requestId);
+    return sendExternalActionJson(reply, error.statusCode, { ...error.payload, authorizationRefusal });
+}
+
+/** The relay's typed refusal: the existing scope code plus the location that decided it. */
+function refuseRootRelay(authorizationRefusal: ExternalActionAuthorizationRefusalPhase) {
+    return { refusalCode: 'credential_scope_denied' as const, authorizationRefusal };
+}
+
 function sendExternalActionSubmittedUnknown(reply: FastifyReply, requestId: string | undefined,
     cause: ExternalActionSubmittedUnknownCauseV1): FastifyReply {
     // The relay cannot authenticate an Action result after losing the daemon's
@@ -301,13 +318,13 @@ async function readAdmittedTerminalSessionRelay(request: FastifyRequest, actionI
     authorization: NonNullable<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>['executionAuthorization']>) {
     const requester = readExternalActionRequestPrincipal(request, actionId, body);
     if (!requester || requester === 'present_user_required' || !('authentication' in requester) || !('authentication' in root)
-        || requester.authentication.kind !== 'account' || requester.authentication.tokenEpoch !== root.authentication.tokenEpoch) return null;
+        || requester.authentication.kind !== 'account' || requester.authentication.tokenEpoch !== root.authentication.tokenEpoch) return refuseRootRelay('principal');
     const principal = projectExternalActionBoundPrincipal(root, requester, request.authAuthority);
-    if (!principal) return null;
+    if (!principal) return refuseRootRelay('principal');
     const machineAdmission = await inTx(tx => readActiveMachineAdmissionInTx(tx,
         { actorAccountId: root.accountId, machineId: root.machineId }));
     if (!machineAdmission || machineAdmission.installationId !== root.installationId
-        || machineAdmission.custodianAccountId !== root.custodianAccountId) return null;
+        || machineAdmission.custodianAccountId !== root.custodianAccountId) return refuseRootRelay('machine_admission_after_principal');
     return { principal, authorization, machineAdmission, authenticationEvidence: request.authTokenAuthenticationEvidence };
 }
 
@@ -316,17 +333,20 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
     const authorization = body.executionAuthorization;
     if (!authorization || body.sessionActionOrigin || body.sessionActionSource || body.installationProof
-        || body.workflowActionOrigin || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
+        || body.workflowActionOrigin || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return refuseRootRelay('proof_shape');
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
-    if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
-        || !sameManagedInput(root, authorization.binding) || !isExternalActionHomeRelayAccountEligible(root)
+    if (!root) return refuseRootRelay('authorization_token');
+    if (root.serverIdentityId !== await getOrCreateServerIdentityId()) return refuseRootRelay('server_identity');
+    if (root.accountId !== request.userId || !isExternalActionHomeRelayAccountEligible(root)) return refuseRootRelay('principal');
+    // The presented binding, envelope and header must be exactly the signed root's.
+    if (!sameManagedInput(root, authorization.binding)
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: body.machineId, envelope: body.envelope })
         || request.externalActionExecutionAuthorized === true
-            && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return null;
+            && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return refuseRootRelay('proof_shape');
     if (request.authTokenLegacy === true && !(isExternalActionWorkflowActionIdV1(actionId) && root.workflowActionOrigin)
         && (request.authTokenKind !== 'account' || !root.sessionActionOrigin || !root.sessionActionSource
             || !('authentication' in root) || root.authentication.kind !== 'account'
-            || root.authentication.tokenEpoch !== request.authTokenEpoch)) return null;
+            || root.authentication.tokenEpoch !== request.authTokenEpoch)) return refuseRootRelay('principal');
     // A terminal session root was admitted once at mint for this Account, Machine and terminal.
     // Each later page proves the signature, the binding and this request's Account credential,
     // then one still-active Machine access lookup; no new admission or mint.
@@ -337,25 +357,26 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     // eligibility. Re-enter the existing root through current rows, not another
     // provider HTTP request after the origin's source check.
     const current = await verifyCurrentExternalActionPrincipalInTx(db, root);
-    if (!current || !await hasCurrentExternalActionSessionSource(root, app.resolveCurrentSessionMachine)) return null;
+    if (!current) return refuseRootRelay('principal');
+    if (!await hasCurrentExternalActionSessionSource(root, app.resolveCurrentSessionMachine)) return refuseRootRelay('source_after_principal');
     const admission = root.handoffAdmission
         ? await readAdmittedExternalActionHandoffMachineInTx(db, root)
         : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: root.accountId,
             machineId: root.machineId, actionId: root.actionId, executionBinding: root, envelope: body.envelope,
             authentication: { authenticationAuthority: current.authority, authenticationEvidence: current.authenticationEvidence } });
     if (!admission || admission.kind !== 'admitted' || admission.installationId !== root.installationId
-        || admission.custodianAccountId !== root.custodianAccountId) return null;
+        || admission.custodianAccountId !== root.custodianAccountId) return refuseRootRelay('machine_admission_after_principal');
     // A person-presented start, restart or retry is new work: it passes the same
     // Environment admission its mint ran, once, before any dispatch.
     let nativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
     try { nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }); }
-    catch { return null; }
+    catch { return refuseRootRelay('proof_shape'); }
     const { readCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
     const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
-    if (!principal) return null;
+    if (!principal) return refuseRootRelay('principal');
     const deployment = await readCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence, principal.authority);
     if (!deployment.ok) return deployment.code && deployment.code !== 'credential_scope_denied'
-        ? { refusalCode: deployment.code } : null;
+        ? { refusalCode: deployment.code } : refuseRootRelay('deployment_preparation');
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.
     const { kind: _kind, ...machineAdmission } = admission;
@@ -663,6 +684,7 @@ export function registerExternalActionRoutes(
             const body = externalActionExecutionAuthorizationRequestSchemaForActionV1(request.params.actionId).safeParse(request.body);
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId, body.success ? body.data : undefined);
             if (principal === 'present_user_required') return sendExternalActionHttpError(reply, principal);
+            const requestPrincipal = principal;
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let handoffContinuation: Awaited<ReturnType<typeof readHandoffContinuation>> = null;
             let handoffPreflight: Awaited<ReturnType<typeof readHandoffPreflight>> = null;
@@ -715,9 +737,9 @@ export function registerExternalActionRoutes(
                 }
                 principal = continuation?.principal ?? null;
             }
-            if (!principal || !actionId.success || !body.success) {
-                return sendExternalActionHttpError(reply, principal ? "invalid_envelope" : "credential_scope_denied");
-            }
+            if (!principal) return sendExternalActionCredentialScopeRefusal(reply, request,
+                requestPrincipal ? 'principal' : 'credential_action_admission');
+            if (!actionId.success || !body.success) return sendExternalActionHttpError(reply, "invalid_envelope");
             if (!continuation && !handoffContinuation && !handoffPreflight
                 && !await isNewDeploymentOrBotWorkEnabled(request, actionId.data, body.data.envelope)) {
                 return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
@@ -1064,7 +1086,7 @@ export function registerExternalActionRoutes(
             if (!principal) {
                 // Authentication succeeded. Denying this Action must not retire
                 // the otherwise valid Account credential in connected clients.
-                return sendExternalActionHttpError(reply, "credential_scope_denied");
+                return sendExternalActionCredentialScopeRefusal(reply, request, 'credential_action_admission');
             }
         },
         preHandler: async (request, reply) => {
@@ -1090,18 +1112,24 @@ export function registerExternalActionRoutes(
             const wrapped = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
             const rawEnvelope = wrapped.success ? null : ExternalActionRequestEnvelopeSchema.safeParse(request.body);
             if (request.authTokenLegacy === true && !isExternalActionWorkflowActionIdV1(actionId.data)
-                && (!wrapped.success || !wrapped.data.executionAuthorization)) return sendExternalActionHttpError(reply, 'credential_scope_denied');
+                && (!wrapped.success || !wrapped.data.executionAuthorization)) {
+                return sendExternalActionCredentialScopeRefusal(reply, request, 'credential_action_admission');
+            }
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId,
                 wrapped.success ? wrapped.data : rawEnvelope?.success ? { envelope: rawEnvelope.data } : undefined);
             if (principal === 'present_user_required') return sendExternalActionHttpError(reply, principal,
                 wrapped.success ? wrapped.data.envelope.requestId : rawEnvelope?.success ? rawEnvelope.data.requestId : undefined);
+            // Which admission location refuses when no principal remains below.
+            let refusal: ExternalActionAuthorizationRefusalPhase = principal ? 'principal' : 'credential_action_admission';
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let admittedRoot: Awaited<ReturnType<typeof readAdmittedRootRelay>> = null;
             let workflowAdmission: WorkflowExternalActionAdmission | undefined;
             if (wrapped.success && wrapped.data.executionAuthorization) {
                 admittedRoot = await readAdmittedRootRelay(app, request, actionId.data, wrapped.data);
-                if (admittedRoot && admittedRoot.refusalCode !== undefined) {
-                    return sendExternalActionHttpError(reply, admittedRoot.refusalCode, wrapped.data.envelope.requestId);
+                if (admittedRoot.refusalCode !== undefined) {
+                    return admittedRoot.authorizationRefusal === undefined
+                        ? sendExternalActionHttpError(reply, admittedRoot.refusalCode, wrapped.data.envelope.requestId)
+                        : sendExternalActionCredentialScopeRefusal(reply, request, admittedRoot.authorizationRefusal, wrapped.data.envelope.requestId);
                 }
                 principal = admittedRoot?.principal ?? null;
             } else if (principal && wrapped.success && wrapped.data.workflowActionOrigin) {
@@ -1118,10 +1146,11 @@ export function registerExternalActionRoutes(
             } else if (request.externalActionExecutionAuthorized === true) {
                 // A signed effect is not an ordinary originator credential.
                 principal = null;
+                refusal = 'verification_purpose';
             } else if (principal && wrapped.success && wrapped.data.sessionActionOrigin) {
                 principal = await readInstalledSessionRequestPrincipal(app, actionId.data, wrapped.data, principal);
             }
-            if (!principal) return sendExternalActionHttpError(reply, 'credential_scope_denied');
+            if (!principal) return sendExternalActionCredentialScopeRefusal(reply, request, refusal);
             const envelope = wrapped.success && (admittedRoot || continuation || wrapped.data.sessionActionOrigin || wrapped.data.workflowActionOrigin)
                 ? ExternalActionRequestEnvelopeSchema.safeParse(wrapped.data.envelope)
                 : rawEnvelope ?? ExternalActionRequestEnvelopeSchema.safeParse(request.body);
