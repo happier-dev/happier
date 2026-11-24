@@ -133,6 +133,8 @@ const TAB_LABELS: Readonly<Record<TelemetryCaptureList, () => string>> = {
 /** Only presence decides the offline words; an unanswered presence (null) is never offline. */
 const selectCollectorOnline = (machine: Machine | null): boolean | null => (machine ? isMachineOnline(machine) : null);
 
+type KeyFlowRoute = Pick<DatabaseCaptureEndpointV1, 'serviceName' | 'method' | 'route'>;
+
 type ListItems =
   | Readonly<{ list: 'endpoints'; items: readonly DatabaseCaptureEndpointV1[]; nextCursor: DatabaseCaptureEndpointCursorV1 | null }>
   | Readonly<{ list: Exclude<TelemetryCaptureList, 'endpoints'>; items: readonly DatabaseCaptureSummaryV1[]; nextCursor: DatabaseCaptureCursorV1 | null }>;
@@ -236,7 +238,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const openRequest = React.useCallback((request: DatabaseCaptureSummaryV1) => {
     if (reads) setOpenTrace({ reads, request });
   }, [reads]);
-  const [addingCheck, setAddingCheck] = React.useState<DatabaseCaptureEndpointV1 | null>(null);
+  const [addingCheck, setAddingCheck] = React.useState<KeyFlowRoute | null>(null);
   const { state, more } = useTelemetryCaptureList(reads, tab, WINDOW_MS[windowId], attempt);
   const retry = React.useCallback(() => setAttempt(value => value + 1), []);
   const offline = collectorOnline === false;
@@ -260,7 +262,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
       action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
     />
   ) : tab === 'traces' && openTrace && openTrace.reads === reads ? (
-    <TelemetryRequestDetail reads={openTrace.reads} request={openTrace.request} locale={locale} onBack={() => setOpenTrace(null)} />
+    <TelemetryRequestDetail
+      reads={openTrace.reads}
+      request={openTrace.request}
+      locale={locale}
+      onBack={() => setOpenTrace(null)}
+      onAddCheck={canAddCheck ? setAddingCheck : undefined}
+    />
   ) : data?.list === 'endpoints' ? (
     <CaptureEndpoints items={data.items} loading={state.reading} locale={locale}
       {...(endpointActions ? { actions: endpointActions } : {})}
@@ -392,8 +400,10 @@ function TelemetryRequestDetail(props: Readonly<{
   request: DatabaseCaptureSummaryV1;
   locale: string;
   onBack: () => void;
+  onAddCheck?: (route: KeyFlowRoute) => void;
 }>) {
-  const { reads, request, locale } = props;
+  const { reads, request, locale, onAddCheck } = props;
+  const { serviceName, endpointMethod, endpointRoute } = request;
   const traceId = request.traceId ?? null;
   const [read, setRead] = React.useState<RequestRead>({ kind: 'loading' });
   const [attempt, setAttempt] = React.useState(0);
@@ -427,6 +437,10 @@ function TelemetryRequestDetail(props: Readonly<{
         <TextLinkButton testID="project-deployments.telemetry.request.back" label={t('deploymentTelemetry.request.back')}
           onPress={props.onBack} tone="quiet" size="meta" />
         <Text variant="heading" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
+        {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
+          <TextLinkButton testID="project-deployments.telemetry.request.add-check" label={t('deploymentTelemetry.addCheck')}
+            onPress={() => onAddCheck({ serviceName, method: endpointMethod, route: endpointRoute })} size="meta" />
+        ) : null}
         <Text variant="meta" style={styles.facts}>
           {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (
             <React.Fragment key={index}>

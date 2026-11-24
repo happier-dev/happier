@@ -315,6 +315,26 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it.each(['manager', 'reader'] as const)('only offers an Environment manager Add a check on the selected request route (%s)', async role => {
+    const screen = await mount(collector(answers).invoke, role);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+      await settle();
+      const action = 'project-deployments.telemetry.request.add-check';
+      if (role === 'manager') {
+        await screen.pressByTestIdAsync(action);
+        expect(screen.findByTestId('project-deployments.telemetry.add-check')).not.toBeNull();
+      } else {
+        expect(screen.findByTestId(action)).toBeNull();
+      }
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('says the collector Machine is not answering, with Retry, when its read fails while it is offline', async () => {
     await publishMachineInventoryForTest(lifetime.scope, [
       createMachineFixture({ id: 'collector', active: false, activeAt: 1 }),
