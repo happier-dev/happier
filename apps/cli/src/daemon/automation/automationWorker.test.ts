@@ -28,7 +28,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/meth
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
   emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { startAutomationWorker } from './automationWorker';
-import { listWorkflowRequesterCredentialScopes, retainWorkflowRequesterCredentials } from '../workflows/requesterCustody';
+import { listWorkflowRequesterCredentialScopes, reconcileWorkflowRequesterCredentialScope, retainWorkflowRequesterCredentials } from '../workflows/requesterCustody';
 import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createManagedActivityInventory, type LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 import { projectMachineWorkSummary } from '../machines/machineWorkSummary';
@@ -61,6 +61,20 @@ const socketIoBoundary = vi.hoisted(() => vi.fn());
 function startCapacityAutomationWorker(params: Parameters<typeof startAutomationWorker>[0]) {
   migrationBoundary.credentials = params.credentials;
   return startAutomationWorker(params);
+}
+
+async function confirmGuestTriggerPublication(input: Parameters<typeof reconcileWorkflowRequesterCredentialScope>[0],
+  automationId: string) {
+  migrationBoundary.get.mockImplementation(async ({ automationId: requestedId }: { automationId: string }) => {
+    expect(requestedId).toBe(automationId);
+    return {
+      enabled: true,
+      assignments: [{ machineId: input.machineId, enabled: true }],
+      triggers: [{ id: input.scopeId, enabled: true }],
+    };
+  });
+  await reconcileWorkflowRequesterCredentialScope(input);
+  migrationBoundary.get.mockResolvedValue(null).mockClear();
 }
 
 // The credential store and Automation HTTP adapters are system boundaries;
@@ -365,7 +379,8 @@ describe('automationWorker', () => {
     mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
       : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
       : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
-    migrationBoundary.get.mockResolvedValue(null); // Actual Automation GET boundary reports the offline deletion.
+    await confirmGuestTriggerPublication({ ...attribution, happyHomeDir: configuration.happyHomeDir, scopeId: 'offline-trigger',
+      homeServerIdentityId: homeIdentity === 'matching' ? 'srv_captured_home' : 'srv_other_home' }, 'offline-deleted-automation');
     mockPost.mockImplementation(async (url: string) => ({ data: url.endsWith('/workflow-storage') ? { runs: [] }
       : { run: null, automation: null, accountCurrentness: null } }));
     const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
@@ -376,7 +391,7 @@ describe('automationWorker', () => {
       const scopes = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: configuration.happyHomeDir });
       if (homeIdentity === 'matching') {
         expect(scopes).toEqual({ status: 'ready', bindings: [] });
-        expect(migrationBoundary.get).toHaveBeenCalledWith({ token: 'guest-token', automationId: 'offline-deleted-automation' });
+        expect(migrationBoundary.get).toHaveBeenCalledWith(expect.objectContaining({ token: 'guest-token', automationId: 'offline-deleted-automation' }));
       } else {
         expect(scopes).toMatchObject({ status: 'ready', bindings: [{ sessionId: 'offline-trigger' }] });
         expect(migrationBoundary.get).not.toHaveBeenCalled();
@@ -431,7 +446,6 @@ describe('automationWorker', () => {
     mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
       : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
       : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
-    migrationBoundary.get.mockResolvedValue(null); // Home's exact Automation GET returns 404 after offline deletion.
     mockPost.mockImplementation(async (url: string) => ({ data: url.endsWith('/workflow-storage') ? { runs: [] }
       : { run: null, automation: null, accountCurrentness: null } }));
     const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
@@ -442,13 +456,18 @@ describe('automationWorker', () => {
       await retainWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir, scopeId: 'guest-trigger',
         automationId: 'deleted-automation', homeServerIdentityId: 'srv_guest_home',
         attribution, credentials: { token: 'guest-token', encryption: null } });
+      await confirmGuestTriggerPublication({ ...attribution, happyHomeDir: configuration.happyHomeDir, scopeId: 'guest-trigger',
+        homeServerIdentityId: 'srv_guest_home' }, 'deleted-automation');
+      const guestSocketIndex = () => socketIoBoundary.mock.calls.findIndex(([, options]) =>
+        options.auth?.clientType === 'user-scoped' && options.auth.token === 'guest-token');
+      await waitForCondition(() => guestSocketIndex() !== -1);
+      const guestSocket: ApiSessionSocketStub = socketIoBoundary.mock.results[guestSocketIndex()]!.value;
+      guestSocket.trigger('connect');
       await expect.poll(async () => {
         const scopes = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: configuration.happyHomeDir });
         return scopes.status === 'ready' ? scopes.bindings.map(row => row.sessionId) : scopes.status;
       }).toEqual([]);
-      expect(migrationBoundary.get).toHaveBeenCalledWith({ token: 'guest-token', automationId: 'deleted-automation' });
-      expect(socketIoBoundary.mock.calls.some(([, options]) => options.auth?.clientType === 'user-scoped'
-        && options.auth.token === 'guest-token')).toBe(true);
+      expect(migrationBoundary.get).toHaveBeenCalledWith(expect.objectContaining({ token: 'guest-token', automationId: 'deleted-automation' }));
     } finally { worker.stop(); }
   });
 
@@ -823,7 +842,8 @@ describe('automationWorker', () => {
       createdAt: now, updatedAt: now, workflowDefinitionId: null, scopeSessionId: null,
       templateCiphertext: kind === 'ordinary' ? AUTOMATION_TEMPLATE_V02_PLAIN : AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
       assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: now }], triggers: [] };
-    migrationBoundary.list.mockImplementation(async () => ({ automations: [row], nextCursor: null }));
+    migrationBoundary.list.mockImplementation(async ({ legacySessionLifecycleSelections }: { legacySessionLifecycleSelections?: true }) =>
+      ({ automations: legacySessionLifecycleSelections ? [] : [row], nextCursor: null }));
     migrationBoundary.get.mockImplementation(async () => row);
     migrationBoundary.reconcile.mockImplementation(async ({ input }: { input: AutomationDefinitionReconcileRequest }) => {
       if (input.expectedTemplateVersion !== row.templateVersion) throw Object.assign(new Error('currentness_conflict'), { code: 'currentness_conflict' });
@@ -862,7 +882,7 @@ describe('automationWorker', () => {
       expect(recipeAtClaim).toBeUndefined();
       expect(row.executionRecipe).toBeUndefined();
       expect(row.templateCiphertext).toBe(kind === 'ordinary' ? AUTOMATION_TEMPLATE_V02_PLAIN : AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
-      expect(migrationBoundary.list.mock.calls.filter(([request]) => !request.managedTargetUnindexed)).toHaveLength(0);
+      expect(migrationBoundary.list.mock.calls.filter(([request]) => !request.managedTargetUnindexed && !request.legacySessionLifecycleSelections)).toHaveLength(0);
       expect(migrationBoundary.reconcile).not.toHaveBeenCalled();
       expect(row.id).toBe('automation-unread');
       expect(row.assignments[0]?.machineId).toBe('machine-1');
@@ -872,7 +892,7 @@ describe('automationWorker', () => {
     }
   });
 
-  it('only selects unindexed definitions at startup while the current assignment inventory contains only Workflow recipes', async () => {
+  it('only selects migration inventories at startup while the current assignments are Workflow recipes', async () => {
     const now = Date.now();
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
@@ -886,8 +906,11 @@ describe('automationWorker', () => {
     const worker = startCapacityAutomationWorker({ token: 'token-1', credentials: { token: 'token-1', encryption: null }, machineId: 'machine-1' });
     try {
       await worker.refreshAssignments();
-      await waitForCondition(() => mockPost.mock.calls.length > 0);
-      expect(migrationBoundary.list).toHaveBeenCalledExactlyOnceWith({ token: 'token-1', managedTargetUnindexed: true, signal: expect.any(AbortSignal) });
+      await waitForCondition(() => mockPost.mock.calls.length > 0 && migrationBoundary.list.mock.calls.length >= 2);
+      expect(migrationBoundary.list.mock.calls).toEqual([
+        [{ token: 'token-1', legacySessionLifecycleSelections: true, signal: expect.any(AbortSignal) }],
+        [{ token: 'token-1', managedTargetUnindexed: true, signal: expect.any(AbortSignal) }],
+      ]);
       expect(migrationBoundary.get).not.toHaveBeenCalled();
       expect(migrationBoundary.reconcile).not.toHaveBeenCalled();
     } finally { worker.stop(); }
@@ -1852,8 +1875,11 @@ describe('automationWorker', () => {
       );
 
       let rows: Array<{ machineId: string; automationId: string; nextClaimAt: number; executionRecipeVersion: 2 }> = [];
-      mockGet.mockImplementation(async () => ({ data: { assignments: rows, settings: DEFAULT_WORKER_SETTINGS } }));
-      mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
+      const assignmentReads = vi.fn(async () => ({ data: { assignments: rows, settings: DEFAULT_WORKER_SETTINGS } }));
+      mockGet.mockImplementation((url: string) => url.endsWith('/v2/account/settings')
+        ? Promise.resolve({ status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } })
+        : assignmentReads());
+      mockPost.mockClear().mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
       reloadConfiguration();
@@ -1871,7 +1897,7 @@ describe('automationWorker', () => {
 
       // Allow any initial background refresh to complete.
       await vi.advanceTimersByTimeAsync(0);
-      const callsBefore = mockGet.mock.calls.length;
+      const callsBefore = assignmentReads.mock.calls.length;
 
       const pushAssignment = () => worker.handleServerUpdate({
         id: 'u-1',
@@ -1889,7 +1915,7 @@ describe('automationWorker', () => {
       rows = [{ machineId: 'machine-1', automationId: 'automation-1', nextClaimAt: Date.now() + 120_000, executionRecipeVersion: 2 }];
       pushAssignment();
       await vi.advanceTimersByTimeAsync(300);
-      expect(mockGet).toHaveBeenCalledTimes(callsBefore + 1);
+      expect(assignmentReads).toHaveBeenCalledTimes(callsBefore + 1);
       expect(mockPost).not.toHaveBeenCalled();
 
       rows = [{ ...rows[0]!, nextClaimAt: Date.now() }];
@@ -1902,20 +1928,20 @@ describe('automationWorker', () => {
       rows = [{ ...rows[0]!, nextClaimAt: Date.now() + 120_000 }];
       pushAssignment();
       await vi.advanceTimersByTimeAsync(300);
-      const readsAfterFuturePush = mockGet.mock.calls.length;
+      const readsAfterFuturePush = assignmentReads.mock.calls.length;
       deadlineTimers.mockClear();
       await vi.advanceTimersByTimeAsync(30_000);
       expect(mockPost).toHaveBeenCalledTimes(1);
-      expect(mockGet).toHaveBeenCalledTimes(readsAfterFuturePush);
+      expect(assignmentReads).toHaveBeenCalledTimes(readsAfterFuturePush);
       expect(deadlineTimers).not.toHaveBeenCalled();
 
       rows = [];
       pushAssignment();
       await vi.advanceTimersByTimeAsync(300);
-      const readsAfterRemoval = mockGet.mock.calls.length;
+      const readsAfterRemoval = assignmentReads.mock.calls.length;
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(180_000);
-      expect(mockGet).toHaveBeenCalledTimes(readsAfterRemoval);
+      expect(assignmentReads).toHaveBeenCalledTimes(readsAfterRemoval);
       expect(mockPost).toHaveBeenCalledTimes(1);
 
       worker.stop();
