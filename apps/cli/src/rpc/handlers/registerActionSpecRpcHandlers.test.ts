@@ -59,6 +59,24 @@ function createRpcHarness() {
 describe('ActionSpec-derived RPC registrar', () => {
     const module = registrarModule;
 
+    it('returns the closed target refusal and receiving Machine on a filesystem copy RPC', async () => {
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        const machineId = 'archive-receiver';
+        const method = RPC_METHODS.DAEMON_FILESYSTEM_COPY;
+        const input = { kind: 'prepared_transfer', source: { kind: 'entry_tree', serverId: 'home', machineId: 'holder',
+            rootPath: '/archives', path: 'archive.tar', sourceId: 'archive-entry', sizeBytes: 1, sha256: '0'.repeat(64),
+            entryTree: { operationId: 'export', expectation: { kind: 'file', digest: '0'.repeat(40), executable: false, size: 1 }, blobs: [] } },
+        destination: { serverId: 'home', machineId, rootPath: '/archives', path: 'archive.tar' }, overwrite: false, recursive: false };
+        module.registerActionSpecRpcHandlers({ rpcHandlerManager, targetMachineId: machineId, actionIds: ['daemon.filesystem.copy'],
+            actionExecutor: { execute: async () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+                effectAttempted: false, details: { code: 'target_unavailable', reason: 'target_binding_mismatch',
+                    machineId: 'untrusted-detail', privateDetail: 'private' } }) } });
+        const result = await handlers.get(method)?.({ v: 1, kind: 'targeted_action_rpc', target: { kind: 'machine', machineId }, input });
+        expect(ActionExecuteFailureSchema.parse(result)).toEqual({ ok: false, errorCode: 'target_unavailable',
+            error: 'target_unavailable', effectAttempted: false,
+            details: { code: 'target_unavailable', reason: 'target_binding_mismatch', machineId } });
+    });
+
     it('accepts archive copy custody using the reviewed Home with no device-local profile in the effect context', async () => {
         const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain' });
         const homeId = h.root.binding.serverIdentityId;

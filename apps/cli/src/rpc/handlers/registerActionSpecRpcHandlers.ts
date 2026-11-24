@@ -7,6 +7,7 @@ import { MachineReachabilityConfigureFailureDetailsV1Schema, MachineReachability
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/machines/filesystemFailure';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
+import { WorkflowTargetUnavailableReasonV1Schema } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
@@ -130,7 +131,7 @@ export function readServerIdFromRpcInput(input: unknown): string | undefined {
     return normalizeOptionalString(readObjectValue(input, 'serverId'));
 }
 
-export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecuteResult): unknown {
+export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecuteResult, receivingMachineId?: string): unknown {
     if (result.ok) {
         return result.result;
     }
@@ -201,6 +202,12 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
     }
     // The executor owns this review; carry it unchanged to the originating UI presenter.
     if (result.errorCode === 'action_interactive_review_required') details = result.details;
+    if (details === undefined && result.errorCode === 'target_unavailable'
+        && readObjectValue(result.details, 'code') === result.errorCode) {
+        const reason = WorkflowTargetUnavailableReasonV1Schema.safeParse(readObjectValue(result.details, 'reason'));
+        if (reason.success) details = { code: result.errorCode, reason: reason.data,
+            ...(receivingMachineId ? { machineId: receivingMachineId } : {}) };
+    }
     return {
         ok: false,
         errorCode: result.errorCode,
@@ -535,7 +542,8 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 && readObjectValue(result.details, 'type') === 'error'
                 && readObjectValue(result.details, 'code') === result.errorCode;
             if ((!result.ok && !isSessionSpawnRefusal) || !rpcBinding) {
-                return unwrapActionResultForRpc(typedActionId, result);
+                return unwrapActionResultForRpc(typedActionId, result, readDeploymentArchiveRpcEffectV1(method)
+                    && externalActionTarget?.kind === 'machine' ? externalActionTarget.machineId : undefined);
             }
             if (result.ok) {
                 if (spec.operation) {
