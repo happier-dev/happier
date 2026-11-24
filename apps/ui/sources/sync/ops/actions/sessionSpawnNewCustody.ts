@@ -23,6 +23,8 @@ export async function settleManualSessionSpawnNewActionCustody(params: Readonly<
     if (committed
         && committed.executionTarget.serverId === executionTarget.serverId
         && committed.executionTarget.machineId === executionTarget.machineId) {
+        if (submitted.createdSessionId === committed.sessionId) return submitted;
+        if (acquired.recoveryWriteFailed) return { ...submitted, createdSessionId: committed.sessionId };
         return await markSpawnAttemptCreated({
             scope: submitted.scope,
             machineId: submitted.machineId,
@@ -32,6 +34,7 @@ export async function settleManualSessionSpawnNewActionCustody(params: Readonly<
             createdSessionId: committed.sessionId,
         }) ?? submitted;
     }
+    if (acquired.recoveryWriteFailed) return submitted;
     const noEffect = sourceAdmissionRetired || (
         !action.ok && (action.effectAttempted === false || action.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)
     ) || (

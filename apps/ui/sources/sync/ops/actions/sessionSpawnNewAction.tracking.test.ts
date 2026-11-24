@@ -9,6 +9,7 @@ import {
     type ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions/operations/v1';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
 import {
     acquireSpawnAttemptCustody,
     readSpawnAttemptCustodyState,
@@ -19,6 +20,7 @@ import { actionOperationStore } from '@/sync/domains/actionOperations/actionOper
 import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { installLegacyNativeMmkvBoundaryForTest } from '@/dev/testkit/harness/persistentUiState';
 import { createSessionDraftRepository } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
 import { readNewSessionAttachmentDrafts, writeNewSessionAttachmentDrafts, clearNewSessionAttachmentDrafts } from '@/components/sessions/new/attachments/newSessionAttachmentDraftStore';
@@ -67,6 +69,43 @@ const result: SessionSpawnNewResultV1 = {
 };
 
 beforeEach(() => frontDoorExecute.mockReset());
+
+it('starts and presents the committed Session when local recovery writes fail', async () => {
+    const backing = await installLegacyNativeMmkvBoundaryForTest();
+    const storage = getPersistenceStorage();
+    const scope = { serverId: 'server-1', accountId: 'account-1' };
+    const storageKey = serverAccountScopedStorageKey('session-spawn-attempts-v1', scope);
+    const userAttemptId = 'quota-failed-launch';
+    const reads = vi.mocked(storage.getString);
+    const writes = vi.mocked(storage.set);
+    try {
+        await acquireSpawnAttemptCustody({ scope, userAttemptId: 'open-before-quota', machineId: 'machine-1',
+            targetFingerprint: 'open-target', seedNonce: 'open-original-nonce', submissionState: 'submitted' });
+        reads.mockClear();
+        writes.mockImplementation((key, value) => {
+            if (key === storageKey) throw new DOMException('Setting the value exceeded the quota.', 'QuotaExceededError');
+            backing.set(key, value);
+        }).mockClear();
+        frontDoorExecute.mockImplementationOnce(async () => {
+            expect(reads.mock.calls.filter(([key]) => key === storageKey)).toHaveLength(1);
+            expect(writes.mock.calls.filter(([key]) => key === storageKey)).toHaveLength(1);
+            return { ok: true, result: { type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+                sessionId: result.sessionId, operation: { ...input.executionTarget, operationId: 'commit-operation' } } };
+        }).mockResolvedValueOnce(observeCommittedTerminal({ ok: true, result: projectSessionSpawnNewActionResultV1(result) }));
+        const onCommitted = vi.fn();
+        const launch = await executeManualSessionSpawnNewAction({ ...input, creationKey: buildManualSessionCreationKey(userAttemptId) },
+            { surface: 'ui', actionRequestId: userAttemptId }, { scope, machineHomeDir: '/home/tester', userAttemptId,
+                observation: { operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3] } }, onCommitted } });
+        expect(launch).toMatchObject({ status: 'executed', action: { ok: true, result } });
+        expect(onCommitted).toHaveBeenCalledWith(expect.objectContaining({ sessionId: result.sessionId }));
+        const retained = readSpawnAttemptCustodyState(scope);
+        expect(retained.status === 'valid' && Object.values(retained.attempts)).toEqual([
+            expect.objectContaining({ userAttemptId: 'open-before-quota', nonce: 'open-original-nonce' }),
+        ]);
+    } finally {
+        vi.restoreAllMocks();
+    }
+});
 
 function observeCommittedTerminal(action: ActionExecuteResult): ActionExecuteResult {
     if (!action.ok) return action;

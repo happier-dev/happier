@@ -2178,6 +2178,9 @@ export function useCreateNewSession(params: Readonly<{
                         submittedLaunch.attempt(launchAttempt);
                     } else {
                         endLaunchAttemptWithoutSession();
+                        if (manualActionCustody?.terminalResult) {
+                            await completeManualSessionSpawnNewActionCustody(manualActionCustody);
+                        }
                     }
                     if ('terminalHostError' in actionResult.result && actionResult.result.terminalHostError?.kind === 'terminal_host_unavailable') {
                         launchDialogs.alert(

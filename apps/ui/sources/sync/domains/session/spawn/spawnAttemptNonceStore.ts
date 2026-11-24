@@ -12,6 +12,7 @@ const LOCK_NAME_PREFIX = 'happier:session-spawn-attempts-v2';
 
 export type AcquireSpawnAttemptCustodyResult =
     | Readonly<{ status: 'acquired'; record: PersistedSpawnAttempt; reused: boolean;
+        recoveryWriteFailed?: true;
         previousSubmissionState?: PersistedSpawnAttempt['submissionState'] }>
     | Readonly<{ status: 'corrupt' }>
     | Readonly<{ status: 'lock_unavailable' }>;
@@ -100,8 +101,9 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
                     record = { ...existing, hasSubmittedRetry: true };
                 }
             }
-            if (record !== existing) writeAttempts(params.scope, { ...attempts, [id]: record });
+            const retained = record === existing || writeAttempts(params.scope, { ...attempts, [id]: record });
             return { status: 'acquired', record, reused: true,
+                ...(!retained ? { recoveryWriteFailed: true } : {}),
                 ...(params.submissionState === 'submitted' ? { previousSubmissionState: existing.submissionState } : {}) };
         }
 
@@ -128,8 +130,9 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
             attachmentMessageLocalId: firstTurnLocalId,
             ...(params.authoringOriginPersistence ? { authoringOriginPersistence: params.authoringOriginPersistence } : {}),
         };
-        writeAttempts(params.scope, { ...attempts, [id]: record });
-        return { status: 'acquired', record, reused: false };
+        const retained = writeAttempts(params.scope, { ...attempts, [id]: record });
+        return { status: 'acquired', record, reused: false,
+            ...(!retained ? { recoveryWriteFailed: true } : {}) };
     });
     return locked.status === 'completed' ? locked.value : locked;
 }
@@ -239,8 +242,7 @@ export async function clearSpawnAttemptCustody(params: Readonly<{
         ) return false;
         const next = { ...state.attempts };
         delete next[id];
-        writeAttempts(params.scope, next);
-        return true;
+        return writeAttempts(params.scope, next);
     });
     return locked.status === 'completed' ? locked.value : false;
 }
@@ -273,18 +275,18 @@ export async function clearCreatedSpawnAttemptCustodyForSession(params: Readonly
 }
 
 /**
- * Completes custody after Action-operation rehydration. The operation request
- * ID is the persisted manual user-attempt ID, so this can settle a submitted
- * record even when the initiating process stopped before recording Session ID.
+ * Completes custody after the draft consumes a rehydrated terminal Action
+ * operation. Its request ID is the persisted manual user-attempt ID, including
+ * when the initiating process stopped before recording a created Session ID.
  */
 export async function settleSpawnAttemptCustodyFromActionOperation(params: Readonly<{
     scope: ServerAccountScope;
     userAttemptId: string;
-    createdSessionId: string;
-}>): Promise<boolean | null> {
+}> & (Readonly<{ createdSessionId: string }> | Readonly<{ failedMachineId: string }>)): Promise<boolean | null> {
     const userAttemptId = normalizeRequired(params.userAttemptId);
-    const createdSessionId = normalizeRequired(params.createdSessionId);
-    if (!userAttemptId || !createdSessionId) return null;
+    const failed = 'failedMachineId' in params;
+    const terminalId = normalizeRequired(failed ? params.failedMachineId : params.createdSessionId);
+    if (!userAttemptId || !terminalId) return null;
 
     const locked = await withSpawnAttemptMutationLock(params.scope, () => {
         const state = readSpawnAttemptCustodyState(params.scope);
@@ -292,15 +294,14 @@ export async function settleSpawnAttemptCustodyFromActionOperation(params: Reado
         if (state.status !== 'valid') return false;
         const matches = Object.entries(state.attempts).filter(([, record]) => (
             record.userAttemptId === userAttemptId
-            && (record.createdSessionId === null || record.createdSessionId === createdSessionId)
+            && (failed ? record.machineId === terminalId : record.createdSessionId === null || record.createdSessionId === terminalId)
         ));
         if (matches.length === 0) return null;
         if (matches.length !== 1) return false;
         const [id] = matches[0];
         const next = { ...state.attempts };
         delete next[id];
-        writeAttempts(params.scope, next);
-        return true;
+        return writeAttempts(params.scope, next);
     });
     return locked.status === 'completed' ? locked.value : false;
 }

@@ -630,14 +630,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 expect(spawnRequests[0].creationKey).not.toBe(buildManualSessionCreationKey('obsolete-attempt'));
             }
             if (cause !== 'unmount') expect(hook.params.setIsCreating).toHaveBeenLastCalledWith(false);
-            const custody = readSpawnAttemptCustodyState(scope);
-            if (preserved) {
-                expect(custody.status).toBe('valid');
-                if (custody.status !== 'valid') throw new Error('Expected retained terminal refusal');
-                expect(Object.values(custody.attempts)).toEqual([expect.objectContaining({
-                    createdSessionId: null, terminalResult: { type: 'error', code: 'target_unavailable', retryable: false },
-                })]);
-            } else expect(custody).toEqual({ status: 'missing' });
+            expect(readSpawnAttemptCustodyState(scope)).toEqual({ status: 'missing' });
         } finally { instructionsCreateGate?.resolve(); releaseCustody.resolve(); await send; lockSpy.mockRestore(); locks.restore(); await hook.unmount(); resetSessionDraftRepositoryForTests(); }
     });
     it.each(['refresh', 'retire'] as const)('settles a launch when its captured Account changes during custody: %s', async change => {
@@ -686,14 +679,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 creating: vi.mocked(hook.params.setIsCreating).mock.calls.at(-1)?.[0] }).toEqual({
                 dispatches: change === 'refresh' ? 1 : 0, attempt: null, creating: false,
             });
-            const custody = readSpawnAttemptCustodyState(scope);
-            if (change === 'refresh') {
-                expect(custody.status).toBe('valid');
-                if (custody.status !== 'valid') throw new Error('Expected original Account terminal refusal');
-                expect(Object.values(custody.attempts)).toEqual([expect.objectContaining({ scope,
-                    createdSessionId: null, terminalResult: { type: 'error', code: 'target_unavailable', retryable: false },
-                })]);
-            } else expect(custody).toEqual({ status: 'missing' });
+            expect(readSpawnAttemptCustodyState(scope)).toEqual({ status: 'missing' });
             expect(settlements).toEqual([{ status: 'rejected' }]);
             expect(alert).toHaveBeenCalled();
             expect(hook.params.promptStore.getPrompt()).toBe('Keep this launch draft');

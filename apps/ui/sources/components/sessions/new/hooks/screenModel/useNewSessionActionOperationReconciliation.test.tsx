@@ -8,6 +8,7 @@ import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sess
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { acquireSpawnAttemptCustody, readSpawnAttemptCustodyState } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const clearCapturedDraftMock = vi.hoisted(() => vi.fn(async () => undefined));
@@ -181,6 +182,9 @@ describe('useNewSessionActionOperationReconciliation', () => {
     it.each(['failed', 'cancelled'] as const)(
         'preserves the persisted form and rotates identity after %s so retry is a fresh execution',
         async (state) => {
+            await expect(acquireSpawnAttemptCustody({ scope: draftScope, machineId: 'machine-a',
+                targetFingerprint: 'retained-after-reload', userAttemptId: 'request-1', submissionState: 'submitted' }))
+                .resolves.toMatchObject({ status: 'acquired' });
             mergeOperations([operation(state)]);
             const resetLaunchRequestId = vi.fn();
             const disableDraftPersistence = vi.fn();
@@ -199,6 +203,7 @@ describe('useNewSessionActionOperationReconciliation', () => {
             }));
 
             await vi.waitFor(() => expect(resetLaunchRequestId).toHaveBeenCalledWith(null));
+            await vi.waitFor(() => expect(readSpawnAttemptCustodyState(draftScope)).toEqual({ status: 'missing' }));
             expect(disableDraftPersistence).not.toHaveBeenCalled();
             expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
             expect(router.replace).not.toHaveBeenCalled();

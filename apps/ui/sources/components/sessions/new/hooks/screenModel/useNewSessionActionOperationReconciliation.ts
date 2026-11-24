@@ -203,6 +203,8 @@ export function useNewSessionActionOperationReconciliation(params: Readonly<{
     React.useEffect(() => {
         if (
             params.localCreationInFlight
+            || !params.requestId
+            || !executionScope
             || !operation
             || operation.actionId !== 'session.spawn_new'
             || (operation.state !== 'failed' && operation.state !== 'cancelled')
@@ -215,7 +217,11 @@ export function useNewSessionActionOperationReconciliation(params: Readonly<{
         if (operation.state === 'failed' && operation.error) {
             params.onOperationFailure?.(operation.error);
         }
-    }, [operation, params.localCreationInFlight, params.onOperationFailure, params.resetLaunchRequestId]);
+        void settleSpawnAttemptCustodyFromActionOperation({ scope: executionScope,
+            userAttemptId: params.requestId, failedMachineId: operation.scope.machineId }).catch(error => {
+            captureExceptionIfEnabled(error, { tags: { area: 'new_session', action: 'settle_reconciled_launch' } });
+        });
+    }, [executionScope, operation, params.localCreationInFlight, params.onOperationFailure, params.requestId, params.resetLaunchRequestId]);
 
     React.useEffect(() => {
         if (

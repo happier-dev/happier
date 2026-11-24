@@ -1193,6 +1193,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
   it('clears the refused Provider launch after changing the qualified source for the same model', async () => {
     const { useCreateNewSession, modalAlertSpy, storageState, scope } = await setupTaskHarness({ httpsHome: true });
+    const { readSpawnAttemptCustodyState } = await import('@/sync/domains/session/spawn/spawnAttemptNonceStore');
     const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
     const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
     const { NewSessionEmbeddedHostProvider } = await import('@/components/sessions/new/navigation/newSessionHost');
@@ -1214,6 +1215,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       expect(executeSpawnAction.mock.calls[0]?.[0], JSON.stringify(modalAlertSpy.mock.calls))
         .toMatchObject({ modelSelection: { ref: { endpointTemplateId } } });
       await vi.waitFor(() => expect(hook.getCurrent().providerLaunchError).toEqual(providerError));
+      expect(readSpawnAttemptCustodyState(scope)).toEqual({ status: 'missing' });
       endpointTemplateId = 'gateway-b';
       await hook.rerender();
       expect(hook.getCurrent().providerLaunchError).toBeNull();

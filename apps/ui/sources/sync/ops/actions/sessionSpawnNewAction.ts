@@ -560,13 +560,13 @@ export async function executeManualSessionSpawnNewAction(
         ...(params.observation.onCommitted ? { onCommitted: async (receipt: SessionSpawnNewCommittedReceipt) => {
             if (receipt.executionTarget.serverId !== input.executionTarget.serverId
                 || receipt.executionTarget.machineId !== input.executionTarget.machineId) throw new Error('spawn_committed_target_mismatch');
-            const marked = await markSpawnAttemptCreated({ scope: submitted.scope, machineId: submitted.machineId,
+            const marked = acquired.recoveryWriteFailed ? null : await markSpawnAttemptCreated({ scope: submitted.scope, machineId: submitted.machineId,
                 targetFingerprint: submitted.targetFingerprint, userAttemptId: submitted.userAttemptId,
                 nonce: submitted.nonce, createdSessionId: receipt.sessionId });
             // Even if persistence is unavailable, known creation cannot become
             // no-effect cleanup when the original terminal result later refuses.
             submitted = marked ?? { ...submitted, createdSessionId: receipt.sessionId };
-            if (!marked) throw new Error('spawn_committed_custody_unavailable');
+            if (!marked && !acquired.recoveryWriteFailed) throw new Error('spawn_committed_custody_unavailable');
             if (params.sourceAccountLifetime?.isCurrent() !== false) {
                 await params.observation?.onCommitted?.({ ...receipt, firstTurnLocalId: submitted.firstTurnLocalId });
             }

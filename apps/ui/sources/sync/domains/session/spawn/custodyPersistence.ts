@@ -208,12 +208,16 @@ export function resetUnreadableSpawnAttemptCustody(scope: ServerAccountScope): b
     return true;
 }
 
-export function writeAttempts(scope: ServerAccountScope, attempts: PersistedSpawnAttempts): void {
+export function writeAttempts(scope: ServerAccountScope, attempts: PersistedSpawnAttempts): boolean {
     const storage = getPersistenceStorage();
     const key = storageKey(scope);
-    if (Object.keys(attempts).length === 0) {
-        storage.delete(key);
-        return;
+    const next = Object.keys(attempts).length === 0 ? null : JSON.stringify(attempts);
+    try {
+        if (next === null) storage.delete(key);
+        else storage.set(key, next);
+        return true;
+    } catch {
+        // Device-local recovery is best effort. The Action still owns creation.
+        return false;
     }
-    storage.set(key, JSON.stringify(attempts));
 }
