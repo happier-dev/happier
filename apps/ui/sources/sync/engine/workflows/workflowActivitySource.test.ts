@@ -26,7 +26,7 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-it('opens cold Event Run names in one lean batch, including the exact Workflow cause outside the membership page', async () => {
+it('opens a 240-Run membership page and reads names only for its Event rows, children and exact off-page Workflow cause', async () => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-names.test' });
     const sourceRun = createWorkflowRunSummaryFixture({ id: 'source-workflow', ownerAccountId: 'event-names-account' });
@@ -44,7 +44,13 @@ it('opens cold Event Run names in one lean batch, including the exact Workflow c
         return createWorkflowRunSummaryFixture({ id: `child-${index}`, ownerAccountId: 'event-names-account',
             origin: { kind: 'automation', automationId: `automation-${index}`, cause } });
     });
-    const namedRuns = [...children, sourceRun];
+    const terminal = createWorkflowRunSummaryFixture({ id: 'finished-workflow', ownerAccountId: 'event-names-account',
+        state: 'succeeded', finishedAt: '2026-09-08T10:01:00.000Z' });
+    const unrelated = Array.from({ length: 237 }, (_, index) => createWorkflowRunSummaryFixture({
+        id: `queued-${index}`, ownerAccountId: 'event-names-account', state: 'queued',
+    }));
+    const members = [...children, terminal, ...unrelated];
+    const namedRuns = [...children, terminal, sourceRun];
     const titleByRunId = new Map(namedRuns.map((run, index) => [run.id, `Accepted work ${index}`]));
     const leanReads: Record<string, unknown>[] = [];
     let membershipReads = 0;
@@ -54,11 +60,12 @@ it('opens cold Event Run names in one lean batch, including the exact Workflow c
             if (actionId !== 'workflow.run.list') throw new Error(`Unexpected full-body Event read: ${actionId}`);
             if (input.projection === 'membership') {
                 membershipReads += 1;
-                return { ok: true, result: { runs: children, metadataByRunId: {}, projection: 'membership' } };
+                return { ok: true, result: { runs: members, metadataByRunId: {}, projection: 'membership' } };
             }
             leanReads.push(input);
-            return { ok: true, result: { runs: namedRuns,
-                metadataByRunId: Object.fromEntries(namedRuns.map(run => [run.id,
+            const requested = namedRuns.filter(run => (input.runIds as string[]).includes(run.id));
+            return { ok: true, result: { runs: requested,
+                metadataByRunId: Object.fromEntries(requested.map(run => [run.id,
                     { kind: 'available', value: { title: titleByRunId.get(run.id)! } }])) } };
         } });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
@@ -79,7 +86,7 @@ it('opens cold Event Run names in one lean batch, including the exact Workflow c
     const secondRelease = source.acquire({ onLive() {}, onRetained() {}, onError: error => errors.push(error) });
     releases.push(release, secondRelease);
     await vi.waitFor(() => expect(pages).toHaveLength(1), { timeout: 10_000 });
-    expect(pages[0]?.runs.map(run => run.id).sort()).toEqual(children.map(run => run.id).sort());
+    expect(pages[0]?.runs.map(run => run.id).sort()).toEqual(members.map(run => run.id).sort());
     await vi.waitFor(() => {
         expect(errors).toEqual([]);
         expect(namedRuns.map(run => {

@@ -41,13 +41,15 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         const result = await callWorkflowAction({ actionId: 'workflow.activity.list', input,
             parseResult: WorkflowActionOutputSchemasV1['workflow.activity.list'].parse,
             accountLifetime: lifetime, signal });
-        // Membership never opens accepted display content. Hydrate its exact Runs and
-        // Workflow causes through the existing Account row owner, including off-page sources.
+        // Only retained Event subjects and their Started from it rows need Run names.
+        // Keep other Runs in public membership without opening their accepted content.
         const runIds = result.retained.runs.flatMap(run => {
             const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
-            return cause?.kind === 'trigger' && cause.triggerKind === 'runLifecycle'
-                && cause.evidence.source.kind === 'workflow_run'
-                ? [run.id, cause.evidence.source.runId] : [run.id];
+            if (cause?.kind === 'trigger' && cause.triggerKind === 'runLifecycle') {
+                return cause.evidence.source.kind === 'workflow_run' ? [run.id, cause.evidence.source.runId] : [run.id];
+            }
+            if (cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle') return [run.id];
+            return projectWorkflowActivityRunFact(run, 'terminal', 'retained') ? [run.id] : [];
         });
         await refreshWorkflowRunsByIds(runIds, { accountLifetime: lifetime, signal,
             fence: { isCurrent: () => lifetime.isCurrent() && !signal?.aborted } });
