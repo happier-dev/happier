@@ -20,15 +20,28 @@ it('loads selected web copy before activation and keeps explicit voice demand in
             bundle: true,
             splitting: true,
             format: 'esm',
-            platform: 'node',
-            resolveExtensions: ['.web.ts', '.ts', '.js'],
+            platform: 'browser',
+            define: { __DEV__: 'false', 'process.env.EXPO_OS': '"web"', 'process.env.NODE_ENV': '"production"' },
+            alias: { 'react-native': resolve('sources/platform/shims/reactNativeWebShim.ts') },
+            resolveExtensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js'],
+            loader: { '.bundle': 'file' },
+            assetNames: 'assets/[name]-[hash]',
             metafile: true,
         });
         // Run emitted ESM directly: Vitest's native resolver cannot exercise web chunk boundaries.
         const observation = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
+            import { readFile } from 'node:fs/promises';
+            // Resolve the exported asset URLs against the fixture root, as a browser would.
+            const base = ${JSON.stringify(pathToFileURL(directory + '/').href)};
+            globalThis.fetch = async (uri) => {
+                const file = new URL(uri, base);
+                if (!file.href.startsWith(base + 'assets/')) throw new Error('Unexpected asset URL: ' + uri);
+                return new Response(await readFile(file));
+            };
             const text = await import(${JSON.stringify(pathToFileURL(join(directory, 'i18n.mjs')).href)});
             const initial = {
                 active: text.getPreferredLanguage(),
+                copy: text.t('tabs.inbox'),
                 spanishLoaded: text.getTranslationValue('tabs.inbox', 'es') !== undefined,
                 frenchLoaded: text.getTranslationValue('tabs.inbox', 'fr') !== undefined,
                 pluginKeyKnown: text.getAllTranslationKeys().includes('agentInput.connectedServiceLabel.gemini'),
@@ -63,6 +76,7 @@ it('loads selected web copy before activation and keeps explicit voice demand in
             traditionalChineseLoaded: true, simplifiedChineseActivated: false,
             unrelatedJapaneseLoaded: false, fallback: 'Google Gemini',
         });
+        expect(observation.selectedCopy).not.toBe(observation.initial.copy);
         expect(observation.selectedCopy).toBe(observation.frenchCopy);
         expect(observation.commits[0].copy).toBe(observation.frenchCopy);
         const entry = Object.values(result.metafile.outputs).find(output => output.entryPoint?.endsWith('/i18n.ts'));
