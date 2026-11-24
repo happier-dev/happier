@@ -156,6 +156,7 @@ import {
 import { getSessionActionMetadata } from './sessionActionMetadata';
 import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
 import { useOpenSessionSimulatorPreview } from '@/components/sessions/simulator/useOpenSessionSimulatorPreview';
+import { SESSION_HEADER_TASK_MENU_ID_PREFIX, useSessionHeaderTaskLinks, type SessionHeaderTaskSession } from '@/components/sessions/shell/view/SessionHeaderTaskLinks';
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'follow.set';
 
@@ -221,6 +222,8 @@ type SessionHeaderActionMenuProps = Readonly<{
   destinationsInMenu?: boolean;
   /** A header control that sits just before the ⋯ (the no-rail (i)), after Follow (lab cshead H1p). */
   beforeMenu?: React.ReactNode;
+  /** A folded header's linked Tasks: each is a row here instead of a chip in the facts line. */
+  taskSession?: SessionHeaderTaskSession;
 }>;
 
 function readCurrentSessionForOpenMenu(sessionId: string, fallback: Session): Session {
@@ -353,6 +356,7 @@ function didSessionHeaderActionMenuPropsChange(
   if (prev.destinationsInMenu !== next.destinationsInMenu) return true;
   // The header's resolved props are cached, so this element changes only with the header's own facts.
   if (prev.beforeMenu !== next.beforeMenu) return true;
+  if (prev.taskSession !== next.taskSession) return true;
   if (prev.session.serverId !== next.session.serverId) return true;
   if (!areSessionActionMenuMetadataSemanticallyEqual(prev.session, next.session)) return true;
   if (prev.session.active !== next.session.active) return true;
@@ -636,6 +640,8 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     });
   }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, externalSessionLink]);
   const accountShowToolCalls = useSetting('transcriptShowToolCalls');
+  // Rows mount on first open and stay: later opens list the Tasks at once, as the chip form would.
+  const taskLinks = useSessionHeaderTaskLinks(props.taskSession ?? null);
   const actions = React.useMemo(() => {
     if (!open) return NO_MENU_ROWS;
     const actionItems: DropdownMenuItem[] = listActionSpecs()
@@ -672,6 +678,10 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     const iconColor = theme.colors.chrome.header.foreground;
     const out: Array<Readonly<{ group: SessionHeaderMenuGroup; item: DropdownMenuItem }>> = [];
     const push = (group: SessionHeaderMenuGroup, item: DropdownMenuItem) => { out.push({ group, item }); };
+    for (const link of taskLinks) {
+      push('open', { id: `${SESSION_HEADER_TASK_MENU_ID_PREFIX}${link.key}`, title: `${t('boards.kinds.task')} · ${link.title}`,
+        icon: <Icon name="check-square" size={16} color={iconColor} /> });
+    }
     push('open', { id: 'header.findChat', title: t('find.surface.chat'), icon: <Icon name="magnifying-glass" size={16} color={iconColor} /> });
     for (const item of workspaceOpen.presentationItems) push('open', item);
     if (openComputer) {
@@ -850,6 +860,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     workspaceOpen.presentationItems,
     props.pluginHeaderActionPlacement,
     props.pluginHeaderActions,
+    taskLinks,
     theme.colors.chrome.header.foreground,
   ]);
   const select = (actionId: string, selection?: DropdownMenuSelection) => {
@@ -891,6 +902,12 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     setOpen(false);
     if (actionId === 'header.deleteBotTemplate') {
       void deleteBotTemplate?.();
+      return;
+    }
+    if (actionId.startsWith(SESSION_HEADER_TASK_MENU_ID_PREFIX)) {
+      // The Task's owning page, the same destination its chip opens.
+      const link = taskLinks.find(candidate => `${SESSION_HEADER_TASK_MENU_ID_PREFIX}${candidate.key}` === actionId);
+      if (link) navigateWithBlurOnWeb(() => router.push(link.href as never));
       return;
     }
     if (actionId === 'header.findChat') {

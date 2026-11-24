@@ -38,6 +38,7 @@ import { normalizePluginSurfacePlatform } from '@/components/plugins/surfaces/pl
 
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
+import type { SessionHeaderTaskSession } from './SessionHeaderTaskLinks';
 import {
     resolveExternalSessionIdentityPresentation,
 } from '../../presentation/externalSessionIdentityPresentation';
@@ -80,6 +81,8 @@ export type SessionViewHeaderProps = Readonly<{
      * live runtime source, since the shell Session does not move with a turn's thinking/status writes.
      */
     liveStatusSource?: SessionViewHeaderLiveStatusSource;
+    /** Linked Tasks drawn as chips in the facts line; a folded (phone) header carries them in ⋯ instead. */
+    taskSession?: SessionHeaderTaskSession;
 }>;
 
 export type SessionViewHeaderLiveStatusSource = Readonly<{
@@ -176,6 +179,8 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
         /** Existing content or an already-open Board may claim the one optional direct slot. */
         preferDirect: boolean;
     }>;
+    /** The presented Session's linked-Task discovery scope; absent for a blocked or unloaded Session. */
+    taskSession?: SessionHeaderTaskSession;
     /** Current exact-realm facts used by the one optional-action selector. */
     companionHeaderAction?: Readonly<{
         availability: SessionCompanionAvailability;
@@ -435,10 +440,13 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     destinationsInMenu={destinationsInMenu}
                     // Session details live in the rail's Info tab; without a visible rail the header keeps (i), before ⋯.
                     beforeMenu={destinationsInMenu ? <SessionHeaderInfoButton onPress={openSessionInfo} /> : null}
+                    taskSession={shouldFoldHeaderIconActions ? input.taskSession : undefined}
                 />
             </SessionHeaderActionsRow>
         ),
         badges: resolvedBadges,
+        // A folded header has no room for a chip beside the folder: its Tasks are ⋯ rows, never squeezed.
+        taskSession: shouldFoldHeaderIconActions ? undefined : input.taskSession,
         isConnected,
         liveStatusSource,
         flavor,

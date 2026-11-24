@@ -219,7 +219,18 @@ describe('SessionPaneHeader', () => {
         expect(metadata.findAll((node) => node.props.testID === 'session-header-subtitle').length).toBeGreaterThan(0);
     });
 
-    it('opens the source-owned page for a task linked to the presented Session', async () => {
+    type LinkedTaskFixture = Readonly<{
+        sessionId: string;
+        serverId: string;
+        key: string;
+        pluginId: string;
+        taskSession: Readonly<{ sessionId: string; scope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope }>;
+        setItem: ReturnType<typeof import('@/dev/testkit/fixtures/workItemsPlugin').createExternalWorkItemsPluginFixture>['setItem'];
+        present: (header: React.ReactElement) => React.ReactElement;
+    }>;
+
+    /** One Task linked to the presented Session and one linked elsewhere, through the installed Work Items owner. */
+    async function withLinkedTaskFixture(run: (fixture: LinkedTaskFixture) => Promise<void>) {
         platformState.os = 'web';
         const { PluginContributesV2Schema } = await import('@happier-dev/protocol/plugins/contributions/v2');
         const { buildWorkBoardItemKeyV1 } = await import('@happier-dev/protocol/boards/workBoardV1');
@@ -229,7 +240,6 @@ describe('SessionPaneHeader', () => {
         const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
         const appShell = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
         const { SessionSurfacePresenceProvider } = await import('../sessionSurfacePresence');
-        const { SessionViewLiveStatusPaneHeader } = await import('./SessionViewLiveStatusPaneHeader');
         const sessionId = 'linked-session';
         const serverId = 'home';
         const controller = new AbortController();
@@ -267,26 +277,83 @@ describe('SessionPaneHeader', () => {
                 moduleReference: { exportName: target.exportName }, accountLifetime, isCurrent: accountLifetime.isCurrent,
                 backend: { backendId: 'commonJs', available: true, async loadInstalledBundle() { return fixture.activateClient; } },
             }])).toMatchObject([{ result: { ok: true } }]);
-            const taskSession = { sessionId, scope: accountLifetime.scope };
-            const screen = await renderScreen(<SessionSurfacePresenceProvider sessionId={sessionId} focusedOverride visibleOverride
-                sceneActive routeAnchorOverride={null} presentedWhileVisible>
-                <SessionViewLiveStatusPaneHeader title="Investigate invoices" subtitle="~/work" taskSession={taskSession} />
-            </SessionSurfacePresenceProvider>);
-            try {
-                await vi.waitFor(() => expect(screen.getTextContent()).toContain('Reconcile invoices'));
-                expect(screen.getTextContent()).not.toContain('Unrelated task');
-                const key = buildWorkBoardItemKeyV1({ kind: 'task', pluginId, qualifiedId: { serverId, id: 'linked' } });
-                await screen.pressByTestIdAsync(`session-header-task-chip:${key}`);
-                expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`);
-                await act(async () => fixture.setItem('linked', { title: 'Reconcile invoices', category: 'started', linkedSessions: [] }));
-                await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Reconcile invoices'));
-            } finally { await screen.unmount(); }
+            await run({
+                sessionId, serverId, pluginId, setItem: fixture.setItem,
+                key: buildWorkBoardItemKeyV1({ kind: 'task', pluginId, qualifiedId: { serverId, id: 'linked' } }),
+                taskSession: { sessionId, scope: accountLifetime.scope },
+                present: header => <SessionSurfacePresenceProvider sessionId={sessionId} focusedOverride visibleOverride
+                    sceneActive routeAnchorOverride={null} presentedWhileVisible>{header}</SessionSurfacePresenceProvider>,
+            });
         } finally {
             spy.mockRestore();
             controller.abort();
             await composition.unload();
             taskPagePush.mockClear();
         }
+    }
+
+    it('opens the source-owned page for a task linked to the presented Session', async () => {
+        const { SessionViewLiveStatusPaneHeader } = await import('./SessionViewLiveStatusPaneHeader');
+        await withLinkedTaskFixture(async ({ key, pluginId, setItem, taskSession, present }) => {
+            const screen = await renderScreen(present(
+                <SessionViewLiveStatusPaneHeader title="Investigate invoices" subtitle="~/work" taskSession={taskSession} />));
+            try {
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('Reconcile invoices'));
+                expect(screen.getTextContent()).not.toContain('Unrelated task');
+                await screen.pressByTestIdAsync(`session-header-task-chip:${key}`);
+                expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`);
+                await act(async () => setItem('linked', { title: 'Reconcile invoices', category: 'started', linkedSessions: [] }));
+                await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Reconcile invoices'));
+            } finally { await screen.unmount(); }
+        });
+    });
+
+    // Owner ruling (UI refinements delta 12): a phone header has no room for the chip beside the folder, so
+    // the Task is one ⋯ row that opens the same page; a wide header keeps the chip.
+    it('folds linked Tasks into the header overflow on a phone and keeps the chip on a wide header', async () => {
+        const { SessionViewLiveStatusPaneHeader } = await import('./SessionViewLiveStatusPaneHeader');
+        const { resolveSessionViewHeaderProps } = await import('./resolveSessionViewHeaderProps');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { t } = await import('@/text');
+        const { withPopoverWebGlobals } = await import('@/dev/testkit');
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        try { await withLinkedTaskFixture(async ({ sessionId, serverId, key, pluginId, taskSession, present }) => {
+            const session = createSessionFixture({ id: sessionId, serverId, metadata: { path: '/tmp/invoices', host: 'test-host' } });
+            const headerAt = (windowWidth: number) => resolveSessionViewHeaderProps({
+                isDataReady: true, session, sessionId, paneScopeId: 'pane-1', windowWidth, taskSession,
+                sessionInfoHref: `/session/${sessionId}/info`, sessionRunsHref: `/session/${sessionId}/runs`,
+                sessionAutomationsHref: `/session/${sessionId}/automations`, sessionAutomationsEnabledCount: 0,
+                sessionExecutionRunsSupported: false, showAutomations: false, shouldShowSubagentsButton: false,
+                navigateWithBlurOnWeb: action => action(), handleHeaderExtraItemSelect: () => false,
+                router: { push: () => {}, navigate: () => {} }, actionIconColor: '#000', headerTintColor: '#000',
+                statusErrorColor: '#f00', externalSessionRuntime: null,
+            });
+            const taskRowId = `header.task:${key}`;
+            const openMenuRows = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+                await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+                return () => screen.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; title: string }>;
+            };
+
+            const phone = await renderScreen(present(<SessionViewLiveStatusPaneHeader {...headerAt(390)} />));
+            try {
+                const rows = await openMenuRows(phone);
+                await vi.waitFor(() => expect(rows().find(row => row.id === taskRowId)?.title)
+                    .toBe(`${t('boards.kinds.task')} · Reconcile invoices`));
+                expect(rows().filter(row => row.id.startsWith('header.task:'))).toHaveLength(1);
+                expect(phone.findAllByTestId(`session-header-task-chip:${key}`)).toHaveLength(0);
+                await act(async () => { phone.findByType(DropdownMenu).props.onSelect(taskRowId); });
+                await vi.waitFor(() => expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`));
+            } finally { await phone.unmount(); }
+
+            const wide = await renderScreen(present(<SessionViewLiveStatusPaneHeader {...headerAt(1440)} />));
+            try {
+                await vi.waitFor(() => expect(wide.findAllByTestId(`session-header-task-chip:${key}`).length).toBeGreaterThan(0));
+                const rows = await openMenuRows(wide);
+                expect(rows().length).toBeGreaterThan(0);
+                expect(rows().some(row => row.id.startsWith('header.task:'))).toBe(false);
+            } finally { await wide.unmount(); }
+        }); } finally { restorePopoverGlobals(); }
     });
 
     it('suppresses session-scoped testIDs when the session screen is hidden', async () => {

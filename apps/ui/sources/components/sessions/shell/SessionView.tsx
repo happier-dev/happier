@@ -1631,6 +1631,9 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
 
     const localizeHeaderPluginText = usePluginLocalizedTextResolver({ projection: headerPluginProjection.pluginUiProjection });
     const voiceConversationSubtitle = useVoiceConversationHeaderSubtitle(ownerMetadata, sessionRouteAddress);
+    const taskSessionScope = stableSessionForHeader && !blockedSurfaceState ? sessionAccountBinding?.scope : undefined;
+    const headerTaskSession = React.useMemo(() => taskSessionScope ? { sessionId, scope: taskSessionScope } : undefined,
+        [sessionId, taskSessionScope]);
     // Compute header props based on session state
     const headerProps = React.useMemo(() => resolveSessionViewHeaderProps({
         isDataReady,
@@ -1657,6 +1660,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         navigateWithBlurOnWeb,
         handleHeaderExtraItemSelect,
         headerMenuExtraItems,
+        taskSession: headerTaskSession,
         collaborationHeader,
         router: routerRef.current,
         actionIconColor: theme.colors.text.secondary,
@@ -1730,6 +1734,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         externalSessionRuntimePresentation,
         headerBlockedSurface,
         headerMenuExtraItems,
+        headerTaskSession,
         collaborationHeader,
         isDataReady,
         paneScopeId,
@@ -1764,7 +1769,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     // subscribes to the workspace's tab set.
     const openAllTabsRef = React.useRef<(() => void) | null>(null);
     const handlePullAllTabs = React.useCallback(() => { openAllTabsRef.current?.(); }, []);
-    const taskSessionScope = stableSessionForHeader && !blockedSurfaceState ? sessionAccountBinding?.scope : undefined;
     const sessionHeader = React.useMemo(() => showTopHeader ? (
         <View style={{ zIndex: 1000 }} {...pane.overlayFocusReturnCaptureProps}>
             {isTablet ? null : (
@@ -1773,7 +1777,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             <SessionViewLiveStatusPaneHeader
                 {...headerProps}
                 rightElement={headerRightElement}
-                taskSession={taskSessionScope ? { sessionId, scope: taskSessionScope } : undefined}
                 // Desktop renames in place (the title is the field); a phone keeps ⋯ Rename.
                 rename={isTablet && stableSessionForHeader?.access?.capabilities.renameSession === true
                     ? { sessionId, serverId: currentSessionRouteServerId || null } : undefined}
@@ -1819,7 +1822,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         stableSessionForHeader?.access?.capabilities.renameSession,
         pane.overlayFocusReturnCaptureProps,
         showTopHeader,
-        taskSessionScope,
         theme.colors.chrome.header.foreground,
     ]);
 

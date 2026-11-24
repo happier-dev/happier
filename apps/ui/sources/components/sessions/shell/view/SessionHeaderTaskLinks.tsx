@@ -9,35 +9,54 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useBoardTaskItems } from '@/components/boards/model/useBoardTaskItems';
 import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { useOptionalSessionScreenTestId } from '@/components/sessions/shell/sessionScreenTestIds';
-import { useSessionSurfacePresence } from '@/components/sessions/shell/sessionSurfacePresence';
+import { useOptionalSessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 const NO_PICKED_TASKS: readonly BoardItemRefV1[] = Object.freeze([]);
+const NO_PRESENCE_SUBSCRIPTION = () => () => {};
 
-export const SessionHeaderTaskLinks = React.memo(function SessionHeaderTaskLinks(
-    { sessionId, scope }: Readonly<{ sessionId: string; scope: ServerAccountScope }>,
-) {
-    const { presented } = useSessionSurfacePresence();
-    const inAppScope = useAppShellPluginUiProjection(view => areServerAccountScopesEqual(view.accountLifetime?.scope, scope), presented);
-    const { serverId } = scope;
-    // Discover through the same live Work Items owner as Boards, qualified to this one presented Session.
-    const sessions = React.useMemo<readonly BoardItemRefV1[]>(() => [
+export type SessionHeaderTaskSession = Readonly<{ sessionId: string; scope: ServerAccountScope }>;
+export type SessionHeaderTaskLink = Readonly<{ key: string; title: string; href: string }>;
+
+/** Menu row ids for linked Tasks folded into the header's ⋯ (a phone header): `header.task:<item key>`. */
+export const SESSION_HEADER_TASK_MENU_ID_PREFIX = 'header.task:';
+
+/**
+ * The canonical Tasks linked to one presented Session, each with its owning plugin page. Discovered through
+ * the same live Work Items owner as Boards; the header chip and the folded ⋯ rows both read this, only while
+ * the Session is presented (outside a Session view it reads nothing).
+ */
+export function useSessionHeaderTaskLinks(taskSession: SessionHeaderTaskSession | null): readonly SessionHeaderTaskLink[] {
+    const presence = useOptionalSessionSurfacePresenceSignal();
+    const readPresented = () => presence?.get().presented === true;
+    const enabled = React.useSyncExternalStore(presence?.subscribe ?? NO_PRESENCE_SUBSCRIPTION, readPresented, readPresented);
+    const scope = taskSession?.scope;
+    const inAppScope = useAppShellPluginUiProjection(view => scope !== undefined && areServerAccountScopesEqual(view.accountLifetime?.scope, scope), enabled);
+    const serverId = scope?.serverId ?? null;
+    const sessionId = taskSession?.sessionId ?? null;
+    const sessions = React.useMemo<readonly BoardItemRefV1[]>(() => serverId && sessionId ? [
         { kind: 'session', qualifiedId: { id: sessionId, serverId } },
-    ], [serverId, sessionId]);
-    const tasks = useBoardTaskItems(serverId, NO_PICKED_TASKS, sessions, presented && inAppScope);
-    const links = tasks.linkedRefs.flatMap(ref => {
+    ] : NO_PICKED_TASKS, [serverId, sessionId]);
+    const tasks = useBoardTaskItems(serverId, NO_PICKED_TASKS, sessions, enabled && inAppScope && sessionId !== null);
+    return React.useMemo(() => tasks.linkedRefs.flatMap((ref): SessionHeaderTaskLink[] => {
         if (ref.kind !== 'task') return [];
         const key = buildWorkBoardItemKeyV1(ref);
         const task = tasks.items.get(key);
         if (!task?.page) return [];
-        return [<TaskLinkChip key={key} itemKey={key} title={task.title} href={buildPluginAppPageRoutePath({
+        return [{ key, title: task.title, href: buildPluginAppPageRoutePath({
             pluginId: ref.pluginId, localId: task.page.pageId, subPath: task.page.subPath,
-        })} />];
-    });
-    return links.length > 0 ? <View style={styles.links}>{links}</View> : null;
+        }) }];
+    }), [tasks.items, tasks.linkedRefs]);
+}
+
+export const SessionHeaderTaskLinks = React.memo(function SessionHeaderTaskLinks(taskSession: SessionHeaderTaskSession) {
+    const links = useSessionHeaderTaskLinks(taskSession);
+    return links.length > 0 ? <View style={styles.links}>{links.map(link => (
+        <TaskLinkChip key={link.key} itemKey={link.key} title={link.title} href={link.href} />
+    ))}</View> : null;
 });
 
 function TaskLinkChip({ itemKey, title, href }: Readonly<{ itemKey: string; title: string; href: string }>) {
@@ -53,6 +72,7 @@ function TaskLinkChip({ itemKey, title, href }: Readonly<{ itemKey: string; titl
 }
 
 const styles = StyleSheet.create(theme => ({
-    links: { flexDirection: 'row', flexShrink: 1, minWidth: 0, gap: theme.space.s6 },
+    // The folder gives way first; a chip truncates its own label only when it alone outgrows the line.
+    links: { flexDirection: 'row', flexShrink: 0, maxWidth: '100%', gap: theme.space.s6 },
     chip: { flexShrink: 1, minWidth: 0, borderRadius: HAPPIER_BADGE_METRICS.radius },
 }));
