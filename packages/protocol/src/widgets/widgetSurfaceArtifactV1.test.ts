@@ -14,6 +14,7 @@ import {
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createWidgetAreaLayoutArtifactPortV1 } from './widgetSurfaceArtifactV1.js';
 import * as areaOwner from './widgetSurfaceArtifactV1.js';
+import { projectOverviewDefaultPlacementsV1 } from './builtinWidgetDescriptorV1.js';
 import {
   createUsageSessionWidgetPresets,
   createUsageWidgetPresets,
@@ -780,25 +781,15 @@ describe('personal widget areas at the Account Artifact owner', () => {
       isCurrent: () => true,
     });
     expect(await port.readState()).toMatchObject({ kind: 'missing' });
-    expect(
-      flattenWidgetLayoutWidgetsV1((await port.read()).items).map((entry) => [
-        entry.instance.id,
-        entry.area,
-      ]),
-    ).toEqual([
-      ['code', 'main'],
-      ['readme', 'main'],
-      ['about', 'aside'],
-      ['changes', 'aside'],
-      ['checkouts', 'aside'],
-      ['scripts', 'aside'],
-      ['sessions', 'aside'],
-    ]);
+    const defaults = projectOverviewDefaultPlacementsV1();
+    const drawn = (await port.read()).items;
+    expect(drawn).toEqual(defaults);
     expect(b.rows.size).toBe(0);
     expect(
       await createWidgetAreaActionPortV1(() => port).read(project, {}),
     ).toMatchObject({
       state: 'missing',
+      items: drawn,
       instances: expect.arrayContaining([
         {
           area: 'main',
@@ -817,14 +808,13 @@ describe('personal widget areas at the Account Artifact owner', () => {
       displayName: 'Our project',
     });
     expect(await port.readState()).toMatchObject({ kind: 'present' });
-    expect(
-      flattenWidgetLayoutWidgetsV1((await port.read()).items),
-    ).toHaveLength(7);
-    expect(
-      flattenWidgetLayoutWidgetsV1((await port.read()).items).find(
-        (entry) => entry.instance.id === 'about',
-      )?.instance.displayName,
-    ).toBe('Our project');
+    expect((await port.read()).items).toEqual(
+      defaults.map((item) =>
+        item.instance.id === 'about'
+          ? { ...item, instance: { ...item.instance, displayName: 'Our project' } }
+          : item,
+      ),
+    );
     for (const entry of flattenWidgetLayoutWidgetsV1((await port.read()).items))
       await port.apply({ kind: 'remove', instanceId: entry.instance.id });
     expect(flattenWidgetLayoutWidgetsV1((await port.read()).items)).toEqual([]);
@@ -890,19 +880,13 @@ describe('personal widget areas at the Account Artifact owner', () => {
       surface: project,
       isCurrent: () => true,
     });
+    const defaults = projectOverviewDefaultPlacementsV1();
     const area = createWidgetAreaActionPortV1(() => port);
-    expect(await area.read(project, {})).toMatchObject({
+    expect(await area.read(project, {})).toEqual(expect.objectContaining({
       state: 'missing',
-      instances: [
-        { instance: { id: 'code' } },
-        { instance: { id: 'readme' } },
-        { instance: { id: 'about' } },
-        { instance: { id: 'changes' } },
-        { instance: { id: 'checkouts' } },
-        { instance: { id: 'scripts' } },
-        { instance: { id: 'sessions' } },
-      ],
-    });
+      items: defaults,
+      instances: defaults.map(({ kind: _kind, ...placement }) => placement),
+    }));
     expect(b.rows.size).toBe(0);
     const dashboards = createWidgetAreaLayoutArtifactPortV1(
       b.dashboardTransport,
@@ -913,10 +897,9 @@ describe('personal widget areas at the Account Artifact owner', () => {
       expectedRevision: null,
       name: 'My overview',
     });
-    expect(await port.read()).toMatchObject({
-      name: 'My overview',
-      items: Array.from({ length: 7 }, () => ({ instance: {} })),
-    });
+    const renamed = await port.read();
+    expect(renamed.name).toBe('My overview');
+    expect(renamed.items).toEqual(defaults);
     expect(await port.readState()).toMatchObject({
       preset: { isEdited: true },
     });
@@ -938,16 +921,11 @@ describe('personal widget areas at the Account Artifact owner', () => {
       expectedRevision: null,
       position: { placement: 'after', anchorId: named.artifactId },
     });
-    expect(
-      flattenWidgetLayoutWidgetsV1(
-        (
-          await createWidgetSurfaceArtifactPortV1(b.transport, {
-            surface: ordered,
-            isCurrent: () => true,
-          }).read()
-        ).items,
-      ),
-    ).toHaveLength(7);
+    const reordered = await createWidgetSurfaceArtifactPortV1(b.transport, {
+      surface: ordered,
+      isCurrent: () => true,
+    }).read();
+    expect(reordered.items).toEqual(defaults);
   });
   it('uses the selected Project host layout name in its render-only Action metadata', async () => {
     const b = boundary();
@@ -1304,25 +1282,30 @@ describe('personal widget areas at the Account Artifact owner', () => {
     expect(b.rows.size).toBe(0);
     await port.apply({ kind: 'add', instance: instance('a'), area: 'main' });
     await port.apply({ kind: 'add', instance: instance('b'), area: 'aside' });
+    const readAsideIds = async () =>
+      flattenWidgetLayoutWidgetsV1((await port.read()).items)
+        .filter((entry) => entry.area === 'aside')
+        .map((entry) => entry.instance.id);
+    const asideBefore = await readAsideIds();
+    const bIndex = asideBefore.indexOf('b');
+    expect(bIndex).toBeGreaterThanOrEqual(0);
+    const toIndex = bIndex + 1;
     await port.apply({
       kind: 'move',
       instanceId: 'a',
-      toIndex: 6,
+      toIndex,
       area: 'aside',
     });
-    expect(
-      flattenWidgetLayoutWidgetsV1((await port.read()).items)
-        .filter((entry) => ['a', 'b'].includes(entry.instance.id))
-        .map((entry) => [entry.instance.id, entry.area]),
-    ).toEqual([
-      ['b', 'aside'],
-      ['a', 'aside'],
+    expect(await readAsideIds()).toEqual([
+      ...asideBefore.slice(0, toIndex),
+      'a',
+      ...asideBefore.slice(toIndex),
     ]);
     const updates = b.updates.length;
     await port.apply({
       kind: 'move',
       instanceId: 'a',
-      toIndex: 6,
+      toIndex,
       area: 'aside',
     });
     expect(b.updates.length).toBe(updates);
