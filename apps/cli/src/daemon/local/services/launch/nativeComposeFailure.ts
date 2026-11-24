@@ -32,9 +32,9 @@ export function readNativeComposeCommandFailure(args: readonly string[], exitSta
     while (args[index]?.startsWith('--')) index += 2;
     const subcommand = args[index];
     if (!subcommand || !/^[a-z][a-z-]*$/u.test(subcommand)) return undefined;
-    const stderrTail = redact
-        ? trimBugReportTextToMaxBytes(redactBugReportSensitiveText(redact(stripVTControlCharacters(stderr)).trim()), 8_192)
-        : '';
+    // The version probe has no deployment inputs, so it can use the normal diagnostic redactor alone.
+    const output = redact || args[1] === 'version' ? stripVTControlCharacters(stderr) : '';
+    const stderrTail = trimBugReportTextToMaxBytes(redactBugReportSensitiveText(redact?.(output) ?? output).trim(), 8_192);
     return { subcommand, exitStatus, ...(stderrTail ? { stderrTail } : {}) };
 }
 

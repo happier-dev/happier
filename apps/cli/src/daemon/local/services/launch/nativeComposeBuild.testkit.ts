@@ -59,7 +59,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
     sourceCompose?: Readonly<{ document: string; services: readonly string[] }>;
     bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
     bakeFailurePlatform?: string;
-    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'candidate-config' | 'imagetools' | 'info'; exitCode?: number; stdout?: string; stderr?: string }>;
+    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'candidate-config' | 'compose-version' | 'imagetools' | 'info'; exitCode?: number; stdout?: string; stderr?: string }>;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
     effectivePlatforms?: boolean;
     preapprovalArmOnly?: boolean;
@@ -244,6 +244,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                 : options.failureOutput.command === 'compose' ? request.args[0] === 'compose' && request.args.includes('config')
                 : options.failureOutput.command === 'candidate-config' ? request.args[0] === 'compose' && request.args.includes('config')
                     && request.args.some(arg => arg.endsWith('candidate.compose.json'))
+                : options.failureOutput.command === 'compose-version' ? request.args[0] === 'compose' && request.args[1] === 'version'
                 : options.failureOutput.command === 'info' && request.args[0] === 'info')) {
                 return { exitCode: options.failureOutput.exitCode ?? 1, stdout: options.failureOutput.stdout ?? '', stderr: options.failureOutput.stderr ?? '' };
             }

@@ -3066,8 +3066,9 @@ not prevent recovery. Previously deleted container output cannot be reconstructe
 A nonzero Docker Compose command can also return a typed `nativeCompose`
 diagnostic in the Action failure and the opened receipt's Investigation
 projection. It records the subcommand and exit status plus a redacted stderr
-tail when the executor has a redaction lease. Existing failures can omit the
-diagnostic. Receipt headers and summary reads retain the existing closed facts.
+tail when the executor has a redaction lease or runs the input-free Compose
+version probe. Existing failures can omit the diagnostic. Receipt headers and
+summary reads retain the existing closed facts.
 Older strict 0.3 development readers require the matching schema when a new
 Receipt includes this diagnostic.
 

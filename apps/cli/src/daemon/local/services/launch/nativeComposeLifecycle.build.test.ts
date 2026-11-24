@@ -78,6 +78,20 @@ describe('phase-correct native platform image production', () => {
         }, { sourceCompose: template.app.compose, failureOutput: { command: 'candidate-config', exitCode: 23, stderr } });
     });
 
+    it('keeps stderr when the host Docker CLI rejects the input-free Compose version check', async () => {
+        const stderr = 'unknown flag: --short\r\nSee https://fixture-user:fixture-password@docker.example.test/help';
+        await withBuilder(async ({ project, requests }) => {
+            const error: unknown = await project.describeBuild().catch(failure => failure);
+            const failure = projectDeploymentFailure('native_failed', error);
+            const nativeCompose = { subcommand: 'version', exitStatus: 125,
+                stderrTail: expect.stringContaining('unknown flag: --short') };
+            expect(failure).toMatchObject({ ok: false, errorCode: 'native_failed', details: { nativeCompose } });
+            expect(projectDeploymentReceiptFailure(failure, 'build')).toMatchObject({ nativeCompose });
+            expect(JSON.stringify(failure)).not.toContain('fixture-password');
+            expect(requests.some(({ args }) => args.includes('config'))).toBe(false);
+        }, { failureOutput: { command: 'compose-version', exitCode: 125, stderr } });
+    });
+
     it.each(['bake', 'info'] as const)('names the attempted Docker socket when %s is denied', async command => {
         const endpoint = 'unix:///run/user/1001/docker.sock';
         const native = `permission denied while trying to connect to the Docker daemon socket at ${endpoint}: private-output-sentinel`;
