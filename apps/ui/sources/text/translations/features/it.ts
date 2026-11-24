@@ -13972,6 +13972,8 @@ const sessionAccessTranslations = { "it": {
         noPrimaryTeam: "Nessun team principale",
         noDirectTeamGrants: "Nessun accesso diretto per i team",
         contextChangeSummary: "Imposta o rimuovi il team principale. Gli accessi esistenti restano validi e il team selezionato ottiene l’accesso se i suoi criteri lo richiedono.",
+        contextSet: ({ team }: { team: string }) => `Ora in ${team}`,
+        contextCleared: "Team principale deselezionato",
         contextPolicyUnavailable: "Non è stato possibile verificare la politica di condivisione di questa sessione. Aggiorna per riprovare.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} non è più disponibile come contesto della sessione.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} è archiviato.`,

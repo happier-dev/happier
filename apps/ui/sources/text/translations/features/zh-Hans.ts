@@ -13853,6 +13853,8 @@ const sessionAccessTranslations = { "zh-Hans": {
         noPrimaryTeam: "无主要团队",
         noDirectTeamGrants: "没有直接授予团队的访问权限",
         contextChangeSummary: "设置或清除主要团队。现有访问权限会保留。如果所选团队的策略要求授予访问权限，该团队将获得访问权限。",
+        contextSet: ({ team }: { team: string }) => `当前所属团队：${team}`,
+        contextCleared: "已清除主要团队设置",
         contextPolicyUnavailable: "无法检查此会话的共享策略。请刷新后重试。",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} 已无法用作会话上下文。`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} 已归档。`,

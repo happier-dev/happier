@@ -13864,6 +13864,8 @@ const sessionAccessTranslations = { "es": {
         noPrimaryTeam: "Sin equipo principal",
         noDirectTeamGrants: "Sin permisos directos para equipos",
         contextChangeSummary: "Establece o quita el equipo principal. Los accesos existentes se mantienen y el equipo seleccionado obtiene acceso si su política lo exige.",
+        contextSet: ({ team }: { team: string }) => `Ahora en ${team}`,
+        contextCleared: "Equipo principal desasignado",
         contextPolicyUnavailable: "No se ha podido comprobar la política de uso compartido de esta sesión. Actualiza para volver a intentarlo.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} ya no está disponible como contexto de la sesión.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} está archivado.`,

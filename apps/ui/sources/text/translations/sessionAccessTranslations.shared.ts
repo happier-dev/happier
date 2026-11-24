@@ -11,6 +11,8 @@ export const sessionAccessTranslationsEnglish = { "en": {
         noPrimaryTeam: "No primary Team",
         noDirectTeamGrants: "No direct Team grants",
         contextChangeSummary: "Set or clear the primary Team. Existing grants stay in place, and the selected Team gains access if its policy requires it.",
+        contextSet: ({ team }: { team: string }) => `Now in ${team}`,
+        contextCleared: "Team cleared",
         contextPolicyUnavailable: "This session’s sharing policy could not be checked. Refresh to try again.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} is no longer available as a session context.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} is archived.`,

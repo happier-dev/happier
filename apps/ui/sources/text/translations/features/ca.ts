@@ -13965,6 +13965,8 @@ const sessionAccessTranslations = { "ca": {
         noPrimaryTeam: "Sense equip principal",
         noDirectTeamGrants: "Cap accés directe d’equip",
         contextChangeSummary: "Defineix o esborra l’equip principal. Els accessos existents es mantenen i l’equip seleccionat obté accés si la seva política ho exigeix.",
+        contextSet: ({ team }: { team: string }) => `Ara a ${team}`,
+        contextCleared: "Equip principal desassignat",
         contextPolicyUnavailable: "No s’ha pogut comprovar la política de compartició d’aquesta sessió. Actualitza per tornar-ho a provar.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} ja no està disponible com a context de la sessió.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} està arxivat.`,

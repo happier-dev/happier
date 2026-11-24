@@ -17,13 +17,14 @@ import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from
 import type { ApprovalTechnicalInputPath } from './specs/definition.js';
 import { matchesConfidentialInputPath, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
-import { ActionIdSchema, type ActionId } from './actionIds.js';
+import { ActionIdSchema, SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import { VoiceConversationTargetSchema } from './voiceConversationActionFamily.js';
 import type { ActionInputFieldHint, ActionInputOption } from './actionInputHintsRuntime.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import type { PrivateLabelStoredV1 } from '../crypto/privateLabelV1.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
+import { SetSessionAccessContextResponseV1Schema, type SetSessionAccessContextResponseV1 } from '../sessions/access/sessionAccessOperationsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { readWidgetActionSurfaceV1 } from '../widgets/actionsV1.js';
 import { unwrapActionInputSchema } from './actionInputSchemaPath.js';
@@ -46,6 +47,27 @@ import {
   PluginChangePendingReviewResultSchema,
   type PluginChangePendingReviewResult,
 } from '../marketplace/pluginInstallationReviewV1.js';
+
+type SettledSessionTeamGrants = Readonly<NonNullable<SetSessionAccessContextResponseV1['teamGrants']>>;
+
+export type SettledSessionTeamApproval =
+  | Readonly<{ kind: 'teamSet'; team: Extract<ApprovalActionReference, { kind: 'team' }>; teamGrantName: string | null; grants: SettledSessionTeamGrants }>
+  | Readonly<{ kind: 'teamCleared'; grants: SettledSessionTeamGrants }>;
+
+/** The context and remaining access are one settled fact from the same execution result. */
+export function readSettledSessionTeamApproval(request: Readonly<{
+  actionId: string; execution?: ApprovalRequest['execution'];
+}>): SettledSessionTeamApproval | null {
+  if (request.actionId !== SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 || !request.execution?.ok) return null;
+  const result = SetSessionAccessContextResponseV1Schema.safeParse(request.execution.result);
+  if (!result.success || result.data.teamGrants === undefined) return null;
+  const { primaryTeamId, teamGrants: grants } = result.data;
+  return primaryTeamId === null ? { kind: 'teamCleared', grants } : {
+    kind: 'teamSet', team: { kind: 'team', id: primaryTeamId },
+    teamGrantName: grants.find(grant => grant.teamId === primaryTeamId)?.name.trim() || null,
+    grants,
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

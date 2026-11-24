@@ -1,5 +1,4 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { SetSessionAccessContextResponseV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -10,7 +9,8 @@ import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '
 import { formatPendingGovernanceSummary } from './governanceApprovalSummary';
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
-import { describeApprovalActionFields, readTeamMemberApprovalPresentation, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { describeApprovalActionFields, readSettledSessionTeamApproval, readTeamMemberApprovalPresentation,
+    type ApprovalActionReference, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle, resolveBotDraftActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
 import { getPreferredLanguage } from '@/text/i18n';
@@ -56,18 +56,23 @@ export function readIncomingDiscussionApprovalSource(input: Readonly<{ actionId?
     return parsed.success && 'externalSource' in parsed.data.content ? parsed.data.content.externalSource ?? null : null;
 }
 
+export function formatSettledSessionTeamApproval(approval: SettledSessionTeamApproval, teamName?: string | null): string {
+    const summary = approval.kind === 'teamCleared' ? t('session.access.contextCleared')
+        : t('session.access.contextSet', { team: approval.teamGrantName ?? teamName ?? t('common.unavailable') });
+    const access = approval.grants.length === 0 ? t('session.access.noDirectTeamGrants')
+        : approval.grants.map(grant => `${grant.name} — ${t(`session.access.${grant.accessLevel}`)}`).join('\n');
+    return `${summary}\n${access}`;
+}
+
 export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown; status?: ApprovalRequest['status'];
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; execution?: ApprovalRequest['execution'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
 export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null): string | null {
     if (request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1) {
-        if (request.execution?.ok) {
-            const result = SetSessionAccessContextResponseV1Schema.safeParse(request.execution.result);
-            if (!result.success || result.data.teamGrants === undefined) return null;
-            return result.data.teamGrants.length === 0
-                ? t('session.access.noDirectTeamGrants')
-                : result.data.teamGrants.map(grant => `${grant.name} — ${t(`session.access.${grant.accessLevel}`)}`).join('\n');
+        if (request.execution?.ok || request.status === 'executed') {
+            const settled = readSettledSessionTeamApproval(request);
+            return settled ? formatSettledSessionTeamApproval(settled) : null;
         }
         return presentActionApproval({ ...request, preview, subject }).summary;
     }

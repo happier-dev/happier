@@ -8,12 +8,14 @@ import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from 
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupChangeGroupRow } from '@/components/settings/machines/managed/MachineSetupChangeGroupRow';
 import { groupMachineSetupChanges } from '@/components/settings/machines/managed/machineSetupReviewChanges';
-import { readActionApprovalSubject, readApprovalPreviewSummary, type ApprovalSummaryInput } from './actionApprovalPresentation';
+import { formatSettledSessionTeamApproval, readActionApprovalSubject, readApprovalPreviewSummary, type ApprovalSummaryInput } from './actionApprovalPresentation';
+import { readSettledSessionTeamApproval, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { useApprovalPrincipalName } from './approvalPrincipalReading';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
-import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -37,7 +39,13 @@ export const ApprovalPreviewCard = React.memo(function ApprovalPreviewCard(props
 /** Hosts may place this sentence in their existing Request section while family facts stay in the shared body. */
 export const ApprovalPreviewSummary = React.memo(function ApprovalPreviewSummary(props: Readonly<{ preview: unknown; request?: ApprovalSummaryInput; serverId?: string | null }>) {
     const language = usePreferredLanguage();
-    const summary = React.useMemo(() => readApprovalPreviewSummary(props.preview, props.request), [props.preview, props.request, language]);
+    const settledTeamChange = props.request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 && props.request.execution?.ok;
+    const summary = React.useMemo(() => settledTeamChange ? null : readApprovalPreviewSummary(props.preview, props.request),
+        [props.preview, props.request, language, settledTeamChange]);
+    if (settledTeamChange && props.request) {
+        const settled = readSettledSessionTeamApproval(props.request);
+        return settled ? <SettledSessionTeamPreview approval={settled} serverId={props.serverId ?? null} /> : null;
+    }
     if (props.request?.actionId === 'scm.diffSummary.result.clear') return <ClearApprovalPreview {...props} request={props.request} />;
     return <ApprovalPreviewText summary={summary} />;
 });
@@ -125,6 +133,13 @@ function ClearApprovalPreview(props: Readonly<{ preview: unknown; request: Appro
     const reading = useApprovalReferenceReading(reference, '', props.serverId ?? null);
     const subject = reading.named && !reading.resolving ? reading.text : null;
     return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, subject)} />;
+}
+
+function SettledSessionTeamPreview(props: Readonly<{ approval: SettledSessionTeamApproval; serverId: string | null }>) {
+    const { approval, serverId } = props;
+    const reference = approval.kind === 'teamSet' && approval.teamGrantName === null ? approval.team : undefined;
+    const { name } = useApprovalPrincipalName(reference, serverId);
+    return <ApprovalPreviewText summary={formatSettledSessionTeamApproval(approval, name)} />;
 }
 
 function ApprovalPreviewText(props: Readonly<{ summary: string | null }>) {

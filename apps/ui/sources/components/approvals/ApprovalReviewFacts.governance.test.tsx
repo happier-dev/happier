@@ -7,7 +7,7 @@ import { TEAM_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { accountDisplayProfileFixture, homeAccountDetailFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
-import { t } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -24,7 +24,10 @@ const ownerInput = { v: 1, name: 'Research team', initialOwnerAccountId: person.
 const homeAccount = homeAccountDetailFixture(person.accountId, { profile: accountDisplayProfileFixture(person.name, { username: 'ada' }) });
 
 beforeEach(async () => { standardCleanup(); await harness.reset(); });
-afterEach(() => standardCleanup());
+afterEach(() => {
+    setPreferredLanguageFromSettings('en');
+    standardCleanup();
+});
 
 it.each([
     { name: 'a Session’s primary Team', actionId: contextAction, input: { sessionId, primaryTeamId: team.teamId },
@@ -111,18 +114,45 @@ it('keeps the unreadable primary Team identity in Technical details', async () =
     } finally { await screen.unmount(); }
 });
 
-it.each([{ primaryTeamId: null }, { primaryTeamId: team.teamId }])(
-    'shows the committed Team grant after setting primaryTeamId to $primaryTeamId',
-    async ({ primaryTeamId }) => {
-        const home = await harness.addHome({ name: 'Review Home', serverUrl: 'https://governance-review.test', accountId: 'reviewer' });
-        harness.answer(home, 'POST /v1/session-access/principals/resolve', { body: { v: 1, principals: [] } });
-        const screen = await renderScreen(<ApprovalReviewFacts actionId={contextAction} actionArgs={{ sessionId, primaryTeamId }}
-            preview={null} serverId={home} testID="governance-review" status="executed"
-            execution={{ ok: true, executedAtMs: 1,
-                result: { changed: true, primaryTeamId, teamGrants: [{ teamId: team.teamId, name: team.name, accessLevel: 'edit' }] } }} />);
-        try {
-            expect(screen.getTextContent()).toContain(`${team.name} — ${t('session.access.edit')}`);
+const retainedTeamGrant = { teamId: team.teamId, name: team.name, accessLevel: 'edit' };
+
+it.each([
+    { scenario: 'set with a direct Team grant', primaryTeamId: team.teamId, grants: [retainedTeamGrant], readable: true,
+        summary: 'Now in Design studio' },
+    { scenario: 'clear with a kept grant', primaryTeamId: null, grants: [retainedTeamGrant], readable: true,
+        summary: 'Team cleared' },
+    { scenario: 'clear with no direct Team grants', primaryTeamId: null, grants: [], readable: true,
+        summary: 'Team cleared' },
+    { scenario: 'set to an unreadable Team with no direct Team grants', primaryTeamId: team.teamId, grants: [], readable: false,
+        summary: 'Now in Unavailable' },
+    { scenario: 'set without the grant projection', primaryTeamId: team.teamId, grants: undefined, readable: true, summary: null },
+    { scenario: 'clear with a malformed grant projection', primaryTeamId: null, grants: [{ ...retainedTeamGrant, accessLevel: 'invalid' }],
+        readable: true, summary: null },
+    { scenario: 'an executed receipt without results', primaryTeamId: null, grants: undefined, readable: true, summary: null, receiptOnly: true },
+    { scenario: 'set to a named Team in French', primaryTeamId: team.teamId, grants: [], readable: true,
+        summary: 'Désormais dans Design studio', language: 'fr' },
+    { scenario: 'clear with a kept grant in French', primaryTeamId: null, grants: [retainedTeamGrant], readable: true,
+        summary: 'Équipe principale désélectionnée', language: 'fr' },
+] as const)('shows the settled Team summary with the committed access for $scenario', async testCase => {
+    const { primaryTeamId, grants, readable, summary } = testCase;
+    if ('language' in testCase) {
+        await preloadTranslations(testCase.language);
+        setPreferredLanguageFromSettings(testCase.language);
+    }
+    const home = await harness.addHome({ name: 'Review Home', serverUrl: 'https://governance-review.test', accountId: 'reviewer' });
+    harness.answer(home, 'POST /v1/session-access/principals/resolve', { body: { v: 1, principals: readable ? [team] : [] } });
+    const request = { actionId: contextAction, actionArgs: { sessionId, primaryTeamId }, status: 'executed' as const,
+        execution: 'receiptOnly' in testCase ? undefined : { ok: true as const, executedAtMs: 1,
+            result: { changed: true, primaryTeamId, ...(grants === undefined ? {} : { teamGrants: grants }) } } };
+    const screen = await renderScreen(<ApprovalReviewFacts {...request} preview={null} serverId={home} testID="governance-review" />);
+    try {
+        if (summary === null) {
+            expect(screen.findByTestId('governance-review.preview')).toBeNull();
+        } else {
+            const access = grants?.length ? `${team.name} — ${t('session.access.edit')}` : t('session.access.noDirectTeamGrants');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(`${summary}\n${access}`));
             expect(screen.getTextContent()).not.toContain(t('session.access.private'));
-        } finally { await screen.unmount(); }
-    },
-);
+            expect(screen.getTextContent()).not.toContain(team.teamId);
+        }
+    } finally { await screen.unmount(); }
+});
