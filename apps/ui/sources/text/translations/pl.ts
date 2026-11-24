@@ -19643,7 +19643,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Najpierw utwórz dedykowaną bazę danych",
       databaseMoveEmptyBody: "Wdróż PostgreSQL we własnym Środowisku ze Sklepu, a potem wróć tutaj.",
       databaseMoveCopy: "Utwórz kopię zapasową i skopiuj",
-      databaseMoveSelectionUnavailable: "Potrzebuje prywatnego adresu sieciowego i zapisanego hasła administratora. Dodaj je w jej Ustawieniach i wybierz ją ponownie.",
+      databaseMoveSelectionUnavailable: "Potrzebuje prywatnego adresu sieciowego i zapisanego hasła administratora.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Dane są w ${provider}. Przeniesienie kopiuje tylko do PostgreSQL na Maszynie.`,
       databaseMoveManagedUnnamed: "Dane są u zarządzanego dostawcy. Przeniesienie kopiuje tylko do PostgreSQL na Maszynie.",
       databaseMoveUnsupported: "Nie można skopiować do tego Środowiska",

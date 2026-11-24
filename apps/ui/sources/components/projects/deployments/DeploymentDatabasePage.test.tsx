@@ -179,6 +179,8 @@ async function renderDatabase(
     sourceMultiMachine?: boolean;
     moveWritersUnavailable?: boolean;
     moveDestinationUnprotected?: boolean;
+    /** The destination is a dedicated PostgreSQL that is not shared on a private network yet. */
+    moveDestinationUnshared?: boolean;
     moveManagedDestination?: boolean;
     managed?: boolean;
     multipleManagedDatabases?: boolean;
@@ -305,7 +307,7 @@ async function renderDatabase(
         { purpose: 'variable', phase: 'runtime', name: 'POSTGRES_DB', source: { kind: 'value', value: 'shop' } },
         createDeploymentSecretVariableBindingV1({ name: 'POSTGRES_PASSWORD', phase: 'runtime', resourceId: 'database-password', resourceRevision: 1 }),
       ],
-      ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true, serviceExports: [
+      ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true, serviceExports: input.moveDestinationUnshared ? [] : [
         { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' },
       ] },
       template: { ...detail.content.template!, services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres',
@@ -1150,6 +1152,21 @@ describe('Environment → Database → Move', () => {
       await view.screen.pressByTestIdAsync('project-deployments.move.destination.setUpBackups');
       expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({
         deploymentEnvironment: 'database-dedicated', deploymentTab: 'settings', deploymentSection: 'backups' }) }));
+    } finally { await view.dispose(); }
+  });
+
+  it('leads a destination that is not ready yet to where it is shared, the way backups lead to Backups', async () => {
+    const view = await renderDatabase({ moveDestination: true, moveDestinationUnshared: true, storedDefinition: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle('project-deployments.move.destination:database-dedicated');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination.share');
+      expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({
+        deploymentEnvironment: 'database-dedicated', deploymentTab: 'settings', deploymentSection: 'sharing' }) }));
     } finally { await view.dispose(); }
   });
 

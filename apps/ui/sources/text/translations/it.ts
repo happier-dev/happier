@@ -19820,7 +19820,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Crea prima un database dedicato",
       databaseMoveEmptyBody: "Distribuisci PostgreSQL nel proprio Ambiente dallo Store, poi torna qui.",
       databaseMoveCopy: "Esegui backup e copia",
-      databaseMoveSelectionUnavailable: "Servono un indirizzo di rete privata e una password amministratore salvata. Aggiungili nelle sue Impostazioni, poi sceglilo di nuovo.",
+      databaseMoveSelectionUnavailable: "Servono un indirizzo di rete privata e una password amministratore salvata.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `I dati sono su ${provider}. Sposta copia solo in PostgreSQL su una Macchina.`,
       databaseMoveManagedUnnamed: "I dati sono su un provider gestito. Sposta copia solo in PostgreSQL su una Macchina.",
       databaseMoveUnsupported: "Sposta non può copiare in questo Ambiente",

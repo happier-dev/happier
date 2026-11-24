@@ -19438,7 +19438,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "请先创建专用数据库",
       databaseMoveEmptyBody: "从商店将 PostgreSQL 部署到独立环境，然后返回此处。",
       databaseMoveCopy: "备份并复制",
-      databaseMoveSelectionUnavailable: "它需要私有网络地址和已保存的管理员密码。请在其设置中添加后再选择。",
+      databaseMoveSelectionUnavailable: "它需要私有网络地址和已保存的管理员密码。",
       databaseMoveManaged: ({ provider }: { provider: string }) => `数据位于 ${provider}。移动只能复制到机器上的 PostgreSQL。`,
       databaseMoveManagedUnnamed: "数据位于托管服务商。移动只能复制到机器上的 PostgreSQL。",
       databaseMoveUnsupported: "无法复制到此环境",

@@ -63,6 +63,11 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const destinationDecision = deploymentDatabaseMoveDestination(destination);
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
   const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
+  const prerequisite = destinationRefusal === 'backup_required'
+    ? { section: 'backups' as const, label: t('projects.deployments.settingsSections.setupTitle'),
+      testID: 'project-deployments.move.destination.setUpBackups' }
+    : selected.snapshot.status === 'ready' && destination && !destinationDecision ? { section: 'sharing' as const, label: t('projects.deployments.databaseShare'),
+      testID: 'project-deployments.move.destination.share' } : null;
   const [busy, setBusy] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Readonly<{ code: string; variable?: string }> | null>(null);
   const select = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
@@ -171,15 +176,16 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         reason={selected.snapshot.status === 'unavailable'
           ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
           : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy') : undefined}
-        // A prerequisite leads to where it is met: the destination's own Settings › Backups (PAGE-ACCEPT-176 D23).
-        {...(destinationRefusal === 'backup_required' && destination ? { action: {
-          label: t('projects.deployments.settingsSections.setupTitle'),
-          testID: 'project-deployments.move.destination.setUpBackups',
+        // A prerequisite leads to where it is met in the destination's own Settings: Backups (PAGE-ACCEPT-176 D23), or
+        // Sharing for a database not yet on a private network.
+        {...(prerequisite && destination ? { action: {
+          label: prerequisite.label,
+          testID: prerequisite.testID,
           onPress: () => {
             props.onClose();
             router.push(deploymentEnvironmentRoute({ serverId: destination.environment.serverId,
               projectSourceId: destination.environment.projectSourceId, environmentId: destination.environment.id,
-              tab: 'settings', section: 'backups' }) as never);
+              tab: 'settings', section: prerequisite.section }) as never);
           },
         } } : {})} /> : null}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"

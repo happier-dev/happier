@@ -19818,7 +19818,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Crea primero una base de datos dedicada",
       databaseMoveEmptyBody: "Despliega PostgreSQL en su propio Entorno desde la Tienda y vuelve aquí.",
       databaseMoveCopy: "Crear copia de seguridad y copiar",
-      databaseMoveSelectionUnavailable: "Necesita una dirección de red privada y una contraseña de administrador guardada. Añádelas en su Configuración y vuelve a elegirlo.",
+      databaseMoveSelectionUnavailable: "Necesita una dirección de red privada y una contraseña de administrador guardada.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Los datos están en ${provider}. Mover solo copia a PostgreSQL en una Máquina.`,
       databaseMoveManagedUnnamed: "Los datos están en un proveedor gestionado. Mover solo copia a PostgreSQL en una Máquina.",
       databaseMoveUnsupported: "Mover no puede copiar a este Entorno",

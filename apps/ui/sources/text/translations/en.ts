@@ -23236,7 +23236,7 @@ const enProjects = {
       databaseMoveEmptyTitle: "Create a dedicated database first",
       databaseMoveEmptyBody: "Deploy PostgreSQL as its own Environment from Store, then return here.",
       databaseMoveCopy: "Back up and copy",
-      databaseMoveSelectionUnavailable: "It needs a private network address and a saved admin password. Add them in its Settings, then choose it again.",
+      databaseMoveSelectionUnavailable: "It needs a private network address and a saved admin password.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Data is on ${provider}. Move copies only into PostgreSQL on a Machine.`,
       databaseMoveManagedUnnamed: "Data is on a managed provider. Move copies only into PostgreSQL on a Machine.",
       databaseMoveUnsupported: "Move can’t copy into this Environment",

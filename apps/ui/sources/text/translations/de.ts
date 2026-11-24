@@ -19928,7 +19928,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Erstelle zuerst eine dedizierte Datenbank",
       databaseMoveEmptyBody: "Stelle PostgreSQL aus dem Store in einer eigenen Umgebung bereit und kehre dann zurück.",
       databaseMoveCopy: "Sichern und kopieren",
-      databaseMoveSelectionUnavailable: "Sie braucht eine private Netzwerkadresse und ein gespeichertes Admin-Passwort. Ergänze beides in ihren Einstellungen und wähle sie erneut.",
+      databaseMoveSelectionUnavailable: "Sie braucht eine private Netzwerkadresse und ein gespeichertes Admin-Passwort.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Die Daten liegen bei ${provider}. Verschieben kopiert nur in PostgreSQL auf einer Maschine.`,
       databaseMoveManagedUnnamed: "Die Daten liegen bei einem verwalteten Anbieter. Verschieben kopiert nur in PostgreSQL auf einer Maschine.",
       databaseMoveUnsupported: "Verschieben kann nicht in diese Umgebung kopieren",

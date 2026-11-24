@@ -19924,7 +19924,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Crie primeiro um banco de dados dedicado",
       databaseMoveEmptyBody: "Implante o PostgreSQL em seu próprio Ambiente pela Loja e volte aqui.",
       databaseMoveCopy: "Fazer backup e copiar",
-      databaseMoveSelectionUnavailable: "Ele precisa de um endereço de rede privada e de uma senha de administrador salva. Adicione-os nas Configurações dele e escolha-o de novo.",
+      databaseMoveSelectionUnavailable: "Ele precisa de um endereço de rede privada e de uma senha de administrador salva.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Os dados estão em ${provider}. Mover só copia para PostgreSQL em uma Máquina.`,
       databaseMoveManagedUnnamed: "Os dados estão em um provedor gerenciado. Mover só copia para PostgreSQL em uma Máquina.",
       databaseMoveUnsupported: "Mover não pode copiar para este Ambiente",

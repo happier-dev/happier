@@ -19772,7 +19772,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "Сначала создайте отдельную базу данных",
       databaseMoveEmptyBody: "Разверните PostgreSQL в отдельном Окружении из Магазина и вернитесь сюда.",
       databaseMoveCopy: "Создать резервную копию и скопировать",
-      databaseMoveSelectionUnavailable: "Нужны адрес в частной сети и сохранённый пароль администратора. Добавьте их в её Настройках и выберите её снова.",
+      databaseMoveSelectionUnavailable: "Нужны адрес в частной сети и сохранённый пароль администратора.",
       databaseMoveManaged: ({ provider }: { provider: string }) => `Данные находятся в ${provider}. Перенос копирует только в PostgreSQL на Машине.`,
       databaseMoveManagedUnnamed: "Данные находятся у управляемого провайдера. Перенос копирует только в PostgreSQL на Машине.",
       databaseMoveUnsupported: "Перенос не может скопировать в это Окружение",

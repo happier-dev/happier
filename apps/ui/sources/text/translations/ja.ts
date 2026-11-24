@@ -19732,7 +19732,7 @@ settingsSession: {
       databaseMoveEmptyTitle: "先に専用データベースを作成",
       databaseMoveEmptyBody: "ストアから PostgreSQL を専用の環境にデプロイしてから、ここに戻ってください。",
       databaseMoveCopy: "バックアップしてコピー",
-      databaseMoveSelectionUnavailable: "プライベートネットワークのアドレスと保存済みの管理者パスワードが必要です。設定で追加してから、もう一度選択してください。",
+      databaseMoveSelectionUnavailable: "プライベートネットワークのアドレスと保存済みの管理者パスワードが必要です。",
       databaseMoveManaged: ({ provider }: { provider: string }) => `データは ${provider} にあります。移動でコピーできるのはマシン上の PostgreSQL だけです。`,
       databaseMoveManagedUnnamed: "データはマネージドプロバイダーにあります。移動でコピーできるのはマシン上の PostgreSQL だけです。",
       databaseMoveUnsupported: "この環境にはコピーできません",
