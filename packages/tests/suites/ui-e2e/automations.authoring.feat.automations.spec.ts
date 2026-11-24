@@ -643,7 +643,7 @@ test.describe('ui e2e: automations authoring', () => {
             return WorkflowTriggerListResultV1Schema.parse(response.data).sets;
         };
         expect(await readTriggers()).toEqual([]);
-        await page.getByRole('button', { name: 'Live events', exact: true }).click();
+        await invokeP04MountedCommand(context, 'f2-open-live-events', /^Live events$/);
         const companion = page.getByTestId('workflow-editor-live-events');
         await expect(companion.getByTestId('workflow-editor-live-events:listening:live')).toBeVisible();
         await arrive();
