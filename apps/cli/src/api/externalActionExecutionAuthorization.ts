@@ -86,7 +86,8 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { openExternalActionRequestV2, openExternalActionResponseV2, projectExternalActionEncryptionBindingV2, sealExternalActionRequestV2,
+  type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
@@ -2979,10 +2980,9 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
       ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(input.material) } : input.material;
     if (binding.accountEncryptionMode === 'e2ee' && !material) return null;
     const envelope = binding.accountEncryptionMode === 'e2ee' && material
-      ? { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: binding.serverIdentityId,
-          accountId: binding.accountId,
-          ...('authentication' in binding ? { authentication: binding.authentication }
-            : { credentialId: binding.credentialId }), actionId, requestId: binding.requestId, target },
+      // The opener's canonical binding: sign-in evidence stays on the root, not in the ciphertext.
+      ? { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+          binding: projectExternalActionEncryptionBindingV2({ ...binding, actionId, target }),
           input: input.input, material, randomBytes }), handoffAdmission }
       : { v: 1 as const, requestId: binding.requestId, target, input: input.input, handoffAdmission };
     const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: input.machineId,

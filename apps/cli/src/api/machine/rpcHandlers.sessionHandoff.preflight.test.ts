@@ -79,7 +79,9 @@ describe('installed source handoff preflight', () => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const secret = new Uint8Array(32).fill(9);
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root', binding: {
-      accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_home',
+      // A signed-in person's root carries its sign-in evidence, as Home issues it.
+      accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0, evidence: [{ kind: 'home_method', methodId: 'password' }] },
+      serverIdentityId: 'srv_home',
       machineId: 'source', custodianAccountId: 'owner', installationId: 'source-installation', actionId: 'session.handoff',
       requestId: 'handoff-request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'source' },
       accountEncryptionMode: 'e2ee', handoffAdmission: { sessionId: 'session', sourceMachineId: 'source', targetMachineId: 'target',
