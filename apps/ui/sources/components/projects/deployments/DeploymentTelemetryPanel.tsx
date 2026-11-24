@@ -163,7 +163,7 @@ type ListState = Readonly<{
  * One page of the open list for the chosen window, read while the tab shows it. Coming back to a list shows what it
  * last read this visit while it reads again; Retry keeps the rows until the answer lands. Show older appends a page.
  */
-function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, active: boolean, list: TelemetryCaptureList, windowMs: number, attempt: number) {
+export function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, active: boolean, list: TelemetryCaptureList, windowMs: number, attempt: number) {
   const key = `${list}\u0000${windowMs}`;
   const [state, setState] = React.useState<ListState>({ reads, key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
   // Last settled answers belong to the current collector, Environment and captured Account lifetime.
@@ -534,7 +534,7 @@ function useCaptureFindingHandoff(lifetime: ServerAccountScopeLifetime | null, d
 }
 
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
-function TelemetryRequestDetail(props: Readonly<{
+export function TelemetryRequestDetail(props: Readonly<{
   reads: TelemetryCaptureReads;
   lifetime: ServerAccountScopeLifetime | null;
   active: boolean;

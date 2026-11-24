@@ -46,6 +46,23 @@ export type Copy = Readonly<{
     queries: (p: Readonly<{ count: number }>) => string;
   }>;
   addCheck: string;
+  /** A worktree's own capture on its Dev servers page (P5 F7, lab dbCapture). */
+  local: Readonly<{
+    views: string;
+    servers: string;
+    on: string;
+    off: string;
+    offTitle: string;
+    offBody: string;
+    turnOn: string;
+    turnOnFailed: string;
+    gaps: (p: Readonly<{ reason: string }>) => string;
+    restart: string;
+    restartReason: string;
+    waitingTitle: string;
+    waitingBody: string;
+    window: Readonly<{ quarter: string; hour: string; day: string }>;
+  }>;
   measurement: Readonly<{ sampled: string; partial: string; unknown: string }>;
   sheet: Readonly<{
     title: (p: Name) => string;
@@ -136,6 +153,22 @@ const en: Copy = {
     queries: ({ count }) => (count === 1 ? '1 query' : `${count} queries`),
   },
   addCheck: 'Add a check…',
+  local: {
+    views: 'What this checkout ran',
+    servers: 'Servers',
+    on: 'Capture on',
+    off: 'Request capture is off',
+    offTitle: 'See what your dev servers do',
+    offBody: 'Each request’s route, time, database queries and logs, kept on this Machine. Turning capture on restarts the dev servers once.',
+    turnOn: 'Turn on capture',
+    turnOnFailed: 'Capture could not be turned on.',
+    gaps: ({ reason }) => `Capture on with gaps · ${reason}`,
+    restart: 'Restart the dev servers to capture their requests.',
+    restartReason: 'Capture changed while they were running.',
+    waitingTitle: 'Waiting for the first request',
+    waitingBody: 'Capture is recording. Open the app and its requests appear here as they happen.',
+    window: { quarter: '15 min', hour: '1 h', day: '24 h' },
+  },
   measurement: {
     sampled: 'Includes sampled requests',
     partial: 'Some observations are missing',

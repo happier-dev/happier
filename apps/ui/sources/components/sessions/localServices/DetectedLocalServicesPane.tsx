@@ -139,6 +139,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginHorizontal: theme.space.s16,
         marginBottom: theme.space.s8,
     },
+    /** Servers · Endpoints · Traces · Logs lead the row; the scope (Servers only) takes its trailing edge (lab dbCapture). */
+    viewBar: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        alignSelf: 'stretch',
+        gap: theme.space.s8,
+    },
+    /** A pane or phone stacks the scope under the views: two bars never squeeze into one narrow row. */
+    viewBarStacked: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+    },
+    viewBarTabs: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
     /** On the Services page the scope sits under the purpose at its own width, not across the column. */
     scopeTogglePage: {
         alignSelf: 'flex-start',
@@ -275,21 +293,37 @@ function ServicesScopeBar(props: Readonly<{
     phone: boolean;
     testID: string;
 }>): React.ReactElement {
-    const styles = stylesheet;
     const tabs = React.useMemo(() => ([
         { id: 'workspace' as const, label: t('localServices.scope.workspace') },
         { id: 'machine' as const, label: t('localServices.scope.machine') },
     ]), []);
     return (
-        <View style={[styles.scopeToggle, props.page ? styles.scopeTogglePage : null, props.page && props.phone ? styles.scopeTogglePhone : null]}>
-            <SegmentedTabBar
-                tabs={tabs}
-                activeTabId={props.scope}
-                onSelectTab={props.onChangeScope}
-                segmentSizing={props.page ? 'content' : 'equal'}
-                accessibilityLabel={t('localServices.scope.toggleA11y')}
-                testIDPrefix={props.testID}
-            />
+        <SegmentedTabBar
+            tabs={tabs}
+            activeTabId={props.scope}
+            onSelectTab={props.onChangeScope}
+            segmentSizing={props.page ? 'content' : 'equal'}
+            accessibilityLabel={t('localServices.scope.toggleA11y')}
+            testIDPrefix={props.testID}
+        />
+    );
+}
+
+/** The page's one control row: the host's views (when it offers capture) and this list's scope. */
+function ServicesViewBar(props: Readonly<{
+    views: React.ReactNode;
+    scope: React.ReactNode;
+    page: boolean;
+    phone: boolean;
+}>): React.ReactElement | null {
+    const styles = stylesheet;
+    if (!props.views && !props.scope) return null;
+    const stacked = !props.page || props.phone;
+    return (
+        <View style={[styles.scopeToggle, props.page ? styles.scopeTogglePage : null, props.page && props.phone ? styles.scopeTogglePhone : null,
+            props.views ? styles.viewBar : null, props.views && stacked ? styles.viewBarStacked : null]}>
+            {props.views ? <View style={styles.viewBarTabs}>{props.views}</View> : null}
+            {props.scope}
         </View>
     );
 }
@@ -355,6 +389,10 @@ type DetectedLocalServicesPaneProps = Readonly<{
     launcherState?: LocalServiceLauncherState | null;
     /** One line under the scope bar about the selected workspace (its own ports), from the host that knows it. */
     scopeNote?: React.ReactNode;
+    /** The host's Servers · Endpoints · Traces · Logs bar, when this checkout's capture can be read. */
+    viewTabs?: React.ReactNode;
+    /** A capture view's body in place of the Servers list; the page header and the bar stay. */
+    viewBody?: React.ReactNode;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     /** The preview-access snapshot, when the host already holds it (a specimen); rows read the shared store otherwise. */
     previewState?: LocalServicePreviewState;
@@ -733,7 +771,8 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         <ServicesEmptyState scope={scope} testID={testID} addService={addService} checkAgain={checkAgain} />
     );
 
-    const scopeBar = props.onChangeScope ? (
+    // The scope chooses which services the Servers list shows; a capture view is always this checkout's.
+    const scopeToggle = props.onChangeScope && !props.viewBody ? (
         <ServicesScopeBar
             scope={scope}
             onChangeScope={props.onChangeScope}
@@ -742,6 +781,20 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             testID={`${testID}-scope-toggle`}
         />
     ) : null;
+    const scopeBar = props.viewTabs || scopeToggle
+        ? <ServicesViewBar views={props.viewTabs} scope={scopeToggle} page={page} phone={phone} /> : null;
+
+    if (props.viewBody) {
+        return (
+            <ScrollView testID={`${testID}-view`} style={styles.root} contentContainerStyle={styles.stateScrollContent}>
+                <ConstrainedScreenContent>
+                    {pageHeader}
+                    {scopeBar}
+                    {props.viewBody}
+                </ConstrainedScreenContent>
+            </ScrollView>
+        );
+    }
     // A whole-pane state stands in for the rows only: the page's purpose and the scope stay above it
     // (a Machine-scope scan can take minutes, and the person must be able to switch back), and the
     // Services panel's plugin surfaces stay reachable below it.

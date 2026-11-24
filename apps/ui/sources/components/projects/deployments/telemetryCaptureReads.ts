@@ -1,7 +1,9 @@
 import * as React from 'react';
 import {
   DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+  DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
   DatabaseCaptureClearResultV1Schema,
+  DatabaseCaptureConfigureResultV1Schema,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
@@ -28,12 +30,13 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { HappyError } from '@/utils/errors/errors';
 
 /**
- * An Environment's collector reads (P6 F14d): the same `capture/*` Actions every capture reader uses, with the
- * Environment as their source, relayed to the Environment's collector Machine. The Action's admission decides once
+ * Capture reads (P6 F14d, P5 F7): the same `capture/*` Actions every capture reader uses, with an Environment (relayed
+ * to its collector Machine) or a worktree checkout (on the Machine that runs it) as their source. The Action's admission decides once
  * per request that this viewer may read the Environment; there is no timer and no retry loop here.
  */
 export type TelemetryCaptureActionId =
   | typeof DATABASE_CAPTURE_CLEAR_ACTION_ID_V1
+  | typeof DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1
@@ -102,16 +105,28 @@ export type TelemetryCapturePage<Item, Cursor> = Readonly<{
   nextCursor: Cursor | null;
 }>;
 
+/** The place whose capture is read: an Environment on its collector, or one worktree checkout on its own Machine. */
 export type TelemetryCaptureEnvironment = Readonly<{
   scope: ServerAccountScope;
-  environmentId: string;
   collectorMachineId: string;
-}>;
+}> & (
+  | Readonly<{ environmentId: string; worktree?: undefined }>
+  | Readonly<{ environmentId?: undefined; worktree: Readonly<{ projectId: string; workspaceId: string }> }>
+);
 
 /** The host's own result-row bound for one read; the collector pages beneath it. */
 const PAGE_LIMIT = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
 
 function source(environment: TelemetryCaptureEnvironment) {
+  if (environment.worktree) {
+    return {
+      kind: 'worktree' as const,
+      serverId: environment.scope.serverId,
+      machineId: environment.collectorMachineId,
+      projectId: environment.worktree.projectId,
+      workspaceId: environment.worktree.workspaceId,
+    };
+  }
   return {
     kind: 'environment' as const,
     serverId: environment.scope.serverId,
@@ -141,6 +156,15 @@ export function createTelemetryCaptureReads(
     async clear() {
       return settle(DatabaseCaptureClearResultV1Schema.safeParse(
         await call(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, { source: source(environment) }),
+      ));
+    },
+    /** A worktree's Project Capture switch on its Machine (P5 Q3); the person's press is the confirmation. */
+    async configure(enabled: boolean) {
+      if (!environment.worktree) throw new HappyError('telemetry_unavailable', false, { code: 'telemetry_unavailable' });
+      const project = { serverId: environment.scope.serverId, machineId: environment.collectorMachineId,
+        projectId: environment.worktree.projectId };
+      return settle(DatabaseCaptureConfigureResultV1Schema.safeParse(
+        await call(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled }),
       ));
     },
     async status(signal?: AbortSignal) {

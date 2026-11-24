@@ -29,6 +29,16 @@ import { useLocalServiceLiveFeeds } from './useLocalServiceLiveFeeds';
 import { useLocalServicePresentationFeatures } from './useLocalServicePublicPreviewFeature';
 import { WorktreePortsLine } from './WorktreePortsLine';
 import { useProjectCommandOutputHostScope } from '@/components/inbox/actionOperations/projectCommandOutputHost';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/database-protocol';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { useProjectContext } from '@/components/projects/useProjectContext';
+import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
+import { readPluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
+import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { LocalServiceCaptureView, type LocalServiceCaptureViewId, type LocalServiceCaptureWorktree } from './LocalServiceCaptureView';
+
+type LocalServicesViewId = 'servers' | LocalServiceCaptureViewId;
+const CAPTURE_RESOURCE = { pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: DATABASE_CAPTURE_RESOURCE_REF_V1.contributionId };
 
 export type LocalServicesSurfaceHostProps = Readonly<{
     machineId?: string | null;
@@ -137,6 +147,49 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         />
     ) : null;
 
+    // The Project and its admitted checkout, read once: the Services panel's plugin surfaces (the Workbench mount's
+    // Worktree scope) and this page's capture views are about the same checkout.
+    const projectRef = useProjectAccountWorkspaceRef(workspaceRefId, serverId ?? undefined);
+    const projectContext = useProjectContext({ serverId: serverId ?? projectRef?.serverId ?? '', projectRef, activeCheckout: projectRef });
+    const projectKey = projectContext.target?.projectKey ?? null;
+    const checkout = projectContext.target?.checkout ?? null;
+    // Capture is offered where this Machine's Telemetry declares its capture Resource for the checkout's Project.
+    const captureOffered = readPluginUiResourceProjection(pluginUiProjection?.resourcesById, CAPTURE_RESOURCE) !== null;
+    const captureMachineId = checkout?.machineId ?? null;
+    const captureWorkspaceId = checkout?.id ?? null;
+    const worktree = React.useMemo((): LocalServiceCaptureWorktree | null => captureOffered && projectKey && captureMachineId && captureWorkspaceId
+        ? { machineId: captureMachineId, projectId: projectKey, workspaceId: captureWorkspaceId } : null,
+    [captureOffered, projectKey, captureMachineId, captureWorkspaceId]);
+    const [view, setView] = React.useState<LocalServicesViewId>('servers');
+    const shownView: LocalServicesViewId = worktree ? view : 'servers';
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const presented = useLayoutPresentationActive();
+    const viewTabs = worktree ? (
+        <SegmentedTabBar<LocalServicesViewId>
+            accessibilityLabel={t('deploymentTelemetry.local.views')}
+            testIDPrefix={`${props.testID}-view`}
+            segmentSizing={props.presentation === 'page' ? 'content' : 'equal'}
+            activeTabId={shownView}
+            tabs={[{ id: 'servers', label: t('deploymentTelemetry.local.servers') },
+                { id: 'endpoints', label: t('deploymentTelemetry.tabs.endpoints') },
+                { id: 'traces', label: t('deploymentTelemetry.tabs.traces') },
+                { id: 'logs', label: t('deploymentTelemetry.tabs.logs') }]}
+            onSelectTab={setView}
+        />
+    ) : null;
+    const showServers = React.useCallback(() => setView('servers'), []);
+    const viewBody = worktree && shownView !== 'servers' ? (
+        <LocalServiceCaptureView
+            lifetime={lifetime && serverId && lifetime.scope.serverId === serverId ? lifetime : null}
+            worktree={worktree}
+            view={shownView}
+            active={presented}
+            machineName={machine.sentenceName ?? t('machine.thisMachineInSentence')}
+            onShowServers={showServers}
+            testID={`${props.testID}-capture`}
+        />
+    ) : null;
+
     const pluginStack = (
         <PluginSurfacePlacementStack
             container="servicesPanel"
@@ -148,6 +201,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             platform={platform}
             targetKind="services"
             projectId={scope === 'workspace' ? props.workspaceRefId : null}
+            projectContext={scope === 'workspace' ? projectContext : undefined}
             testID={`${props.testID}-plugin-stack`}
         />
     );
@@ -177,6 +231,8 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             viewerAccountId={entryActions.viewerAccountId}
             effectReview={entryActions.review}
             scopeNote={scopeNote}
+            viewTabs={viewTabs}
+            viewBody={viewBody}
             testID={props.testID}
             footer={pluginStack}
         />
