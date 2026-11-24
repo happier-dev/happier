@@ -276,6 +276,10 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'machinePool'; id: string }>
   | Readonly<{ kind: 'artifact' | 'skill'; id: string; unavailableWithoutName?: true }>
   | Readonly<{ kind: 'mcpServer' | 'project' | 'agent' | 'registrySource' | 'builtinWidget'; id: string }>
+  /** A saved, built-in or plugin Workflow (its canonical definition reference), read by its title. */
+  | Readonly<{ kind: 'workflow'; id: string }>
+  /** An existing Workflow Run, read by its Workflow's title and when it started. */
+  | Readonly<{ kind: 'workflowRun'; id: string }>
   | Readonly<{ kind: 'machine'; id: string; serverId?: string; workspaceRoot?: string; unavailableWithoutName?: true }>
   /** A workspace the app already knows (a ref id): read by its folder name and its machine. */
   | Readonly<{ kind: 'workspace'; id: string; unavailableWithoutName?: true }>
@@ -306,6 +310,9 @@ function describeApprovalKeyReference(key: string | undefined, value: unknown): 
   if (key === 'discussionId') return { kind: 'discussion', id: value.trim() };
   // A Team id names a Team wherever an Action carries it; its name reads instead of the id.
   if (key === 'teamId') return { kind: 'team', id: value.trim() };
+  // A Project key names that Project wherever an Action carries it (`projectKey`, `target.projectKey`).
+  // `self` is the grouping contract's "its own Project" choice, not a Project.
+  if (key === 'projectKey' && value.trim() !== 'self') return { kind: 'project', id: value.trim() };
   return readApprovalSavedSecretReference('', key, value);
 }
 

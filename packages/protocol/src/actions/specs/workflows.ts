@@ -1,6 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import type { ActionExecutorContext } from '../executor/types.js';
+import type { ApprovalActionReference } from '../actionApprovalPresentation.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -90,6 +91,21 @@ function removesWholeTriggerSet(input: unknown): boolean {
   return typeof readRecord(input).triggerId !== 'string';
 }
 
+/**
+ * The Workflow operands an approval names: a Workflow (saved definition id or catalog reference) by its title, an
+ * existing Run by its Workflow and start time. A create allocates the new definition's id and a start the new Run's
+ * id: neither names anything yet, so they stay as written.
+ */
+function workflowApprovalReferenceForField(actionId: WorkflowActionIdV1) {
+  return (path: string, value: unknown): ApprovalActionReference | undefined => {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    if ((path === 'definitionId' && actionId !== 'workflow.definition.create')
+      || path === 'source.definitionId' || path === 'workflow' || path === 'source.workflow') return { kind: 'workflow', id: value };
+    if ((path === 'runId' && actionId !== 'workflow.run.start') || path === 'source.replay.runId') return { kind: 'workflowRun', id: value };
+    return undefined;
+  };
+}
+
 export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => WORKFLOW_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   // Voice reaches the ordinary Action owner but cannot complete a person's review.
   const voice = actionId !== 'workflow.run.invocations.complete_review';
@@ -134,10 +150,13 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
     },
     ...(deletesRetainedContent || actionId === 'workflow.trigger.remove'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
-    ...(actionId === 'workflow.definition.delete' || actionId === 'workflow.trigger.remove' ? {
-      approvalPresentation: { summary: (input: unknown) => actionId === 'workflow.trigger.remove'
-        && !removesWholeTriggerSet(input) ? null : WORKFLOW_AUTOMATION_REMOVAL_WARNING },
-    } : {}),
+    approvalPresentation: {
+      referenceForField: workflowApprovalReferenceForField(actionId),
+      ...(actionId === 'workflow.definition.delete' || actionId === 'workflow.trigger.remove' ? {
+        summary: (input: unknown) => actionId === 'workflow.trigger.remove'
+          && !removesWholeTriggerSet(input) ? null : WORKFLOW_AUTOMATION_REMOVAL_WARNING,
+      } : {}),
+    },
     approval: WORKFLOW_READ_ACTION_IDS.has(actionId) ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
     title: WORKFLOW_ACTION_TITLES[actionId],
     description: WORKFLOW_ACTION_DESCRIPTIONS[actionId]

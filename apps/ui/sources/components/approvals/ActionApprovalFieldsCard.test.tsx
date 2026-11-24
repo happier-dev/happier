@@ -900,3 +900,74 @@ it('names a plugin-contributed Action\'s Session and Machine operands like a hos
     expect(invoked.getTextContent()).toContain('Checkout page review');
     expect(invoked.getTextContent()).not.toContain(sessionId);
 });
+
+it('names a Workflow, a Run and a Project by what they are, and says so neutrally when they cannot be read', async () => {
+    // The real sync runtime owns exact header and Run reads; its transport is the boundary stubbed below.
+    await import('@/sync/syncEngine');
+    const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+    const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
+    const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+    const { formatRelativeTimeShort } = await import('@/utils/time/formatShortRelativeTime');
+    const home = await upsertServerProfile({ name: 'Approval Home', serverUrl: 'https://workflow-operands.test' });
+    profiles.push(home.id);
+    const scope = { serverId: home.id, accountId: 'account' };
+    const active = await activateStorageAccountScope(scope);
+    // The Home's reads are the network boundary: anything not already in the stores settles as unread.
+    vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+    try {
+        const definitionId = '33333333-3333-4333-8333-333333333333';
+        const runId = 'run-nightly';
+        const startedAt = Date.now() - 2 * 60 * 60_000;
+        await act(async () => {
+            storage.setState({ settingsScope: scope });
+            storage.getState().applyArtifacts([{ id: definitionId, title: null, isDecrypted: true, ownerAccountId: 'account', access: 'owner',
+                rawHeader: { kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Nightly triage' },
+                    revision: { headerVersion: 1, bodyVersion: 1 } },
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } as never]);
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: runId,
+                createdAt: new Date(startedAt).toISOString() }), { kind: 'available', value: { title: 'Nightly triage' } })], scope);
+            applyProjectAccountRowsFixture(storage, { organizations: [{ key: { kind: 'project-organization', serverId: home.id,
+                projectKey: 'payments' }, revision: 1, value: { label: 'Payments service' } }] });
+        });
+        const project = { key: { projectKey: 'payments' }, value: { label: 'Payments service' } };
+        const read = async (actionId: 'workflow.definition.delete' | 'workflow.run.cancel', actionArgs: Record<string, unknown>) => {
+            const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+                presentation={describeApprovalActionFields({ actionId, actionArgs: getActionSpec(actionId).inputSchema.parse(actionArgs) })} />);
+            return screen;
+        };
+        const workflow = await read('workflow.definition.delete', { definitionId });
+        expect(workflow.getTextContent()).toContain('Nightly triage');
+        expect(workflow.getTextContent()).not.toContain(definitionId);
+        await expandDisclosureAsync(workflow.findAllByTestId('approvals.technical-details'));
+        expect(workflow.getTextContent()).toContain(definitionId);
+
+        const run = await read('workflow.run.cancel', { runId, expectedRevision: 1 });
+        expect(run.getTextContent()).toContain(`Nightly triage · ${formatRelativeTimeShort(startedAt, Date.now())}`);
+        expect(run.getTextContent()).not.toContain(runId);
+
+        const unreadWorkflow = await read('workflow.definition.delete', { definitionId: '44444444-4444-4444-8444-444444444444' });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        // An unread reference reads as the card's one neutral word; its id stays in Technical details.
+        expect(unreadWorkflow.getTextContent()).toContain(t('common.unavailable'));
+        expect(unreadWorkflow.getTextContent()).not.toContain('44444444-4444-4444-8444-444444444444');
+        const unreadRun = await read('workflow.run.cancel', { runId: 'run-not-visible', expectedRevision: 1 });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(unreadRun.getTextContent()).toContain(t('common.unavailable'));
+        expect(unreadRun.getTextContent()).not.toContain('run-not-visible');
+
+        // A Project key reads by the Project's name on any Action, a plugin's included.
+        const projects = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+            presentation={describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open', secretInputPaths: [],
+                input: { projectKey: project.key.projectKey } })} />);
+        expect(projects.getTextContent()).toContain(project.value.label);
+        expect(projects.getTextContent()).not.toContain(project.key.projectKey);
+        const hidden = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+            presentation={describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open', secretInputPaths: [],
+                input: { projectKey: 'project-not-visible' } })} />);
+        expect(hidden.getTextContent()).toContain(t('common.unavailable'));
+        expect(hidden.getTextContent()).not.toContain('project-not-visible');
+    } finally {
+        active.dispose();
+    }
+});

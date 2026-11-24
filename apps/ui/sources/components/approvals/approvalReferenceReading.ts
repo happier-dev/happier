@@ -70,6 +70,12 @@ import { useDiscussionTitleReadings } from '@/components/discussions/useDiscussi
 import { readDiscussionTitle } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { useHomeHubLayoutReading } from '@/components/hub/layout/useHomeHubLayout';
 import { homeChildTitle, homeHubSectionTitle } from '@/components/hub/homeHubSections';
+import { useWorkflowReferenceTitleRead } from '@/components/workflows/presentation/workflowReferenceOptions';
+import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { useActiveServerAccountScopeLifetime, useWorkflowRun } from '@/sync/store/hooks';
+import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { describeWidgetGroupAmong } from '@/components/widgets/group/widgetGroupMenu';
 type ApprovalReference = ApprovalActionReference;
 
@@ -463,6 +469,10 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const teamDirectorySourceName = directorySource && governanceScope
         ? readTeamDirectorySourceName(governanceScope, directorySource.teamId, directorySource.id) : null;
     const teamInvitationName = invitation && governanceScope ? readTeamInvitationName(governanceScope, invitation) : null;
+    const workflowRefs = React.useMemo(() => reference?.kind === 'workflow' && ownHome ? [reference.id] : NO_WORKFLOW_REFS,
+        [ownHome, reference]);
+    const workflowTitles = useWorkflowReferenceTitleRead(workflowRefs, workflowRefs.length > 0);
+    const workflowRun = useApprovalWorkflowRun(reference?.kind === 'workflowRun' && ownHome ? reference.id : null);
     const homeLayout = useApprovalHomeLayoutItemReading(reference?.kind === 'homeLayoutItem' ? approvalServerId : null, viewer?.serverId);
     const homeLayoutItemName = reference?.kind === 'homeLayoutItem' ? homeLayout.readName(reference.id) : null;
     return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
@@ -480,7 +490,39 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         homeSetupStepName: reference?.kind === 'homeSetupStep' ? readSetupStepName(reference.id, ownHome ? viewer : null) : null,
         homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && homeLayout.resolving,
         machineCatalogName: machineCatalogReference ? lookup.value : null,
-        machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
+        machineCatalogResolving: machineCatalogReference !== null && lookup.resolving,
+        workflowTitle: workflowRefs[0] ? workflowTitles.title(workflowRefs[0]) : null,
+        workflowTitleResolving: workflowRefs[0] ? workflowTitles.isPending(workflowRefs[0]) : false,
+        workflowRunName: workflowRun.text, workflowRunResolving: workflowRun.resolving });
+}
+
+const NO_WORKFLOW_REFS: readonly string[] = Object.freeze([]);
+
+/**
+ * An existing Run reads as its Run rows do: its Workflow's title from the Run label owner and when it started, on
+ * the shared list clock. A Run this device has not read yet gets one exact read through the Run owner.
+ */
+function useApprovalWorkflowRun(runId: string | null): Readonly<{ text: string | null; resolving: boolean }> {
+    const lifetime = useActiveServerAccountScopeLifetime(runId !== null);
+    const row = useWorkflowRun(runId, { enabled: runId !== null, ...(lifetime ? { scope: lifetime.scope } : {}) });
+    const missing = runId !== null && row === null;
+    const [settledRunId, setSettledRunId] = React.useState<string | null>(null);
+    React.useEffect(() => {
+        if (!runId || !missing || !lifetime?.isCurrent()) return;
+        const controller = new AbortController();
+        void refreshWorkflowRunById(runId, { signal: controller.signal, fence: lifetime, accountLifetime: lifetime })
+            .catch(() => {}).finally(() => { if (!controller.signal.aborted) setSettledRunId(runId); });
+        return () => controller.abort();
+    }, [lifetime, missing, runId]);
+    const startedAt = row?.summary ? Date.parse(row.summary.createdAt) : Number.NaN;
+    const started = Number.isFinite(startedAt);
+    const readNextRefresh = React.useCallback((nowMs: number) => started ? readRelativeTimeShortRefreshAtMs(startedAt, nowMs) : null,
+        [started, startedAt]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, started);
+    if (!runId) return { text: null, resolving: false };
+    if (!row) return { text: null, resolving: settledRunId !== runId };
+    const name = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(row.metadata));
+    return { text: started ? `${name} · ${formatRelativeTimeShort(startedAt, nowMs)}` : name, resolving: false };
 }
 
 function readTeamInvitationName(scope: NonNullable<ApprovalReferenceSources['viewer']>,
@@ -622,6 +664,11 @@ type ApprovalReferenceSources = {
     discussionTitle?: string | null;
     /** The title is still being read: the destination reads as loading, not unavailable. */
     discussionTitleResolving?: boolean;
+    workflowTitle?: string | null;
+    workflowTitleResolving?: boolean;
+    /** The Run's Workflow title and start time, as its Run rows read it. */
+    workflowRunName?: string | null;
+    workflowRunResolving?: boolean;
 };
 
 function resolveApprovalReferenceReading(reference: ApprovalReference | undefined, literal: string, approvalServerId: string | null, sources: ApprovalReferenceSources): ApprovalReferenceReading {
@@ -718,6 +765,14 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     if (reference?.kind === 'project') {
         const title = sources.project?.value.label;
         return { text: title ?? reference.id, named: Boolean(title) };
+    }
+    if (reference?.kind === 'workflow' || reference?.kind === 'workflowRun') {
+        const name = reference.kind === 'workflow' ? sources.workflowTitle : sources.workflowRunName;
+        if (!name && (reference.kind === 'workflow' ? sources.workflowTitleResolving : sources.workflowRunResolving)) {
+            return { text: t('common.loading'), named: false, resolving: true };
+        }
+        // Unnamed, the card reads it as unavailable and keeps the id in Technical details, as for a Project.
+        return { text: name || reference.id, named: Boolean(name) };
     }
     if (reference?.kind === 'agent') {
         const title = agents?.map(row => row.entry.title).join(', ') ?? '';
