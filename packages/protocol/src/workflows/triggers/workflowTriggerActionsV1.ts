@@ -15,7 +15,7 @@ import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.
 import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
 import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automationSubjectV1.js';
 import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
-import { AutomationDefinitionListRequestSchema, AutomationScheduleHoldV1Schema } from '../../automations/automationApiV3.js';
+import { AutomationDefinitionListRequestSchema, AutomationEnvironmentHealthCheckSelectionV1Schema, AutomationScheduleHoldV1Schema } from '../../automations/automationApiV3.js';
 import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
@@ -191,7 +191,10 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
     serverId: WorkflowDeploymentBackupTargetV1Schema.shape.serverId,
     environmentId: WorkflowDeploymentBackupTargetV1Schema.shape.environmentId,
   }) }),
-  z.strictObject({ healthSource: z.strictObject({ sourceInstanceIds: z.array(AutomationEventSourceInstanceIdV1Schema) }) }),
+  z.strictObject({ healthSource: z.union([
+    z.strictObject({ sourceInstanceIds: z.array(AutomationEventSourceInstanceIdV1Schema) }),
+    AutomationEnvironmentHealthCheckSelectionV1Schema,
+  ]) }),
   z.strictObject({ scope: z.enum(['account_inline', 'account_all', 'account_source_unavailable']) }),
   z.strictObject({ lifetimeSession: z.pick(WorkflowTriggerLifetimeSessionV1Schema, { sessionId: true }) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),

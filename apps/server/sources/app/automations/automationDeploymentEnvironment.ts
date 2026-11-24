@@ -1,4 +1,6 @@
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { parseAutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -64,6 +66,15 @@ export async function lockAutomationDeploymentEnvironmentInTx(tx: Tx,
         select: { deploymentEnvironmentId: true } }) : null;
     const environmentId = existing?.deploymentEnvironmentId ?? input.deploymentEnvironment?.environmentId;
     if (environmentId) await lockDeploymentEnvironmentInTx(tx, environmentId);
+}
+
+/** Saved probes use the person's Check from Machine. Other linked Events follow the controller. */
+export function isEnvironmentControllerBoundEvent(input: Readonly<{
+    eventPluginId: string | null; eventLocalId: string | null; sourceContractVersion: number | null;
+}>): boolean {
+    return input.eventPluginId !== HEALTH_CHECK_EVENT_REFS_V1.status.pluginId
+        || input.eventLocalId !== HEALTH_CHECK_EVENT_REFS_V1.status.localId
+        || input.sourceContractVersion !== HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.sourceContractVersion;
 }
 
 /** Existing V3 authoring admits one Source-managed Environment; later edits retain that relationship. */

@@ -352,11 +352,21 @@ Launch intent stays outside the setup Action's input. The plugin returns complet
 Action input through the existing form owner, which validates it and resolves its
 connected Account; the host does not assume saved, launch and Action shapes match.
 
-Environment Add Check supplies the existing Automation Environment reference. The
-saved Workflow read returns that association, and Environment withdrawal disables
-the linked definition. If the create acknowledgement is lost, the Account host
-attempts to delete the newly allocated definition and preserves the unresolved
-outcome when deletion cannot be confirmed.
+In unreleased 0.3 source, Environment Add Check supplies the existing Automation
+Environment reference and saves on the current Machine selected under **Check
+from**. That watcher stays attached to the check across Environment controller
+changes. Controller-bound deployment Events still follow the controller.
+
+On the Environment's Home Account, call `workflow.trigger.list` with
+`{ healthSource: { environmentId } }` to read its saved checks before or after
+first deploy. The Account reader opens only definitions with the persisted
+Environment association and returns every exact Automation and trigger, including
+separate definitions with the same source instance and rows disabled by Environment
+withdrawal. A finite lookup by source instance still selects its incumbent.
+
+If the create acknowledgement is lost, the Account host attempts to delete the
+newly allocated definition and preserves the unresolved outcome when deletion
+cannot be confirmed.
 
 Machine services exposes `health/remove` with `automationId`, `triggerId`, and
 `checkId`. It uses the saved Workflow revision to update the selected source.

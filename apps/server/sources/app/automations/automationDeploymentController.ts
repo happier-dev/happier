@@ -4,6 +4,7 @@ import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWork
 import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { replaceAutomationAssignmentsTx } from './automationAssignmentService';
 import { emitAutomationAssignmentMutationAfterTx, loadAutomationTx, markAutomationChangedTx } from './automationCrudService';
+import { isEnvironmentControllerBoundEvent } from './automationDeploymentEnvironment';
 import { ensureAutomationEventCatalogStateTx } from './automationEnabledTransition';
 import { emitAutomationAssignmentUpdated } from './automationChangePublisher';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -30,7 +31,8 @@ export async function reassignDeploymentEnvironmentAutomationsInTx(tx: Tx, actor
             const serverId = await readCurrentServerIdentityId(process.env, tx);
             let changed = false;
             for (const trigger of existing.triggers) {
-                if (trigger.kind !== 'pluginEvent' || trigger.observationTransport !== 'checkpointedPull' || !trigger.eventPluginId) continue;
+                if (trigger.kind !== 'pluginEvent' || trigger.observationTransport !== 'checkpointedPull' || !trigger.eventPluginId
+                    || !isEnvironmentControllerBoundEvent(trigger)) continue;
                 const materializations = serverId && machine?.installationId
                     ? await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx, accountId: row.accountId,
                         serverIdentityId: serverId, machineId: controllerMachineId,

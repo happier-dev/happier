@@ -922,7 +922,13 @@ if (trigger.kind === 'sessionLifecycle') {
         const hasRetainedEvent = input.triggers.some(item => item.kind === 'existing'
           && row.triggers.some(trigger => trigger.id === item.triggerId && trigger.kind === 'pluginEvent'));
         const current = needsPrivateWrite || hasRetainedEvent ? await params.resolveEncryption() : null;
-        if (current) await assertSourceConfigurations(automationId, input.name,
+        // Pausing a saved observation withdraws it from the source census. A
+        // retained conflict must not prevent retiring either exact definition.
+        const withdrawingObservation = row.observationOnly !== undefined
+          && (!input.enabled || input.triggers.some(item => item.kind === 'existing' && item.enabled === false))
+          && input.triggers.every(item => item.kind === 'existing' && item.enabled !== true
+            && item.trigger === undefined && item.triggerDefinitionEnvelope === undefined);
+        if (current && !withdrawingObservation) await assertSourceConfigurations(automationId, input.name,
           input.triggers.flatMap(item => {
             if (item.kind === 'new' || item.trigger !== undefined) {
               const trigger = item.kind === 'new' ? item.trigger : { ...item.trigger!, enabled: item.enabled ?? false };

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealAutomationTriggerDefinitionStoredEnvelopeV1, AutomationTriggerIdSchema, AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol';
@@ -19,6 +20,10 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
 import { removeAutomationMachineAssignmentsTx } from '@/app/automations/automationMachineAssignmentRemoval';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { AutomationDefinitionDetailSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
 
 const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Controller', platform: 'linux',
@@ -133,6 +138,123 @@ describe('Environment-owned Automation controller assignment', () => {
         expect(withdrawn).toMatchObject({ ok: true });
         expect(await getAutomation({ accountId: owner.id, automationId: observation.id }))
             .toMatchObject({ enabled: false, deploymentEnvironmentId: environment.environmentId });
+    });
+
+    async function seedSavedChecksEnvironment() {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
+            serverId, requestKey: crypto.randomUUID(), name: 'Check vantage', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const addMachine = () => db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            ...publishedMachine, installationId: crypto.randomUUID(), pluginMaterializationRevision: 1n } });
+        const [controller, alternate, replacement] = await Promise.all([addMachine(), addMachine(), addMachine()]);
+        const artifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Check vantage' })),
+            body: environmentArtifactBody, dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
+            serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: controller.id,
+            contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+        }));
+        if (!environment.ok) throw new Error(environment.error);
+
+        const eventRef = HEALTH_CHECK_EVENT_REFS_V1.status;
+        const manifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
+            new URL('../../../../cli/assets/bundled-plugin-manifests/machine-services.json', import.meta.url), 'utf8')));
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({ data: { accountId: owner.id, pluginId: manifest.id, enabled: true,
+            writableCollections: [], releaseLessDeclaration: declaration } });
+        const materializationId = 'daemon-selected:happier.machine.services';
+        for (const machine of [controller, alternate, replacement]) {
+            await db.pluginMachineMaterialization.create({ data: { accountId: owner.id, serverIdentityId: serverId,
+                machineId: machine.id, materializationId, pluginId: manifest.id, version: manifest.version,
+                sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
+                uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        }
+        const reference = { serverId, projectSourceId: source.source.id, environmentId: environment.environmentId };
+        const create = (machineId: string, checkId: string, linked: boolean) => ({
+            automationId: crypto.randomUUID(), name: checkId, enabled: true, assignments: [],
+            observationOnly: { kind: 'observationOnly', templateVersion: 1, ...(linked ? { deploymentEnvironment: reference } : {}) },
+            triggers: [{ triggerId: crypto.randomUUID(), trigger: {
+                kind: 'pluginEvent', enabled: true, eventRef, sourceContractVersion: 1, sourceInstanceId: 'health:saved-environment',
+                displayLabel: checkId, filter: null, maximumObservationAgeMs: null,
+                sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: environment.environmentId },
+                    checks: [{ checkId, kind: { pluginId: eventRef.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+                        config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
+                        periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }] },
+                observationTransport: { kind: 'checkpointedPull',
+                    watcherMaterializationRef: { machineId, pluginId: eventRef.pluginId, materializationId } },
+            } }],
+        });
+        return { owner, controller, alternate, replacement, environment, reference, create };
+    }
+
+    it('admits a saved Environment check with a current alternate watcher and keeps the selected vantage', async () => {
+        const f = await seedSavedChecksEnvironment();
+        const headers = { 'x-test-user-id': f.owner.id };
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const control = await app.inject({ method: 'POST', url: '/v3/automations', headers,
+                payload: f.create(f.controller.id, 'controller-check', true) });
+            expect(control.statusCode, control.body).toBe(200);
+            const payload = f.create(f.alternate.id, 'alternate-check', true);
+            const saved = await app.inject({ method: 'POST', url: '/v3/automations', headers, payload });
+            expect(saved.statusCode, saved.body).toBe(200);
+            const admitted = AutomationDefinitionDetailSchema.parse(saved.json());
+            expect(admitted).toMatchObject({ deploymentEnvironment: f.reference, triggers: [
+                { observation: { watcher: { machineId: f.alternate.id } } },
+            ] });
+            const invalid = await app.inject({ method: 'POST', url: '/v3/automations', headers,
+                payload: f.create(crypto.randomUUID(), 'unavailable-watcher', true) });
+            expect(invalid.statusCode).toBe(400);
+            const moved = await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, f.owner.id, {
+                serverId, environmentId: f.environment.environmentId, expectedRevision: f.environment.revision,
+                controllerMachineId: f.replacement.id,
+            }));
+            expect(moved).toMatchObject({ ok: true });
+            const retained = await app.inject({ method: 'GET', url: `/v3/automations/${payload.automationId}`, headers });
+            expect(retained.statusCode, retained.body).toBe(200);
+            expect(AutomationDefinitionDetailSchema.parse(retained.json()).triggers).toMatchObject([
+                { observation: { watcher: { machineId: f.alternate.id } } },
+            ]);
+        });
+    });
+
+    it('pages exact saved checks for an undeployed Environment and retains disabled rows after withdrawal', async () => {
+        const f = await seedSavedChecksEnvironment();
+        const headers = { 'x-test-user-id': f.owner.id };
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const linked = [f.create(f.controller.id, 'first-check', true), f.create(f.controller.id, 'second-check', true)];
+            for (const payload of [...linked, f.create(f.controller.id, 'unlinked', false)]) {
+                const saved = await app.inject({ method: 'POST', url: '/v3/automations', headers, payload });
+                expect(saved.statusCode, saved.body).toBe(200);
+            }
+            const query = { healthCheckSources: { environmentId: f.environment.environmentId }, details: true };
+            async function readPage(cursor?: string, userId = f.owner.id) {
+                const response = await app.inject({ method: 'POST', url: '/v3/automations/query',
+                    headers: { 'x-test-user-id': userId }, payload: { ...query, limit: 1, ...(cursor ? { cursor } : {}) } });
+                expect(response.statusCode, response.body).toBe(200);
+                return AutomationDefinitionDetailsResponseSchema.parse(response.json());
+            }
+            const first = await readPage();
+            expect(first.nextCursor).toEqual(expect.any(String));
+            const second = await readPage(first.nextCursor!);
+            expect(second.nextCursor).toBeNull();
+            expect([...first.automations, ...second.automations].map(row => row.id).sort())
+                .toEqual(linked.map(row => row.automationId).sort());
+            expect((await readPage(undefined, stranger.id)).automations).toEqual([]);
+
+            const withdrawn = await inTx(tx => deleteDeploymentEnvironmentInTx(tx, f.owner.id, {
+                serverId, environmentId: f.environment.environmentId, expectedRevision: f.environment.revision,
+                requestKey: crypto.randomUUID(),
+            }));
+            expect(withdrawn).toMatchObject({ ok: true });
+            const disabled = await readPage();
+            expect([...disabled.automations, ...(await readPage(disabled.nextCursor!)).automations].map(row => row.enabled))
+                .toEqual([false, false]);
+        });
     });
 
     it.each(['plain', 'e2ee'] as const)('reads a %s observation-only health definition without resolving its private Domain subject', async encryptionMode => {

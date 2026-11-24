@@ -367,14 +367,15 @@ async function automationRows<T>(readPage: (input: Readonly<Partial<AutomationDe
   return rows;
 }
 
-/** The retained Event owner supplies saved health configuration and the actual remote watcher together. */
-export async function readSavedHealthCheckSourceSnapshotV1(deps: Readonly<{
+type SavedHealthCheckReadDeps = Readonly<{
   automations: Pick<WorkflowTriggerAutomationOperations, 'listDetails'>;
   openPluginEventTrigger?: WorkflowTriggerActionsDependencies['openPluginEventTrigger'];
-}>, selection: Pick<WorkflowSubjectsListRequestV1, 'sources'> = {}): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>> {
+}>;
+
+/** Open each admitted saved probe with its actual watcher and exact removal target. */
+async function* readSavedHealthCheckCandidates(deps: SavedHealthCheckReadDeps,
+  selection: NonNullable<AutomationDefinitionListRequest['healthCheckSources']>) {
   if (!deps.openPluginEventTrigger) refuse('source_unavailable');
-  const candidates = new Map<string, WorkflowTriggerHealthSourceV1>();
-  const priority = (candidate: WorkflowTriggerHealthSourceV1) => candidate.enabled ? candidate.observer ? 2 : 1 : 0;
   for (const row of await automationRows(deps.automations.listDetails, { healthCheckSources: selection })) {
     for (const trigger of row.triggers) {
       if (trigger.kind !== 'pluginEvent' || !isHealthCheckEventSourceV1(trigger)) continue;
@@ -383,13 +384,22 @@ export async function readSavedHealthCheckSourceSnapshotV1(deps: Readonly<{
       const source = HealthCheckSourceConfigV1Schema.safeParse(definition.sourceConfig);
       if (!source.success) continue;
       const sourceInstanceId = definition.sourceInstanceId;
-      const candidate = { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
+      yield { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
         source: source.data, enabled: row.enabled && trigger.enabled,
         observer: trigger.observation.kind === 'checkpointedPull' ? trigger.observation.watcher : null,
         automationId: row.id, triggerId: trigger.id } satisfies WorkflowTriggerHealthSourceV1;
-      const previous = candidates.get(sourceInstanceId);
-      if (!previous || priority(candidate) > priority(previous)) candidates.set(sourceInstanceId, candidate);
     }
+  }
+}
+
+/** A lookup by source id selects the incumbent used by finite health Actions. */
+export async function readSavedHealthCheckSourceSnapshotV1(deps: SavedHealthCheckReadDeps,
+  selection: Pick<WorkflowSubjectsListRequestV1, 'sources'> = {}): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>> {
+  const candidates = new Map<string, WorkflowTriggerHealthSourceV1>();
+  const priority = (candidate: WorkflowTriggerHealthSourceV1) => candidate.enabled ? candidate.observer ? 2 : 1 : 0;
+  for await (const candidate of readSavedHealthCheckCandidates(deps, selection)) {
+    const previous = candidates.get(candidate.sourceInstanceId);
+    if (!previous || priority(candidate) > priority(previous)) candidates.set(candidate.sourceInstanceId, candidate);
   }
   return candidates;
 }
@@ -1175,8 +1185,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return { sets: [value.set], backupEnvironments: backupTargets(value).environments };
       }
       if ('healthSource' in input) {
-        const healthSources = await readSavedHealthCheckSourcesV1(input.healthSource.sourceInstanceIds, deps);
-        return { sets: [], healthSources };
+        const selection = input.healthSource;
+        if ('sourceInstanceIds' in selection) {
+          return { sets: [], healthSources: await readSavedHealthCheckSourcesV1(selection.sourceInstanceIds, deps) };
+        }
+        // Environment inventory retains every removal target, including paused sources.
+        const healthSources = new Map<string, WorkflowTriggerHealthSourceV1>();
+        for await (const source of readSavedHealthCheckCandidates(deps, selection)) {
+          healthSources.set(JSON.stringify([source.automationId, source.triggerId]), source);
+        }
+        return { sets: [], healthSources: [...healthSources.values()] };
       }
       if ('triggerId' in input) {
         const row = await read(input.automationId);

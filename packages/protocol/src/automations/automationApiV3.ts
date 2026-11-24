@@ -483,6 +483,14 @@ export type AutomationDefinitionDetail = z.infer<typeof AutomationDefinitionDeta
  */
 export const AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS = 100;
 
+export const AutomationEnvironmentHealthCheckSelectionV1Schema = lazyZodSchema(() =>
+  z.pick(DeploymentEnvironmentRefV1Schema, { environmentId: true }));
+
+const AutomationHealthCheckSourcesSelectionSchema = lazyZodSchema(() => z.union([
+  AutomationEnvironmentHealthCheckSelectionV1Schema,
+  z.strictObject({ sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)) }),
+]));
+
 export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.strictObject({
   limit: z._default(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)), AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS),
   cursor: zMini.optional(OPAQUE_CURSOR_SCHEMA),
@@ -499,7 +507,7 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   includeUnindexedManagedTargets: z.optional(z.literal(true)),
   managedTargetUnindexed: z.optional(z.literal(true)),
   legacySessionLifecycleSelections: z.optional(z.literal(true)),
-  healthCheckSources: z.optional(z.strictObject({ sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)) })),
+  healthCheckSources: z.optional(AutomationHealthCheckSourcesSelectionSchema),
 }).check(z.superRefine((value, context) => {
   if ((value.actionId === undefined) !== (value.phase === undefined)) {
     context.addIssue({ code: 'custom', path: ['actionId'], message: 'Action selection requires its phase' });

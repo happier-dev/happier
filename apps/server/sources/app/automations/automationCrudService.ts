@@ -1,5 +1,4 @@
 import { AutomationSessionLifecycleTriggerSchema, projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
-import type { AutomationTriggerReferenceV1 } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -8,7 +7,7 @@ import type { WorkflowAttachedTriggerPageV1 } from '@happier-dev/protocol/workfl
 import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
 import { legacyAutomationSessionSelectionWhere, legacyAutomationSessionSelectionSelect,
     readLegacyAutomationSessionSelection, migrateLegacyAutomationSessionSelectionsTx } from './automationSessionLifecycleMigration';
-import type { AutomationDefinitionPatchRequest, AutomationDefinitionDetailsResponse } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationDefinitionListRequest, AutomationDefinitionPatchRequest, AutomationDefinitionDetailsResponse } from '@happier-dev/protocol/automations/automationApiV3';
 import { randomUUID } from "node:crypto";
 import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationInTx,
     type AutomationMutationPublication } from './automationSharedWorkflowSummaries';
@@ -71,7 +70,7 @@ import {
     markAutomationRunSummaryChangedTx,
 } from "./automationChangePublisher";
 import { assertAutomationAssignmentLiveness, automationAssignmentsMatch, replaceAutomationAssignmentsTx } from "./automationAssignmentService";
-import { admitAutomationDeploymentEnvironmentInTx, admitAutomationDeploymentMutationInTx, lockAutomationDeploymentEnvironmentInTx } from './automationDeploymentEnvironment';
+import { admitAutomationDeploymentEnvironmentInTx, isEnvironmentControllerBoundEvent, admitAutomationDeploymentMutationInTx, lockAutomationDeploymentEnvironmentInTx } from './automationDeploymentEnvironment';
 import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { ensureAutomationScheduleCursorsTx } from "./automationRunQueueService";
 import { applyAutomationEnabledTransitionTx, ensureAutomationEventCatalogStateTx } from "./automationEnabledTransition";
@@ -4545,11 +4544,17 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     }
     const observationEnvironment = parseAutomationObservationOnlyDefinitionV1(params.automation.templateCiphertext)?.deploymentEnvironment;
     if (observationEnvironment) {
-        const environment = await params.tx.deploymentEnvironment.findUnique({ where: { id: observationEnvironment.environmentId },
-            select: { controllerMachineId: true } });
-        if (params.input.observationTransport.kind !== 'checkpointedPull'
-            || params.input.observationTransport.watcherMaterializationRef.machineId !== environment?.controllerMachineId) {
-            throw new AutomationValidationError('Change the Environment controller to move this Event source');
+        const transport = params.input.observationTransport;
+        if (transport.kind !== 'checkpointedPull') {
+            throw new AutomationValidationError('Environment Event sources require checkpointed observation');
+        }
+        if (isEnvironmentControllerBoundEvent({ eventPluginId: params.input.eventRef.pluginId,
+            eventLocalId: params.input.eventRef.localId, sourceContractVersion: params.input.sourceContractVersion })) {
+            const environment = await params.tx.deploymentEnvironment.findUnique({ where: { id: observationEnvironment.environmentId },
+                select: { controllerMachineId: true } });
+            if (transport.watcherMaterializationRef.machineId !== environment?.controllerMachineId) {
+                throw new AutomationValidationError('Change the Environment controller to move this Event source');
+            }
         }
     }
     if ("triggerDefinitionEnvelope" in params.input) {
@@ -4745,7 +4750,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     managedTarget?: AutomationManagedTargetV1;
     includeUnindexedManagedTargets?: true;
     managedTargetUnindexed?: true;
-    healthCheckSources?: Readonly<{ sources?: readonly AutomationTriggerReferenceV1[] }>;
+    healthCheckSources?: AutomationDefinitionListRequest['healthCheckSources'];
     /** The explicit private-detail query uses the canonical full definition selection. */
     details?: true;
     legacySessionLifecycleSelections?: true;
@@ -4785,10 +4790,13 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
                 selections: row.triggers.map(trigger => ({ triggerId: trigger.id, triggerRevision: trigger.revision,
                     ...readLegacyAutomationSessionSelection(trigger, serverId) })) })) };
     }
-    const healthTriggers = params.healthCheckSources ? { kind: 'pluginEvent' as const, deletedAt: null,
+    const healthSelection = params.healthCheckSources;
+    const exactHealthSources = healthSelection && 'sources' in healthSelection ? healthSelection.sources : undefined;
+    const healthEnvironmentId = healthSelection && 'environmentId' in healthSelection ? healthSelection.environmentId : undefined;
+    const healthTriggers = healthSelection ? { kind: 'pluginEvent' as const, deletedAt: null,
         sourceContractVersion: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.sourceContractVersion,
         OR: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.eventRefs.map(ref => ({ eventPluginId: ref.pluginId, eventLocalId: ref.localId })),
-        ...(params.healthCheckSources.sources ? { id: { in: params.healthCheckSources.sources.map(source => source.triggerId) } } : {}),
+        ...(exactHealthSources ? { id: { in: exactHealthSources.map(source => source.triggerId) } } : {}),
     } : undefined;
     const baseSelect = params.details ? automationListItemSelect : automationDefinitionListItemSelect;
     const rows = await db.automation.findMany({
@@ -4800,9 +4808,10 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
             ...(params.workflowDefinitionIds !== undefined ? { workflowDefinitionId: { in: [...new Set(params.workflowDefinitionIds)] } } : {}),
             ...(params.scopeSessionId !== undefined ? { scopeSessionId: params.scopeSessionId } : {}),
             ...(params.scope === "account_inline" ? { workflowDefinitionId: null, scopeSessionId: null } : {}),
+            ...(healthEnvironmentId === undefined ? {} : { deploymentEnvironmentId: healthEnvironmentId }),
             AND: [
                 ...(healthTriggers ? [{ triggers: { some: healthTriggers } }] : []),
-                ...(params.healthCheckSources?.sources ? [{ OR: params.healthCheckSources.sources.map(source => ({
+                ...(exactHealthSources ? [{ OR: exactHealthSources.map(source => ({
                     id: source.automationId, triggers: { some: { id: source.triggerId } },
                 })) }] : []),
                 ...(params.scope === "account_saved" ? [{ workflowDefinitionId: { not: null }, scopeSessionId: null }] : []),

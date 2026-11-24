@@ -798,6 +798,60 @@ describe('trigger source display provenance', () => {
     await expect(changing('production-health')).rejects.toMatchObject({ code: 'content_unavailable' });
   });
 
+  it('lists every exact Environment check owner even when retained sources share a source instance', async () => {
+    const f = fixture();
+    const host = createAccountWorkflowTriggerActions({
+      automations: { ...f.deps.automations, listDetails: async input => ({
+        automations: [...f.rows.values()].filter(row => {
+          const selection = input.healthCheckSources;
+          const environmentId = selection && 'environmentId' in selection ? selection.environmentId : undefined;
+          return environmentId === undefined || row.observationOnly?.deploymentEnvironment?.environmentId === environmentId;
+        }), nextCursor: null,
+      }) },
+      resolveEncryption: async () => ({ kind: 'available',
+        witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: f.deps.newId,
+    });
+    const environment = { serverId: 'home', projectSourceId: 'source', environmentId: 'production' };
+    const eventRef = { pluginId: 'happier.machine.services', localId: 'health-status' };
+    const observer = { machineId: 'alternate', pluginId: eventRef.pluginId, materializationId: 'services' };
+    for (const [i, environmentId] of ['production', 'production', 'staging'].entries()) {
+      const checkId = `http-${i}`;
+      await f.deps.automations.create({ automationId: `health-${i}`, name: checkId, enabled: true, assignments: [],
+        observationOnly: { kind: 'observationOnly', templateVersion: 1, deploymentEnvironment: { ...environment, environmentId } },
+        triggers: [{ triggerId: AutomationTriggerIdSchema.parse(`trigger-${i}`), trigger: {
+          kind: 'pluginEvent', enabled: true, eventRef, sourceInstanceId: 'shared-source', sourceContractVersion: 1,
+          sourceConfig: { v: 1, subject: { kind: 'environment', environmentId }, checks: [{
+            checkId, kind: { pluginId: eventRef.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+            config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
+            periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1,
+          }] },
+          displayLabel: checkId, filter: null, maximumObservationAgeMs: null,
+          observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: observer },
+        } }],
+      });
+    }
+    const result = await f.executor(host).execute('workflow.trigger.list', { healthSource: { environmentId: 'production' } }, ownCaller);
+    expect(result).toMatchObject({ ok: true, result: { sets: [], healthSources: [
+      { sourceInstanceId: 'shared-source', automationId: 'health-0', triggerId: 'trigger-0', enabled: true,
+        observer, source: { checks: [{ checkId: 'http-0' }] } },
+      { sourceInstanceId: 'shared-source', automationId: 'health-1', triggerId: 'trigger-1', enabled: true,
+        observer, source: { checks: [{ checkId: 'http-1' }] } },
+    ] } });
+
+    // The removal Action pauses a one-check set using this exact update.
+    await expect(host.update({ automationId: 'health-0', expectedRevision: 1, patch: { enabled: false } }))
+      .resolves.toMatchObject({ set: { automationId: 'health-0', enabled: false } });
+    const listed = await host.list({ healthSource: { environmentId: 'production' } });
+    expect(listed.healthSources).toEqual([
+      expect.objectContaining({ automationId: 'health-0', enabled: false }),
+      expect.objectContaining({ automationId: 'health-1', enabled: true }),
+    ]);
+    const exactSource = await host.list({ healthSource: { sourceInstanceIds: ['shared-source'] } });
+    expect(exactSource.healthSources).toEqual([expect.objectContaining({ automationId: 'health-1', enabled: true })]);
+  });
+
   it.each(['plain', 'e2ee'] as const)('projects each retained %s receipt Event subject without creating an Environment lifecycle binding', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
