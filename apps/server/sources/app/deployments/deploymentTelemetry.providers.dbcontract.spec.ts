@@ -327,9 +327,32 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                     serverId, environmentId: f.environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
                     expectedRevision: 1, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } },
                 privateKey: f.keys.secretKey });
-            const settle = await app.inject({ method: 'POST',
+            const settleReceipt = () => app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${f.environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { ...body, proof } });
+            const other = await db.deploymentEnvironment.create({ data: {
+                projectSourceId: f.environment.projectSourceId, createdByAccountId: f.owner.id,
+                controllerMachineId: f.controller.id, protection: 'nonProduction', purpose: 'standard',
+                deployerMode: 'managers', ...f.reference, telemetryMachineId: f.oldCollector.id, telemetryTokenHash: hash,
+            } });
+            const otherLink = await db.deploymentTargetLink.create({ data: { environmentId: other.id,
+                createdByAccountId: f.owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+                targetKind: 'ownServer', state: 'deployed', ...await f.createReference('deployment-target-link.v1') } });
+            await db.deploymentEnvironment.update({ where: { id: other.id }, data: { runtimeTargetLinkId: otherLink.id } });
+            const duplicate = await settleReceipt();
+            expect(duplicate.statusCode, duplicate.body).toBe(409);
+            expect(duplicate.json()).toEqual({ ok: false, error: 'deployment_conflict' });
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } }))
+                .toMatchObject({ revision: 1, state: 'running' });
+            expect((await db.artifact.findUniqueOrThrow({ where: { id: receipt.contentArtifactId } })).bodyVersion)
+                .toBe(receipt.contentBodyVersion);
+            // Detach, keep running reserves the live assignment until Environment deletion.
+            await db.deploymentEnvironment.update({ where: { id: other.id }, data: { runtimeTargetLinkId: null } });
+            const detachedAssignments = (await assignments()).json();
+            expect(detachedAssignments.assignments).toContainEqual(expect.objectContaining({ environmentId: other.id, tokenHash: hash }));
+            expect((await settleReceipt()).statusCode).toBe(409);
+            await db.deploymentEnvironment.update({ where: { id: other.id }, data: { deletedAt: new Date() } });
+            const settle = await settleReceipt();
             expect(settle.statusCode, settle.body).toBe(200);
             expect((await db.artifact.findUniqueOrThrow({ where: { id: receipt.contentArtifactId } })).bodyVersion)
                 .toBe(receipt.contentBodyVersion + 1);

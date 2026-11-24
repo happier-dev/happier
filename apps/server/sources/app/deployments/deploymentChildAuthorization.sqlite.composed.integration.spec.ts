@@ -7035,14 +7035,14 @@ describe('deployment children retain their controller Action authority', () => {
             const body = { serverId, environmentId: f.environment.id, expectedRevision, ...candidate,
                 referencedSavedSecretRevisions: [], grants: [], telemetryMachineId,
                 targetLinkContent: { targetLinkId: f.link.id, expectedTargetLinkRevision, ...targetLinkCandidate } };
-            return { body, headers(payload: unknown) {
+            return { body, headers(payload: unknown, requestPath = path) {
                 return { ...currentAccountStoredContentCompatibilityHeaders,
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                     [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId, target, method: 'POST', path, body: payload,
+                        authorizationToken: authorization.token, effectActionId, target, method: 'POST', path: requestPath, body: payload,
                         installationId: f.controller.installationId, requestId, reviewedChild, privateKey: f.controller.keys.secretKey }),
                 };
             } };
@@ -7085,26 +7085,72 @@ describe('deployment children retain their controller Action authority', () => {
                 expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
                 return;
             }
+            let environmentRevision = f.environmentRevision;
+            let linkRevision = f.link.revision;
+            if (contentMode === 'plain') {
+                const holder = await fixture('account', 'account', {
+                    contentMode, readableEnvironment: true, platformTarget: 'vercel',
+                });
+                const holderPath = `/v1/deployments/environments/${holder.environment.id}/bindings`;
+                const foreignBody = { ...first.body, environmentId: holder.environment.id,
+                    telemetrySyncAcknowledgement: acknowledgement };
+                const crossEnvironment = await app.inject({ method: 'POST', url: holderPath, payload: foreignBody,
+                    headers: first.headers(foreignBody, holderPath) });
+                expect(crossEnvironment.statusCode).toBe(401);
+
+                await db.deploymentEnvironment.update({ where: { id: holder.environment.id }, data: acknowledgement });
+                const refused = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
+                expect(refused.statusCode, refused.body).toBe(409);
+                expect(refused.json()).toEqual({ ok: false, error: 'deployment_conflict' });
+                expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } }))
+                    .toMatchObject({ revision: environmentRevision, telemetryTokenHash: null });
+                expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+                    .toMatchObject({ revision: linkRevision });
+                expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: holder.environment.id } }))
+                    .toMatchObject({ telemetryTokenHash: acknowledgement.telemetryTokenHash });
+                // Detach, keep running preserves delivery for the original workload.
+                await db.deploymentEnvironment.update({ where: { id: holder.environment.id }, data: { runtimeTargetLinkId: null } });
+                const stillReserved = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
+                expect(stillReserved.statusCode, stillReserved.body).toBe(409);
+                await db.deploymentEnvironment.update({ where: { id: holder.environment.id }, data: { deletedAt: new Date() } });
+            }
             const stored = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
             expect(stored.statusCode, stored.body).toBe(200);
             expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+            environmentRevision += 1;
+            linkRevision += 1;
+            if (contentMode === 'plain') {
+                const edited = await app.inject({ method: 'PATCH', url: path.slice(0, -'/bindings'.length),
+                    payload: { serverId, environmentId: f.environment.id, expectedRevision: environmentRevision,
+                        contentArtifactId: first.body.contentArtifactId, contentHeaderVersion: first.body.contentHeaderVersion,
+                        contentBodyVersion: first.body.contentBodyVersion, patch: { dataAgentAccess: 'none' } },
+                    headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${session}` } });
+                expect(edited.statusCode, edited.body).toBe(200);
+                environmentRevision += 1;
+                expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+                const refresh = await preparedWrite(environmentRevision, linkRevision);
+                expect((await submit(refresh, { ...refresh.body, telemetrySyncAcknowledgement: acknowledgement })).statusCode).toBe(200);
+                environmentRevision += 1;
+                linkRevision += 1;
+                expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+            }
 
-            const rotated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1, { rotate: true });
+            const rotated = await preparedWrite(environmentRevision, linkRevision, { rotate: true });
             expect((await submit(rotated)).statusCode).toBe(200);
             expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
 
             const nextBearer = 'synthetic-rotated-exporter-bearer';
             const rotatedAcknowledgement = { ...acknowledgement, telemetryTokenHash: createHash('sha256').update(nextBearer).digest('hex') };
             expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
-            const next = await preparedWrite(f.environmentRevision + 2, f.link.revision + 2);
+            const next = await preparedWrite(environmentRevision + 1, linkRevision + 1);
             expect((await submit(next, { ...next.body, telemetrySyncAcknowledgement: rotatedAcknowledgement })).statusCode).toBe(200);
             expect(await admit(selected, nextBearer)).toMatchObject({ accepted: true });
             expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
-            const moved = await preparedWrite(f.environmentRevision + 3, f.link.revision + 3, { collector: f.member.id });
+            const moved = await preparedWrite(environmentRevision + 2, linkRevision + 2, { collector: f.member.id });
             expect((await submit(moved)).statusCode).toBe(200);
             expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
             expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: false, status: 401 });
-            const resync = await preparedWrite(f.environmentRevision + 4, f.link.revision + 4, { collector: f.member.id });
+            const resync = await preparedWrite(environmentRevision + 3, linkRevision + 3, { collector: f.member.id });
             const restored = await submit(resync, { ...resync.body,
                 telemetrySyncAcknowledgement: { ...rotatedAcknowledgement, telemetryMachineId: f.member.id } });
             expect(restored.statusCode, restored.body).toBe(200);

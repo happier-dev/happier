@@ -34,6 +34,7 @@ import { listDeploymentTargetLinksInTx } from '@/app/deployments/deploymentTarge
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentInTx, transitionDeploymentInTx } from '@/app/deployments/deploymentService';
+import { DeploymentTelemetryAssignmentConflictError } from '@/app/deployments/deploymentPublication';
 import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } from '@/app/deployments/deploymentPendingService';
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
 import { readDeploymentExecutionBindingFromRequest, readDeploymentExecutionEffectFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
@@ -62,6 +63,13 @@ function status(result: { ok: boolean; error?: string }) {
         : result.error === 'deployment_conflict' || result.error === 'deployment_in_progress' || result.error === 'deployment_preview_not_enrolled'
             || result.error === 'deployment_content_unavailable' || result.error === 'deployment_teardown_required' ? 409
         : result.error === 'machine_unavailable' ? 503 : result.error === 'quota_exceeded' ? 413 : 400;
+}
+
+function projectTelemetryAssignmentConflict(error: unknown) {
+    if (error instanceof DeploymentTelemetryAssignmentConflictError) {
+        return { ok: false as const, error: 'deployment_conflict' as const };
+    }
+    throw error;
 }
 
 /** Authenticated storage only: the daemon owns review, effects and observation. */
@@ -239,7 +247,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         const result = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
                 isolationLevel: deploymentWriteIsolationLevel(),
-            });
+            }).catch(projectTelemetryAssignmentConflict);
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/template', {
@@ -399,7 +407,9 @@ export function registerDeploymentRoutes(app: Fastify): void {
                 readTeamOperationAuthenticationFromRequest(request), binding,
                 () => { stopAccepted = true; });
             return { result, stopAccepted };
-        }, { isolationLevel: 'ReadCommitted' });
+        }, { isolationLevel: 'ReadCommitted' }).catch(error => ({
+            result: projectTelemetryAssignmentConflict(error), stopAccepted: false,
+        }));
         if (binding?.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && stopAccepted && result.ok)
             reply.header(DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, '1');
         return reply.code(status(result)).send(result);
