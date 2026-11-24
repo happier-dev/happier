@@ -75,8 +75,12 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
                 {...(params.fieldSpan === undefined ? {} : { span: params.fieldSpan })}
                 {...(params.fieldDensity === undefined ? {} : { density: params.fieldDensity })}>
                 {params.loading ? (
-                    <HappierSkeletonBlock width={72} height={14} radius={5} color={params.field.placeholderColor} />
-                ) : params.value != null && !label.placeholder ? (
+                    // The bar stands in the value's slot, which grows like the value does, so the chevron keeps its
+                    // place at the field's end when the value lands.
+                    <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 }}>
+                        <HappierSkeletonBlock width={72} height={14} radius={5} color={params.field.placeholderColor} />
+                    </View>
+                ) :params.value != null && !label.placeholder ? (
                     <View style={{ flexShrink: 1, minWidth: 0 }}>{params.value}</View>
                 ) : <Text
                     style={[label.style, params.secondary ? { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' } : null, params.quietValue && !label.placeholder && params.quietValueColor ? { color: params.quietValueColor } : null]}

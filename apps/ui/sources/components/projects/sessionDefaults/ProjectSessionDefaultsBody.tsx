@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ProjectSessionDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
+import { ProjectSessionDefaultsLoadingSection, ProjectSessionDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -21,9 +21,6 @@ import { t } from '@/text';
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 
 export type DefaultsScope = 'me' | 'project';
-
-/** The rows the editor shows once read (Machine, Agent, then the Agents), held while it loads (lab L11-loading). */
-const LOADING_ROWS = 7;
 
 /**
  * Project › Session defaults (plan F §2/§6, lab L11): how new sessions in this project start, for me or for
@@ -195,13 +192,8 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
             />
           </ItemGroup>
         ) : !settled ? (
-          <ItemGroup>
-            <ItemLoadStateRows
-              testID={`${testID}.loading`}
-              state={{ kind: 'loading' }}
-              rows={LOADING_ROWS}
-            />
-          </ItemGroup>
+          // The editor's own rows hold their places while it reads (lab L11-loading).
+          <ProjectSessionDefaultsLoadingSection testID={`${testID}.loading`} shared={scope === 'project'} />
         ) : (
           <ProjectSessionDefaultsSection
             testID={`${testID}.editor`}
