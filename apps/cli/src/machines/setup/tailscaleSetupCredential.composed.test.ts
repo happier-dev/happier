@@ -28,6 +28,8 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
+import { ActionAutomationIndexSelectionV1Schema, ActionAutomationIndexV1Schema,
+  AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -69,8 +71,15 @@ describe.runIf(process.platform === 'linux')('cold Tailscale setup credential br
       let stored: ReturnType<typeof sealMachineSecretGrant> | undefined;
       const grantOperations: string[] = [];
       vi.spyOn(axios, 'request').mockImplementation(async config => {
+        const path = new URL(String(config.url)).pathname;
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+          // This Home has no Action triggers. The receiver still runs real Automation admission.
+          if (config.method === 'POST') ActionAutomationIndexSelectionV1Schema.parse(config.data);
+          else expect(config.method).toBe('GET');
+          return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+        }
         const body = MachineConnectorSecretGrantInputV1Schema.parse(config.data);
-        expect(new URL(String(config.url)).pathname).toBe(`/v1/deployments/machines/${fixture.machine.id}/connector-secret-grant`);
+        expect(path).toBe(`/v1/deployments/machines/${fixture.machine.id}/connector-secret-grant`);
         expect(body.subject).toMatchObject({ machineId: fixture.machine.id,
           installationId: fixture.installation.installationId, provider: { kind: 'builtin', id: 'tailscale' } });
         grantOperations.push(body.operation);
@@ -162,7 +171,9 @@ describe.runIf(process.platform === 'linux')('cold Tailscale setup credential br
         installedWorkflow: { context, machineId: publisherMachineId, installationId: publisherInstallationId, privateKey: publisherKeys.secretKey } });
       expect(codecDelivered).toBe(true);
       if (!applied.ok) {
-        expect(grantee && applied.errorCode).toBe('credential_unavailable');
+        expect(applied, JSON.stringify({ code: applied.errorCode, cause: applied.failureCause })).toMatchObject(grantee
+          ? { ok: false, errorCode: 'credential_unavailable' }
+          : { ok: true, result: { operationId: expect.any(String) } });
         expect(grantOperations).toEqual([]);
         expect(fixture.rootLaunches).toEqual([]);
         return;
@@ -264,8 +275,10 @@ describe.runIf(process.platform === 'linux')('cold Tailscale setup credential br
     await writeFile(join(dirname(fixture.statePath), 'bin', 'tailscale'), `#!${process.execPath}\n`
       + `import { readFileSync } from 'node:fs';\n`
       + `const state = JSON.parse(readFileSync(${JSON.stringify(fixture.statePath)}, 'utf8'));\n`
-      + `if (process.argv[2] !== 'status') process.exitCode = 2;\n`
-      + `else process.stdout.write(JSON.stringify({ BackendState: state.joined ? 'Running' : 'Stopped', Self: { Online: !!state.joined } }));\n`,
+      + `const args = process.argv.slice(2).join(' ');\n`
+      + `if (args === 'debug prefs') process.stdout.write(JSON.stringify({ WantRunning: !!state.joined }));\n`
+      + `else if (args === 'status --json') process.stdout.write(JSON.stringify({ BackendState: state.joined ? 'Running' : 'Stopped', Self: { Online: !!state.joined } }));\n`
+      + `else process.exitCode = 2;\n`,
       { mode: 0o755 });
     const nativeCommands: Array<{ executable: string; args: readonly string[] }> = [];
     const keyFile = machineConnectorCredentialFilePath(fixture.installation.installationId);
@@ -279,6 +292,8 @@ describe.runIf(process.platform === 'linux')('cold Tailscale setup credential br
           : `${account}:x:${account === 'root' ? 0 : 1001}:\n`, stderr: '' };
       }
       if (!command.executable.endsWith('tailscale')) return null;
+      if (command.args[0] === 'debug' && command.args[1] === 'prefs')
+        return { code: 0, stdout: JSON.stringify({ WantRunning: online }), stderr: '' };
       if (command.args[0] === 'status') return { code: 0, stdout: JSON.stringify({
         BackendState: online ? 'Running' : 'Stopped', Self: { Online: online },
       }), stderr: '' };
