@@ -3636,7 +3636,7 @@ exports[`preserves every declared method and complete effective policy through d
     "actionSpecId": "projects.inspect",
     "method": "daemon.projects.inspect.v1",
     "ownerPacket": "PMS-5",
-    "rationale": "Project definitions retain their original admitted Action and custodian Machine access.",
+    "rationale": "Project definitions require their original admitted Action; the receiving daemon places a grantee's own Project by its isolation policy.",
     "routeClass": "server_required",
     "rpcClassification": "action_spec_bound",
     "scope": {
@@ -3645,13 +3645,13 @@ exports[`preserves every declared method and complete effective policy through d
       "serverRequired": true,
     },
     "serverRequiredReason": "auth",
-    "sharedMachineAccess": "custodian_only",
+    "sharedMachineAccess": "use",
   },
   {
     "actionSpecId": "projects.manifest.update",
     "method": "daemon.projects.manifest.update.v1",
     "ownerPacket": "PMS-5",
-    "rationale": "Project definitions retain their original admitted Action and custodian Machine access.",
+    "rationale": "Project definitions require their original admitted Action; the receiving daemon places a grantee's own Project by its isolation policy.",
     "routeClass": "server_required",
     "rpcClassification": "action_spec_bound",
     "scope": {
@@ -3660,7 +3660,7 @@ exports[`preserves every declared method and complete effective policy through d
       "serverRequired": true,
     },
     "serverRequiredReason": "auth",
-    "sharedMachineAccess": "custodian_only",
+    "sharedMachineAccess": "use",
   },
   {
     "actionSpecId": "workspace.sync.relationship.disable",

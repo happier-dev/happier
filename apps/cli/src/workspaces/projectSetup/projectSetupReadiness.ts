@@ -26,23 +26,31 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
-/** The requester Account and native invocation supply the accepted checkout's filesystem facts. */
+/** The requester Account supplies the accepted checkout: only a WorkspaceRef in the requester's
+ * own Account rows is read. `placement: 'daemon'` is the placement owner's decision for this
+ * requester's own Project (isolation off); otherwise the native member invocation reads it. */
 export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity' | 'agentIsolation'> & Readonly<{
         nativeOperationRuntime?: Pick<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>, 'prepareNativeOperation'>;
     }>;
     ingress: RpcHandlerContext; workspace: ProjectDefinitionWorkspace;
     context: ActionExecutorContext; read(root: string): Promise<T>;
+    placement?: 'daemon';
 }>): Promise<T> {
     const unavailable = (code = 'project_workspace_unavailable'): never => { throw Object.assign(new Error(code), { code }); };
     const identity = input.runtime.requesterIdentity;
     const nativeRuntime = input.runtime.nativeOperationRuntime;
-    if (identity?.kind !== 'isolated' || !nativeRuntime) return unavailable('agent_isolation_unavailable');
+    if (identity?.kind !== 'isolated' || !nativeRuntime && input.placement !== 'daemon') return unavailable('agent_isolation_unavailable');
     const signal = input.context.signal ? AbortSignal.any([input.ingress.signal, input.context.signal]) : input.ingress.signal;
     const accepted = await resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
         ...projectRuntimeAccountRowsInput(input.runtime), serverId: input.runtime.serverId,
         serverHttpBaseUrl: input.runtime.serverHttpBaseUrl, signal, allowUnassociated: true, allowProjectless: true });
-    if (!accepted) return unavailable();
+    if (!accepted || accepted.workspace.machineId !== identity.requester.machineId) return unavailable();
+    if (input.placement === 'daemon') {
+        if (!canonicalAbsolutePathsEqual(accepted.workspace.rootPath, input.workspace.rootPath)) return unavailable();
+        return await input.read(accepted.workspace.rootPath);
+    }
+    if (!nativeRuntime) return unavailable('agent_isolation_unavailable');
     const material = Object.freeze({ materializationKey: input.context.actionRequestId ?? input.ingress.transportRequestId ?? accepted.workspace.id,
         environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
     const native = await nativeRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: input.ingress,

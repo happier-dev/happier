@@ -248,7 +248,7 @@ import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepare
 import { createFilesystemEffectRpcOwner, createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
-import { canExecuteRequesterWorkspaceOnDaemonForHost, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isHostRequesterUnrestrictedOwner, isRequesterOwnWorkPlacedOnDaemonForHost, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
 import { PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -2805,17 +2805,24 @@ export class ApiMachineClient {
         });
         const ordinary = create();
         return async request => {
-            if (!ingress || !isRequesterProjectDefinitionActionIdV1(request.actionId)) return ordinary(request);
+            if (!ingress) return ordinary(request);
             const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
             if (!parsed.success) return ordinary(request);
             const runtime = await this.resolveProjectFiniteRuntime(ingress);
             if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
             const identity = runtime.requesterIdentity;
-            if (!identity || identity.kind === 'unknown') throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
-            if (canExecuteRequesterWorkspaceOnDaemonForHost(identity,
-                () => this.lifecycleDependencies.agentIsolation?.read() ?? { enabled: false })) return ordinary(request);
+            const isolationUnavailable = () => Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+            if (!identity || identity.kind === 'unknown') throw isolationUnavailable();
+            if (isHostRequesterUnrestrictedOwner(identity)) return ordinary(request);
+            // A grantee's own Project work runs on the daemon exactly when the one placement owner
+            // says so (owner ruling 2026-11-23: isolation off); an unread policy never does.
+            const onDaemon = isRequesterOwnWorkPlacedOnDaemonForHost(identity, () => this.lifecycleDependencies.agentIsolation?.read());
+            // Inside isolation a requester reads its accepted member checkout; no member writer
+            // exists for the manifest, so the daemon never writes it on the requester's behalf.
+            if (!onDaemon && !isRequesterProjectDefinitionActionIdV1(request.actionId)) throw isolationUnavailable();
+            // Either placement reaches only a WorkspaceRef in the requester's own Account rows.
             return withProjectMemberWorkspaceSource({ runtime, ingress, workspace: parsed.data.workspace, context: request.context,
-                read: root => create({ root, runtime })(request) });
+                ...(onDaemon ? { placement: 'daemon' as const } : {}), read: root => create({ root, runtime })(request) });
         };
     }
 
