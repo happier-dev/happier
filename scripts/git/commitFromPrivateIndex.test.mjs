@@ -507,6 +507,13 @@ while [ "$1" != -- ]; do
   shift
 done
 shift
+if [ -n "\${TEST_IDLE_GRANT:-}" ]; then
+  touch "$TEST_IDLE_GRANT"
+  trap 'rm -f -- "$TEST_IDLE_GRANT"' EXIT
+  export TEST_ENTRY_ADMITTED=1
+  "$@"
+  exit "$?"
+fi
 if [ "$TEST_GROUP_QUEUE" != 1 ] && ! "$TEST_FLOCK" -n "$TEST_LOCK" true; then
   printf 'Entry load requested admission while the commit lock was held\n' >&2
   exit 92
@@ -561,6 +568,76 @@ export async function loadEntryGraph(graph) {
   f.write(packet, 'export const value = 2;\n');
   return { f, base, winner, packet };
 }
+
+test('three idle ordered writers hold zero entry-load cores', { skip: !hasFlock }, async t => {
+  const { f, base } = treeGraphReplayFixture(t);
+  const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
+  const bin = path.join(f.cwd, 'bin');
+  const flock = execFileSync('sh', ['-c', 'command -v flock'], { encoding: 'utf8' }).trim();
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'flock'), `#!/bin/sh
+if [ "$1" = -s ]; then : > "$TEST_QUEUE_WAIT"; fi
+exec "$TEST_FLOCK" "$@"
+`, { mode: 0o755 });
+  fs.mkdirSync(path.join(f.cwd, 'node_modules'));
+  await publishDependencyRefreshMarker({ installDir: f.cwd, identity: 'fixture-install' });
+
+  const blocker = spawn(flock, ['-x', lock, 'sh', '-c', 'printf "ready\\n"; cat >/dev/null'],
+    { stdio: ['pipe', 'pipe', 'inherit'] });
+  const blockerDone = once(blocker, 'close');
+  t.after(() => blocker.stdin.end());
+  await once(blocker.stdout, 'data');
+
+  const startWriter = (lane, file) => {
+    const messageFile = path.join(f.cwd, `msg-${lane}`);
+    const wait = path.join(f.cwd, `waiting-${lane}`);
+    const grant = path.join(f.cwd, `grant-${lane}`);
+    f.write(`msg-${lane}`, `test: writer ${lane}\n`);
+    f.write(file, 'export const changed = true;\n');
+    const child = spawn(process.execPath, [
+      fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', messageFile, '--', file,
+    ], { cwd: f.cwd, stdio: ['ignore', 'ignore', 'pipe'], env: {
+      ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HAPPIER_COMMIT_GATE_ARRIVED_AT: String(lane + 1), HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+      HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
+      TEST_FLOCK: flock, TEST_LOCK: lock, TEST_QUEUE_WAIT: wait, TEST_IDLE_GRANT: grant,
+      TEST_TREE_GATE_LOCKS: path.join(f.cwd, `graphs-${lane}`),
+    } });
+    t.after(() => { if (child.exitCode === null) child.kill(); });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    return { wait, grant, closed: once(child, 'close'), stderr: () => stderr };
+  };
+
+  const writers = [startWriter(0, 'changed')];
+  const until = async (predicate, writer) => {
+    const deadline = performance.now() + 15000;
+    while (!predicate()) {
+      assert.ok(performance.now() < deadline, writer.stderr());
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
+  try {
+    await until(() => fs.existsSync(lock + '.writers')
+      && fs.readdirSync(lock + '.writers').some(name => /^\d/u.test(name)), writers[0]);
+    for (const lane of [1, 2, 3]) {
+      const writer = startWriter(lane, `apps/cli/src/queued-${lane}.mjs`);
+      writers.push(writer);
+      await until(() => fs.existsSync(writer.wait), writer);
+    }
+    const idle = writers.slice(1);
+    assert.equal(idle.filter(writer => fs.existsSync(writer.grant)).length * 2, 0,
+      'three blocked graph-bearing writers booked cores while waiting');
+    assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
+  } finally {
+    blocker.stdin.end();
+    await blockerDone;
+    await Promise.all(writers.map(writer => writer.closed));
+  }
+  for (const writer of writers) assert.equal((await writer.closed)[0], 0, writer.stderr());
+  assert.equal(f.git('rev-parse', 'HEAD~4').trim(), base);
+  for (const writer of writers) assert.ok(!fs.existsSync(writer.grant));
+});
 
 for (const scenario of ['unrelated predecessor', 'dependency-changing predecessor', 'unexpected dependency change']) {
   test(`grouped writer uses its own admitted proof with ${scenario}`, { skip: !hasFlock }, async t => {

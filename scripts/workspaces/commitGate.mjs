@@ -14,7 +14,7 @@ import { commitLocalImportClosure, commitProducerClosure, createRevisionViewRead
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { APPROVAL_DTO_PATH, commitTreeEntryLoads, defaultCommitTreeLedger, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
-  commitEntryLoadEnvironmentKey, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
+  commitEntryLoadEnvironmentKey, selectCommitTreeEntryGraphs, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 import { withCommitLock } from './commitWriterLock.mjs';
 export { commitGateLockPath, withCommitLock } from './commitWriterLock.mjs';
 
@@ -439,23 +439,30 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
   const projections = packetProjectionInputs(git, packet);
   const arrival = process.env.HAPPIER_COMMIT_GATE_ARRIVED_AT || Date.now();
   const waiting = candidate && !dry ? { candidate, label, message, environment: commitEntryLoadEnvironmentKey() } : undefined;
-  const admissionAt = performance.now();
   try {
-    return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, async (compareAdmittedEntryLoads, regenerate, hasEntryGraphs) => {
-      console.error(`commit gate: admission ${Math.round(performance.now() - admissionAt)} ms`);
-      const queuedAt = performance.now();
-      const preparesProjection = projections.approvals || projections.fieldTitles || projections.plugins.size;
-      const prepare = waiting && (hasEntryGraphs || preparesProjection) && (async (predecessor, predecessorProof) => {
-        try {
-          const head = git(['rev-parse', '--verify', ref]).trim();
-          let headTree = head;
-          if (predecessor?.candidate) {
-            const previous = frozenCandidate(git, predecessor.candidate);
-            const preview = await composePacketAgainstHead({ git, head, packet: previous,
-              projections: packetProjectionInputs(git, previous), regenerate: requireOwnAdmission, replayScratchRoot,
-              preparedProjection: predecessorProof?.projection });
-            headTree = preview.tree;
-          }
+    const queuedAt = performance.now();
+    const { selected: projects } = await selectCommitTreeEntryGraphs({ repo, ...packet, phase: 'commit' });
+    const hasEntryGraphs = projects.length > 0;
+    const withPreparationGrant = (run, entryProof) => {
+      const started = performance.now();
+      return withAdmittedCommitEntryPhase({ repo, tree: packet.tree, projects, entryProof }, (compare, regenerate) => {
+        console.error(`commit gate: preparation admission ${Math.round(performance.now() - started)} ms`);
+        return run(compare, regenerate);
+      });
+    };
+    const preparesProjection = projections.approvals || projections.fieldTitles || projections.plugins.size;
+    const prepare = waiting && (hasEntryGraphs || preparesProjection) && (async (predecessor, predecessorProof) => {
+      try {
+        const head = git(['rev-parse', '--verify', ref]).trim();
+        let headTree = head;
+        if (predecessor?.candidate) {
+          const previous = frozenCandidate(git, predecessor.candidate);
+          const preview = await composePacketAgainstHead({ git, head, packet: previous,
+            projections: packetProjectionInputs(git, previous), regenerate: requireOwnAdmission, replayScratchRoot,
+            preparedProjection: predecessorProof?.projection });
+          headTree = preview.tree;
+        }
+        return await withPreparationGrant(async (compareAdmittedEntryLoads, regenerate) => {
           let projection;
           const exact = await composePacketAgainstHead({ git, head, headTree, packet, projections, regenerate,
             replayScratchRoot, onProjection: value => { projection = value; } });
@@ -463,63 +470,64 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
             compareAdmittedEntryLoads, prepare: true });
           if (proof) console.error(`commit gate: waiting entry proof over ${Object.keys(proof.keys).length} graph(s)`);
           if (proof || projection) return { ...proof, projection };
-        } catch (error) {
-          const reason = error instanceof EntryLoadAdmissionRequired ? 'entry admission or generator still needed' : error.message;
-          console.error(`commit gate: waiting entry proof unavailable (${reason})`);
-        }
-      });
-      const priority = waiting && await identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot });
-      const land = async priority => {
-        const timing = { applyMs: 0, recheckMs: 0, regenerationMs: 0, regenerations: 0, entryGenerationMs: 0,
-          refUpdateMs: 0 };
-        const landed = [];
-        let own;
-        const plan = async (head, queued, entryProof) => {
-          try {
-            if (own?.head !== head) {
-              const result = await judgePreparedPacket({ repo, git, head, packet, regenerate, projections,
-                compareAdmittedEntryLoads, entryProof, replayScratchRoot, message, priority, timing });
-              if (result.gate || result.priorityExpired) return result;
-              own = { head, commit: createCommit(result.exact), tree: result.exact.tree };
-            }
-            const group = dry ? [] : await planWaitingPackets({ repo, git, head: own.commit, queued, timing, replayScratchRoot });
-            return { result: own, group };
-          } catch (error) {
-            if (error instanceof EntryLoadAdmissionRequired) throw error;
-            return { error };
-          }
-        };
-        const publish = async (moveRef, queued, _entryProof, prepared) => {
-          console.error(`commit gate: queue and preparation ${Math.round(performance.now() - queuedAt)} ms`);
-          const update = input => {
-            const started = performance.now();
-            try { moveRef(input); }
-            finally { timing.refUpdateMs += performance.now() - started; }
-          };
-          if (prepared.error) throw prepared.error;
-          const { result, group } = prepared;
-          if (!result) return prepared;
-          if (!dry) {
-            const { commit, head } = result;
-            try { update({ commit, head, reason: `${label}: pid ${process.pid}` }); }
-            catch (error) { throw new CommitGateUnavailable('ref update', error); }
-            try { await publishWaitingPackets({ group, queued, publish: update, landed }); }
-            catch (error) { console.error(`commit gate: group landing stopped (${error.message})`); }
-          }
-          return result;
-        };
+        });
+      } catch (error) {
+        const reason = error instanceof EntryLoadAdmissionRequired ? 'entry admission or generator still needed' : error.message;
+        console.error(`commit gate: waiting entry proof unavailable (${reason})`);
+      }
+    });
+    const priority = waiting && await identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot });
+    const land = async priority => {
+      const timing = { applyMs: 0, recheckMs: 0, regenerationMs: 0, regenerations: 0, entryGenerationMs: 0,
+        refUpdateMs: 0 };
+      const landed = [];
+      let own;
+      const plan = async (head, queued, entryProof) => {
         try {
-          return await withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare, plan,
-            restoresHead: priority?.breaking, onPublishedHold: elapsed => reportHold(repo, timing, elapsed, landed.length) }, publish);
-        } finally {
-          for (const { commit, head } of landed) console.error(`commit gate: grouped ${commit} after ${head}`);
+          if (own?.head !== head) {
+            const result = await withPreparationGrant((compareAdmittedEntryLoads, regenerate) =>
+              judgePreparedPacket({ repo, git, head, packet, regenerate, projections,
+                compareAdmittedEntryLoads, entryProof, replayScratchRoot, message, priority, timing }), entryProof);
+            if (result.gate || result.priorityExpired) return result;
+            own = { head, commit: createCommit(result.exact), tree: result.exact.tree };
+          }
+          const group = dry ? [] : await planWaitingPackets({ repo, git, head: own.commit, queued, timing, replayScratchRoot });
+          return { result: own, group };
+        } catch (error) {
+          if (error instanceof EntryLoadAdmissionRequired || error instanceof EntryLoadAdmissionUnavailable) throw error;
+          return { error };
         }
       };
-      const result = await land(priority);
-      if (!result.priorityExpired) return result;
-      console.error('commit gate: Restores-HEAD claim expired; resuming in ordinary arrival order');
-      return await land();
-    });
+      const publish = async (moveRef, queued, _entryProof, prepared) => {
+        console.error(`commit gate: queue and preparation ${Math.round(performance.now() - queuedAt)} ms`);
+        const update = input => {
+          const started = performance.now();
+          try { moveRef(input); }
+          finally { timing.refUpdateMs += performance.now() - started; }
+        };
+        if (prepared.error) throw prepared.error;
+        const { result, group } = prepared;
+        if (!result) return prepared;
+        if (!dry) {
+          const { commit, head } = result;
+          try { update({ commit, head, reason: `${label}: pid ${process.pid}` }); }
+          catch (error) { throw new CommitGateUnavailable('ref update', error); }
+          try { await publishWaitingPackets({ group, queued, publish: update, landed }); }
+          catch (error) { console.error(`commit gate: group landing stopped (${error.message})`); }
+        }
+        return result;
+      };
+      try {
+        return await withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare, plan,
+          restoresHead: priority?.breaking, onPublishedHold: elapsed => reportHold(repo, timing, elapsed, landed.length) }, publish);
+      } finally {
+        for (const { commit, head } of landed) console.error(`commit gate: grouped ${commit} after ${head}`);
+      }
+    };
+    const result = await land(priority);
+    if (!result.priorityExpired) return result;
+    console.error('commit gate: Restores-HEAD claim expired; resuming in ordinary arrival order');
+    return await land();
   } catch (error) {
     if (!(error instanceof EntryLoadAdmissionUnavailable)) throw error;
     return { gate: {

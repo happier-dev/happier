@@ -356,23 +356,21 @@ export class EntryLoadAdmissionUnavailable extends Error {
 }
 
 /**
- * The native payload signals its grant, then waits for the exact scoped request
- * from the lock holder. Leave its input open through CAS to retain the slot.
- * Reserve the packet's reachable set because HEAD can move while admission waits.
+ * Scope the grant to active entry and projection preparation. The caller must
+ * finish this phase before waiting for another writer or publishing the ref.
  */
-export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, env = process.env }, run) {
-  const { selected: projects } = await selectCommitTreeEntryGraphs({ repo, base, tree, phase });
+export async function withAdmittedCommitEntryPhase({ repo, tree, projects, entryProof, env = process.env }, run) {
   const assertCovered = request => {
     if (request.selected.some(project => !projects.includes(project))) {
       throw new Error('HEAD changed the reachable entry points during admission; retry against current HEAD');
     }
   };
   if (!projects.length) return await run(assertCovered, (combined, output, projections) =>
-    regenerateCommitProjections({ repo, tree: combined, output, projections }, env), false);
-  const cached = await verifiedGraphInputs({ repo, tree, installDir: repo, root: defaultRoot(), selected: projects, env });
-  if (projects.every(id => cached?.records.get(id)?.hit)) {
+    regenerateCommitProjections({ repo, tree: combined, output, projections }, env));
+  const cached = entryProof ? undefined : await verifiedGraphInputs({ repo, tree, installDir: repo, root: defaultRoot(), selected: projects, env });
+  if (entryProof || projects.every(id => cached?.records.get(id)?.hit)) {
     const requireAdmission = () => { throw new EntryLoadAdmissionRequired(); };
-    try { return await run(requireAdmission, requireAdmission, true); }
+    try { return await run(requireAdmission, requireAdmission); }
     catch (error) { if (!(error instanceof EntryLoadAdmissionRequired)) throw error; }
   }
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
@@ -406,7 +404,7 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
     return await run(request => {
       assertCovered(request);
       return send(request);
-    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }), true);
+    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }));
   } finally {
     child.stdin.end();
     output.close();
