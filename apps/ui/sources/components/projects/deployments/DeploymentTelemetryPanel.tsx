@@ -675,10 +675,22 @@ export function TelemetryRequestDetail(props: Readonly<{
           <TextLinkButton testID="project-deployments.telemetry.request.back" label={props.backLabel ?? t('deploymentTelemetry.request.back')}
             onPress={props.onBack} tone="quiet" size="meta" />
         ) : null}
-        {/* The request's identity leads at the title step, its actions at the title line's end, its facts under it
-            (lab dbCapture-traces: "GET /invoices/48210 … Logs for this request"). */}
+        {/* The request's identity (title step, its facts under it) leads; its actions stand at the line's end and, where
+            the line is short, wrap under the whole identity (lab dbCapture-traces: "GET /invoices/48210 … Logs for this
+            request"; tracep: title, then facts). */}
         <View style={styles.titleLine}>
-          <Text variant="title" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
+          <View style={styles.identity}>
+            <Text variant="title" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
+            <Text variant="meta" style={styles.facts}>
+              {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (
+                <React.Fragment key={index}>
+                  {index === 0 ? null : ' · '}
+                  {/* Only the failing status speaks; the rest of the line stays quiet (lab p7AddNow-trace "500"). */}
+                  {part === status && captureSummaryFailed(request) ? <Text variant="meta" style={styles.failedStatus}>{part}</Text> : part}
+                </React.Fragment>
+              ))}
+            </Text>
+          </View>
           {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
             <RoundButton size="small" display="secondary" testID="project-deployments.telemetry.request.add-check"
               title={t('deploymentTelemetry.addCheck')}
@@ -694,15 +706,6 @@ export function TelemetryRequestDetail(props: Readonly<{
               title={t('workflows.triggers.section.automate')} onPress={openWorkflow} />
           ) : null}
         </View>
-        <Text variant="meta" style={styles.facts}>
-          {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (
-            <React.Fragment key={index}>
-              {index === 0 ? null : ' · '}
-              {/* Only the failing status speaks; the rest of the line stays quiet (lab p7AddNow-trace "500"). */}
-              {part === status && captureSummaryFailed(request) ? <Text variant="meta" style={styles.failedStatus}>{part}</Text> : part}
-            </React.Fragment>
-          ))}
-        </Text>
       </View>
       {read.kind === 'loading' ? (
         <SurfaceStateCard kind="loading" size="line" title={t('deploymentTelemetry.request.reading')} />
@@ -744,5 +747,6 @@ const styles = StyleSheet.create((theme) => ({
   // The title takes the line; the actions keep their width at its end and wrap under it when the line is short.
   titleLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s12, rowGap: theme.space.s8 },
   // The request's identity in identifier type and the theme's ink, legible on either sheet.
-  requestTitle: { ...Typography.mono(), color: theme.colors.text.primary, flexGrow: 1, flexShrink: 1, flexBasis: 240 },
+  requestTitle: { ...Typography.mono(), color: theme.colors.text.primary },
+  identity: { gap: theme.space.s4, flexGrow: 1, flexShrink: 1, flexBasis: 240 },
 }));

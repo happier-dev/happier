@@ -359,7 +359,8 @@ export function LocalServiceCaptureView(
             testID={`${testID}-gaps`}
             tone="warning"
             emphasis={t('deploymentTelemetry.local.gaps')}
-            reason={gaps}
+            // The line's owner draws `emphasis` inside `reason`: the state leads, then what it cost.
+            reason={[t('deploymentTelemetry.local.gaps'), gaps].filter(Boolean).join(' · ')}
             action={{ label: t('common.retry'), onPress: () => { void retryCapture(); } }}
           />
         ) : null}

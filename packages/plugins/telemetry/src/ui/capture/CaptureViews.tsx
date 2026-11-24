@@ -164,10 +164,15 @@ function CaptureList<Item>(
     () => new Map(items.map((item) => [keyOf(item), item])),
     [items, keyOf],
   );
-  // The person's pick while its row is listed; otherwise the first row, shown only beside the list.
+  // The person's pick while its row is listed; otherwise the row first shown, beside the list only. That row stays
+  // while newer rows arrive above it, so the request being read is never swapped under the reader; it moves to the
+  // first row only once it leaves the list.
   const picked = detail?.openId != null && byKey.has(detail.openId) ? detail.openId : null;
   const first = items[0];
-  const openKey = detail === undefined ? null : picked ?? (first === undefined ? null : keyOf(first));
+  const [landing, setLanding] = React.useState<string | null>(null);
+  const landingKey = landing !== null && byKey.has(landing) ? landing : first === undefined ? null : keyOf(first);
+  if (detail !== undefined && landingKey !== landing) setLanding(landingKey);
+  const openKey = detail === undefined ? null : picked ?? landingKey;
   const model = useHappierCollection({
     items,
     keyOf,

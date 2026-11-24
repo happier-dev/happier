@@ -352,6 +352,36 @@ describe('LocalServiceCaptureView', () => {
     } finally { await screen.unmount(); }
   });
 
+  // Live R5 finding: the request shown beside the list stays while newer requests arrive above it.
+  it('keeps the request it showed beside Traces when a newer request arrives', async () => {
+    const at = Date.now();
+    const request = (id: string, route: string, offset: number) => ({
+      id, worktree: 'checkout-main', kind: 'span', source: 'otlp', at: at - offset, traceId: `trace-${id}`, spanId: id,
+      durationMs: 40, serviceName: 'web', endpointMethod: 'GET', endpointRoute: route, httpStatusCode: 200,
+    });
+    const finite = machine((call) => {
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      if (call.actionId.endsWith('/capture/trace/get'))
+        return { ok: true, source, traceId: (call.input as { traceId: string }).traceId, summaries: [], repeatedQueries: [], slowChildSpans: [], logCorrelations: [] };
+      return { ok: true, source, items: [] };
+    });
+    let items = [request('t1', '/invoices/:id', 1000)];
+    const capture = machine(() => ({ ok: true, source, items }));
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const screen = await renderScreen(view(finite.invoke, 'traces', transport));
+    try {
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces', { width: 1000, height: 800 });
+      await settle();
+      items = [request('t0', '/login', 0), ...items];
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.trace.t0')).not.toBeNull();
+      expect(finite.calls.filter((call) => call.actionId.endsWith('/capture/trace/get')).map((call) => (call.input as { traceId: string }).traceId))
+        .toEqual(['trace-t1']);
+    } finally { await screen.unmount(); }
+  });
+
   // DBW review R4 #7: gaps are said once, in the person's terms, with Retry beside them.
   it('says capture has gaps once, without the store code, and retries from that line', async () => {
     const { invoke, calls } = machine((call) => {
