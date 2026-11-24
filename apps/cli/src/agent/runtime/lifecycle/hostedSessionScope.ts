@@ -48,6 +48,11 @@ export type HostedSessionScope = {
   handoverSaves?: Set<() => Promise<void>>;
   /** This Session's current live work: the same non-content facts its runner pushes to the daemon. */
   readLiveWork?: () => Promise<SessionInputLiveWork>;
+  /**
+   * Secret values this Session's launches materialized, with their registration counts. Owned by
+   * `transcriptSecretRedaction.ts`; another hosted Session's content is never masked with them.
+   */
+  transcriptSecrets?: Map<string, number>;
   /** The daemon-admitted runner bootstrap of the file this Session's environment names (session host). */
   readonly runnerBootstrap?: Readonly<{ path: string; bootstrap: AgentRuntimeRunnerBootstrapV1 }>;
 };

@@ -11,26 +11,33 @@
  * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers, the session hook
  * server, and the secret values the daemon materialized into a runner-spawned launch (Project
  * secret bindings, Profile secret bindings, produced native credentials), registered by the
- * runner's exec authorization for the launch's life. A Session's own launch secrets (Profile saved
+ * runner's exec authorization for its invocation's life. A Session's own launch secrets (Profile saved
  * secrets, Provider binding and Connected Account credentials the daemon materialized, carried in
  * the runner bootstrap or the foreground admission) register through
- * `beginSessionLaunchSecretRedaction` for the Session's life. The registry is process-local: it protects
- * the process that writes this Session's transcript, so registration happens there.
+ * `beginSessionLaunchSecretRedaction` for the Session's life. Registration happens in the process
+ * that writes this Session's transcript. Inside a hosted Session it goes to that Session's scope, so
+ * a session host serving several Accounts never masks (or reveals the presence of) one Session's
+ * values in another's content; outside any Session it goes to the process set, which every
+ * Session's content is masked with.
  */
-const registeredSecrets = new Map<string, number>();
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
+const processSecrets = new Map<string, number>();
 
 export const TRANSCRIPT_SECRET_REDACTED = '[redacted]';
 
 /** Register a live secret; the returned function releases this registration. */
 export function registerTranscriptSecret(secret: string): () => void {
-    registeredSecrets.set(secret, (registeredSecrets.get(secret) ?? 0) + 1);
+    const scope = readHostedSessionScope();
+    const store = scope ? scope.transcriptSecrets ??= new Map() : processSecrets;
+    store.set(secret, (store.get(secret) ?? 0) + 1);
     let released = false;
     return () => {
         if (released) return;
         released = true;
-        const count = registeredSecrets.get(secret) ?? 0;
-        if (count <= 1) registeredSecrets.delete(secret);
-        else registeredSecrets.set(secret, count - 1);
+        const count = store.get(secret) ?? 0;
+        if (count <= 1) store.delete(secret);
+        else store.set(secret, count - 1);
     };
 }
 
@@ -73,7 +80,9 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
  * returned as is. Without a registered secret this is a no-op.
  */
 export function redactTranscriptSecrets<T>(content: T): T {
-    if (registeredSecrets.size === 0 || content === undefined) return content;
-    const secrets = [...registeredSecrets.keys()].sort((left, right) => right.length - left.length);
+    const scoped = readHostedSessionScope()?.transcriptSecrets;
+    if ((processSecrets.size === 0 && !scoped?.size) || content === undefined) return content;
+    const secrets = [...new Set([...processSecrets.keys(), ...(scoped?.keys() ?? [])])]
+        .sort((left, right) => right.length - left.length);
     return redactValue(content, secrets) as T;
 }

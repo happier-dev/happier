@@ -1,7 +1,7 @@
 import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
 import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
-import { readHostedSessionScope, sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, readHostedSessionScope, sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { materializeDiscussionInputAttachments, DiscussionAttachmentPreparationError,
@@ -1610,7 +1610,9 @@ export class ApiSessionClient extends EventEmitter {
                 );
             },
             usageObservationPublisher: this.usageObservationPublisher,
-            buildOutboundSessionMessagePayload: (content) => buildOutboundSessionMessagePayload(this.storedContentCrypto, content),
+            // Delivery can run from a pooled socket callback; redaction uses this Session's secrets.
+            buildOutboundSessionMessagePayload: bindToHostedSessionScope((content: unknown) =>
+                buildOutboundSessionMessagePayload(this.storedContentCrypto, content)),
             toolCallCanonicalNameByProviderAndId: this.toolCallCanonicalNameByProviderAndId,
             permissionToolCallRawInputByProviderAndId: this.permissionToolCallRawInputByProviderAndId,
             toolCallInputByProviderAndId: this.toolCallInputByProviderAndId,
@@ -4393,10 +4395,10 @@ export class ApiSessionClient extends EventEmitter {
                         kind: 'agentState',
                         // Agent state carries Agent-authored tool input (permission request
                         // arguments); every commit passes the transcript redactor once.
-                        update: (state) => {
+                        update: bindToHostedSessionScope((state: AgentState) => {
                             const next = handler(state);
                             return redactTranscriptSecrets(this.agentStateRequestStore?.applyAppliedCompletions(next) ?? next);
-                        },
+                        }),
                     },
                 }));
             });
