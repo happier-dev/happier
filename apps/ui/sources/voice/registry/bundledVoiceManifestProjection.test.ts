@@ -4,11 +4,11 @@ import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manife
 
 import { projectBundledVoiceManifestContributions } from './bundledVoiceManifestProjection';
 
-it('reads packaged Voice declarations despite empty retired manifest families', () => {
-    const packaged: unknown = JSON.parse(readFileSync(new URL(
-        '../../../../../packages/plugins/codex/.happier-plugin/plugin.json', import.meta.url,
+it('reads bundled Voice declarations despite empty retired manifest families', () => {
+    const bundled: unknown = JSON.parse(readFileSync(new URL(
+        '../../../../../apps/cli/assets/bundled-plugin-manifests/codex.json', import.meta.url,
     ), 'utf8'));
-    const manifest = PluginManifestV2LoadSchema.parse(packaged);
+    const manifest = PluginManifestV2LoadSchema.parse(bundled);
     const expected = projectBundledVoiceManifestContributions(manifest);
     expect(expected.length).toBeGreaterThan(0);
     const compatible = {

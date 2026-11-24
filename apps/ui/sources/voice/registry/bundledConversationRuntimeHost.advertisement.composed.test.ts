@@ -12,6 +12,7 @@ import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '@happier-dev/plugins
 
 import { storage } from '@/sync/domains/state/storage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import { provisionElevenLabsWithAccountOperations } from '../../../../../packages/plugins/elevenlabs/src/ui/voice/operations';
 import elevenLabsVendorSchema from '../../../../../packages/plugins/elevenlabs/src/ui/voice/fixtures/tools.openapi.json';
 
@@ -113,8 +114,9 @@ describe('realtime Voice tool advertisement cost', () => {
     try {
       const tools = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' });
       expect(tools.some(tool => advertisesFullGrammar(tool.parameters))).toBe(false);
+      expect(tools.filter(tool => tool.name === VOICE_ACTION_EXECUTE_TOOL_NAME)).toHaveLength(1);
       const advertisement = await measure(tools);
-      expect(advertisement.count).toBe(31);
+      expect(advertisement.count).toBe(32);
       expect(advertisement.bytes).toBeLessThan(previousBytes);
       console.info(JSON.stringify({ family, ...advertisement }));
     } finally {

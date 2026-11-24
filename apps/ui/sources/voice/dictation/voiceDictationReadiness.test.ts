@@ -444,7 +444,7 @@ describe('resolveVoiceDictationReadiness', () => {
         providerId: 'local_neural',
         status: 'unavailable',
         code: 'model_unknown',
-        recoveryAction: 'install_model',
+        recoveryAction: 'retry',
       });
       expect(resolveVoiceDictationExecutionMachineRequirement({
         registry,
