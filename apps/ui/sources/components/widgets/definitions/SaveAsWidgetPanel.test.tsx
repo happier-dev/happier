@@ -6,6 +6,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { waitForTestEvent } from '@/dev/testkit/hooks/waitForTestEvent';
+import { isApprovalArtifactKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -20,9 +22,6 @@ import { decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/a
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { readBuiltinWidgetDescriptorV1, resolveConfiguredWidgetInputs, WidgetInstanceActionOutputSchemasV1, type WidgetInputBindingsV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
-    .createModalModuleMock({ confirmResult: true }).module);
-
 const harness = createHomeGovernanceHarness();
 const readBatchRequest = createSessionReadBatchFetchBoundary(harness.request);
 installHomeGovernanceBoundaries(harness);
@@ -36,6 +35,7 @@ installDisconnectedServerSocketBoundary(socket => {
     });
 });
 await loadSyncSingletonForTests();
+const { ModalProvider } = await import('@/modal/ModalProvider');
 const { SaveAsWidgetPanel } = await import('./SaveAsWidgetPanel');
 const { SessionVisualCopyPanel } = await import('@/components/sessions/board/SessionVisualCopyPanel');
 const { useWidgetDefinitionFlows } = await import('./useWidgetDefinitionFlows');
@@ -43,6 +43,16 @@ const { WidgetSetupStep } = await import('../add/WidgetSetupStep');
 const { t } = await import('@/text');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 let restoreUuid: (() => void) | null = null;
+
+async function waitForWidgetReview(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    await waitForTestEvent(screen.subscribe, () =>
+        expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+}
+
+function approvalArtifacts(serverId: string) {
+    return harness.artifacts(serverId).list().filter(row =>
+        isApprovalArtifactKindV1(Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind')));
+}
 
 /** Save as your widget's place chip ("Also add to"), by its place: its filter is what the person sees and changes. */
 function placeChip(screen: Readonly<{ tree: { root: { findAll: (predicate: (node: { props: Record<string, unknown> }) => boolean) => readonly { props: Record<string, unknown> }[] } } }>, id: string) {
@@ -73,7 +83,7 @@ describe('Save as widget placement', () => {
         resetRuntimeFetch();
     });
 
-    it.each(['placed', 'savePending', 'placementPending', 'placementRefused', 'builtinPlaced', 'publicPlaced'] as const)(
+    it.each(['placed', 'reviewSave', 'reviewPlacement', 'placementRefused', 'builtinPlaced', 'publicPlaced'] as const)(
         'promotes Session Add-to before setup placement and preserves %s outcomes', async outcome => {
         const accountId = 'owner';
         const sessionId = 'source';
@@ -83,7 +93,7 @@ describe('Save as widget placement', () => {
         const { SessionSurfaceItemV1Schema } = await import('@happier-dev/protocol/sessions/board');
         const { WidgetDefinitionV1Schema } = await import('@happier-dev/protocol/widgets');
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        const { retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
         const { View, Pressable } = await import('react-native');
         const { t } = await import('@/text');
         const account = { serverId, accountId };
@@ -117,7 +127,7 @@ describe('Save as widget placement', () => {
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Original checks' } } },
             ...(outcome === 'publicPlaced' ? { publicPresentation: { kind: 'declarative',
                 document: { version: 1, root: { kind: 'text', text: 'Shared edition' } } } } : {}),
-            ...(outcome === 'placementPending' ? { networkOverride: { network: 'none' } } : {}),
+            ...(outcome === 'reviewPlacement' ? { networkOverride: { network: 'none' } } : {}),
             ...(outcome === 'builtinPlaced' ? { name: 'Copied daily usage', body: nativeDefinition,
                 sizeDeclaration: native.sizeDeclaration, inputs: native.inputs, inputSchema: native.inputSchema } : {}) });
         const bindings: WidgetInputBindingsV1 = outcome === 'builtinPlaced' ? {
@@ -135,8 +145,8 @@ describe('Save as widget placement', () => {
             revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' });
         harness.answer(serverId, `/v2/sessions/${sessionId}/system-records/record?owner=host&namespace=surface&kind=layout.v1&localId=layout`, { body: { record: null } });
         harness.answer(serverId, `/v2/sessions/${sessionId}/system-records/record?owner=host&namespace=surface&kind=item.v1&localId=source-item`, { body: { record } });
-        if (outcome === 'savePending') await harness.requireUiApproval(serverId, 'widgets.definition.saveFromSession');
-        if (outcome === 'placementPending') await harness.requireUiApproval(serverId, 'widgets.item.add');
+        if (outcome === 'reviewSave') await harness.requireUiApproval(serverId, 'widgets.definition.saveFromSession');
+        if (outcome === 'reviewPlacement') await harness.requireUiApproval(serverId, 'widgets.item.add');
         const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
             ...storage.getState().settings.actionsSettingsV1,
             approvalWaivedSurfaces: {},
@@ -152,7 +162,7 @@ describe('Save as widget placement', () => {
                 anchorRef: React.useRef(null), testID: 'sessionAdd' });
             return <View><Pressable testID="openAdd" onPress={flows.addTo} />{flows.panel}</View>;
         }
-        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Card /></InjectedAuthProvider>);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><ModalProvider><Card /></ModalProvider></InjectedAuthProvider>);
         try {
             await screen.pressByTestIdAsync('openAdd');
             await screen.pressByTestIdAsync('sessionAdd.addTo.destination.home');
@@ -163,23 +173,33 @@ describe('Save as widget placement', () => {
                     destination: { key: 'public-profile', label: 'Public profile', surface: publicSurface },
                     current: { ...account, owner: { kind: 'sessionBoard', sessionId } }, providedContext: {}, promoted: { current: null }, testID: 'publicCopy' })
                 : screen.tree.root.findByType(WidgetSetupStep).props.setup;
-            let result: Awaited<ReturnType<typeof setup.submit>>;
-            await act(async () => { result = await setup.submit(setup.initial); });
-            const saved = harness.artifacts(serverId).list().filter(row => Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind') === 'widget-definition.v1');
-            if (outcome === 'savePending') {
-                expect(saved).toHaveLength(0);
-                expect(result!).toEqual({ ok: true, approvalPending: true });
-                const approvals = harness.artifacts(serverId).list().map(row => harness.artifacts(serverId).readPlainBody(row.id)).filter(Boolean).map(body => JSON.parse(body!));
-                expect(approvals).toEqual(expect.arrayContaining([expect.objectContaining({ actionId: 'widgets.definition.saveFromSession' })]));
-                expect(approvals.some(row => row.actionId === 'widgets.item.add')).toBe(false);
-                return;
+            const savedDefinitions = () => harness.artifacts(serverId).list().filter(row =>
+                Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind') === 'widget-definition.v1');
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const listHomePlacements = async () => {
+                const listed = await createDefaultActionExecutor().execute('widgets.item.list', { surface: { ...account, owner: { kind: 'home' } } },
+                    { serverId, surface: 'ui', authority: 'present_user' });
+                if (!listed.ok) throw new Error(listed.errorCode);
+                return WidgetInstanceActionOutputSchemasV1['widgets.item.list'].parse(listed.result).instances;
+            };
+            const expectsReview = outcome === 'reviewSave' || outcome === 'reviewPlacement';
+            const originalPlacements = expectsReview ? await listHomePlacements() : [];
+            const submission = setup.submit(setup.initial);
+            if (expectsReview) {
+                await waitForWidgetReview(screen);
+                expect(savedDefinitions()).toHaveLength(outcome === 'reviewSave' ? 0 : 1);
+                expect(await listHomePlacements()).toEqual(originalPlacements);
+                expect(approvalArtifacts(serverId)).toEqual([]);
+                await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
             }
+            let result: Awaited<typeof submission>;
+            await act(async () => { result = await submission; });
+            const saved = savedDefinitions();
             expect(saved).toHaveLength(1);
             expect(JSON.parse(harness.artifacts(serverId).readPlainBody(saved[0]!.id)!)).toMatchObject({
                 body: definition.body, provenance: { source: { kind: 'session', serverId, sessionId, itemId: instance.id } },
             });
             if (outcome === 'publicPlaced') {
-                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
                 expect(result!).toEqual({ ok: true });
                 const listed = await createDefaultActionExecutor().execute('widgets.item.list', { surface: publicSurface },
                     { serverId, surface: 'ui', authority: 'present_user', expectedAccountId: accountId });
@@ -190,28 +210,14 @@ describe('Save as widget placement', () => {
                 expect(result!).toEqual({ ok: false, message: t('widgetDefinition.savedButNotPlaced') });
                 await act(async () => { await setup.submit(setup.initial); });
                 expect(harness.artifacts(serverId).list().filter(row => Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind') === 'widget-definition.v1')).toHaveLength(1);
-            } else if (outcome === 'placementPending') {
-                expect(result!).toEqual({ ok: true, approvalPending: true });
-                const approvals = harness.artifacts(serverId).list().map(row => harness.artifacts(serverId).readPlainBody(row.id)).filter(Boolean).map(body => JSON.parse(body!));
-                expect(approvals).toEqual(expect.arrayContaining([expect.objectContaining({ actionId: 'widgets.item.add', actionArgs: expect.objectContaining({
-                    instance: expect.objectContaining({ definition: { kind: 'artifact', artifactId: saved[0]!.id }, networkOverride: { network: 'none' } }),
-                }) })]));
-                const pendingResult = result!;
-                if (!pendingResult.ok) throw new Error('Expected pending placement');
-                await act(async () => { screen.tree.root.findByType(WidgetSetupStep).props.onDone(pendingResult); });
-                expect(readPresentationNotice()?.message).toContain(t('widgetDefinition.savedButNotPlaced'));
             } else {
-                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
                 expect(result!).toEqual({ ok: true });
-                const listed = await createDefaultActionExecutor().execute('widgets.item.list', { surface: { ...account, owner: { kind: 'home' } } },
-                    { serverId, surface: 'ui', authority: 'present_user' });
-                expect(listed.ok).toBe(true);
-                if (!listed.ok) throw new Error('Expected the placed Home widgets to be readable');
-                const home = WidgetInstanceActionOutputSchemasV1['widgets.item.list'].parse(listed.result);
-                const copies = home.instances.filter(({ instance: placed }) => placed.definition.kind === 'artifact'
+                const copies = (await listHomePlacements()).filter(({ instance: placed }) => placed.definition.kind === 'artifact'
                     && placed.definition.artifactId === saved[0]!.id);
                 expect(copies).toHaveLength(1);
+                if (outcome === 'reviewPlacement') expect(copies[0]!.instance.networkOverride).toEqual({ network: 'none' });
                 expect(copies[0]!.instance.bindings).toEqual(bindings);
+                expect(approvalArtifacts(serverId)).toEqual([]);
             }
         } finally { await screen.unmount(); await disconnect(); retirePresentationNotice(); }
     });
@@ -312,7 +318,7 @@ describe('Session widget placement through the destination setup', () => {
             return <View><Pressable testID="openAdd" onPress={flows.addTo} /><Pressable testID="openSave" onPress={flows.saveAsYours} />
                 <Pressable testID="openAbout" onPress={flows.about} />{flows.panel}</View>;
         }
-        const screen = await renderScreen(<InjectedAuthProvider credentials={connected.credentials}><Card /></InjectedAuthProvider>);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connected.credentials}><ModalProvider><Card /></ModalProvider></InjectedAuthProvider>);
         const savedDefinitions = () => harness.artifacts(serverId).list().filter(row => Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind') === 'widget-definition.v1');
         const copies = async (destination: 'home' | 'project' = 'home') => {
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -355,7 +361,7 @@ describe('Session widget placement through the destination setup', () => {
             await act(async () => { showLibrary(copy); });
             await screen.pressByTestIdAsync('openAbout');
         };
-        return { account, sessionId, screen, placeAt, saveTo, savedDefinitions, copies, openAbout, disconnect: connected.disconnect };
+        return { account, sessionId, screen, placeAt, saveWithPlace, saveTo, savedDefinitions, copies, openAbout, disconnect: connected.disconnect };
     }
 
     const sessionValue = (sessionId: string, serverId: string): WidgetInputBindingsV1 => ({ session: { kind: 'value', value: { serverId, sessionId } } });
@@ -594,24 +600,30 @@ describe('Session widget placement through the destination setup', () => {
         } finally { await home.screen.unmount(); await home.disconnect(); }
     });
 
-    it.each(['save', 'addTo'] as const)('%s retains the saved copy and visibly waits when the chosen place needs approval', async via => {
+    it.each(['save', 'addTo'] as const)('%s keeps the saved copy while the chosen place awaits UI confirmation', async via => {
         const home = await openSessionHome({ key: 'summary-approval', builtinId: 'session_summary',
             bindings: { session: { kind: 'context', slot: 'session' } }, placementNeedsApproval: true });
         try {
-            if (via === 'save') {
-                // Save places at once; the placement waits for approval and the saved copy stays.
-                await home.saveTo();
-                expect(home.savedDefinitions()).toHaveLength(1);
-                expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toHaveLength(0);
-                return;
-            }
-            const setup = await home.placeAt(via);
-            let result: Awaited<ReturnType<typeof setup.submit>>;
-            await act(async () => { result = await setup.submit(setup.initial); });
-            expect(result!).toEqual({ ok: true, approvalPending: true });
-            await act(async () => { await setup.submit(setup.initial); });
-            expect(home.savedDefinitions()).toHaveLength(1);
+            const submit = async () => {
+                if (via === 'save') return home.saveWithPlace('home');
+                const setup = await home.placeAt(via);
+                expect(await setup.submit(setup.initial)).toEqual({ ok: true });
+            };
+            const submission = submit();
+            await waitForWidgetReview(home.screen);
+            const saved = home.savedDefinitions();
+            expect(saved).toHaveLength(1);
             expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toHaveLength(0);
+            expect(approvalArtifacts(home.account.serverId)).toEqual([]);
+            await home.screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+            await act(async () => { await submission; });
+            await waitForHomeGovernance(async () => {
+                expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toEqual([
+                    expect.objectContaining({ definition: { kind: 'artifact', artifactId: saved[0]!.id } }),
+                ]);
+            });
+            expect(home.savedDefinitions().map(row => row.id)).toEqual([saved[0]!.id]);
+            expect(approvalArtifacts(home.account.serverId)).toEqual([]);
         } finally { await home.screen.unmount(); await home.disconnect(); }
     });
 
