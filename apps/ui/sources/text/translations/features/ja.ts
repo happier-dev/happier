@@ -20095,6 +20095,7 @@ const ja: WorkflowTriggersCopy = {
         checking: "自動化を確認しています…",
         notChecked: "自動化は確認されませんでした: 読み込めませんでした。",
         notCheckedHomeUnavailable: "自動化は確認されませんでした: Home の準備ができていません。",
+        notCheckedUnreachable: "自動化は確認されませんでした: Home に接続できません。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} をスキップしました · 実行にはマシンが必要です`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} をスキップしました · ${name} がこのマシンで許可していません`,
         openRun: "実行を開く",

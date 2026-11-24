@@ -20035,6 +20035,7 @@ const zhHant: WorkflowTriggersCopy = {
         checking: "正在檢查自動化…",
         notChecked: "未檢查自動化：無法載入它們。",
         notCheckedHomeUnavailable: "未檢查自動化：Home 目前尚未就緒。",
+        notCheckedUnreachable: "未檢查自動化：無法連線到 Home。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `已略過 ${workflow} · 需要一台機器才能執行`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `已略過 ${workflow} · ${name} 尚未在這台機器上允許它`,
         openRun: "開啟執行",

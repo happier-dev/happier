@@ -20185,6 +20185,7 @@ const ru: WorkflowTriggersCopy = {
         checking: "Проверка автоматизаций…",
         notChecked: "Автоматизации не проверены: их не удалось загрузить.",
         notCheckedHomeUnavailable: "Автоматизации не проверены: Home сейчас не готов.",
+        notCheckedUnreachable: "Автоматизации не проверены: Home недоступен.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} пропущен · для запуска нужна машина`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} пропущен · ${name} не разрешил(а) его на этой машине`,
         openRun: "Открыть запуск",

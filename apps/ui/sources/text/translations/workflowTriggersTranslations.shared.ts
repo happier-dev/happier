@@ -171,6 +171,7 @@ export const en = {
         checking: "Checking automations…",
         notChecked: "Automations weren’t checked: they couldn’t be loaded.",
         notCheckedHomeUnavailable: "Automations weren’t checked: the Home isn’t ready right now.",
+        notCheckedUnreachable: "Automations weren’t checked: the Home can’t be reached.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Skipped ${workflow} · it needs a Machine to run`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Skipped ${workflow} · ${name} hasn’t allowed it on this Machine`,
         openRun: "Open run",

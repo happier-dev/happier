@@ -44,6 +44,12 @@ function readAppliedHomeUnavailable(): boolean {
     return readAppliedHomeSummaryKind() === 'unavailable';
 }
 
+/** Whether the page already says this Home can't be reached: the applied Home, read once from the same summary. */
+export function readHomeShownUnavailable(serverId: string | null | undefined): boolean {
+    if (!readAppliedHomeUnavailable()) return false;
+    return !serverId || areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId);
+}
+
 /** The canonical connection summary of the applied Home, read without subscribing to its machines. */
 function readAppliedHomeSummaryKind() {
     if (!isAppliedActiveServerRuntimeAvailable()) return null;

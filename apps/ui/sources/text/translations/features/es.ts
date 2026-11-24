@@ -20096,6 +20096,7 @@ const es: WorkflowTriggersCopy = {
         checking: "Comprobando automatizaciones…",
         notChecked: "Las automatizaciones no se comprobaron: no se pudieron cargar.",
         notCheckedHomeUnavailable: "Las automatizaciones no se comprobaron: el Home no está listo ahora mismo.",
+        notCheckedUnreachable: "Las automatizaciones no se comprobaron: no se puede acceder al Home.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Se omitió ${workflow} · necesita una máquina para ejecutarse`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Se omitió ${workflow} · ${name} no lo ha permitido en esta máquina`,
         openRun: "Abrir ejecución",

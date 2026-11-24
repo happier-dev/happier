@@ -3,6 +3,7 @@ import { readActionAutomationSkipReasonV1, type ActionExecuteResult } from '@hap
 import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from '@/components/approvals/formatAutomaticCheckSkipNotice';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { t } from '@/text';
 
 /**
@@ -17,8 +18,16 @@ export async function presentActionAutomationSkipNotice(
 ): Promise<void> {
     const notices = result.automationNotices ?? [];
     const skipped = notices.filter(notice => notice.code === 'action_automation_skipped');
-    const notChecked = notices.flatMap(notice => notice.code === 'action_automations_not_checked' ? [notice.reason] : []);
+    let notChecked = notices.flatMap(notice => notice.code === 'action_automations_not_checked' ? [notice.reason] : []);
     if ((notChecked.length === 0 && skipped.length === 0) || lifetime?.isCurrent() === false) return;
+    if (notChecked.includes(SERVER_UNREACHABLE_ERROR_CODE)) {
+        // One fact, once: when the page already says this Home can't be reached, the unreachable note adds nothing.
+        const { readHomeShownUnavailable } = await import('@/components/navigation/connectionStatus/HomeReachabilityGate');
+        if (readHomeShownUnavailable(lifetime?.scope.serverId)) {
+            notChecked = notChecked.filter(reason => reason !== SERVER_UNREACHABLE_ERROR_CODE);
+        }
+        if (notChecked.length === 0 && skipped.length === 0) return;
+    }
     const names = new Map<string, string>();
     if (lifetime && skipped.length > 0) {
         const ids = [...new Set(skipped.map(notice => notice.workflowId))];

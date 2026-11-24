@@ -19654,6 +19654,7 @@ const de: WorkflowTriggersCopy = {
         checking: "Automatisierungen werden geprüft…",
         notChecked: "Automatisierungen wurden nicht geprüft: Sie konnten nicht geladen werden.",
         notCheckedHomeUnavailable: "Automatisierungen wurden nicht geprüft: Das Home ist gerade nicht bereit.",
+        notCheckedUnreachable: "Automatisierungen wurden nicht geprüft: Das Home ist nicht erreichbar.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} übersprungen · braucht eine Maschine zum Ausführen`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} übersprungen · ${name} hat es auf dieser Maschine nicht erlaubt`,
         openRun: "Lauf öffnen",

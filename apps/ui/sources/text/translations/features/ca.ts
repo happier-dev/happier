@@ -20174,6 +20174,7 @@ const ca: WorkflowTriggersCopy = {
         checking: "S’estan comprovant les automatitzacions…",
         notChecked: "Les automatitzacions no s’han comprovat: no s’han pogut carregar.",
         notCheckedHomeUnavailable: "Les automatitzacions no s’han comprovat: la Home encara no està a punt.",
+        notCheckedUnreachable: "Les automatitzacions no s’han comprovat: no es pot accedir a la Home.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `S’ha omès ${workflow} · necessita una màquina per executar-se`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `S’ha omès ${workflow} · ${name} no ho ha permès en aquesta màquina`,
         openRun: "Obre l’execució",
