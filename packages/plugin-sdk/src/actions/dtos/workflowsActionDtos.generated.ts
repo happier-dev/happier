@@ -21820,6 +21820,15 @@ export type WorkflowsActionResultById = {
                 dueAt: number;
                 lastRunAt: null | number;
             }[];
+            scheduleHolds?: ({
+                runId: string;
+                runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                triggerId: string;
+                reason: 'open_occurrence';
+            } | {
+                triggerId: string;
+                reason: 'open_occurrence';
+            })[] | undefined;
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -24094,6 +24103,15 @@ export type WorkflowsActionResultById = {
                 dueAt: number;
                 lastRunAt: null | number;
             }[];
+            scheduleHolds?: ({
+                runId: string;
+                runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                triggerId: string;
+                reason: 'open_occurrence';
+            } | {
+                triggerId: string;
+                reason: 'open_occurrence';
+            })[] | undefined;
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -26052,6 +26070,15 @@ export type WorkflowsActionResultById = {
                 dueAt: number;
                 lastRunAt: null | number;
             }[];
+            scheduleHolds?: ({
+                runId: string;
+                runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                triggerId: string;
+                reason: 'open_occurrence';
+            } | {
+                triggerId: string;
+                reason: 'open_occurrence';
+            })[] | undefined;
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -28014,6 +28041,15 @@ export type WorkflowsActionResultById = {
                 dueAt: number;
                 lastRunAt: null | number;
             }[];
+            scheduleHolds?: ({
+                runId: string;
+                runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                triggerId: string;
+                reason: 'open_occurrence';
+            } | {
+                triggerId: string;
+                reason: 'open_occurrence';
+            })[] | undefined;
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;

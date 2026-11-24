@@ -3,6 +3,7 @@ import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automatio
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import type { Prisma } from '@prisma/client';
 
+import { resolveReadableWorkflowRunIdsInTx } from "@/app/workflows/workflowRunAccess";
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { afterTx } from "@/storage/inTx";
@@ -24,8 +25,8 @@ function hasOneOpenScheduleOccurrence(scopeSessionId: string | null): boolean {
     return scopeSessionId === null;
 }
 
-function openScheduleOccurrencesWhere(accountId: string, triggerId: Prisma.AutomationRunWhereInput["triggerId"]) {
-    return { accountId, triggerId, causeTriggerKind: "schedule",
+function openScheduleOccurrencesWhere(triggerId: Prisma.AutomationRunWhereInput["triggerId"]) {
+    return { triggerId, causeTriggerKind: "schedule",
         state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } } satisfies Prisma.AutomationRunWhereInput;
 }
 
@@ -44,20 +45,21 @@ export async function loadAutomationScheduleHolds(
             }
         }
     }
+    const runs = (await Promise.all(portableQueryChunks({
+        values: [...candidates.keys()], bindingsPerValue: 1, fixedBindings: 1 + AUTOMATION_RUN_TERMINAL_STATES.length,
+    }).map(triggerIds => db.automationRun.findMany({
+        where: openScheduleOccurrencesWhere({ in: [...triggerIds] }),
+        select: { id: true, automationId: true, triggerId: true, accountId: true, state: true,
+            sourceArtifactId: true, visibleTeamId: true, workflowCustodyState: true },
+    })))).flat().filter(run => run.triggerId !== null && candidates.get(run.triggerId) === run.automationId);
+    const readable = await resolveReadableWorkflowRunIdsInTx(db, accountId, runs);
     const byAutomation = new Map<string, NonNullable<AutomationDefinitionDetail["scheduleHolds"]>>();
-    for (const triggerIds of portableQueryChunks({
-        values: [...candidates.keys()], bindingsPerValue: 1, fixedBindings: 2 + AUTOMATION_RUN_TERMINAL_STATES.length,
-    })) {
-        const runs = await db.automationRun.findMany({
-            where: openScheduleOccurrencesWhere(accountId, { in: [...triggerIds] }),
-            select: { id: true, automationId: true, triggerId: true },
-        });
-        for (const run of runs) {
-            if (run.triggerId === null || candidates.get(run.triggerId) !== run.automationId) continue;
-            const holds = byAutomation.get(run.automationId) ?? [];
-            holds.push({ triggerId: AutomationTriggerIdSchema.parse(run.triggerId), reason: "open_occurrence", runId: run.id });
-            byAutomation.set(run.automationId, holds);
-        }
+    for (const run of runs) {
+        if (run.automationId === null || run.triggerId === null) continue;
+        const holds = byAutomation.get(run.automationId) ?? [];
+        holds.push({ triggerId: AutomationTriggerIdSchema.parse(run.triggerId), reason: "open_occurrence",
+            ...(readable.has(run.id) ? { runId: run.id, runState: run.state } : {}) });
+        byAutomation.set(run.automationId, holds);
     }
     return byAutomation;
 }
@@ -168,7 +170,7 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
     });
     const oneOpen = hasOneOpenScheduleOccurrence(trigger.automation.scopeSessionId);
     const open = oneOpen ? await params.tx.automationRun.findFirst({
-        where: openScheduleOccurrencesWhere(trigger.automation.accountId, trigger.id),
+        where: { ...openScheduleOccurrencesWhere(trigger.id), automationId: trigger.automationId },
         select: { occurrenceKey: true },
     }) : null;
     if (open && open.occurrenceKey !== occurrenceKey) return null;

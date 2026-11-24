@@ -103,6 +103,12 @@ async function readRunFactsInTx(tx: Tx, runId: string) {
     return tx.automationRun.findUnique({ where: { id: runId }, select: runFactsSelect });
 }
 type RunFacts = NonNullable<Awaited<ReturnType<typeof readRunFactsInTx>>>;
+type RunAudienceFacts = Pick<RunFacts, 'accountId' | 'workflowCustodyState' | 'sourceArtifactId' | 'visibleTeamId'>;
+
+function readFrozenRunAudience(row: RunAudienceFacts) {
+    if (row.workflowCustodyState === null || !row.sourceArtifactId || !row.visibleTeamId) return null;
+    return { sourceArtifactId: row.sourceArtifactId, teamId: row.visibleTeamId };
+}
 
 async function isLiveTeamMemberInTx(tx: Tx, teamId: string, accountId: string): Promise<boolean> {
     const memberships = await resolveTeamMembershipContextsInTx(tx, { where: { teamId, accountId } });
@@ -147,14 +153,39 @@ export async function resolveWorkflowRunVisibilityScopesInTx(tx: Tx, input: Read
     return [...teamsBySource].filter(([sourceArtifactId]) => accessibleIds.has(sourceArtifactId))
         .map(([sourceArtifactId, visibleTeamIds]) => ({ sourceArtifactId, visibleTeamIds }));
 }
+/** Authorize references to already-selected Runs in one audience batch, with no Run rereads. */
+export async function resolveReadableWorkflowRunIdsInTx(tx: Tx, actorAccountId: string,
+    rows: readonly (RunAudienceFacts & Readonly<{ id: string }>)[],
+): Promise<ReadonlySet<string>> {
+    const readable = new Set<string>();
+    const shared = [];
+    for (const row of rows) {
+        if (row.accountId === actorAccountId) {
+            readable.add(row.id);
+            continue;
+        }
+        const audience = readFrozenRunAudience(row);
+        if (audience) shared.push({ id: row.id, ...audience });
+    }
+    if (shared.length === 0) return readable;
+    const scopes = await resolveWorkflowRunVisibilityScopesInTx(tx, {
+        actorAccountId, sourceArtifactIds: [...new Set(shared.map(row => row.sourceArtifactId))],
+    });
+    const teamsBySource = new Map(scopes.map(scope => [scope.sourceArtifactId, new Set(scope.visibleTeamIds)]));
+    for (const row of shared) {
+        if (teamsBySource.get(row.sourceArtifactId)?.has(row.teamId)) readable.add(row.id);
+    }
+    return readable;
+}
+
 async function accessFromFactsInTx(tx: Tx, row: Omit<RunFacts, "workflowAcceptedSnapshotEnvelope">, actorAccountId: string): Promise<WorkflowRunAccess | null> {
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(row.account);
     const common = { ownerAccountId: row.accountId, encryptionMode: mode.status === "ready" ? mode.mode : null, visibleTeamId: row.visibleTeamId };
     if (row.accountId === actorAccountId) return { ...common, level: "owner" };
-    if (row.workflowCustodyState === null) return null;
-    if (!row.sourceArtifactId || !row.visibleTeamId || !await isLiveTeamMemberInTx(tx, row.visibleTeamId, actorAccountId)) return null;
-    if ((await readGrantedTeamIdsInTx(tx, row.sourceArtifactId, [row.visibleTeamId])).length === 0) return null;
-    const grant = await resolveArtifactAccessInTx(tx, { actorAccountId, artifactId: row.sourceArtifactId });
+    const audience = readFrozenRunAudience(row);
+    if (!audience || !await isLiveTeamMemberInTx(tx, audience.teamId, actorAccountId)) return null;
+    if ((await readGrantedTeamIdsInTx(tx, audience.sourceArtifactId, [audience.teamId])).length === 0) return null;
+    const grant = await resolveArtifactAccessInTx(tx, { actorAccountId, artifactId: audience.sourceArtifactId });
     return grant ? { ...common, level: grant.level === "owner" ? "admin" : grant.level } : null;
 }
 

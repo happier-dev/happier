@@ -1,8 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 
+import { createAccountWorkflowTriggerActions } from "@happier-dev/protocol/actions";
+import {
+    AutomationDefinitionDetailSchema, AutomationDefinitionDetailsResponseSchema,
+} from "@happier-dev/protocol/automations/automationApiV3";
+import { WorkflowTriggerListResultV1Schema } from "@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { resolveWorkflowRunAccessInTx } from "@/app/workflows/workflowRunAccess";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { removeMachineAccessGrantInTx } from "@/app/machines/machineAccess";
 import { admitDueAutomationScheduleTriggerTx } from "@/app/automations/automationRunQueueService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -68,49 +75,97 @@ describe("Automation current transport and retained 0.2 data", () => {
         });
     });
 
-    it("returns the exact open Run holding a pending recurring schedule to its owner until settlement", async () => {
+    it("projects recurring holds onto the authenticated Workflow trigger set with one batched holder read", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const other = await db.account.create({ data: { encryptionMode: "plain" } });
         const machine = await db.machine.create({ data: {
             id: randomUUID(), accountId: account.id, installationId: randomUUID(), metadata: "{}",
         } });
         const dueAt = new Date(Date.now() - 60_000);
+        const schedule = { kind: "schedule" as const, scheduleKind: "interval" as const, everyMs: 60_000, nextRunAt: dueAt };
         const automation = await db.automation.create({ data: {
             accountId: account.id, name: "Scheduled Workflow", enabled: true,
             templateVersion: 1, templateCiphertext: workflowRecipe("detached_run"),
             assignments: { create: { machineId: machine.id, enabled: true } },
-            triggers: { create: [{ kind: "schedule", scheduleKind: "interval", everyMs: 60_000, nextRunAt: dueAt },
-                { kind: "schedule", scheduleKind: "interval", everyMs: 60_000, nextRunAt: dueAt }] },
+            triggers: { create: [schedule, schedule, schedule] },
         }, include: { triggers: true } });
-        const trigger = automation.triggers[0]!;
-        const admitted = await inTx(tx => admitDueAutomationScheduleTriggerTx({
-            tx, triggerId: trigger.id, expectedRevision: trigger.revision, expectedNextRunAt: dueAt, now: dueAt,
-        }));
-        expect(admitted?.kind).toBe("admitted");
-        const runId = admitted!.run.id;
-        await db.automationRun.update({ where: { id: runId }, data: {
-            state: "interrupted", leaseExpiresAt: dueAt,
-        } });
-        // A cadence edit keeps an open prior occurrence as the incumbent.
-        await db.automationTrigger.update({ where: { id: trigger.id }, data: { revision: { increment: 1 } } });
+        const [trigger, privateTrigger, unheldTrigger] = automation.triggers;
+        const admit = async (candidate: typeof trigger) => {
+            const result = await inTx(tx => admitDueAutomationScheduleTriggerTx({
+                tx, triggerId: candidate.id, expectedRevision: candidate.revision, expectedNextRunAt: dueAt, now: dueAt,
+            }));
+            if (result?.kind !== "admitted") throw new Error("Fixture schedule did not admit");
+            return result.run.id;
+        };
         await withAuthenticatedTestApp(automationRoutes, async app => {
-            const read = (accountId: string) => app.inject({ method: "GET", url: `/v3/automations/${automation.id}`,
-                headers: { "x-test-user-id": accountId } });
-            const detail = await read(account.id);
-            const page = await app.inject({ method: "POST", url: "/v3/automations/query",
-                headers: { "x-test-user-id": account.id }, payload: { details: true } });
-            const foreign = await read(other.id);
-            expect(detail.statusCode, detail.body).toBe(200);
-            expect(page.statusCode, page.body).toBe(200);
-            expect(foreign.statusCode).toBe(404);
-            expect(foreign.body).not.toContain(runId);
-            const holds = [{ triggerId: trigger.id, reason: "open_occurrence", runId }];
-            expect(detail.json().scheduleHolds).toEqual(holds);
-            expect(page.json().automations).toEqual([expect.objectContaining({ id: automation.id, scheduleHolds: holds })]);
-            const cancelled = await app.inject({ method: "POST", url: `/v3/automations/runs/${runId}/cancel`,
-                headers: { "x-test-user-id": account.id } });
+            const headers = { "x-test-user-id": account.id };
+            const outsideFixture = () => { throw new Error("Unexpected host transport"); };
+            const actions = createAccountWorkflowTriggerActions({
+                resolveWorkflow: outsideFixture,
+                resolveEncryption: async () => ({ kind: "available", witness: {
+                    mode: "plain", version: 1, contentKeyFingerprint: null,
+                } }),
+                randomBytes: outsideFixture,
+                newId: outsideFixture,
+                automations: {
+                    list: outsideFixture, create: outsideFixture, reconcile: outsideFixture, delete: outsideFixture,
+                    listDetails: async selection => {
+                        const response = await app.inject({ method: "POST", url: "/v3/automations/query",
+                            headers, payload: { ...selection, details: true } });
+                        expect(response.statusCode, response.body).toBe(200);
+                        return AutomationDefinitionDetailsResponseSchema.parse(response.json());
+                    },
+                    get: async automationId => {
+                        const response = await app.inject({ method: "GET", url: `/v3/automations/${automationId}`, headers });
+                        expect(response.statusCode, response.body).toBe(200);
+                        return AutomationDefinitionDetailSchema.parse(response.json());
+                    },
+                },
+            });
+            const readSet = async (selection: Parameters<typeof actions.list>[0] = { scope: "account_all" }) => {
+                const page = WorkflowTriggerListResultV1Schema.parse(await actions.list(selection));
+                expect(page.sets).toHaveLength(1);
+                return page.sets[0]!;
+            };
+            expect(await readSet()).not.toHaveProperty("scheduleHolds");
+            const runId = await admit(trigger);
+            const privateRunId = await admit(privateTrigger);
+            await db.automationRun.update({ where: { id: runId }, data: { state: "running" } });
+            // Isolate the two permissions: this Account may read the definition, while the
+            // saved incumbent on its second trigger is private to another Account.
+            await db.automationRun.update({ where: { id: privateRunId }, data: {
+                accountId: other.id, state: "interrupted", visibleTeamId: null,
+            } });
+            expect(await inTx(tx => resolveWorkflowRunAccessInTx(tx, { actorAccountId: account.id, runId: privateRunId }))).toBeNull();
+            let holderReads = 0;
+            const stopObserving = observeSqliteRequests({ before: request => {
+                if (request.model === "AutomationRun" && request.action === "findMany"
+                    && JSON.stringify(request.args).includes('"notIn"')) holderReads++;
+            } });
+            try {
+                const set = await readSet();
+                expect(set).toHaveProperty("scheduleHolds", expect.arrayContaining([
+                    { triggerId: trigger.id, reason: "open_occurrence", runId, runState: "running" },
+                    { triggerId: privateTrigger.id, reason: "open_occurrence" },
+                ]));
+                expect(set.scheduleHolds).toHaveLength(2);
+                expect(JSON.stringify(set)).not.toContain(privateRunId);
+                expect(set.missedSchedules?.map(item => item.triggerId)).toEqual([unheldTrigger.id]);
+                expect(holderReads).toBe(1);
+            } finally {
+                stopObserving();
+            }
+            await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", leaseExpiresAt: dueAt } });
+            // A cadence edit retains an open prior occurrence as the incumbent.
+            await db.automationTrigger.update({ where: { id: trigger.id }, data: { revision: { increment: 1 } } });
+            expect(await readSet({ automationId: automation.id })).toHaveProperty("scheduleHolds", expect.arrayContaining([
+                { triggerId: trigger.id, reason: "open_occurrence", runId, runState: "interrupted" },
+            ]));
+            const cancelled = await app.inject({ method: "POST", url: `/v3/automations/runs/${runId}/cancel`, headers });
             expect(cancelled.statusCode, cancelled.body).toBe(200);
-            expect((await read(account.id)).json().scheduleHolds).toBeUndefined();
+            expect(await readSet()).toHaveProperty("scheduleHolds", [
+                { triggerId: privateTrigger.id, reason: "open_occurrence" },
+            ]);
         });
     });
 

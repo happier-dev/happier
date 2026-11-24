@@ -738,8 +738,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const readMissedSchedules = (row: AutomationDefinitionDetail, now: number) => {
     const occurrences = row.scheduleOccurrences;
     if (!row.enabled || occurrences === undefined) return [];
+    const heldTriggerIds = new Set(row.scheduleHolds?.map(hold => hold.triggerId));
     return row.triggers.flatMap(trigger => {
-      if (trigger.kind !== 'schedule' || !trigger.enabled) return [];
+      if (trigger.kind !== 'schedule' || !trigger.enabled || heldTriggerIds.has(trigger.id)) return [];
       const occurrence = occurrences.find(item => item.triggerId === trigger.id && item.triggerRevision === trigger.revision);
       const dueAt = trigger.nextRunAt !== null && trigger.nextRunAt < now
         ? Math.max(trigger.nextRunAt, occurrence?.scheduledFor ?? 0) : occurrence?.scheduledFor;
@@ -756,6 +757,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...(row.scheduleOccurrences === undefined ? {} : {
         missedSchedules: missedSchedules ?? readMissedSchedules(row, Date.now()),
       }),
+      ...(row.scheduleHolds?.length ? { scheduleHolds: row.scheduleHolds } : {}),
       revision: row.templateVersion, enabled: row.enabled, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
   };

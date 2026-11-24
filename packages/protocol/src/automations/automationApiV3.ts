@@ -443,6 +443,14 @@ export const AutomationDefinitionListItemSchema = lazyZodSchema(() => (<T extend
 })));
 export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 
+export const AutomationScheduleHoldV1Schema = lazyZodSchema(() => {
+  const hold = { triggerId: AutomationTriggerIdSchema, reason: z.literal("open_occurrence") };
+  return z.union([
+    z.strictObject(hold),
+    z.strictObject({ ...hold, runId: IDENTIFIER_SCHEMA, runState: WorkflowRunStateV1Schema }),
+  ]);
+});
+
 /**
  * Authenticated definition detail, also available through explicit private-page
  * demand. Ordinary summary/status/source projections omit its private envelopes.
@@ -459,12 +467,8 @@ export const AutomationDefinitionDetailSchema = lazyZodSchema(() => (<T extends 
   scheduleOccurrences: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema, triggerRevision: AutomationTriggerRevisionSchema,
     scheduledFor: TIMESTAMP_SCHEMA, startedAt: z.nullable(TIMESTAMP_SCHEMA), held: z.boolean(),
   }))),
-  /** Incumbents of recurring schedules in the authenticated Account's detail. */
-  scheduleHolds: z.optional(z.array(z.strictObject({
-    triggerId: AutomationTriggerIdSchema,
-    reason: z.literal("open_occurrence"),
-    runId: IDENTIFIER_SCHEMA,
-  }))),
+  /** Server-authorized incumbents consumed by the Workflow trigger-set projection. */
+  scheduleHolds: z.optional(z.array(AutomationScheduleHoldV1Schema)),
   /** Predecessor bytes for direct reads and narrow retained-template recovery; ordinary writes use executionRecipe. */
   templateCiphertext: z.optional(z.string().check(z.minLength(1))),
   /** Private-reader current recipe; ordinary summary lists never disclose it. */

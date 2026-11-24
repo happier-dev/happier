@@ -3242,11 +3242,13 @@ run. The Home sends the content-free code with HTTP 409 before creating a Run.
 An empty assignment has its existing validation response. Idempotent retries of
 admitted requests keep their existing receipt.
 
-Private Automation definition detail, including explicit details queries, can
-carry `scheduleHolds` entries with a trigger ID, `open_occurrence` and the owning
-Account's Run ID. A recurring unscoped schedule retains its open incumbent
-across cadence edits. Earlier responses omit the hold evidence. Use matching
-0.3 development Home and Protocol readers for the closed detail response.
+A recurring unscoped schedule retains its open incumbent across cadence edits.
+The Workflow trigger set projects this as optional `scheduleHolds`. Each hold
+identifies the trigger and carries `open_occurrence`. Only a reader authorized
+by the existing Run audience receives the Run ID and lifecycle state. The
+authenticated Automation definition detail is the existing host transport for
+the same evidence. Earlier responses may omit it. Load matching Home,
+Protocol and generated SDK contracts for the closed responses.
 
 The existing `requester_session_bootstrap_v1` private installed message supports
 `scope: 'workflow_trigger'`, with an exact Machine target, opaque scope id,

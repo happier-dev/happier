@@ -15,7 +15,7 @@ import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.
 import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
 import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automationSubjectV1.js';
 import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
-import { AutomationDefinitionListRequestSchema } from '../../automations/automationApiV3.js';
+import { AutomationDefinitionListRequestSchema, AutomationScheduleHoldV1Schema } from '../../automations/automationApiV3.js';
 import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
@@ -313,6 +313,8 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Read-time fact from the saved scheduler cursor and the actual latest started Run. */
   missedSchedules: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema,
     dueAt: z.number().check(z.int(), z.nonnegative()), lastRunAt: z.nullable(z.number().check(z.int(), z.nonnegative())) }))),
+  /** Why a recurring schedule waits. Run identity and state require Run read access. */
+  scheduleHolds: z.optional(z.array(AutomationScheduleHoldV1Schema)),
   /** Current saved definition provenance, never an occurrence's accepted source. Display only. */
   sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
   sourceSavedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
