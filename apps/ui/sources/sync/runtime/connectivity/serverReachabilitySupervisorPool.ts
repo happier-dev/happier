@@ -19,6 +19,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 import { createNotAuthenticatedError } from './authErrors';
 import { recordFailedHomeReach } from './homeReachFailures';
+import { isBrowserOffline } from './transientConnectivityErrors';
 import { readServerReachabilityBackgroundRetryMs } from './serverReachabilityTuning';
 
 export class ServerReachabilityWaitTimeoutError extends Error {
@@ -512,7 +513,7 @@ export async function waitForServerReachable(params: Readonly<{
             // Foreground reach diagnostics follow an actual canonical outage,
             // never the duration of a caller's wait or intentional shutdown.
             if (!homeIdentityId || params.signal?.aborted || !networkAllowed
-                || (typeof navigator !== 'undefined' && navigator.onLine === false)
+                || isBrowserOffline()
                 || state.phase !== 'offline'
                 || entry.recordedFailuresForOfflineEpisode.has(homeIdentityId)) return;
             entry.recordedFailuresForOfflineEpisode.add(homeIdentityId);

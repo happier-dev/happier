@@ -2,6 +2,7 @@ import type { VoiceMachineError, VoiceMachineErrorKind } from './voiceConversati
 import { t } from '@/text';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 import { readLegacyExecutionRunFailureMessage } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
 /** The daemon owns retry scheduling; a provider reset alone promises no automatic retry. */
@@ -65,6 +66,7 @@ export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
     voice_provider_agent_unavailable: 'settingsVoice.local.machineErrors.provider_agent_unavailable',
     voice_agent_startup_instructions_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
     execution_run_protocol_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
+    [SERVER_UNREACHABLE_ERROR_CODE]: 'settingsPlugins.targetSelection.unreachableThisHome',
     provider_response_invalid: 'settingsVoice.local.machineErrors.provider_response_invalid',
     source_runtime_reload_required: 'session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED',
 } as const;
@@ -90,6 +92,7 @@ export function resolveVoiceMachineErrorTranslationKey(
         || kind === 'service_temporarily_unavailable' || kind === 'provider_setup_required'
         || (kind === 'transport_disconnect' && copyReason === 'voice_capture_recovered')
         || (kind === 'provider_error' && (copyReason === 'daemon_streaming_stt_runtime_unavailable' || copyReason === 'usage_limit'
+            || copyReason === SERVER_UNREACHABLE_ERROR_CODE
             || copyReason === 'provider_response_invalid' || copyReason === 'source_runtime_reload_required')))
         && isVoiceMachineErrorReasonWithCopy(copyReason)) {
         return VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS[copyReason];

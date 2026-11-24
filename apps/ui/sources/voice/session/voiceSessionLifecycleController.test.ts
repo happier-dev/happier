@@ -910,8 +910,30 @@ describe('createVoiceSessionLifecycleController', () => {
         try {
             fixture.environment.providerFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
             await expect(fixture.lifecycle.toggle(fixture.target)).resolves.toBeUndefined();
-            expect(fixture.lifecycle.getSnapshot()).toMatchObject({ adapterId: OPENAI_PROVIDER_ID, sessionId: fixture.runtime.historySessionId,
-                status: 'error', canStop: false, errorCode: 'voice_connection_failed', errorRecoveryAction: 'retry' });
+            const snapshot = fixture.lifecycle.getSnapshot();
+            expect(snapshot).toMatchObject({ adapterId: OPENAI_PROVIDER_ID, sessionId: fixture.runtime.historySessionId,
+                status: 'error', canStop: false, errorCode: 'voice_connection_failed', errorRecoveryAction: 'retry',
+                errorFailureCause: { phase: 'voice.runtime', errorClass: 'TypeError', errorCode: 'server_unreachable', httpStatus: null },
+            });
+            const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+            const { resolveVoiceAttemptControl } = await import('@/components/voice/attempt/resolveVoiceAttemptControl');
+            const { t } = await import('@/text');
+            const control = resolveVoiceAttemptControl({
+                status: snapshot.status, sessionId: snapshot.sessionId, canStop: snapshot.canStop,
+                muted: false, capturing: false, startAdmitted: false, hasRecovery: true, canDismissFailedAttempt: true,
+                surfaceState: 'error', tone: 'error',
+            });
+            expect(projectVoiceAttemptPresentation({
+                control, attemptId: 'started-attempt', ended: false,
+                errorCode: snapshot.errorCode, errorMessage: snapshot.errorMessage, errorFailureCause: snapshot.errorFailureCause,
+                recoveryAction: snapshot.errorRecoveryAction ?? null,
+                recoveryContext: { connectRecoveryTarget: { kind: 'unavailable' }, runtimeRecoveryTarget: null,
+                    attemptSessionId: snapshot.sessionId, startSessionId: null, globalStartAuthorized: false },
+                serviceTitle: 'OpenAI', agentTitle: null, agentMachineLabel: null,
+            })).toMatchObject({ failureKind: 'provider_error', failureTitle: t('voiceAssistant.connectionError'),
+                failureMessage: t('settingsPlugins.targetSelection.unreachableThisHome'),
+                canDismissFailedAttempt: true, recovery: { action: 'retry' },
+            });
             expect(fixture.browser.micSession.getStream()).toBeNull();
         } finally { await fixture.dispose(); }
     });

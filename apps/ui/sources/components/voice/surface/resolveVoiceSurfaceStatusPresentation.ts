@@ -1,3 +1,4 @@
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { VoiceSurfaceState } from './resolveVoiceSurfaceState';
 
 /**
@@ -62,7 +63,8 @@ export function resolveVoiceSurfaceStatusPresentation(
     case 'error':
       return {
         tone: 'error',
-        labelKey: failureReason === 'voice_connection_failed' || failureReason === 'voice_connection_timeout'
+        labelKey: failureReason === SERVER_UNREACHABLE_ERROR_CODE
+          || failureReason === 'voice_connection_failed' || failureReason === 'voice_connection_timeout'
           ? 'voiceAssistant.connectionError' : 'common.error',
       };
   }

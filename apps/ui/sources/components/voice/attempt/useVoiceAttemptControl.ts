@@ -62,6 +62,9 @@ import { getFocusedDesktopAppWindowSurface, subscribeFocusedDesktopAppWindowSurf
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { resolveVoiceIdleTarget, useVoiceTargetStore, type VoiceStartIntent } from '@/voice/runtime/voiceTargetStore';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { Modal } from '@/modal';
+import { HappyError } from '@/utils/errors/errors';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -239,10 +242,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const savedSecretReferences = useSavedSecretReferenceResolver({
         scope: hasCredentialSlot ? currentAccountScope : null, includeMaterial: false,
     });
-    const { executeValue } = useMountedActionExecution(currentAccountScope);
-    const executeControl = React.useCallback(async (
+    const { executeValue, isCurrent } = useMountedActionExecution(currentAccountScope);
+    const executeControl = React.useCallback(async function executeVoiceControl(
         actionId: VoiceConversationActionId, input: unknown, tag: string, operation?: UiActionOperation,
-    ) => {
+    ): Promise<boolean> {
         try {
             // Approval can await: retain the originating tab and focus-return target, not the then-focused destination.
             const navigation = actionId === 'ui.voice_global.recover' || actionId === 'ui.voice_global.open_conversation'
@@ -254,10 +257,19 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             const output = VoiceConversationActionOutputSchemas[actionId].parse(result);
             return 'status' in output && output.status === 'completed';
         } catch (error) {
-            fireAndForget(Promise.reject(error), { tag });
+            if (error instanceof HappyError && error.code === SERVER_UNREACHABLE_ERROR_CODE && error.effectAttempted === false) {
+                if (isCurrent()) {
+                    Modal.alert(t('voiceAssistant.connectionError'), t('settingsPlugins.targetSelection.unreachableThisHome'), [
+                        { text: t('common.dismiss'), style: 'cancel' },
+                        { text: t('common.retry'), onPress: () => executeVoiceControl(actionId, input, tag, operation) },
+                    ]);
+                }
+            } else {
+                fireAndForget(Promise.reject(error), { tag });
+            }
             return false;
         }
-    }, [executeValue, navigateWithFocusReturn, router]);
+    }, [executeValue, isCurrent, navigateWithFocusReturn, router]);
     const surfaceState = resolveVoiceSurfaceState({
         status: snap.status,
         mode: snap.mode,

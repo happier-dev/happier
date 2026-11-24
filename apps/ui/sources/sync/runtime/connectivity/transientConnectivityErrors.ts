@@ -1,6 +1,35 @@
 import { isTerminalAuthError } from './authErrors';
 import { HappyError } from '@/utils/errors/errors';
 
+export const SERVER_UNREACHABLE_ERROR_CODE = 'server_unreachable';
+
+export function isBrowserOffline(): boolean {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+function isFetchTransportFailure(error: Error, message = error.message.trim().toLowerCase()): boolean {
+    return message === 'failed to fetch' || (error instanceof TypeError && message === 'network request failed');
+}
+
+export function readServerUnreachableFetchCode(error: unknown): typeof SERVER_UNREACHABLE_ERROR_CODE | null {
+    return (error instanceof Error && isFetchTransportFailure(error))
+        || (error instanceof HappyError && error.kind === 'network' && error.code === 'endpoint_offline')
+        ? SERVER_UNREACHABLE_ERROR_CODE : null;
+}
+
+/** Expo's production web loader reports script failure without an HTTP status. */
+export function readServerUnreachableModuleLoadCode(error: unknown): typeof SERVER_UNREACHABLE_ERROR_CODE | null {
+    if (!(error instanceof Error)) return null;
+    for (const candidate of [error, error.cause]) {
+        if (readServerUnreachableFetchCode(candidate)) return SERVER_UNREACHABLE_ERROR_CODE;
+        if (candidate instanceof Error && candidate.name === 'AsyncRequireError'
+            && 'type' in candidate && candidate.type === 'error' && isBrowserOffline()) {
+            return SERVER_UNREACHABLE_ERROR_CODE;
+        }
+    }
+    return null;
+}
+
 export class RetryableServerResponseError extends Error {
     readonly status: number;
 
@@ -50,8 +79,7 @@ export function isTransientConnectivityError(error: unknown): boolean {
         return true;
     }
     const message = error.message.trim().toLowerCase();
-    return message === 'failed to fetch'
-        || (error instanceof TypeError && message === 'network request failed')
+    return isFetchTransportFailure(error, message)
         || message === 'socket connect timeout'
         || message.includes('connect_error');
 }

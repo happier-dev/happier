@@ -31,7 +31,7 @@ import type { ReviewCommentListResponseV1, ReviewCommentGetResponseV1 } from '@h
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { SessionArchiveActionInputV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { isSessionArchiveOperationCurrent, resolveSessionArchiveAddress, type SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
-import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { isTransientConnectivityError, readServerUnreachableModuleLoadCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { AccountStorageCurrentnessUnavailableError } from '@/sync/encryption/accountStorageReadFailure';
 import type { ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { executeSessionMessageReplyReview } from './sessionMessageReplyReview';
@@ -2531,12 +2531,19 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         });
         return result.ok ? result.result : { ...result, error: result.errorCode };
       }
-      const [{ executeVoiceConversationAction }, { router }, { resolveHref }, { openWorkspaceHrefOrElse }] = await Promise.all([
+      const modules = await Promise.all([
         import('./voiceConversationAction'), import('expo-router'), import('expo-router/build/link/href'),
         import('@/components/appShell/workspace/workspaceActionRuntime'),
-      ]);
+      ]).catch((error: unknown) => {
+        const errorCode = context.surface === 'ui' ? readServerUnreachableModuleLoadCode(error) : null;
+        if (!errorCode) throw error;
+        return { ok: false as const, errorCode, error: errorCode, effectAttempted: false,
+          failureCause: { ...projectActionFailureCauseV1(error, 'voice.action_load'), errorCode } };
+      });
       accountContext.assertCurrent();
       throwIfAborted(context.signal);
+      if ('ok' in modules) return modules;
+      const [{ executeVoiceConversationAction }, { router }, { resolveHref }, { openWorkspaceHrefOrElse }] = modules;
       return await executeVoiceConversationAction(actionId, input, { signal: context.signal, isCurrent: () => accountContext.accountLifetime.isCurrent() && !context.signal?.aborted, navigate: async (href) => {
         accountContext.assertCurrent();
         throwIfAborted(context.signal);

@@ -13,6 +13,26 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
+    it.each(['voice_connection_failed', 'send_failed'])('retains unreachable transport in a generic %s outcome', reason => {
+        const error = createVoiceMachineError({ kind: 'provider_error', reason, cause: new TypeError('Failed to fetch') });
+        expect(error).toMatchObject({
+            reason,
+            failureCause: { phase: 'voice.runtime', errorClass: 'TypeError', errorCode: 'server_unreachable', httpStatus: null },
+            recoveryAction: 'retry',
+            retryPolicy: 'user_action',
+        });
+    });
+
+    it('keeps an unknown provider TypeError on the generic copy and existing Retry', () => {
+        const error = createVoiceMachineError({
+            kind: 'provider_error', reason: 'voice_connection_failed', cause: new TypeError('Unexpected provider result'),
+        });
+        expect(error).toMatchObject({
+            reason: 'voice_connection_failed', failureCause: { errorCode: null }, recoveryAction: 'retry',
+        });
+        expect(resolveVoiceMachineErrorTranslationKey(error.kind, error.reason)).toBe('settingsVoice.local.machineErrors.provider_error');
+    });
+
     it('presents the native model-policy startup refusal with its reason and settings repair', () => {
         const failure = classifyVoiceMachineError(createRpcCallError({
             error: 'Codex cannot enforce the requested native tool policy for this configuration.',

@@ -3655,6 +3655,45 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
     vi.restoreAllMocks();
   });
 
+  it('offers Retry and Dismiss when the cold Voice Action chunk cannot be fetched', async () => {
+    const { Modal } = await import('@/modal');
+    const notice = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+    const { controller } = await installElevenLabsLifecycle();
+    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+    const { getVoiceSessionPresentedAttemptId } = await import('@/voice/session/voiceSessionStore');
+    const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+    const online = vi.spyOn(navigator, 'onLine', 'get');
+    try {
+      expect(hook.getCurrent().canStart).toBe(true);
+      online.mockReturnValue(false);
+      vi.doMock('@/sync/ops/actions/voiceConversationAction', () => {
+        // The installed Expo production web loader reports a failed script request this way.
+        throw Object.assign(new Error('Loading module /voiceConversationAction.js failed.\n(error: /voiceConversationAction.js)'), {
+          name: 'AsyncRequireError', type: 'error', request: '/voiceConversationAction.js',
+        });
+      });
+      await act(async () => { await hook.getCurrent().onToggle(); });
+      expect(getVoiceSessionPresentedAttemptId()).toBeNull();
+      expect(notice).toHaveBeenCalledWith(
+        t('voiceAssistant.connectionError'),
+        t('settingsPlugins.targetSelection.unreachableThisHome'),
+        expect.arrayContaining([
+          expect.objectContaining({ text: t('common.retry'), onPress: expect.any(Function) }),
+          expect.objectContaining({ text: t('common.dismiss'), style: 'cancel' }),
+        ]),
+      );
+      vi.doUnmock('@/sync/ops/actions/voiceConversationAction');
+      online.mockReturnValue(true);
+      const retry = notice.mock.lastCall?.[2]?.find(button => button.text === t('common.retry'))?.onPress;
+      await act(async () => { await retry?.(); });
+      expect(controller.getSnapshot().status).toBe('connected');
+    } finally {
+      online.mockRestore();
+      vi.doUnmock('@/sync/ops/actions/voiceConversationAction');
+      await hook.unmount();
+    }
+  });
+
   it('offers Retry after a terminal SDK disconnect and starts a fresh attempt', async () => {
     const { controller } = await installElevenLabsLifecycle();
     const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');

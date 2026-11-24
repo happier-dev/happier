@@ -1,6 +1,7 @@
 import { log } from '@/log';
 import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { readServerUnreachableFetchCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readSessionRuntimeFailureCause, SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -164,7 +165,13 @@ export function readSafeVoiceRuntimeFailureFacts(error: unknown): Readonly<{
   }
   if (!failureCause) {
     const nativeError = candidates.find(candidate => candidate instanceof Error);
-    if (nativeError) failureCause = projectActionFailureCauseV1(nativeError, 'voice.runtime', { allowUnknownErrorCode: false });
+    if (nativeError) {
+      failureCause = projectActionFailureCauseV1(nativeError, 'voice.runtime', { allowUnknownErrorCode: false });
+      if (failureCause.errorCode === null && failureCause.httpStatus === null) {
+        const errorCode = readServerUnreachableFetchCode(nativeError) ?? readServerUnreachableFetchCode(nativeError.cause);
+        if (errorCode) failureCause = { ...failureCause, errorCode };
+      }
+    }
   }
   return {
     ...(failureCause ? { failureCause } : {}),

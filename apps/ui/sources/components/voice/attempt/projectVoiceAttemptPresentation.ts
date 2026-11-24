@@ -1,5 +1,6 @@
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 import { t } from '@/text';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { resolveVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
 import { presentVoiceUsageLimitMessage, resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
@@ -52,7 +53,10 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
                     ? t('voiceSurface.setUpAgent', { agent: agentTitle }) : t(recovery.labelKey), icon: recovery.icon }
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
-    const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, input.errorMessage);
+    const unreachable = failureKind === 'provider_error' && input.errorFailureCause
+        && 'errorCode' in input.errorFailureCause && input.errorFailureCause.errorCode === SERVER_UNREACHABLE_ERROR_CODE;
+    const presentationReason = unreachable ? SERVER_UNREACHABLE_ERROR_CODE : input.errorMessage;
+    const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, presentationReason);
     const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
     const startupCode = sessionCause?.code ?? input.errorMessage;
     const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause, input.errorProviderMessage) : null;
@@ -62,9 +66,9 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })
         : startupMessage ?? (failureKind === null ? null
-        : failureKind === 'provider_error' && providerMessage ? providerMessage
+        : failureKind === 'provider_error' && providerMessage && !unreachable ? providerMessage
         : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
-        : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage ?? undefined), { service: input.serviceTitle }));
+        : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, presentationReason ?? undefined), { service: input.serviceTitle }));
     const failureTitle = provider ? t(provider.titleKey)
         : failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
             ? translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle })

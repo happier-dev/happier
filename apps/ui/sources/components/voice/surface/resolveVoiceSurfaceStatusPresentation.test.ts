@@ -40,6 +40,7 @@ describe('resolveVoiceSurfaceStatusPresentation', () => {
   });
 
   it.each([
+    ['server_unreachable', 'voiceAssistant.connectionError'],
     ['voice_connection_failed', 'voiceAssistant.connectionError'],
     ['voice_connection_timeout', 'voiceAssistant.connectionError'],
     ['provider_response_invalid', 'common.error'],
