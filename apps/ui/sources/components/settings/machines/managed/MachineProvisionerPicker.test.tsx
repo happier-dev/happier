@@ -225,7 +225,7 @@ describe('provisioner picker demand', () => {
     ['answers chooser Trust before settling the Linux probe', 'linux', 'chooser'],
     ['keeps the Windows fallback after chooser Trust', 'windows', 'chooser'],
     ['uses the admitted guest after Inbox Accept without waiting for another Trust click or browsing the provisional guest', 'linux', 'inbox'],
-    ['keeps chooser Decline after Inbox Accept from attaching a successfully admitted guest', 'linux', 'decline'],
+    ['explains that Inbox Accept already attached the guest when the chooser declines', 'linux', 'decline'],
   ] as const)('%s', (_description, platform, decision) => withPopoverWebGlobals(async () => {
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
@@ -368,7 +368,7 @@ describe('provisioner picker demand', () => {
         }
       });
       await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(decision === 'decline'
-        ? { kind: 'failed', code: 'action_operation_unavailable', message: null }
+        ? { kind: 'failed', code: 'action_operation_unavailable', message: 'You already answered this trust question in the Inbox. The workspace is attached.' }
         : platform === 'linux' ? { kind: 'attached', managedId: admitted.managedId, controller } : { kind: 'unsupported_platform' }));
       if (decision === 'inbox') expect(Modal.hide).toHaveBeenCalled();
       expect(trustAnswers).toEqual([{ id: 'tool.systemTasks', method: 'respond',

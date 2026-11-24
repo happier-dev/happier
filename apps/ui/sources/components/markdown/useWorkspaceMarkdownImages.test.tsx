@@ -98,6 +98,25 @@ describe('workspace Markdown image consent wiring', () => {
         }
     });
 
+    it('keeps the managed Markdown image address and consent separate from the controller folder', async () => {
+        const controller = { serverId: 'markdown-managed-home', machineId: 'markdown-controller', rootPath: '/repo' };
+        const workspace = { v: 2 as const, kind: 'managed' as const, workspaceId: 'guest-workspace', serverId: controller.serverId,
+            controller: { machineId: controller.machineId, installationId: 'controller-installation' }, managedId: 'guest',
+            rootPath: controller.rootPath };
+        const scope = { ...controller, workspace };
+        const native = await renderHook(() => useWorkspaceMarkdownImages({ scope: controller, filePath: 'README.md' }));
+        const managed = await renderHook(() => useWorkspaceMarkdownImages({ scope, filePath: 'README.md' }));
+        try {
+            await act(async () => native.getCurrent().images.onLoadRemote());
+            expect(native.getCurrent().images.remoteLoaded).toBe(true);
+            expect(managed.getCurrent().images.remoteLoaded).toBe(false);
+            expect(managed.getCurrent().imageScope).toEqual(scope);
+        } finally {
+            await native.unmount();
+            await managed.unmount();
+        }
+    });
+
     it('imports only the requested retained workspace/document consent once and leaves older-client data unchanged', async () => {
         const scope = { serverId: 'markdown-import-home', machineId: 'markdown-import-machine', rootPath: '/repo' };
         const workspace = tryBuildWorkspaceCacheKey(scope)!;

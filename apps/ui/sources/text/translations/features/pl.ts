@@ -6099,6 +6099,7 @@ const filesPaneTranslations = { pl: {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `Za pierwszym razem Happier kopiuje mały program pomocniczy do ~/.happier na ${workspace}. Nic tam nie działa, gdy go nie używasz.`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `Szukaj folderów w ${workspace}`,
         serverFolderPreparing: 'Przygotowywanie dostępu do obszaru roboczego',
+        serverFolderTrustAlreadyAnswered: 'Odpowiedź na pytanie o zaufanie została już udzielona w skrzynce odbiorczej. Obszar roboczy jest podłączony.',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Niepowodzenie: ${reason}`,
         serverFolderUnsupportedTitle: 'Ten serwer nie jest jeszcze obsługiwany',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier może w ten sposób otwierać foldery tylko na serwerach Linux i macOS. Skonfiguruj ${workspace} jako maszynę: wtedy Happier działa tam samodzielnie.`,

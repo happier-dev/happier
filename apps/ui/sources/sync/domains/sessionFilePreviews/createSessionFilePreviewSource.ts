@@ -3,10 +3,12 @@ import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import type { ComposerContentHandleV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
 import { resolveWebFileBufferMaxBytes } from '@/sync/runtime/files/webFileBufferBudget';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { decodeBase64 } from '@/encryption/base64';
 
 const PREVIEW_CACHE_DIRECTORY_NAME = 'happier-session-file-previews';
 export const PREVIEW_TOO_LARGE_ERROR = 'File exceeds the preview size limit';
@@ -226,11 +228,19 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     return await createPreviewSource({
         ...input,
         load: async ({ destination, signal, maxBytes, onProgress }) => {
+            const target = workspaceFileSystemTargetFromScope(input.scope);
+            if (target.kind === 'managed') {
+                const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem/fileReadWrite');
+                const read = await workspaceReadFile(target, input.filePath, { signal, maxBytes });
+                if (!read.success) return { ok: false, error: read.error, errorCode: read.errorCode };
+                await destination.writeBytes(decodeBase64(read.content));
+                return { ok: true };
+            }
             const { downloadDaemonWorkspaceFileToDestination } = await import('@/sync/domains/transfers/runtime/transferRuntime');
             const download = await downloadDaemonWorkspaceFileToDestination({
-                machineId: input.scope.machineId,
-                serverId: input.scope.serverId,
-                rootPath: input.scope.rootPath,
+                machineId: target.machineId,
+                serverId: target.serverId,
+                rootPath: target.rootPath,
                 request: { path: input.filePath, asZip: false },
                 destination,
                 onInit: async (init) => {

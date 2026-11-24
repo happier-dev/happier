@@ -4837,18 +4837,10 @@ export class ApiMachineClient {
             kind: 'refused', code: 'project_open_unavailable', effectAttempted: false,
             failureCause: { phase, errorClass: 'Error', errorCode: 'project_open_unavailable', httpStatus: null },
         } as const);
-        const managedSource = request.source.kind === 'workspace' && request.source.checkout && isManagedWorkspaceRefV2(request.source.checkout)
-            ? request.source.checkout : null;
-        const sessionChild = authorization?.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
-            && managedSource?.controller.machineId === this.machine.id
-            && managedSource.controller.installationId === installation?.installationId
-            ? request.materialization.kind === 'attach' && !request.materialization.targetManaged && !request.cloneSource
-                ? SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source
-                : request.materialization.kind === 'sync' && !request.materialization.targetManaged
-                    && request.materialization.workspaceAction.kind === 'copy_once' ? SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target : null
-            : null;
-        const reviewedAuthorization = sessionChild
-            && readHostAdmittedReviewedChildRoleV1(context, sessionChild.action, request) === sessionChild.role
+        const { source, target } = SESSION_PROJECT_FILES_OPEN_CHILDREN_V1;
+        const childRole = authorization?.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            ? readHostAdmittedReviewedChildRoleV1(context, source.action, request) : null;
+        const reviewedAuthorization = childRole === source.role || childRole === target.role
             ? readHostReviewedChildOriginalAuthorizationV1(context) : undefined;
         const isSessionOpen = reviewedAuthorization !== undefined && authorization !== undefined
             && reviewedAuthorization.token === authorization.token
@@ -4867,6 +4859,17 @@ export class ApiMachineClient {
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
                 { actionId: rootActionId, machineId: this.machine.id, envelope })
             || !isSessionOpen && envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
+        if (isSessionOpen) {
+            // This receiver carries Account custody for the managed source on this installation.
+            const checkout = request.source.kind === 'workspace' ? request.source.checkout : undefined;
+            if (!checkout || !isManagedWorkspaceRefV2(checkout)
+                || checkout.controller.machineId !== this.machine.id
+                || checkout.controller.installationId !== installation.installationId) return unavailable('projects.open.admission');
+            if (childRole === source.role && request.cloneSource) return unavailable('projects.open.session_source_clone');
+            // The installed target path carries a one-time copy into a native Machine directory.
+            if (childRole === target.role && (request.materialization.kind !== 'sync' || request.materialization.targetManaged
+                || request.materialization.workspaceAction.kind !== 'copy_once')) return unavailable('projects.open.admission');
+        }
         const sessionAccount = isSessionOpen ? readRequesterAccountActionTransportContext(authorization) : null;
         if (isSessionOpen && !sessionAccount) return unavailable('projects.open.requester_custody');
         if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {

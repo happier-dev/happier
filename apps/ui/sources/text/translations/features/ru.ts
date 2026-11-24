@@ -6100,6 +6100,7 @@ const filesPaneTranslations = { ru: {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `В первый раз Happier копирует небольшой помощник в ~/.happier на ${workspace}. Пока вы им не пользуетесь, там ничего не работает.`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `Искать папки в ${workspace}`,
         serverFolderPreparing: 'Подготовка доступа к рабочему пространству',
+        serverFolderTrustAlreadyAnswered: 'Вы уже ответили на этот вопрос о доверии во входящих. Рабочая область подключена.',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Ошибка: ${reason}`,
         serverFolderUnsupportedTitle: 'Этот сервер пока не поддерживается',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Так Happier может открывать папки только на серверах Linux и macOS. Настройте ${workspace} как машину: тогда Happier будет работать там сам.`,

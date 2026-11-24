@@ -15,7 +15,7 @@ function normalizeWorkspaceScope(scope: WorkspaceScopeBase | null): WorkspaceSco
     const machineId = String(scope.machineId ?? '').trim();
     const rootPath = String(scope.rootPath ?? '').trim();
     if (!serverId || !machineId || !rootPath) return null;
-    return { serverId, machineId, rootPath };
+    return { ...scope, serverId, machineId, rootPath };
 }
 
 export const WorkspaceFileDownloadButton = React.memo((props: Readonly<{

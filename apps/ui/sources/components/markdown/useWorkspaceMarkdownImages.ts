@@ -17,8 +17,8 @@ type WorkspaceMarkdownImages = Readonly<{
 export function useWorkspaceMarkdownImages(input: Readonly<{ scope: WorkspaceScopeBase; filePath: string }>): WorkspaceMarkdownImages;
 export function useWorkspaceMarkdownImages(input: Readonly<{ scope?: WorkspaceScopeBase | null; filePath: string }>): Partial<WorkspaceMarkdownImages>;
 export function useWorkspaceMarkdownImages(input: Readonly<{ scope?: WorkspaceScopeBase | null; filePath: string }>): Partial<WorkspaceMarkdownImages> {
-    const { serverId, machineId, rootPath = '' } = input.scope ?? {};
-    const imageScope = React.useMemo(() => serverId && machineId && rootPath ? { serverId, machineId, rootPath } : null, [serverId, machineId, rootPath]);
+    const { serverId, machineId, rootPath = '', workspace } = input.scope ?? {};
+    const imageScope = React.useMemo(() => serverId && machineId && rootPath ? { serverId, machineId, rootPath, ...(workspace ? { workspace } : {}) } : null, [serverId, machineId, rootPath, workspace]);
     const workspaceCacheKey = React.useMemo(() => imageScope ? tryBuildWorkspaceCacheKey(imageScope) : null, [imageScope]);
     const filePath = React.useMemo(() => rootPath ? resolveWorkspaceFileReference({ url: input.filePath, workspacePath: rootPath })?.filePath ?? null : null,
         [input.filePath, rootPath]);

@@ -6070,6 +6070,7 @@ const filesPaneTranslations = { pt: {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `Na primeira vez, o Happier copia um pequeno auxiliar para ~/.happier em ${workspace}. Nada é executado lá enquanto você não o usa.`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `Pesquisar pastas em ${workspace}`,
         serverFolderPreparing: 'Preparando o acesso ao workspace',
+        serverFolderTrustAlreadyAnswered: 'Já respondeu a esta pergunta de confiança na caixa de entrada. O espaço de trabalho está ligado.',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Falhou: ${reason}`,
         serverFolderUnsupportedTitle: 'Este servidor ainda não é compatível',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `O Happier só abre pastas desta forma em servidores Linux e macOS. Configure ${workspace} como máquina: assim o Happier roda lá por conta própria.`,

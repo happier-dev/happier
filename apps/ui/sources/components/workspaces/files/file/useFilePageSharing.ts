@@ -1,6 +1,7 @@
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { artifactPublicationWorkspaceFromScope } from '@/sync/ops/actions/artifactWorkspaceSource';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { openSaveFileAsArtifactDialog } from './SaveFileAsArtifactDialog';
 import { useFilePageShareContext } from './useFilePageShareContext';
@@ -15,16 +16,17 @@ export function useFilePageSharing(input: Parameters<typeof useFilePageShareCont
 }>) {
     const router = useRouter();
     const context = useFilePageShareContext(input);
+    const publicationWorkspace = artifactPublicationWorkspaceFromScope(input.scope);
     return useWorkspaceFileShareActions({
         workspaceScope: input.scope, path: input.filePath, actionScope: input.accountScope,
         linkInput: context.linkInput, composer: context.composer, homeDir: context.homeDir,
         machineReachable: input.machineReachable, unavailableReason: input.unavailableReason, cachedContent: input.cachedContent,
-        onSaveAsArtifact: input.accountScope ? () => {
+        onSaveAsArtifact: input.accountScope && publicationWorkspace ? () => {
             const sourceScope = input.accountScope;
             if (!sourceScope || !areServerAccountScopesEqual(sourceScope, getActiveServerAccountScope())) return;
             openSaveFileAsArtifactDialog({
                 source: { scope: sourceScope, sourceSessionId: context.sourceSessionId,
-                    sourceWorkspace: context.sourceSessionId ? null : { machineId: input.scope.machineId, rootPath: input.scope.rootPath },
+                    sourceWorkspace: context.sourceSessionId ? null : publicationWorkspace,
                     sourceProject: context.sourceProject, filePath: input.filePath },
                 sourceFacts: input.sourceFacts,
                 onOpenArtifact: (artifactId: string) => {

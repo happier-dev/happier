@@ -74,6 +74,20 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
         await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:cached-file'), { timeout: 2_000 });
     });
 
+    it('does not download a guest archive from the controller filesystem', async () => {
+        const scope = harness.scope;
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, workspaceId: 'checkout',
+            managedId: 'guest', controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath } as const;
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:wrong-controller-file');
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        vi.spyOn(browser.window.HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        const hook = await renderHook(() => useWorkspaceFileTransfers({ workspaceScope: { ...scope, workspace } }));
+        await act(async () => {
+            await expect(hook.getCurrent().startDownload({ path: 'report.txt', asZip: true })).resolves.toMatchObject({ ok: false });
+        });
+        expect(harness.rpcRequests).toHaveLength(0);
+    });
+
     it('requires a workspace for ZIP creation even when complete file bytes are held', async () => {
         vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-archive');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});

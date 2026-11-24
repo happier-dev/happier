@@ -1,3 +1,4 @@
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export type WorkspaceFileCachedContent = Readonly<{ bytes: Uint8Array; fileName: string; mimeType: string }>;
@@ -14,5 +15,8 @@ export function resolveWorkspaceFileDownloadSource(input: Readonly<{
 }>): WorkspaceFileDownloadSource {
     // A held file is already complete. Creating an archive still needs the Machine.
     if (!input.asZip && input.cachedContent) return { kind: 'held', content: input.cachedContent };
-    return input.workspaceScope ? { kind: 'workspace', scope: input.workspaceScope } : { kind: 'unavailable' };
+    const scope = input.workspaceScope;
+    // Direct export accepts native Machine paths. Held bytes above are already addressed.
+    return scope && workspaceFileSystemTargetFromScope(scope).kind !== 'managed'
+        ? { kind: 'workspace', scope } : { kind: 'unavailable' };
 }

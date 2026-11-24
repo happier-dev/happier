@@ -32,7 +32,8 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
         serverId: input.scope.serverId,
         machineId: input.scope.machineId,
         rootPath: input.scope.rootPath,
-    } : null, [input.scope?.serverId, input.scope?.machineId, input.scope?.rootPath, input.contextKey,
+        workspace: input.scope.workspace,
+    } : null, [input.scope?.serverId, input.scope?.machineId, input.scope?.rootPath, input.scope?.workspace, input.contextKey,
         input.mode, input.includeHidden, input.resultType, input.maxDepth]);
     const [retryToken, setRetryToken] = React.useState(0);
     const [paging, setPaging] = React.useState<WorkspaceFileQueryPaging | null>(null);

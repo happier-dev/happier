@@ -17,6 +17,18 @@ describe('useWorkspaceFileQuery', () => {
     beforeEach(() => { vi.useFakeTimers(); transport.list.mockReset(); });
     afterEach(() => { vi.useRealTimers(); });
 
+    it('searches the guest checkout when the same folder also exists on the controller', async () => {
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, workspaceId: 'checkout',
+            managedId: 'guest', controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath } as const;
+        transport.list.mockImplementation(async (_machine, request) => ({
+            ok: true, paths: [request.workspace ? 'needle-guest.ts' : 'needle-controller.ts'], truncated: false,
+        }));
+        const hook = await renderHook(() => useWorkspaceFileQuery({ scope: { ...scope, workspace },
+            query: 'needle', mode: 'glob', accountLifetime }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        expect(hook.getCurrent().items.map(item => item.fullPath)).toEqual(['needle-guest.ts']);
+    });
+
     it('pages through every matching file and resets the page on a new query', async () => {
         transport.list.mockResolvedValue({ ok: true, paths: Array.from({ length: 45 }, (_, index) => `needle-${index}.ts`), truncated: false });
         const hook = await renderHook((query: string) => useWorkspaceFileQuery({

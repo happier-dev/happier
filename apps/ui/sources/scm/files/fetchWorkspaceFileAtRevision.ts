@@ -5,6 +5,7 @@ import { digest } from '@/platform/digest';
 import { machineScmFileRead } from '@/sync/ops/scm/machineScm';
 import { downloadDaemonWorkspaceFileToDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { createBufferedTransferDestination } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/createBufferedTransferDestination';
+import { projectWorkspaceFileSystemRoute, workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export type WorkspaceFileAtRevisionResult =
@@ -19,10 +20,13 @@ export async function fetchWorkspaceFileAtRevision(input: Readonly<{
     maxBytes?: number;
     signal?: AbortSignal;
 }>): Promise<WorkspaceFileAtRevisionResult> {
-    const response = await machineScmFileRead(input.scope.machineId, {
-        cwd: input.scope.rootPath, path: input.path, selector: input.selector,
+    const target = workspaceFileSystemTargetFromScope(input.scope);
+    const route = projectWorkspaceFileSystemRoute(target);
+    const response = await machineScmFileRead(route.machineId, {
+        cwd: route.rootPath, path: input.path, selector: input.selector,
         ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
-    }, { serverId: input.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) });
+    }, { serverId: route.serverId, ...(target.kind === 'managed' ? { workspace: target.workspace } : {}),
+        ...(input.signal ? { signal: input.signal } : {}) });
     input.signal?.throwIfAborted();
     const parsed = ScmFileReadResponseSchema.safeParse(response);
     if (!parsed.success) return { success: false, errorCode: 'blob_unavailable', error: 'The file revision response is invalid.' };
@@ -41,8 +45,8 @@ export async function fetchWorkspaceFileAtRevision(input: Readonly<{
         // endpoint recovery. URI lifetime still belongs to the preview owner.
         const buffered = createBufferedTransferDestination(result.sizeBytes);
         const downloaded = await downloadDaemonWorkspaceFileToDestination({
-            machineId: input.scope.machineId, serverId: input.scope.serverId,
-            rootPath: input.scope.rootPath, request: { path: input.path, asZip: false },
+            machineId: route.machineId, serverId: route.serverId,
+            rootPath: route.rootPath, request: { path: input.path, asZip: false },
             signal: input.signal,
             preparedExport: result.prepared,
             onInit: async meta => {

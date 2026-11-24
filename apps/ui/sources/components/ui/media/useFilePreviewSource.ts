@@ -92,9 +92,11 @@ export function useFilePreviewSource(input: UseFilePreviewSourceInput): FilePrev
     const kind = source.kind;
     const sessionScope = useSessionWorkspaceTarget(enabled && source.kind === 'session' ? source.sessionId : null);
     const rawScope = source.kind === 'workspace' ? source.scope : source.kind === 'session' ? sessionScope : null;
+    const managedWorkspace = rawScope?.workspace;
     const scope = React.useMemo<WorkspaceScopeBase | null>(() => rawScope
-        ? { serverId: rawScope.serverId, machineId: rawScope.machineId, rootPath: rawScope.rootPath } : null,
-    [rawScope?.serverId, rawScope?.machineId, rawScope?.rootPath]);
+        ? { serverId: rawScope.serverId, machineId: rawScope.machineId, rootPath: rawScope.rootPath,
+            ...(managedWorkspace ? { workspace: managedWorkspace } : {}) } : null,
+    [rawScope?.serverId, rawScope?.machineId, rawScope?.rootPath, managedWorkspace]);
     const stage = source.kind === 'composerStage' ? source.handle : null;
     const attachment = source.kind === 'attachment' ? source.handle : null;
     const bytes = source.kind === 'bytes' ? source.bytes : null;

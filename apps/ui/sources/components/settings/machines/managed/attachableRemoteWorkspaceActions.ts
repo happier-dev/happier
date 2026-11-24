@@ -15,6 +15,7 @@ import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { t } from '@/text';
 import type { ManagedMachineCreationProgress } from './managedMachineCreation';
 import { createManagedProvisionerClient, projectManagedProvisionerFailure } from './managedProvisionerClient';
 
@@ -144,7 +145,8 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         const snapshot = initial.operation;
         let terminal = readActionOperationTerminalResultV1(snapshot);
         if (!terminal) {
-            const prompt = readActionOperationTaskQuestionV1(snapshot)?.prompt;
+            const question = readActionOperationTaskQuestionV1(snapshot);
+            const prompt = question?.prompt;
             if (prompt?.kind !== 'ssh.trustHost' && prompt?.kind !== 'ssh.replaceHostKey') {
                 return finishFailure(failed('invalid_action_output'));
             }
@@ -162,7 +164,19 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
                 if (first.kind === 'decision') {
                     const answer = await submitActionOperationTaskAnswer({ serverId, snapshot }, { trusted: first.trusted }, input.signal);
                     if (input.signal.aborted) return failed('aborted');
-                    if (!answer.ok) return finishFailure(failed(answer.errorCode));
+                    if (!answer.ok) {
+                        if (!first.trusted && answer.errorCode === 'action_operation_unavailable') {
+                            const settled = await settlement;
+                            if (input.signal.aborted) return failed('aborted');
+                            if (settled.kind === 'found'
+                                && settled.operation.state === 'succeeded'
+                                && settled.operation.domainRef?.kind === 'managedMachine'
+                                && settled.operation.domainRef.bootstrapTask?.id === question?.id) {
+                                return finishFailure(failed(answer.errorCode, t('files.pane.serverFolderTrustAlreadyAnswered')));
+                            }
+                        }
+                        return finishFailure(failed(answer.errorCode));
+                    }
                     if (!first.trusted) return finishFailure(failed('host_trust_declined'));
                 }
                 const settled = first.kind === 'decision' ? await settlement : first;

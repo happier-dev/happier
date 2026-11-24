@@ -71,6 +71,7 @@ export type FilesPaneTranslations = Readonly<{
     serverFolderHelperNote: (params: Readonly<{ workspace: string }>) => string;
     serverFolderSearch: (params: Readonly<{ workspace: string }>) => string;
     serverFolderPreparing: string;
+    serverFolderTrustAlreadyAnswered: string;
     serverFolderPrepareFailed: (params: Readonly<{ reason: string }>) => string;
     serverFolderUnsupportedTitle: string;
     serverFolderUnsupportedBody: (params: Readonly<{ workspace: string }>) => string;
@@ -302,6 +303,7 @@ export const filesPaneTranslationsEnglish = { en: {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `The first time, Happier copies a small helper into ~/.happier on ${workspace}. Nothing runs there while you aren’t using it.`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `Search folders in ${workspace}`,
         serverFolderPreparing: 'Preparing workspace access',
+        serverFolderTrustAlreadyAnswered: 'You already answered this trust question in the Inbox. The workspace is attached.',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Failed: ${reason}`,
         serverFolderUnsupportedTitle: 'This server isn’t supported yet',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier can only open folders on Linux and macOS servers this way. Set ${workspace} up as a machine instead: Happier then runs there on its own.`,

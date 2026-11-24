@@ -387,4 +387,27 @@ async function assertReviewedManagedOpen(h: Awaited<ReturnType<typeof createInst
     },
   });
   expect(reviewedOpen).toMatchObject({ kind: 'refused', code: 'workspace_target_unavailable' });
+
+  // A managed source on this controller can request Git defaults through the same reviewed source role.
+  const clonePlacement = SessionSpawnNewInputV2Schema.parse({
+    ...spawn, sessionPlacement: { ...spawn.sessionPlacement, projectFiles: { kind: 'git_clone' } },
+  });
+  const cloneEnvelope = { ...envelope, input: projectNativeJsonValueForTransport(clonePlacement) };
+  const cloneInput = { ...source, cloneSource: true as const };
+  const cloneAuthorization = Object.defineProperties({ ...authorization }, {
+    ...Object.getOwnPropertyDescriptors(authorization),
+    binding: { value: { ...signed.binding, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(cloneEnvelope) } },
+  });
+  const cloneContext = { ...context, originalActionEnvelope: cloneEnvelope,
+    externalActionExecutionAuthorization: cloneAuthorization };
+  const reviewedClone = await invokeHostReviewedChildV1({
+    parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: cloneEnvelope.input as Record<string, JsonValue> },
+    context: cloneContext, reviewAdmitted: true,
+    child: { ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source, input: projectNativeJsonValueForTransport(cloneInput) },
+    execute: async (_input, child) => await h.machine.callProjectOpen({ input: cloneInput, context: { ...cloneContext, ...child },
+      rpcContext: { signal: h.signal, callerAuthority: 'present_user', callerInputAuthorization: cloneAuthorization,
+        machineAdmission, verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } }),
+  });
+  expect(reviewedClone).toMatchObject({ kind: 'refused', code: 'project_open_unavailable', effectAttempted: false,
+    failureCause: { phase: 'projects.open.session_source_clone' } });
 }

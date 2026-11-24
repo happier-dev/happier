@@ -53,20 +53,21 @@ export function useImageCompare(input: Readonly<{
         selector: afterBlobId ? { blobId: afterBlobId } : { side: 'before', area: 'both' },
         mimeType: viewer.mimeType, signature: captured?.comparisonId, attempt: attempts.after,
     });
-    const { serverId, machineId, rootPath } = input.scope;
+    const { serverId, machineId, rootPath, workspace } = input.scope;
     const liveAfterInput = React.useMemo<UseFilePreviewSourceInput>(() => {
         const enabled = input.enabled && !afterAbsent && Boolean(live);
-        const identity = enabled ? buildWorkspacePreviewIdentity(input.scope, input.filePath, live?.sizeBytes, live?.signature) : null;
+        const scope = { serverId, machineId, rootPath, ...(workspace ? { workspace } : {}) };
+        const identity = enabled ? buildWorkspacePreviewIdentity(scope, input.filePath, live?.sizeBytes, live?.signature) : null;
         return {
             enabled,
-            source: { kind: 'workspace', scope: { serverId, machineId, rootPath }, filePath: input.filePath },
+            source: { kind: 'workspace', scope, filePath: input.filePath },
             mimeType: viewer.mimeType, sizeBytes: live?.sizeBytes, ...identity,
             // This mounted comparison owns one live read; wells, modes and stage borrow that read.
             ...(enabled && !identity?.cacheKey ? { acquisitionKey: createImagePreviewAcquisition() } : {}),
             // The preview owner retries keyed and unkeyed reads without inventing a version for either.
             retryCount: attempts.after,
         };
-    }, [input.enabled, afterAbsent, Boolean(live), serverId, machineId, rootPath, input.filePath, viewer.mimeType,
+    }, [input.enabled, afterAbsent, Boolean(live), serverId, machineId, rootPath, workspace, input.filePath, viewer.mimeType,
         live?.sizeBytes, live?.signature, attempts.after]);
     const liveAfter = useFilePreviewSource(liveAfterInput);
     const beforePreview = captured && !beforeAbsent && !beforeBlobId

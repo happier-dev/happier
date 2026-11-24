@@ -5972,6 +5972,7 @@ const filesPaneTranslations = { 'zh-Hans': {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `首次使用时，Happier 会把一个小助手复制到 ${workspace} 的 ~/.happier。不使用时那里不会运行任何东西。`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `在 ${workspace} 中搜索文件夹`,
         serverFolderPreparing: '正在准备工作区访问',
+        serverFolderTrustAlreadyAnswered: '你已在收件箱中回答了此信任问题。工作区已连接。',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失败：${reason}`,
         serverFolderUnsupportedTitle: '暂不支持此服务器',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier 只能通过这种方式打开 Linux 和 macOS 服务器上的文件夹。请改为将 ${workspace} 设置为机器：Happier 将在那里独立运行。`,

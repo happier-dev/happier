@@ -380,6 +380,22 @@ describe('useFilePreviewSource', () => {
         }
     });
 
+    it('does not read the controller image for a managed working-tree comparison', async () => {
+        const scope = { ...fixture.scope, workspace: { v: 2 as const, kind: 'managed' as const, workspaceId: 'guest-workspace',
+            serverId: fixture.scope.serverId, controller: { machineId: fixture.scope.machineId, installationId: 'controller-installation' },
+            managedId: 'guest', rootPath: fixture.scope.rootPath } };
+        transfer.setPayload(Uint8Array.of(52, 53, 54), 'guest-compare.png');
+        const compare = await renderHook(() => useImageCompare({ enabled: true, scope, filePath: 'guest-compare.png',
+            source: { kind: 'workingTree', changeKind: 'added', area: 'both' } }));
+        try {
+            await vi.waitFor(() => expect(compare.getCurrent().after.kind).toBe('present'));
+            const after = compare.getCurrent().after;
+            if (after.kind !== 'present') throw new Error('Expected the guest working-tree image');
+            expect(files.get(after.uri)?.chunks.flatMap(chunk => [...chunk])).toEqual([52, 53, 54]);
+            expect(transfer.prepares).toHaveLength(0);
+        } finally { await compare.unmount(); }
+    });
+
     it('does not reuse an unversioned Markdown image for a later working-tree comparison After', async () => {
         const path = 'assets/unversioned-compare.svg';
         const original = '<svg xmlns="http://www.w3.org/2000/svg" width="232" height="56"><rect width="232" height="56" fill="#fbfafc"/></svg>';

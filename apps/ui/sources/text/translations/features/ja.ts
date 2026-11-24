@@ -6032,6 +6032,7 @@ const filesPaneTranslations = { ja: {
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `初回のみ、Happier は ${workspace} の ~/.happier に小さなヘルパーをコピーします。使っていない間は何も実行されません。`,
         serverFolderSearch: ({ workspace }: { workspace: string }) => `${workspace} のフォルダーを検索`,
         serverFolderPreparing: 'ワークスペースへのアクセスを準備中',
+        serverFolderTrustAlreadyAnswered: 'この信頼の確認には受信トレイですでに回答しました。ワークスペースは接続されています。',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失敗: ${reason}`,
         serverFolderUnsupportedTitle: 'このサーバーはまだサポートされていません',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `この方法で Happier がフォルダーを開けるのは Linux と macOS のサーバーだけです。代わりに ${workspace} をマシンとして設定すると、Happier がそこで単独で動作します。`,

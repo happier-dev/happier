@@ -367,7 +367,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     } = params;
     const stableWorkspaceScope = React.useMemo(
         () => workspaceScope,
-        [workspaceScope?.machineId, workspaceScope?.rootPath, workspaceScope?.serverId],
+        [workspaceScope?.machineId, workspaceScope?.rootPath, workspaceScope?.serverId, workspaceScope?.workspace],
     );
     const [uploadState, setUploadState] = React.useState<WorkspaceUploadState>({ status: 'idle' });
     const [downloadState, setDownloadState] = React.useState<WorkspaceDownloadState>({ status: 'idle' });

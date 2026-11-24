@@ -45,6 +45,19 @@ describe('canonical repository row menu', () => {
         expect(discardAll).not.toHaveBeenCalled();
     });
 
+    it('keeps a managed folder out of the physical Machine Artifact publication flow', async () => {
+        const scope = { serverId: 'home', machineId: 'controller', rootPath: '/repo' };
+        const actionScope = { serverId: scope.serverId, accountId: 'owner' };
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, workspaceId: 'checkout',
+            managedId: 'guest', controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath } as const;
+        const { screen: physical } = await render({ kind: 'directory', downloadActionsEnabled: false,
+            share: { actionScope, workspaceScope: scope } });
+        const { screen: managed } = await render({ kind: 'directory', downloadActionsEnabled: false,
+            share: { actionScope, workspaceScope: { ...scope, workspace } } });
+        expect(physical.findByTestId('repository-tree-menuitem-saveAsArtifact')).toBeTruthy();
+        expect(managed.findByTestId('repository-tree-menuitem-saveAsArtifact')).toBeNull();
+    });
+
     it('offers file and directory downloads by actual entry kind and dispatches the selected action', async () => {
         const file = await render({ kind: 'file', downloadActionsEnabled: true });
         expect(file.screen.findByTestId('repository-tree-menuitem-download')).toBeTruthy();

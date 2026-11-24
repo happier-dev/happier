@@ -18,6 +18,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { openSaveFileAsArtifactDialog } from '@/components/workspaces/files/file/SaveFileAsArtifactDialog';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { artifactPublicationWorkspaceFromScope } from '@/sync/ops/actions/artifactWorkspaceSource';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 
 /** What a tree row's Share items act on: the canonical share owner runs them for the row's own path. */
@@ -92,18 +93,22 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
     const actionScope = props.share?.actionScope ?? null;
     const workspaceScope = props.share?.workspaceScope ?? null;
     const linkTarget = props.share?.linkTarget ?? null;
-    const saveFolderAsArtifact = React.useMemo(() => props.kind === 'directory' && actionScope && workspaceScope ? () => {
-        if (!areServerAccountScopesEqual(actionScope, getActiveServerAccountScope())) return;
-        const sourceSessionId = linkTarget?.kind === 'session' ? linkTarget.sessionId : null;
-        openSaveFileAsArtifactDialog({
-            source: { scope: actionScope, sourceSessionId, filePath: props.path, entrypoint: 'index.html',
-                sourceWorkspace: sourceSessionId ? null : { machineId: workspaceScope.machineId, rootPath: workspaceScope.rootPath } },
-            sourceFacts: props.path,
-            onOpenArtifact: (artifactId: string) => {
-                if (areServerAccountScopesEqual(actionScope, getActiveServerAccountScope())) router.push(artifactViewRoute(artifactId) as never);
-            },
-        });
-    } : undefined, [actionScope, linkTarget, props.kind, props.path, router, workspaceScope]);
+    const saveFolderAsArtifact = React.useMemo(() => {
+        const publicationWorkspace = workspaceScope && artifactPublicationWorkspaceFromScope(workspaceScope);
+        if (props.kind !== 'directory' || !actionScope || !publicationWorkspace) return undefined;
+        return () => {
+            if (!areServerAccountScopesEqual(actionScope, getActiveServerAccountScope())) return;
+            const sourceSessionId = linkTarget?.kind === 'session' ? linkTarget.sessionId : null;
+            openSaveFileAsArtifactDialog({
+                source: { scope: actionScope, sourceSessionId, filePath: props.path, entrypoint: 'index.html',
+                    sourceWorkspace: sourceSessionId ? null : publicationWorkspace },
+                sourceFacts: props.path,
+                onOpenArtifact: (artifactId: string) => {
+                    if (areServerAccountScopesEqual(actionScope, getActiveServerAccountScope())) router.push(artifactViewRoute(artifactId) as never);
+                },
+            });
+        };
+    }, [actionScope, linkTarget, props.kind, props.path, router, workspaceScope]);
     // The File page's share owner, for this row's path: Copy path / Happier link, Attach and Open in go through it.
     const share = useWorkspaceFileShareActions({
         workspaceScope: props.share?.workspaceScope ?? null,

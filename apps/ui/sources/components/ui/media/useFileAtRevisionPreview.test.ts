@@ -19,6 +19,19 @@ vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
 const scope = { serverId: 'srv', machineId: 'm1', rootPath: '/repo' };
 
 describe('useFileAtRevisionPreview', () => {
+  it('reads a guest revision using its managed checkout address', async () => {
+    rpc.machineScmFileRead.mockClear().mockResolvedValueOnce({ success: false, errorCode: 'unsupported' });
+    const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, workspaceId: 'checkout',
+      managedId: 'guest', controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath } as const;
+    const hook = await renderHook(() => useFileAtRevisionPreview({
+      enabled: true, scope: { ...scope, workspace }, path: 'logo.png', selector: { side: 'before', area: 'both' },
+    }));
+    await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', errorCode: 'unsupported' }));
+    expect(rpc.machineScmFileRead).toHaveBeenCalledExactlyOnceWith(scope.machineId,
+      expect.objectContaining({ cwd: scope.rootPath, path: 'logo.png' }), expect.objectContaining({ workspace }));
+    rpc.machineScmFileRead.mockReset();
+  });
+
   it('reports an interrupted read as a failed load, not a missing revision, and reads again on retry', async () => {
     const interrupted =
       'The direct machine connection was interrupted. Retry the transfer.';
