@@ -312,8 +312,9 @@ export function rpcHandler(
             const listeners = resolveUserRpcListeners('ensure');
             listeners.set(method, socket);
             ownedMethods.add(method);
-            await redisRegistry.registerMethod(method);
+            // Started before the write: the refresh retries a registration Redis rejects.
             redisRegistry.startRefreshLoopIfNeeded();
+            await redisRegistry.registerMethod(method);
 
             socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
         } catch (error) {

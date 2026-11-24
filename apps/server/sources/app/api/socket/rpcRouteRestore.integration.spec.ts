@@ -187,6 +187,28 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await coordinator.stopRefreshLoopIfIdle();
     });
 
+    it("retries a socket's first registration that Redis rejected", async () => {
+        const method = "machine-1:spawn-happy-session";
+        const userRpcListeners = new Map<string, Socket>();
+        const allRpcListeners = new Map<string, Map<string, Socket>>([[userId, userRpcListeners]]);
+        const ctx = { io: {} as Server, redisRegistry: { enabled: true as const, instanceId: "instance-1" } };
+        const socket = createFakeSocket({ id: "socket-1", emit: vi.fn() });
+        rpcHandler(userId, socket as unknown as Socket, userRpcListeners, allRpcListeners, ctx);
+        // A key of the wrong type makes the registration's HSET fail.
+        await getRedisClient().set(`rpc:${userId}:${method}`, "not-a-hash");
+
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ type: "register" }));
+
+        await getRedisClient().del(`rpc:${userId}:${method}`);
+        await runRefreshTick();
+        await getRedisClient().ping();
+
+        expect(await createCoordinator("observer", new Set()).lookupSocketId(userId, method)).toBe("socket-1");
+
+        await triggerSocketHandler(socket, "disconnect");
+    });
+
     it("reports a refresh that Redis rejects", async () => {
         const method = "machine-1:spawn-happy-session";
         const ownedMethods = new Set([method]);
