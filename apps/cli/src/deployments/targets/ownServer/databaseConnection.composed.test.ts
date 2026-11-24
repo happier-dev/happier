@@ -151,12 +151,17 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                 const actionInput = { action, input: { operation: 'statement.run', target, mode: 'read', statement } };
                 const machineTarget = { kind: 'machine' as const, machineId: 'machine-a' };
                 const envelope = { v: 1 as const, requestId: 'native-real-pg', target: machineTarget, input: actionInput };
-                const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'native-query-root', binding: {
+                const requesterBinding = {
                     accountId, authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
                     actionId: ACTION_INVOKE_ACTION_ID_V1, target: machineTarget, machineId: 'machine-a',
                     installationId: installation.installationId, custodianAccountId: accountId, accountEncryptionMode: 'plain',
+                };
+                const databaseAccess = { agentLevel: 'read', policyEnvironmentId: detail.environment.id, policyRevision: detail.environment.revision };
+                const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'native-query-root', binding: {
+                    ...requesterBinding,
                     requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput),
+                    deploymentDatabaseAccess: { ...databaseAccess, summary: { canRead: true, canWrite: false, reason: 'database_editing_off' } },
                 } });
                 const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
                     serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', target: machineTarget,
@@ -167,7 +172,7 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                     machineId: 'machine-a', installationId: installation.installationId, service: 'database' };
                 const sizeEnvelope = { ...envelope, requestId: 'native-size', input: sizeInput };
                 const sizeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-size-root',
-                    binding: { ...root.binding, actionId: DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, requestId: sizeEnvelope.requestId,
+                    binding: { ...requesterBinding, actionId: DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, requestId: sizeEnvelope.requestId,
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(sizeEnvelope),
                         deploymentReadAdmission: projectDeploymentReadAdmissionV1(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, sizeInput) } });
                 const sizeAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: sizeRoot,
@@ -232,9 +237,11 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                     const setup = { operation: 'stats.enable' as const, target };
                     const setupEnvelope = { ...envelope, requestId: 'native-statistics-enable', input: { action: setupAction, input: setup } };
                     const forRole = async (role: 'use' | 'manage', editor: 'allowed' | 'not_an_editor' | 'editing_off') => {
+                        const summary = editor === 'allowed' ? { canRead: true, canWrite: true }
+                            : { canRead: true, canWrite: false, reason: editor === 'editing_off' ? 'database_editing_off' : 'database_not_an_editor' };
                         const setupRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, binding: {
                             ...root.binding, accountId: role === 'use' ? 'machine-grantee' : accountId, admittedMachineRole: role,
-                            deploymentDatabaseEditor: editor, requestId: setupEnvelope.requestId,
+                            deploymentDatabaseAccess: { ...databaseAccess, summary }, requestId: setupEnvelope.requestId,
                             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(setupEnvelope),
                             deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, setupEnvelope.input),
                         } });
@@ -394,7 +401,8 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                             statements: [{ sql: "UPDATE native_items SET note = 'held-reader' WHERE id = 1 RETURNING current_user", parameters: [] }] };
                         const writeEnvelope = { ...envelope, requestId: 'native-statistics-writer', input: { action, input: write } };
                         const writeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-write-root',
-                            binding: { ...root.binding, deploymentDatabaseEditor: 'allowed', requestId: writeEnvelope.requestId,
+                            binding: { ...root.binding, requestId: writeEnvelope.requestId,
+                                deploymentDatabaseAccess: { ...databaseAccess, summary: { canRead: true, canWrite: true } },
                                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
                                 deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, writeEnvelope.input) } });
                         const writeAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: writeRoot,
