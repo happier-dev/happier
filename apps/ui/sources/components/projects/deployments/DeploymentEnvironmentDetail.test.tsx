@@ -401,9 +401,10 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
   } finally { account.dispose(); await act(async () => { controller.retire(); }); }
 });
 
-it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
+it.each(['update_available', 'removed_from_source', 'unchecked', 'cold'] as const)(
   'opens the owning review or source repair from the Environment catalog notice (%s)', async state => {
-    await homes.switchAccount(scope.serverId, scope.accountId, { currentAccount: true });
+    const serverId = scope.serverId;
+    await homes.switchAccount(serverId, scope.accountId, { currentAccount: true });
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
     const { createPromptLibraryCatalogBoundary } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
@@ -420,17 +421,16 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
       sources: [source], disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(row => row.id) } }] });
     for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources'])
-      homes.answer(scope.serverId, path, { body: await (await catalog.handle(path))!.json() });
+      homes.answer(serverId, path, { body: await (await catalog.handle(path))!.json() });
     const base = environmentDetailForHome();
     const definition = { kind: 'stored' as const, document: 'services:\n  app:\n    image: nginx:1\n',
       contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] };
-    const detail = environmentDetailForHome({ content: {
+    const member = base.targetLinks[0]!.targetLink.members[0]!;
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId, controllerMachineId: member.machineId }, content: {
       ...base.content, definition, template: { templateRef: { sourceId: source.id, itemId: 'app', version: '1',
         ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
         definition: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest }, services: ['app'] },
     } });
-    const member = detail.targetLinks[0]!.targetLink.members[0]!;
-    detail.environment.controllerMachineId = member.machineId;
     const upstreamHttp = createUiRegistryHttpV1(async () => state === 'unchecked' ? new Response(null, { status: 401 })
       : Response.json({ schemaVersion: 1, apps: state === 'removed_from_source' ? [] : [{ itemId: 'app', app: {
         schemaVersion: 1, title: 'App', compose: { document: 'services:\n  app:\n    image: nginx:2\n', profiles: [], services: ['app'] },
@@ -438,7 +438,7 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
       } }] }));
     const observedChecks: string[] = [];
     const boundaryTrace: string[] = [];
-    const boundary = await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'registries.updates.check',
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId: 'registries.updates.check',
       machineId: member.machineId, installationId: member.installationId, tokenEpoch: 0, requesterInvocation: 'none', execute: async raw => {
         const input = REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(raw);
         if (input.kind !== 'app') throw new Error('Expected app update demand');
@@ -464,26 +464,56 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
         throw error;
       }
     };
-    const account = await captureLazyActionAccountContext(scope.serverId);
+    const account = await captureLazyActionAccountContext(serverId);
     storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
     storage.getState().activateProfileScope(account.accountLifetime.scope);
-    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: member.machineId,
-      installationId: member.installationId, activeAt: Date.now() })]);
+    let releaseMachineList: () => void = () => {};
+    const publishMachine = () => publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
+      id: member.machineId, installationId: member.installationId, activeAt: Date.now(),
+    })]);
+    if (state === 'cold') {
+      const respondAfter = new Promise<void>(resolve => { releaseMachineList = resolve; });
+      homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine], respondAfter });
+      storage.getState().applyMachines([], true, {
+        sourceServerId: account.accountLifetime.scope.serverId, sourceAccountId: account.accountLifetime.scope.accountId,
+      });
+      storage.setState(state => ({ machineListStatusByServerId: {
+        ...state.machineListStatusByServerId, [account.accountLifetime.scope.serverId]: 'loading',
+      } }));
+    } else await publishMachine();
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const { controller } = controllerFor({ detail });
     const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
-      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={serverId}
       phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={account.accountLifetime} /></ModalProvider>);
     try {
       const banner = 'project-deployments.environment.attention.catalogUpdate';
+      if (state === 'cold') {
+        await waitForContent(screen, 'project-deployments.environment.header');
+        expect(screen.findByTestId(`${banner}.loading`), JSON.stringify({
+          visible: screen.getTextContent(),
+          inventory: storage.getState().machineListStatusByServerId[account.accountLifetime.scope.serverId],
+          observedChecks,
+          boundaryTrace,
+        })).not.toBeNull();
+        expect(screen.findByTestId(`${banner}.action`)).toBeNull();
+        expect(observedChecks).toEqual([]);
+        releaseMachineList();
+        await act(publishMachine);
+      }
       await waitForHomeGovernance(() => expect(observedChecks, JSON.stringify({ boundaryTrace,
         requests: [...new Set(homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`))] }))
-        .toContain(state === 'unchecked' ? 'unchecked:auth_failed' : state));
+        .toContain(state === 'unchecked' ? 'unchecked:auth_failed' : state === 'cold' ? 'update_available' : state));
       await waitForContent(screen, `${banner}.action`);
       await screen.pressByTestIdAsync(`${banner}.action`);
-      await waitForContent(screen, state === 'update_available' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');
-      expect(homes.artifacts(scope.serverId).list()).toEqual([]);
-    } finally { await screen.unmount(); controller.retire(); account.dispose(); }
+      await waitForContent(screen, state === 'update_available' || state === 'cold' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');
+      expect(homes.artifacts(serverId).list()).toEqual([]);
+    } finally {
+      releaseMachineList();
+      await screen.unmount();
+      controller.retire();
+      account.dispose();
+    }
   },
 );
 

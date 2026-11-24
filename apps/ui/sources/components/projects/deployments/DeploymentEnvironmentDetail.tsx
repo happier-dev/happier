@@ -896,6 +896,8 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
     const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
+    const catalogUpdatePending = environment.catalogUpdate.loading
+      && !environment.catalogUpdate.upstream && !environment.catalogUpdate.error;
     const runtimeReinstall = detail.runtimeReinstall ?? null;
     const reinstallMachine = runtimeReinstall ? knownMachine(runtimeReinstall.machines[0]!.machineId) : null;
     // Reinstall on this Machine (the read's fact): relink and re-seal through the disposition owner, then the page's
@@ -925,7 +927,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
       servingState: overview ? activeReceipt?.deployment.state ?? null : null,
-      catalogUpdate: overview && Boolean(templateRef && (environment.catalogUpdate.upstream
+      catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || environment.catalogUpdate.upstream
         && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
     });
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
@@ -1049,6 +1051,10 @@ export const DeploymentEnvironmentDetail = React.memo(
           );
         }
         case 'catalogUpdate': {
+          if (catalogUpdatePending) return (
+            <SurfaceStateCard testID="project-deployments.environment.attention.catalogUpdate.loading"
+              size="line" kind="loading" title={t('projects.deployments.loading')} />
+          );
           const upstream = environment.catalogUpdate.upstream;
           const updateAvailable = upstream?.state === 'update_available';
           return (
