@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { io } from 'socket.io-client';
+import tweetnacl from 'tweetnacl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
@@ -10,8 +12,87 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+
+vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+
+it.each(['destination', 'source'] as const)('reads Handoff %s with the admitted requester at Home', async phase => {
+  const home = 'srv_handoff_home';
+  const serverHttpBaseUrl = 'https://handoff.example.test';
+  const sessionId = 'cmwagqalz008omccdtt4qggcq';
+  const machineId = 'source';
+  const targetMachineId = 'destination';
+  const installationId = 'source-installation';
+  const target = { kind: 'machine' as const, machineId };
+  const credentials = { token: 'requester-fixture', encryption: null };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-admission', binding: {
+    actionId: 'session.handoff', accountId: 'requester', custodianAccountId: 'custodian',
+    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+    serverIdentityId: home, machineId, installationId, target, requestId: 'handoff-request',
+    requestEnvelopeDigest: 'a'.repeat(43), handoffAdmission: { sessionId, sourceMachineId: machineId,
+      sourceInstallationId: installationId, targetMachineId, targetInstallationId: 'destination-installation' },
+  } });
+  const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+    updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } };
+  const observedSignedReads: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: {}, capabilities: {
+    encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } })));
+  vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+    const path = new URL(String(url)).pathname;
+    if (config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) {
+      observedSignedReads.push(path);
+      return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
+    }
+    expect(config?.headers?.Authorization).toBe('Bearer requester-fixture');
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+    if (path === `/v1/machines/${targetMachineId}`) return { status: 200, data: { machine: {
+      id: targetMachineId, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    } } };
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createCurrentSessionProjectionRecordFixture({
+      id: sessionId, encryptionMode: 'plain', share: null, metadata: 'not-json',
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+    }) } };
+    throw new Error(`Unexpected Home read ${path}`);
+  });
+  vi.mocked(io).mockImplementation(() => createApiSessionSocketStub({ emitWithAck: (event, packet) => {
+    expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+    expect(packet).toMatchObject({ method: `${targetMachineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}` });
+    return { ok: true, result: { type: 'not_required' } };
+  } }) as unknown as ReturnType<typeof io>);
+  const admitted = await projectRequesterAccountActionAuthorization({ authorization, serverIdentityId: home, bootstrap: {
+    attribution: { serverId: home, accountId: 'requester', machineId, installationId },
+    credentials, serverHttpBaseUrl, isCurrent: async () => true,
+  } });
+  if (!admitted) throw new Error('The test requester must have admitted custody');
+  const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+    serverId: home, serverIdentityId: home, serverHttpBaseUrl,
+    externalActionMachineInstallationId: installationId,
+    externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32)).secretKey,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+  });
+  const context = { surface: 'cli' as const, authority: 'present_user' as const,
+    externalActionExecutionAuthorization: admitted, externalActionTarget: target };
+  if (phase === 'destination') {
+    const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    expect(await deps.sessionHandoffTargetReplacementApprovalPreflight!({ sessionId, targetMachineId, targetPath: '/destination',
+      workspaceAction: { kind: 'copy_once', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } },
+      serverId: home, operationId: 'handoff-request',
+      effectActionId: 'session.handoff', context })).toEqual({ type: 'not_required' });
+  } else {
+    expect(await deps.sessionHandoffStart!({ sessionId, targetMachineId, workspaceAction: { kind: 'none' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'session_owner_metadata_unavailable' });
+  }
+  expect(observedSignedReads).toEqual([]);
+});
 
 it('retains admitted handoff custody through source enrichment and rejects a changed destination on replay', async () => {
   const input = {

@@ -8,9 +8,21 @@ import type { resolveSessionTransportContext } from '@/session/services/resolveS
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { logger } from '@/ui/logger';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
+import { isOriginalAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+
+function readOriginalAccountHandoffRoot(context?: ActionExecutorContext) {
+  const root = context?.externalActionExecutionAuthorization;
+  const admission = root?.binding.handoffAdmission;
+  return root && root.binding.actionId === 'session.handoff' && admission
+    && !root.binding.handoffPreflight && !root.binding.handoffContinuation
+    && isOriginalAccountActionCustody(root.binding) ? { root, admission } : undefined;
+}
+
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'
   | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume' | 'sessionWorkspaceReturn'>;
 
@@ -49,6 +61,7 @@ export function createCliSessionHandoffActionDeps(
     // families. Handoff expresses its intent through a workspace action; direct
     // Project linking has no Session and states its intent and mode explicitly.
     sessionHandoffTargetReplacementApprovalPreflight: async ({
+      sessionId,
       targetMachineId,
       targetPath,
       workspaceAction,
@@ -88,7 +101,7 @@ export function createCliSessionHandoffActionDeps(
         return { type: 'error' as const, result: { ...failure, failureCause } };
       };
       try {
-        const raw = await callMachineAction({
+        const rpc = {
           machineId: targetMachineId,
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
           request: {
@@ -101,11 +114,24 @@ export function createCliSessionHandoffActionDeps(
             ...(destinationIntent ? { destinationIntent } : {}),
             ...(replaceRelationshipId ? { replaceRelationshipId } : {}),
           },
-          context,
-          effectActionId,
-          exactMachine: true,
           ...(signal ? { signal } : {}),
-        });
+        };
+        const handoff = effectActionId === 'session.handoff' ? readOriginalAccountHandoffRoot(context) : undefined;
+        let raw: unknown;
+        if (handoff) {
+          // Destination inspection follows the app's ordinary Account RPC. The
+          // target still enforces Manage and owns the destination-path decision.
+          const requester = readRequesterAccountActionTransportContext(handoff.root);
+          if (!requester || handoff.admission.sessionId !== sessionId || handoff.admission.targetMachineId !== targetMachineId) {
+            return { type: 'error' as const, result: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } };
+          }
+          const { callExactMachineRpc, executionRunAuthorityCeiling } = await import('@/session/transport/rpc/machineRpc');
+          raw = readMachineActionRpcResult(await callExactMachineRpc({ ...rpc, credentials: requester.credentials,
+            serverUrl: requester.serverHttpBaseUrl, requestId: context.actionRequestId,
+            ...executionRunAuthorityCeiling({ authority: context.authority }) }));
+        } else {
+          raw = await callMachineAction({ ...rpc, context, effectActionId, exactMachine: true });
+        }
         const failure = readActionFailureEnvelope(raw);
         if (failure) return refuse(failure, failure);
         return HandoffTargetReplacementPreflightResultV1Schema.parse(raw);
@@ -130,8 +156,17 @@ export function createCliSessionHandoffActionDeps(
       signal,
     }, context) => {
       if (!params.credentials) return notSupported();
-      const transport = await resolveTransportForSession(sessionId, signal,
-        context ? { context, actionId: 'session.handoff' } : undefined);
+      const handoff = readOriginalAccountHandoffRoot(context);
+      const requester = readRequesterAccountActionTransportContext(handoff?.root);
+      if (handoff && (!requester || requester.credentials !== params.credentials || handoff.admission.sessionId !== sessionId)) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      }
+      // Keep the source read in the requester's Account and on the exact
+      // admitted Session. The effect below still receives the admitted Action.
+      const transport = requester && handoff
+        ? await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => resolveTransportForSession(sessionId, signal,
+          undefined, { serverId: handoff.root.binding.serverIdentityId, sessionId }))
+        : await resolveTransportForSession(sessionId, signal, context ? { context, actionId: 'session.handoff' } : undefined);
       if (!transport.ok) {
         return { ok: false, errorCode: transport.code, error: transport.code };
       }
