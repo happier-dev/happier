@@ -482,6 +482,13 @@ In 0.3 development source, the open prompt picker observes that same catalog and
 
 Controlled single choice is a separate capability: `Collection.selection.single` (also `List.selection.single`) supplies `value`, `onValueChange`, optional eligibility and an unavailable reason. It uses the existing row/card keyboard and physical-focus owner, exposes radio semantics, and changes the caller's choice without opening detail. Multiple selection remains the existing store capability; the two are mutually exclusive.
 
+Public Collection tables in 0.3 development can opt into `tableCells`.
+Collection resolves arrow navigation across visible rows and columns and delivers
+the selected cell or the edit intent. The caller supplies the active cell and owns
+its draft and save Action. The header's `resizeEnd` delivers a width once per
+completed resize gesture. The Database Workbench keeps widths in its local interaction
+state for the selected table.
+
 Transient option menus reuse the public [`HappierOptionRow`](../packages/plugin-ui/src/presentation/interaction/OptionRow.tsx) controlled anatomy through the app's `SelectableRow` adapter. Callers supply labels, accessories, disabled state, activation and semantic props; the adapter retains theme paint and keyboard/focus policy. Context's host-owned qualified document choices feed that same menu path for Account, Profile, Project and Session, while Instructions admits only PromptDocs. Neither the option anatomy nor its menu owns catalog admission, Home/Account currentness or mutations.
 
 Page-scrolling loading placeholders use the bounded Collection viewport height, not the growing stage content height. The stage still supplies the available row/card width; adding skeletons must never increase the next loading inventory.
