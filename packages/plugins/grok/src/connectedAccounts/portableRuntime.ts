@@ -188,7 +188,9 @@ export function createXaiPortableConnectedAccountRuntime(): ConnectedAccountRunt
         if (response.status < 200 || response.status >= 300) {
           const failure = parseConnectedAccountTokenEndpointFailure(response);
           const policyReason = response.status === 403 ? readXaiPolicyReason(response.body) : undefined;
-          return { status: failure.kind === 'invalid_grant' || failure.kind === 'invalid_client' ? 'reconnectRequired' : 'unavailable', diagnostic: diagnostic(`xai_refresh_${policyReason ?? failure.providerErrorCode ?? response.status}`) };
+          return { status: failure.kind === 'invalid_grant' || failure.kind === 'invalid_client' ? 'reconnectRequired' : 'unavailable',
+            diagnostic: { ...diagnostic(`xai_refresh_${policyReason ?? failure.providerErrorCode ?? response.status}`),
+              details: { providerHttpStatus: response.status, credentialRefreshFailureKind: failure.kind } } };
         }
         const refreshed = parseToken(JSON.parse(new TextDecoder().decode(response.body)), context.invokedAtMs, { ...credential, tokenEndpoint });
         await writeXaiCredential(context.stagedCredentials, refreshed, { signal });

@@ -139,6 +139,15 @@ describe('xAI refresh custody', () => {
     expect(JSON.parse(staged.get('xaiCredential') ?? 'null')).toMatchObject({ tokenEndpoint: 'https://auth.example/native-token', refreshToken: 'fake-refresh', accessToken: 'fake-rotated' });
     expect(f.saved.get('xaiCredential')).toContain('fake-import');
   });
+  it.each([[400, 'invalid_grant', 'invalid_grant'], [401, 'unauthorized', 'provider_401']] as const)(
+    'reports a refresh rejected with HTTP %s (%s) as a classified reconnect, so health stays latched', async (status, error, kind) => {
+    const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
+    await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'subscription', accessToken: 'fake-old', refreshToken: 'fake-old-refresh', tokenEndpoint: 'https://auth.example/token', clientId: 'fake-client' }));
+    f.request.mockImplementation(async () => ({ status, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error })) }));
+    const context = { ...f.read, stagedCredentials: { set: async () => {}, delete: async () => {} } } as unknown as Parameters<ConnectedAccountRuntime['refresh']>[0];
+    const result = await runtime.refresh(context);
+    expect(result).toMatchObject({ diagnostic: { details: { credentialRefreshFailureKind: kind, providerHttpStatus: status } } });
+  });
   it('rotates refresh material through staged custody while HTTP output contains only access headers', async () => {
     const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
     await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'subscription', accessToken: 'fake-old', refreshToken: 'fake-old-refresh', tokenEndpoint: 'https://auth.example/token', clientId: 'fake-client' }));

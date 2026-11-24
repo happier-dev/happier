@@ -1,5 +1,4 @@
 import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
-import { isReadRecoverableNeedsReauth } from '@happier-dev/cli-common/connectedAccounts';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -406,12 +405,6 @@ export class ConnectedServiceCredentialRefreshError extends Error {
 
 function isReconnectRequiredProfileStatus(status: unknown): boolean {
   return status === 'needs_reauth';
-}
-
-/** A needs_reauth the next scheduled status read may not re-derive (`isReadRecoverableNeedsReauth`). */
-function holdsReconnectRequired(profile: Pick<QualifiedConnectedAccountProfileV4, 'status' | 'statusReason'>): boolean {
-  return isReconnectRequiredProfileStatus(profile.status)
-    && !isReadRecoverableNeedsReauth({ status: profile.status, failureKind: profile.statusReason });
 }
 
 function readBoundedPluginDiagnosticCode(
@@ -1061,11 +1054,11 @@ export class ConnectedServiceRefreshCoordinator {
       }
       this.scheduledHealthProbeAtByKey.set(key, { ...identity, basis, at: -Infinity });
     }
-    if (!available || holdsReconnectRequired(profile)) {
+    if (!available || isReconnectRequiredProfileStatus(profile.status)) {
       this.scheduledHealthProbeAtByKey.set(key, { ...identity, basis, at: Infinity });
     }
     const nextDeadline = () => {
-      if (!available || holdsReconnectRequired(profile)) return null;
+      if (!available || isReconnectRequiredProfileStatus(profile.status)) return null;
       const at = (binding ? this.credentialHealthReprobeState.get(bindingKey(binding))?.nextProbeAt : undefined)
         ?? this.credentialHealthReprobeState.get(key)?.nextProbeAt
         ?? this.scheduledHealthProbeAtByKey.get(key)?.at;
@@ -1074,7 +1067,7 @@ export class ConnectedServiceRefreshCoordinator {
     const scheduledAt = (binding ? this.credentialHealthReprobeState.get(bindingKey(binding))?.nextProbeAt : undefined)
       ?? this.credentialHealthReprobeState.get(key)?.nextProbeAt
       ?? this.scheduledHealthProbeAtByKey.get(key)?.at ?? Infinity;
-    const due = available && !holdsReconnectRequired(profile) && scheduledAt <= now;
+    const due = available && !isReconnectRequiredProfileStatus(profile.status) && scheduledAt <= now;
     return { due, nextDeadline, settle: async (outcome, settlementSignal = signal) => {
       const signal = settlementSignal;
       signal?.throwIfAborted();
@@ -1156,7 +1149,7 @@ export class ConnectedServiceRefreshCoordinator {
     try {
       // Reconnecting replaces the credential revision and clears this status.
       // An expiry-only status probe cannot rehabilitate a rejected refresh grant.
-      if (holdsReconnectRequired(profile)) return;
+      if (isReconnectRequiredProfileStatus(profile.status)) return;
       const statusInvocation = scheduledStatus ? await scheduledStatus() :
         await runtime.establishedRuntimeOwner.invokeWithReceipt({ ...(signal ? { signal } : {}),
           account: profile.ref,

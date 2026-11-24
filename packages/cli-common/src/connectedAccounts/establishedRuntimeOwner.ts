@@ -24,9 +24,10 @@ type ConnectedAccountConfigurationSecrets = Parameters<typeof createConnectedAcc
 /**
  * The one rule for leaving a stored needs_reauth without a reconnect. When no provider rejected
  * the grant (the recorded failure kind stayed 'unknown', as when a runtime could not read its own
- * stored credential), a successful status read or connection test of the same credential revision
- * clears it. invalid_grant, invalid_client, provider_401/403 and a configuration-change reconnect
- * (no failure kind) stay latched until reconnect.
+ * stored credential), a check that exercised the credential against the provider and succeeded (a
+ * connection test) clears it. A status read never does: it checks local facts only.
+ * invalid_grant, invalid_client, provider_401/403 and a configuration-change reconnect (no failure
+ * kind) stay latched until reconnect.
  */
 export function isReadRecoverableNeedsReauth(health: Readonly<{ status?: string | null; failureKind?: string | null }>): boolean {
   return health.status === 'needs_reauth' && health.failureKind === 'unknown';

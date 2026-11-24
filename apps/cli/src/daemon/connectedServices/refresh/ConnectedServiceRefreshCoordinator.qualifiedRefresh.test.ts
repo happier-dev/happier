@@ -401,9 +401,9 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     }, 30_000);
 
   it.each([
-    ['an unclassified reconnect', 'unknown', true],
-    ['a provider grant rejection', 'invalid_grant', false],
-  ] as const)('re-derives needs_reauth after %s from the next status read only when no provider rejected the grant', async (_case, statusReason, clears) => {
+    ['an unclassified reconnect', 'unknown'],
+    ['a provider grant rejection', 'invalid_grant'],
+  ] as const)('keeps needs_reauth after %s across a scheduled status read, which checks local facts only', async (_case, statusReason) => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('A status read makes no provider request'); }));
@@ -426,8 +426,8 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     try {
       await quotas.tickOnce();
       const healthWrites = harness.mutateCredentialHealth.mock.calls.map(([input]) => (input.patch as { health?: { status?: string } }).health?.status);
-      // A login that reads as usable again clears a reconnect no provider asked for; a rejected grant stays.
-      expect(healthWrites).toEqual(clears ? ['connected'] : []);
+      // A local read cannot prove a rejected grant works again; only a provider check or refresh clears it.
+      expect(healthWrites).toEqual([]);
     } finally {
       await quotas.disposeInBandQuotaPersistence();
     }
