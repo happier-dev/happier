@@ -324,7 +324,12 @@ describe('PageHeader primary action placement', () => {
             // One ordinary row for the chooser, beside the page's own rows; no chip drawn inside the menu.
             const rows = screen.findAllByType(SelectableRow as never);
             expect(rows.map(row => row.props.testID)).toContain('fold.target.folded');
-            expect(rows.find(row => row.props.testID === 'fold.target.folded')?.props.title).toContain('Machine B');
+            const folded = rows.find(row => row.props.testID === 'fold.target.folded');
+            expect(folded?.props.title).toContain('Machine B');
+            // One menu, one icon column: the page's own rows carry no glyph, so neither does the chooser's; it opens its
+            // sheet with the menu's own "›", as a submenu row does, never a field's "▾".
+            expect(folded?.props.left ?? null).toBeNull();
+            expect((folded?.props.right as React.ReactElement<{ name?: string }> | undefined)?.props.name).toBe('caret-right');
             expect(screen.findHostByTestId('fold.target.picker-list')).toBeNull();
             await screen.pressByTestIdAsync('fold.target.folded');
             // The menu runs its row after it closes; the chooser's own list then opens (a phone sheet).

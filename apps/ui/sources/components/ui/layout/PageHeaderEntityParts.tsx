@@ -9,7 +9,6 @@ import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { t } from '@/text';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 
@@ -44,9 +43,9 @@ export type PageHeaderMenuAction = Readonly<{
     subtitle?: string;
     /** Rows of one kind sit together; the menu draws a divider between kinds. */
     category?: string;
-    /** The row's glyph: a chooser folded into the menu keeps its own (a Machine's desktop). */
+    /** The row's glyph. A menu shows its rows' glyphs only when every row has one (`PageHeaderMenu` decides). */
     icon?: IconName;
-    /** The row opens a chooser (a folded Machine chooser): it draws the field chevron, as the chooser's row form does. */
+    /** The row opens a chooser's sheet (a folded Machine chooser): it takes the menu's own "›", as a submenu row does. */
     opensChooser?: boolean;
 }>;
 
@@ -85,6 +84,8 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
     React.useEffect(() => {
         onOpenChange?.(open);
     }, [onOpenChange, open]);
+    // One menu, one icon column: its rows show their glyphs only when every row has one.
+    const showsIcons = props.actions.length > 0 && props.actions.every((action) => action.icon !== undefined);
     const toItem = React.useCallback((action: PageHeaderMenuAction): DropdownMenuItem => ({
         id: action.id,
         title: altHeld && action.alternateTitle !== undefined ? action.alternateTitle : action.title,
@@ -94,18 +95,16 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
         ...(action.subtitle ? { subtitle: action.subtitle } : {}),
         ...(action.category ? { category: action.category } : {}),
         ...(action.checked === undefined ? {} : { checked: action.checked }),
-        ...(action.icon ? { icon: <Icon name={action.icon} size={16} color={theme.colors.text.secondary} /> } : {}),
+        ...(showsIcons && action.icon ? { icon: <Icon name={action.icon} size={16} color={theme.colors.text.secondary} /> } : {}),
         // The menu draws the check of a checked row.
         ...(action.loading
             ? { rightElement: <ActivitySpinner size="small" color={theme.colors.text.secondary} /> }
-            : action.opensChooser
-                ? { rightElement: renderDropdownItemTriggerRightElement({ detail: null, open: false,
-                    detailColor: theme.colors.text.secondary, chevronColor: theme.colors.text.secondary }) }
-                : {}),
+            : {}),
+        ...(action.opensChooser ? { opensMore: true } : {}),
         ...(action.children && action.children.length > 0
             ? { submenu: { items: action.children.map((child) => toItem(child)), showCategoryTitles: false } }
             : {}),
-    }), [altHeld, theme.colors.text.secondary]);
+    }), [altHeld, showsIcons, theme.colors.text.secondary]);
     const items = React.useMemo(() => props.actions.map(toItem), [props.actions, toItem]);
     return (
         <DropdownMenu

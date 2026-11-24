@@ -69,6 +69,8 @@ export type DropdownMenuItem = Readonly<{
      */
     multiSelect?: boolean;
     submenu?: DropdownMenuSubmenu;
+    /** The row opens more than itself (a chooser's sheet) without a submenu: it takes the submenu row's own "›". */
+    opensMore?: boolean;
     /** Present the item as a round colour choice instead of a text row (`title` stays its label). */
     swatch?: SelectableMenuSwatch;
     /**
@@ -495,7 +497,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
                     : item.rightElement
                     ? item.rightElement
-                    : hasSubmenu
+                    : hasSubmenu || item.opensMore
                         ? <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                         : item.shortcut && hasHardwareKeyboard
                             ? <KeyHint label={item.shortcut} />
