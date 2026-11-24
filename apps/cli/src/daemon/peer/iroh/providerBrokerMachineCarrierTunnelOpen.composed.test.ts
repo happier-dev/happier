@@ -469,6 +469,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
 
   it.each([
     { failure: { ok: false as const, reasonCode: 'resource_forbidden' as const }, nativeRefusal: 'socket_close' },
+    { failure: { ok: false as const, reasonCode: 'access_removed' as const }, nativeRefusal: 'http_403' },
     { failure: { ok: false as const, reasonCode: 'resource_forbidden' as const }, nativeRefusal: 'http_403' },
     { failure: { ok: false as const, reasonCode: 'broker_unavailable' as const }, nativeRefusal: 'http_403' },
     { failure: { ok: false as const, reasonCode: 'resource_unavailable' as const,

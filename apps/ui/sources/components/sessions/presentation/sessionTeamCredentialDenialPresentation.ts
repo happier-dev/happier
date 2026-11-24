@@ -8,6 +8,8 @@ import {
 import { t } from '@/text';
 import { teamCredentialOwnerHandoffLabel, teamCredentialReconnectPresentation } from '@/components/settings/teams/credentials/sourceHealthPresentation';
 
+import { presentSessionTeamCredentialBindingRejection } from './sessionRuntimeIssuePresentation';
+
 export type SessionTeamCredentialDenialPresentation = Readonly<{
     kind: 'team-credential-denied';
     action: 'choose-model';
@@ -45,10 +47,12 @@ export function presentSessionTeamCredentialDenial(input: Readonly<{
     const resourceId = denial?.resourceId ?? null;
     const usageLimit = denial?.usageLimit ?? null;
     const reconnect = teamCredentialReconnectPresentation(denial?.reasonCode);
+    const reason = denial?.reasonCode;
     const details = [
         resourceId === null ? null : input.resolveResourceDisplayName(resourceId),
         // A reconnect refusal is its title; the body adds only who can reconnect it.
-        denial === null ? null : reconnect ? teamCredentialOwnerHandoffLabel() : credentialApprovalFailureMessage(denial.reasonCode),
+        reason === 'access_removed' ? presentSessionTeamCredentialBindingRejection(reason)
+            : reason === undefined ? null : reconnect ? teamCredentialOwnerHandoffLabel() : credentialApprovalFailureMessage(reason),
         usageLimit === null ? null : limitMetricLabel(usageLimit.metric),
         usageLimit === null ? null : t('teams.credentials.limits.remaining', { remaining: usageLimit.remaining }),
         usageLimit === null ? null : formatLimitResetUtc(usageLimit.resetsAtUtc),

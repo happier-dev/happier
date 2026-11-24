@@ -64,6 +64,23 @@ describe('presentSessionTeamCredentialDenial', () => {
         expect(presentation?.body).toContain('managed by this Team');
     });
 
+    it('shows access removed for a withdrawn broker credential in the retained transcript', () => {
+        const issue = runtimeIssue({});
+        const message = normalizeRawMessage('failure', 'failure', issue.occurredAt, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+                type: 'message', message: issue.sanitizedPreview,
+            } }, meta: { source: 'runtime', runtimeIssueV1: { ...issue, teamCredential: {
+                v: 1, resourceId: 'resource-acme', reasonCode: 'access_removed',
+            } } },
+        }, { seq: 10 });
+        expect(presentSessionTeamCredentialDenial({
+            issue: readRuntimeIssueMessageMeta(message?.meta), resolveResourceDisplayName,
+        })).toMatchObject({
+            action: 'choose-model',
+            body: `Acme OpenAI · ${t('session.startFailure.teamCredentialBinding.access_removed')}`,
+        });
+    });
+
     it('names the exhausted shared credential, its measure and when the allowance returns', () => {
         const presentation = presentSessionTeamCredentialDenial({
             issue: runtimeIssue({

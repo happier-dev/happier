@@ -3024,6 +3024,13 @@ authority failures.
 For Execution Run broker admission, Home reports `execution_run_authority_unavailable`
 when the worker cannot supply a readable authority reply. An explicit terminal
 Run or mismatched authority still receives its existing refusal.
+In unreleased 0.3, a verified Session broker refresh reports `access_removed`
+when the member loses brokered access. Home checks entitlement before comparing
+the requested resource revision. An entitled member using an old revision gets
+`resource_changed`. A fresh Open keeps the generic resource refusal when access
+is absent. For an entitled detached Run, the refusal carries the specific
+Session-use policy when its missing Team context or visibility prevents use.
+Use matching Home, CLI and app builds to read the closed broker refusal code.
 The Agent receives the local machine-carrier capability through its declared raw
 credential header, not a public-header/config literal; signed Home authority
 remains with the admitted stream. Security/currentness fingerprints continue

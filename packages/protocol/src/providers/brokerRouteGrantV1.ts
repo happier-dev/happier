@@ -16,11 +16,17 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { TeamCredentialActionOperationConsumerV1Schema } from '../teams/credentials/actionOperationV1.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { TeamCredentialSessionUsePolicyV1Schema } from '../teams/credentials/resourceV1.js';
 import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
 import { TeamCredentialUsageLimitDenialV1Schema } from '../teams/credentials/usageV1.js';
 import { ProviderWireProtocolSchema } from './capabilities/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderLocalIdSchema } from './ids.js';
 import { ProviderConnectionSecurityFingerprintV1Schema, ProviderManagedRuntimeBindingFingerprintV1Schema } from './fingerprints.js';
+
+/** The exact selected resource's policy, after Home has admitted the requester's entitlement. */
+export const PROVIDER_BROKER_TEAM_POLICY_REFUSAL_PHASE = 'providers.team_credential.session_use_policy' as const;
+export const ProviderBrokerTeamPolicyRefusalV1Schema = lazyZodSchema(() =>
+  z.enum(TeamCredentialSessionUsePolicyV1Schema.options.filter(policy => policy !== 'personal_allowed')));
 
 export const PROVIDER_BROKER_ROUTE_AUDIENCE_V1 = 'happier-provider-broker-route-v1' as const;
 /** The first declared watcher served by the finite Provider read scope. */
@@ -242,6 +248,7 @@ export const ProviderBrokerAdmissionFailureCodeV1Schema = lazyZodSchema(() => z.
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   'invalid_request',
   'resource_forbidden',
+  'access_removed',
   'resource_unavailable',
   'resource_changed',
   'session_not_active',

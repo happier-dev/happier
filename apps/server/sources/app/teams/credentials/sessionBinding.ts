@@ -814,12 +814,13 @@ async function validateSessionTeamCredentialResourceForContextInTx(
         },
     });
     if (!resource) return { ok: false, reason: "resource_missing" };
+    const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: resource.id, accountId: input.accountId });
+    if (!entitlement.ok) return entitlement;
+    if (input.deliveryMode === "brokered" && !entitlement.mayBroker) return { ok: false, reason: "access_removed" };
     if (input.expectedResourceRevision !== undefined && resource.revision !== input.expectedResourceRevision) {
         return { ok: false, reason: "resource_changed",
             revisionComparison: { expectedRevision: input.expectedResourceRevision, observedRevision: resource.revision } };
     }
-    const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: resource.id, accountId: input.accountId });
-    if (!entitlement.ok) return entitlement;
     // The presented credential's current qualification, decided at each
     // admission (open, grant refresh, turn begin). An already-admitted
     // operation's retained check skips it: tightening the Team sign-in policy
@@ -868,7 +869,6 @@ async function validateSessionTeamCredentialResourceForContextInTx(
     }
     if (source.authenticationFailure) return { ok: false, reason: source.authenticationFailure };
     if (input.deliveryMode === "brokered") {
-        if (!entitlement.mayBroker) return { ok: false, reason: "access_removed" };
         const placement = readTeamCredentialBrokerPlacement(resource);
         if (!placement.ok) return { ok: false, reason: "resource_corrupt" };
         // A readable resource that names no broker (its Machine or Pool was

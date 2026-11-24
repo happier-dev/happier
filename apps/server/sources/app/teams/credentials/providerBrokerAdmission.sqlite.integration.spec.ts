@@ -342,9 +342,11 @@ async function createBrokerFixture(
             ...(input.readCurrentPresence ? { readCurrentPresence: input.readCurrentPresence } : {}),
             ...(input.readPoolSourceEligibility ? { readPoolSourceEligibility: input.readPoolSourceEligibility } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
-            ...(input.refreshAuthority
-                ? { verifyRefreshAuthority: (candidate: SignedProviderBrokerModelRouteGrantV1) => candidate.payload.grantId === input.refreshAuthority!.payload.grantId }
-                : {}),
+            verifyRefreshAuthority: authority => verifyProviderBrokerRouteGrantSignatureV1({
+                authority,
+                nowMs: 1,
+                signingCapability: { keyId: 'fixture-home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url'), expiresAt: null },
+            }),
             ...(input.resolveExecutionRunCurrentness
                 ? { resolveExecutionRunCurrentness: input.resolveExecutionRunCurrentness }
                 : {}),
@@ -2135,8 +2137,16 @@ describe('Team credential Provider broker admission', () => {
             data: { sessionUsePolicy: 'team_context_required' },
         });
         await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: true });
-        await expect(tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun))
-            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        const openWithRestrictedPolicy = () =>
+            tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun);
+        await expect(openWithRestrictedPolicy()).resolves.toEqual({
+            ok: false, reasonCode: 'resource_forbidden',
+            failureCause: { phase: 'providers.team_credential.session_use_policy', errorClass: 'Error',
+                errorCode: 'team_context_required', httpStatus: null },
+        });
+        await db.teamMembership.update({ where: { id: requesterMembership.id }, data: { status: 'suspended' } });
+        await expect(openWithRestrictedPolicy()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await db.teamMembership.update({ where: { id: requesterMembership.id }, data: { status: 'active' } });
         await db.teamCredentialResource.update({
             where: { id: resource.id },
             data: { sessionUsePolicy: 'personal_allowed' },
@@ -3983,8 +3993,10 @@ describe('Team credential Provider broker admission', () => {
             where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true } });
         const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
         if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
-        const refresh = (current: Readonly<{ id: string; revision: number; sourceBindingJson: string }>) => fixture.open({
-            resource: current, sessionId: session.id, authentication: TEST_AUTHENTICATION, refreshAuthority: opened.authority });
+        const refresh = (
+            current: Readonly<{ id: string; revision: number; sourceBindingJson: string }>,
+            refreshAuthority = opened.authority,
+        ) => fixture.open({ resource: current, sessionId: session.id, authentication: TEST_AUTHENTICATION, refreshAuthority });
         const setAudience = async (expectedRevision: number, granted: boolean) => await inTx(tx => setTeamCredentialAudienceInTx(tx, {
             actorAccountId: fixture.custodian.id,
             input: { resourceId: resource.id, expectedRevision, allMembersAllowedRoutes: null, groupGrants: [],
@@ -4005,8 +4017,14 @@ describe('Team credential Provider broker admission', () => {
         const withdrawn = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
         await expect(fixture.admit({ authority: opened.authority, resource: withdrawn, requestId: 'after-withdrawal' }))
             .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
-        await expect(refresh(withdrawn)).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
-        await expect(refresh(resource)).resolves.toMatchObject({ ok: false });
+        await expect(refresh(resource)).resolves.toEqual({ ok: false, reasonCode: 'access_removed' });
+        await expect(refresh(withdrawn)).resolves.toEqual({ ok: false, reasonCode: 'access_removed' });
+        await expect(refresh(resource, {
+            ...opened.authority,
+            payload: { ...opened.authority.payload, grantId: crypto.randomUUID() },
+        })).resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
+        await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
+            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
 
         // Restoration: the next refresh at the current revision is admitted
         // as a fresh job; one naming the old revision is told it changed.

@@ -2,7 +2,7 @@ import { brokerFailureForBindingRejection } from './brokerBindingFailure';
 export { openTeamCredentialActionBroker, admitTeamCredentialActionBrokerRequest } from './actionBrokerAdmission';
 import { z } from 'zod/mini';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerRequestAdmissionV1Schema, SignedProviderBrokerModelRouteGrantV1Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerOpenRequestV1, type ProviderBrokerOpenResponseV1, type ProviderBrokerRequestAdmissionV1, type SignedProviderBrokerModelRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PROVIDER_BROKER_TEAM_POLICY_REFUSAL_PHASE, ProviderBrokerTeamPolicyRefusalV1Schema, PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerRequestAdmissionV1Schema, SignedProviderBrokerModelRouteGrantV1Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerOpenRequestV1, type ProviderBrokerOpenResponseV1, type ProviderBrokerRequestAdmissionV1, type SignedProviderBrokerModelRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -522,7 +522,24 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
             return resourceChanged('binding_resource_revision_mismatch',
                 'revisionComparison' in admitted ? admitted.revisionComparison : undefined);
         }
-        // A fresh open answers every resource-authority refusal with one code
+        // Home has verified that this grant previously admitted the same
+        // requester, resource, and consumer. A fresh Open has no such proof.
+        if (request.refreshAuthority && admitted.reason === 'access_removed') {
+            return bindingFailure(admitted.reason, admitted.reason);
+        }
+        if (consumer.kind === 'execution_run' && consumer.parentSessionId === null) {
+            const policy = ProviderBrokerTeamPolicyRefusalV1Schema.safeParse(admitted.reason);
+            if (policy.success) {
+                return {
+                    ...bindingFailure('resource_forbidden', policy.data),
+                    failureCause: {
+                        phase: PROVIDER_BROKER_TEAM_POLICY_REFUSAL_PHASE, errorClass: 'Error',
+                        errorCode: policy.data, httpStatus: null,
+                    },
+                };
+            }
+        }
+        // An open answers resource-authority refusals with one code
         // so that a resource which exists but is not this caller's cannot be
         // told apart from one that does not exist — the enumeration contract
         // `providerBrokerRoutes.spec.ts` pins. Authentication failure
