@@ -8,6 +8,7 @@ import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusa
   type RequesterSessionCustodyRefusalCode } from './requesterCurrentness';
 
 import { basename, join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import { openSessionRequesterBootstrapRpcRequestV1, type SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -53,6 +54,10 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { TrackedSession } from '../types';
 import { releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
+import { resolveRequesterSessionRuntimeDirectories } from './requesterSessionRuntimeDirectories';
+import { resolveConnectedServicesMaterializationBaseDir } from '../connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
+import { normalizeMaterializationKeyForPath } from '../connectedServices/materialize/normalizeMaterializationKeyForPath';
+import { isContainedMaterializedHomeDirectory } from '../connectedServices/materialize/cleanup/ConnectedServiceMaterializedHomeCleanupScheduler';
 export { releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
 import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
 import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -370,9 +375,10 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   /** Host-local capture facet; reuses this bootstrap's admitted Account facts. */
   projectHandoffCaptureAccountContext(authorization: ExternalActionExecutionAuthorizationV1,
     observedServerIdentityId: string, signal?: AbortSignal): Promise<import('./requesterAccountActionContext').RequesterAccountActionContext | null>;
-  bindSession(sessionId: string, sessionCreationTag: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
+  /** `materializationKey` names the Session's Agent home, removed when the Session is deleted. */
+  bindSession(sessionId: string, sessionCreationTag: string, materializationKey?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
   /** Existing-Session adoption retains the original immutable creation recipe. */
-  bindExistingSession(sessionId: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
+  bindExistingSession(sessionId: string, materializationKey?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
 }>;
 
 export async function admitRequesterSessionBootstrap(input: Readonly<{
@@ -506,31 +512,33 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       await savedSecretOperationContext.isCurrent();
       await observation?.dispose();
     };
-    const persistVerifiedCustody = async (binding: Parameters<typeof verifyRequesterSessionCredentialBinding>[0]) => {
+    const persistVerifiedCustody = async (binding: Parameters<typeof verifyRequesterSessionCredentialBinding>[0],
+      materializationKey: string | undefined) => {
       await bindRequesterSessionMachineControl(binding);
       if (!await verifyRequesterSessionCredentialBinding(binding, 'custody_after_machine_binding')) return null;
       return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir,
+        ...(materializationKey ? { materializationKey } : {}),
         ...(machineAdmission ? { machineAdmission } : {}),
         ...(homeServerIdentityId ? { homeServerIdentityId } : {}) });
     };
-    const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (sessionId, sessionCreationTag) => {
+    const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (sessionId, sessionCreationTag, materializationKey) => {
       if (!verifyRuntime || preparedSessionId && preparedSessionId !== sessionId || bound && (bound.sessionId !== sessionId
         || bound.sessionCreationTag !== undefined && bound.sessionCreationTag !== sessionCreationTag) || !await isCurrent()) return null;
       const binding = { credentials, sessionId, attribution, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
         verifyMachineAdmissionCurrent: bound ? verifyRuntime : verify,
         signal: currentnessSignal(), expectedSessionCreationTag: sessionCreationTag };
-      const custody = await persistVerifiedCustody(binding);
+      const custody = await persistVerifiedCustody(binding, materializationKey);
       if (!custody) return null;
       bound = { sessionId, sessionCreationTag };
       cleanup = custody.cleanup;
       if (!await isCurrent()) { await cleanup(); return null; }
       return { path: custody.path, cleanup };
     };
-    const bindExistingSession: AdmittedRequesterSessionBootstrap['bindExistingSession'] = async sessionId => {
+    const bindExistingSession: AdmittedRequesterSessionBootstrap['bindExistingSession'] = async (sessionId, materializationKey) => {
       if (!bound || bound.sessionId !== sessionId || !verifyRuntime || !await isCurrent()) return null;
       const binding = { credentials, sessionId, attribution, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
         verifyMachineAdmissionCurrent: verifyRuntime, signal: currentnessSignal() };
-      const custody = await persistVerifiedCustody(binding);
+      const custody = await persistVerifiedCustody(binding, materializationKey);
       if (!custody) return null;
       cleanup = custody.cleanup;
       if (!await isCurrent()) { await cleanup(); return null; }
@@ -931,6 +939,7 @@ async function readBoundCustody(path: string, expected: Pick<RequesterCredential
   const credentials = decodeStoredCredentials(value.credentials);
   return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId,
     executionIdentity: value.v === 1 ? value.executionIdentity : undefined,
+    materializationKey: value.v === 1 ? value.materializationKey : undefined,
     workspace: value.v === 2 ? value.workspace : undefined,
     sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined,
     sourceAdmission: value.v === 1 ? value.sourceAdmission : undefined }
@@ -1047,7 +1056,7 @@ async function readRequesterSessionCredentialBinding(
   input: Parameters<typeof verifyRequesterSessionCredentialBinding>[0],
   readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
   caller: 'direct_binding' | 'custody_after_machine_binding' | 'custody_recovery' = 'direct_binding',
-): Promise<true | null | undefined> {
+): Promise<true | null | undefined | 'session_absent'> {
   // Workspace's Machine verifier throws unavailable reads and returns false
   // only for a definite refusal. Other callers' opaque false stays unknown.
   const readMachineCurrent = async (signal?: AbortSignal) => readMachineAdmissionCurrent
@@ -1059,7 +1068,7 @@ async function readRequesterSessionCredentialBinding(
     // This owner holds no operation identity; do not infer one from a detached
     // latency/materialization trace.
     caller, operationId: null };
-  return await timeWebLatencyPhase('requester.credential_binding', async (): Promise<true | null | undefined> => {
+  return await timeWebLatencyPhase('requester.credential_binding', async (): Promise<true | null | undefined | 'session_absent'> => {
     let sessionReadRefused = false;
     const observe = async <T>(phase: 'machine_before' | 'profile' | 'encryption' | 'session', work: () => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
@@ -1100,7 +1109,7 @@ async function readRequesterSessionCredentialBinding(
             observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
               token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
               retainCredentialReference: before === true ? undefined : true,
-              ...(input.signal ? { signal: input.signal } : {}) }, async (currentness): Promise<true | null | undefined> => {
+              ...(input.signal ? { signal: input.signal } : {}) }, async (currentness): Promise<true | null | undefined | 'session_absent'> => {
               const [profile, session] = await correspondenceRead;
               const owner = input.expectedSessionCreationTag !== undefined && session ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
                 accountEncryptionMode: currentness.mode, rawSession: session }) : null;
@@ -1116,7 +1125,11 @@ async function readRequesterSessionCredentialBinding(
                   || correspondence?.success === true && correspondence.data.sessionCreationTag === input.expectedSessionCreationTag
                     && correspondence.data.recipe.execution.machineId === input.attribution.machineId);
               if (input.signal?.aborted) return undefined;
-              return bound ? true : null;
+              if (bound) return true;
+              // The requester's own Session is gone from its Home while this Machine still admits them.
+              const modeCurrent = currentness.mode === 'plain' ? input.credentials.encryption === null : input.credentials.encryption !== null;
+              return !input.scope && session === null && profile.id === input.attribution.accountId && modeCurrent
+                ? 'session_absent' : null;
             })),
           ]);
           return current;
@@ -1143,8 +1156,10 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
   executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
   sourceAdmission?: WorkspaceSyncSourceStandingAdmission;
+  materializationKey?: string;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
+    ...(input.materializationKey ? { materializationKey: input.materializationKey } : {}),
     ...(input.scope ? { scope: input.scope } : {}),
     ...(input.endpointRole ? { endpointRole: input.endpointRole } : {}),
     ...(input.executionIdentity ? { executionIdentity: input.executionIdentity } : {}),
@@ -1177,14 +1192,32 @@ async function writeRequesterCredentialCustody(input: RequesterCredentialCustody
       || !isDeepStrictEqual(existing.executionIdentity, input.executionIdentity)
       || !isDeepStrictEqual(existing.sourceExecutionIdentity, input.sourceExecutionIdentity)) throw new Error('requester_session_custody_mismatch');
     created = false;
-    await replacePrivateBearerFile({ path, contents });
+    // A rejoin without the key (recovery, adoption) keeps the Session's recorded Agent home.
+    const parsed = JSON.parse(contents) as Record<string, unknown>;
+    const merged = existing.materializationKey && parsed.materializationKey === undefined
+      ? JSON.stringify({ ...parsed, materializationKey: existing.materializationKey }) : contents;
+    await replacePrivateBearerFile({ path, contents: merged });
   }
   return { path, created, cleanup: async () => { if (created) await removePrivateBearerFile(path); } };
 }
 
-/** Explicit custody retirement; a resumable Session's physical exit retains birth. */
+/** The guest Session's Agent home lives exactly as long as the Session: kept at exit for resume. */
+async function removeRequesterSessionMaterializedHome(input: Readonly<{ happyHomeDir: string;
+  attribution: Pick<RequesterWorkAttributionV1, 'accountId'>; materializationKey: string }>): Promise<void> {
+  const storeRoot = resolveConnectedServicesMaterializationBaseDir(input.happyHomeDir);
+  const { connectedServicesMaterializationBaseDir } = resolveRequesterSessionRuntimeDirectories({
+    activeServerDir: input.happyHomeDir, attribution: input.attribution, connectedServicesMaterializationBaseDir: storeRoot });
+  const home = join(connectedServicesMaterializationBaseDir, normalizeMaterializationKeyForPath(input.materializationKey));
+  // Never through a link: the home must sit physically inside this daemon's store.
+  if (!await isContainedMaterializedHomeDirectory(home, storeRoot)) return;
+  await rm(home, { recursive: true, force: true });
+}
+
+/** Explicit custody retirement; a resumable Session's physical exit retains birth.
+ * Only a deleted Session also ends the Agent home its birth recorded. */
 export async function retireRequesterSessionCredentialCustody(input: RequesterCredentialCustodyBinding
-  | Readonly<{ happyHomeDir: string; serverId: string; sessionId: string }>): Promise<boolean> {
+  | Readonly<{ happyHomeDir: string; serverId: string; sessionId: string }>,
+  cause?: 'session_deleted'): Promise<boolean> {
   const path = requesterSessionCredentialPath('attribution' in input ? input
     : { ...input, attribution: { serverId: input.serverId } });
   try {
@@ -1193,7 +1226,12 @@ export async function retireRequesterSessionCredentialCustody(input: RequesterCr
     const binding = 'attribution' in input ? input : { happyHomeDir: input.happyHomeDir, sessionId: input.sessionId,
       attribution: { ...RequesterCredentialCustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown).attribution,
         serverId: input.serverId } };
-    if (!await readBoundCustody(path, binding)) return false;
+    const stored = await readBoundCustody(path, binding);
+    if (!stored) return false;
+    if (cause === 'session_deleted' && stored.materializationKey) {
+      await removeRequesterSessionMaterializedHome({ happyHomeDir: binding.happyHomeDir,
+        attribution: binding.attribution, materializationKey: stored.materializationKey });
+    }
     await removePrivateBearerFile(path);
     return true;
   } catch (error) {
@@ -1266,7 +1304,9 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
     // readBoundCustody above has already matched the exact persisted scope,
     // Account, Session/trigger id and installation attribution. Only a definite
     // refusal retires custody; unavailable currentness preserves every scope.
-    if (!input.signal?.aborted && current === null) await retireRequesterSessionCredentialCustody(input);
+    if (!input.signal?.aborted && (current === null || current === 'session_absent')) {
+      await retireRequesterSessionCredentialCustody(input, current === 'session_absent' ? 'session_deleted' : undefined);
+    }
     return null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
 }

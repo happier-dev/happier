@@ -3432,7 +3432,7 @@ export class ApiMachineClient {
             retireRequesterCustody: async sessionId => {
                 const { retireRequesterSessionCredentialCustody } = await import('@/daemon/sessionEncryption/requesterSessionCredentials');
                 return retireRequesterSessionCredentialCustody({ happyHomeDir: configuration.happyHomeDir,
-                    serverId: this.machineRuntimeServerId, sessionId });
+                    serverId: this.machineRuntimeServerId, sessionId }, 'session_deleted');
             },
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
                 readMemberFolderOwner: path => this.readMemberFolderOwner(path) },

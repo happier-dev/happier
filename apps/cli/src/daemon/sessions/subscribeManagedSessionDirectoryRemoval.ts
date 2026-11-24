@@ -59,7 +59,7 @@ export async function subscribeManagedSessionDirectoryRemoval(
         return;
       }
       if (params.requesterCustody
-        && !await retireRequesterSessionCredentialCustody({ ...params.requesterCustody, sessionId })) {
+        && !await retireRequesterSessionCredentialCustody({ ...params.requesterCustody, sessionId }, 'session_deleted')) {
         throw new Error('requester_session_custody_unavailable');
       }
     }),

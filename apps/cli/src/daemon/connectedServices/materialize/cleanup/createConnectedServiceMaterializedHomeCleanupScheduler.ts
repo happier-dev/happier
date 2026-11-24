@@ -3,12 +3,15 @@ import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/pro
 import type { TrackedSession } from '../../../types';
 import { isExecutionRunHomeRetained, readRetainedExecutionRunHomeKeys } from '../../../executionRunRegistry';
 import { hasLocalConnectedServiceResumeState } from '../../stateSharing/connectedServiceStateSharingManifest';
+import { listConnectedServiceRetainedMaterializedHomeSanitizers } from '../../catalogHooks';
+import { logger } from '@/utils/logger';
 import {
   readConnectedServiceMaterializationIdentityFromEnvironment,
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
 } from '../../materialization/identity';
 import {
   ConnectedServiceMaterializedHomeCleanupScheduler,
+  isContainedMaterializedHomeDirectory,
   type ConnectedServiceRetainedMaterializationKeysResult,
   type ConnectedServiceRetainedMaterializedHomeSanitizer,
 } from './ConnectedServiceMaterializedHomeCleanupScheduler';
@@ -32,6 +35,32 @@ export async function isConnectedServiceMaterializedHomeRetainedOnExit(input: Re
   return input.materializationKey.startsWith('csm_')
     || await isExecutionRunHomeRetained(input.materializationKey)
     || await hasLocalConnectedServiceResumeState(input.homeRoot);
+}
+
+/** Each Agent plugin's hygiene for a home that is kept but no longer running. */
+export async function sanitizeStoppedConnectedServiceMaterializedHome(identityRoot: string): Promise<void> {
+  for (const sanitize of listConnectedServiceRetainedMaterializedHomeSanitizers()) {
+    try { await sanitize(identityRoot); }
+    catch (error) { logger.debug('[CONNECTED SERVICES] Retained-home hygiene failed (non-fatal)', { identityRoot, error }); }
+  }
+}
+
+/** Runner exit: an unretained home is removed; a retained one is sanitized once, now that it stopped. */
+export async function settleStoppedConnectedServiceMaterializedHome(input: Readonly<{
+  materializationKey: string;
+  homeRoot: string;
+  identityRoot: string;
+  /** The materialized store root the identity root must sit physically inside. */
+  containmentRoot: string;
+  probe: boolean;
+  remove(): Promise<void>;
+}>): Promise<void> {
+  if (input.probe || !await isConnectedServiceMaterializedHomeRetainedOnExit(input)) {
+    await input.remove();
+    return;
+  }
+  if (!await isContainedMaterializedHomeDirectory(input.identityRoot, input.containmentRoot).catch(() => false)) return;
+  await sanitizeStoppedConnectedServiceMaterializedHome(input.identityRoot);
 }
 
 export function createConnectedServiceMaterializedHomeCleanupScheduler(params: Readonly<{

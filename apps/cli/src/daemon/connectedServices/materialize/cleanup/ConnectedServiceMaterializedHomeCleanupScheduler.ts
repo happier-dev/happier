@@ -57,6 +57,7 @@ export type ConnectedServiceRetainedMaterializationKeysResult =
   | Readonly<{ status: 'unavailable' }>;
 
 type RetainedSegmentsSnapshot = Readonly<{
+  liveSegments: ReadonlySet<string>;
   retainedSegments: ReadonlySet<string>;
   retainedKeys: ReadonlySet<string>;
   identityDeletionAuthority: 'confirmed' | 'unavailable';
@@ -112,6 +113,40 @@ async function readDirectoryEntries(path: string, timeoutMs: number): Promise<Re
       .map((entry) => ({ name: entry.name, path: join(path, entry.name) }));
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+/** A real directory strictly inside `baseDir` by its lexical path, no link anywhere below `baseDir`. */
+export async function isContainedMaterializedHomeDirectory(path: string, baseDir: string,
+  timeoutMs = DEFAULT_FILE_OPERATION_TIMEOUT_MS): Promise<boolean> {
+  try {
+    const targetStat = await runFileOperationWithTimeout({
+      operation: 'lstat',
+      path,
+      timeoutMs,
+      run: async () => await lstat(path),
+    });
+    if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return false;
+    const [baseRealPath, targetRealPath] = await Promise.all([
+      runFileOperationWithTimeout({
+        operation: 'realpath',
+        path: baseDir,
+        timeoutMs,
+        run: async () => await realpath(baseDir),
+      }),
+      runFileOperationWithTimeout({
+        operation: 'realpath',
+        path,
+        timeoutMs,
+        run: async () => await realpath(path),
+      }),
+    ]);
+    const rel = relative(baseRealPath, targetRealPath);
+    return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
+      && rel === relative(resolve(baseDir), resolve(path));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
     throw error;
   }
 }
@@ -197,17 +232,16 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     );
     if (retainedResult.status === 'unavailable') {
       return {
+        liveSegments,
         retainedSegments: liveSegments,
         retainedKeys,
         identityDeletionAuthority: 'unavailable',
       };
     }
     for (const key of retainedResult.keys) retainedKeys.add(key);
-    for (const segment of normalizeMaterializationKeys(retainedKeys)) {
-      liveSegments.add(segment);
-    }
     return {
-      retainedSegments: liveSegments,
+      liveSegments,
+      retainedSegments: normalizeMaterializationKeys(retainedKeys),
       retainedKeys,
       identityDeletionAuthority: 'confirmed',
     };
@@ -272,11 +306,21 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     return targets;
   }
 
-  async #sanitizeRetainedMaterializedHomes(retainedSnapshot: RetainedSegmentsSnapshot): Promise<void> {
+  /** Daemon start: a retained home with no live Session is stopped; the exit owner sanitizes later stops. */
+  async #sanitizeStoppedRetainedMaterializedHomes(retainedSnapshot: RetainedSegmentsSnapshot): Promise<void> {
     const sanitize = this.#sanitizeRetainedMaterializedHome;
     if (!sanitize) return;
-    await Promise.all(Array.from(retainedSnapshot.retainedSegments, async (segment) => {
-      const homeRootDir = join(this.#baseDir, segment);
+    const live = retainedSnapshot.liveSegments;
+    const homeRootDirs = Array.from(retainedSnapshot.retainedSegments)
+      .filter(segment => !live.has(segment)).map(segment => join(this.#baseDir, segment));
+    // Requester homes are kept while their Session exists; none is live unless tracked here.
+    for (const account of await readDirectoryEntries(join(this.#baseDir, 'requester-accounts'), this.#fileOperationTimeoutMs)) {
+      for (const home of await readDirectoryEntries(account.path, this.#fileOperationTimeoutMs)) {
+        if (!live.has(home.name)) homeRootDirs.push(home.path);
+      }
+    }
+    await Promise.all(homeRootDirs.map(async (homeRootDir) => {
+      if (!await this.#isContainedDirectory(homeRootDir, this.#baseDir).catch(() => false)) return;
       await runFileOperationWithTimeout({
         operation: 'sanitizeRetainedHome',
         path: homeRootDir,
@@ -289,35 +333,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   }
 
   async #isContainedDirectory(path: string, baseDir: string): Promise<boolean> {
-    try {
-      const targetStat = await runFileOperationWithTimeout({
-        operation: 'lstat',
-        path,
-        timeoutMs: this.#fileOperationTimeoutMs,
-        run: async () => await lstat(path),
-      });
-      if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return false;
-      const [baseRealPath, targetRealPath] = await Promise.all([
-        runFileOperationWithTimeout({
-          operation: 'realpath',
-          path: baseDir,
-          timeoutMs: this.#fileOperationTimeoutMs,
-          run: async () => await realpath(baseDir),
-        }),
-        runFileOperationWithTimeout({
-          operation: 'realpath',
-          path,
-          timeoutMs: this.#fileOperationTimeoutMs,
-          run: async () => await realpath(path),
-        }),
-      ]);
-      const rel = relative(baseRealPath, targetRealPath);
-      return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
-        && rel === relative(resolve(baseDir), resolve(path));
-    } catch (error) {
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
-      throw error;
-    }
+    return await isContainedMaterializedHomeDirectory(path, baseDir, this.#fileOperationTimeoutMs);
   }
 
   async #isRetainedIdentityTarget(target: MaterializedHomeCleanupTarget): Promise<boolean> {
@@ -374,9 +390,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     };
   }
 
-  async reconcile(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
-    const retainedSnapshot = await this.#readRetainedSegments();
-    await this.#sanitizeRetainedMaterializedHomes(retainedSnapshot);
+  async #removeUnretainedHomes(retainedSnapshot: RetainedSegmentsSnapshot): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
     const results: ConnectedServiceMaterializedHomeCleanupResult[] = [];
     for (const target of await this.#listCleanupTargets(retainedSnapshot)) {
       results.push(await this.#removeTarget(target));
@@ -384,7 +398,15 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     return results;
   }
 
+  /** Daemon start. */
+  async reconcile(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
+    const retainedSnapshot = await this.#readRetainedSegments();
+    await this.#sanitizeStoppedRetainedMaterializedHomes(retainedSnapshot);
+    return await this.#removeUnretainedHomes(retainedSnapshot);
+  }
+
+  /** Runner exit: removal only; the exit owner already sanitized the home that stopped. */
   async cleanupPendingMaterializedHomes(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
-    return await this.reconcile();
+    return await this.#removeUnretainedHomes(await this.#readRetainedSegments());
   }
 }

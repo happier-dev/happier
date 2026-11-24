@@ -213,8 +213,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { cleanupDaemonHomeMachineWorkspace } from './startup/daemonHomeMachineWorkspaceCleanup';
 import { createSshTunnelSupervisor } from './ssh/tunnels';
 import { createConnectedServiceGroupHomeCleanupScheduler } from './connectedServices/homes/createConnectedServiceGroupHomeCleanupScheduler';
-import { createConnectedServiceMaterializedHomeCleanupScheduler } from './connectedServices/materialize/cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
-import { listConnectedServiceRetainedMaterializedHomeSanitizers } from './connectedServices/catalogHooks';
+import { createConnectedServiceMaterializedHomeCleanupScheduler, sanitizeStoppedConnectedServiceMaterializedHome } from './connectedServices/materialize/cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
 import { readRetainedConnectedServiceMaterializationKeys } from './connectedServices/materialize/cleanup/readRetainedConnectedServiceMaterializationKeys';
 import { resolveConnectedServicesMaterializationBaseDir } from './connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import { createDaemonMachineRpcRouteAttachmentCache } from './machineRpcRouteAttachments';
@@ -1520,11 +1519,7 @@ export async function startDaemon(
         logger.debug('[DAEMON RUN] Connected-service materialized home retained-session scan failed (non-fatal)', error);
         return { status: 'unavailable' };
       }),
-      sanitizeRetainedMaterializedHome: async (homeRootDir) => {
-        for (const sanitize of listConnectedServiceRetainedMaterializedHomeSanitizers()) {
-          await sanitize(homeRootDir);
-        }
-      },
+      sanitizeRetainedMaterializedHome: sanitizeStoppedConnectedServiceMaterializedHome,
     });
     void connectedServiceMaterializedHomeCleanupScheduler.reconcile().catch((error) => {
       logger.debug('[DAEMON RUN] Connected-service materialized home startup reconciliation failed (non-fatal)', error);

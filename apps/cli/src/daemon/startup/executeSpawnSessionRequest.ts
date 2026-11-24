@@ -67,6 +67,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveProjectFilesForManagedLaunch } from './projectFilesLaunchSelection';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
+import { readConnectedServiceMaterializationIdentityFromSpawnOptions } from '../connectedServices/materialization/identity';
 import type { ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
@@ -1121,11 +1122,13 @@ export async function executeSpawnSessionRequest(
             }
             if (requesterRuntime) {
                 const tag = launchOptions.sessionCreationTag;
+                // The committed Session's Agent home; it is removed when that Session is deleted.
+                const materializationKey = readConnectedServiceMaterializationIdentityFromSpawnOptions(launchOptions)?.id;
                 const custody = normalizedExistingSessionId
                     && requesterRuntime.bootstrap.getBoundSessionId() === normalizedExistingSessionId
-                    ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId)
+                    ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId, materializationKey)
                     : launchExistingSessionId && tag
-                      ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag) : null;
+                      ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag, materializationKey) : null;
                 if (!custody) return await refuseSpawn(projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session custody unavailable'));
                 launchOptions = { ...launchOptions, requesterSessionCredentialFile: custody.path };
                 launchResourceScope.register({ onFailure: custody.cleanup, onExit: () => undefined });

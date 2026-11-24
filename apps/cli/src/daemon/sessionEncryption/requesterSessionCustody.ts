@@ -49,6 +49,8 @@ export const CustodySchema = z.strictObject({
   automationId: z.optional(z.string().check(z.minLength(1))),
   automationScopePending: z.optional(z.literal(true)),
   retireWhenIdle: z.optional(z.literal(true)),
+  /** The Session's connected-service materialization identity; its Agent home goes when the Session is deleted. */
+  materializationKey: z.optional(z.string().check(z.minLength(1))),
   attribution: RequesterWorkAttributionV1Schema,
   homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
   /** The daemon's Machine admission for this requester; the actor is attribution.accountId. */

@@ -1,6 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
-import { access, mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, readFile, chmod, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import axios from 'axios';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -123,6 +123,9 @@ import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/s
 import { CustodySchema } from './requesterSessionCustody';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ManagedWorkspaceRefV2WriteSchema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveConnectedServicesMaterializationBaseDir } from '../connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
+import { normalizeMaterializationKeyForPath } from '../connectedServices/materialize/normalizeMaterializationKeyForPath';
+import { resolveRequesterSessionRuntimeDirectories } from './requesterSessionRuntimeDirectories';
 
 // Genuine socket boundary: these custody tests do not establish runner availability.
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Runner socket unavailable'); } }));
@@ -348,6 +351,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   let signedAdmissionAvailable = true;
   let accountMode: 'plain' | 'e2ee' = options.encryptionSecret ? 'e2ee' : 'plain';
   let sessionRole: 'owner' | 'view' = 'owner';
+  let sessionDeleted = false;
   let loseDuringVerification = false;
   let unavailablePath: string | null = null;
   let acpCatalog: AcpCatalogRecordV1 = { v: 1, definitions: [] };
@@ -457,7 +461,8 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
       ...(options.bot ? { identity: { bot: { kind: 'bot' }, createdAsBot: true } } : {}),
       configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
       terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null } });
-  app.get(`/v2/sessions/${sessionId}`, async (request, reply) => options.requesterReadsOnly
+  app.get(`/v2/sessions/${sessionId}`, async (request, reply) => sessionDeleted
+    ? reply.code(404).send({ error: 'Session not found' }) : options.requesterReadsOnly
     && request.headers.authorization !== `Bearer ${credentials.token}`
     && !hasSignedSessionActionAuthority(request)
     ? reply.code(403).send({ error: 'access_denied' }) : ({ session: createSessionRecordFixture({ id: sessionId, seq: options.sessionSeq ?? 0,
@@ -485,6 +490,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
     setAcpCatalog: (record: AcpCatalogRecordV1) => { acpCatalog = record; },
     setAccountId: (value: string) => { accountId = value; }, setAccountMode: (value: 'plain' | 'e2ee') => { accountMode = value; },
     setSessionRole: (value: 'owner' | 'view') => { sessionRole = value; },
+    setSessionDeleted: (value: boolean) => { sessionDeleted = value; },
     replaceDuringVerification: () => { loseDuringVerification = true; } };
 }
 
@@ -541,6 +547,101 @@ describe('requester Session lifecycle custody', () => {
       await deleted({ sessionId: 'deleted' });
     } finally { dispose(); }
   });
+  // A guest's materialized Agent home is kept while its Session exists (resume)
+  // and goes with that Session's custody when the Session is deleted.
+  async function guestHomes(happyHomeDir: string) {
+    const base = resolveConnectedServicesMaterializationBaseDir(happyHomeDir);
+    const guestBase = resolveRequesterSessionRuntimeDirectories({ activeServerDir: happyHomeDir,
+      connectedServicesMaterializationBaseDir: base, attribution }).connectedServicesMaterializationBaseDir;
+    const make = async (root: string, key: string) => {
+      const path = join(root, normalizeMaterializationKeyForPath(key));
+      await mkdir(join(path, 'codex', 'sessions'), { recursive: true });
+      await writeFile(join(path, 'codex', 'session_index.jsonl'), '{}\n');
+      return path;
+    };
+    return { deleted: await make(guestBase, 'csm_1_deleted'), kept: await make(guestBase, 'csm_2_kept'),
+      legacy: await make(guestBase, 'csm_3_legacy'), owner: await make(base, 'csm_4_owner') };
+  }
+
+  it.each(['identity-root', 'requester-accounts'] as const)('refuses to remove through a symlinked %s when the Session is deleted', async link => {
+    await home();
+    const outside = await mkdtemp(join(tmpdir(), 'guest-home-outside-'));
+    onTestFinished(() => rm(outside, { recursive: true, force: true }));
+    await mkdir(join(outside, 'codex'), { recursive: true });
+    await writeFile(join(outside, 'codex', 'keep.txt'), 'outside');
+    const base = resolveConnectedServicesMaterializationBaseDir(directory!);
+    const guestBase = resolveRequesterSessionRuntimeDirectories({ activeServerDir: directory!,
+      connectedServicesMaterializationBaseDir: base, attribution }).connectedServicesMaterializationBaseDir;
+    const segment = normalizeMaterializationKeyForPath('csm_1_deleted');
+    if (link === 'identity-root') {
+      await mkdir(guestBase, { recursive: true });
+      await symlink(outside, join(guestBase, segment), 'dir');
+    } else {
+      await mkdir(join(outside, 'account-bob', segment, 'codex'), { recursive: true });
+      await writeFile(join(outside, 'account-bob', segment, 'codex', 'keep.txt'), 'outside');
+      await mkdir(base, { recursive: true });
+      await symlink(outside, join(base, 'requester-accounts'), 'dir');
+    }
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'deleted',
+      attribution, credentials, materializationKey: 'csm_1_deleted' });
+    expect(await requesterCredentialOwner.retireRequesterSessionCredentialCustody(
+      { happyHomeDir: directory!, serverId: attribution.serverId, sessionId: 'deleted' }, 'session_deleted')).toBe(true);
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    const kept = link === 'identity-root' ? join(outside, 'codex', 'keep.txt') : join(outside, 'account-bob', segment, 'codex', 'keep.txt');
+    expect(await readFile(kept, 'utf8')).toBe('outside');
+  });
+
+  it('removes a deleted guest Session home with its custody and leaves every other home', async () => {
+    await home();
+    const homes = await guestHomes(directory!);
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'deleted',
+      attribution, credentials, materializationKey: 'csm_1_deleted', machineAdmission: { custodianAccountId: 'alice', role: 'use' } });
+    expect(JSON.parse(await readFile(custody.path, 'utf8')).materializationKey).toBe('csm_1_deleted');
+    const kept = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'kept',
+      attribution, credentials, materializationKey: 'csm_2_kept' });
+    let deleted: ((change: { sessionId: string }) => void | Promise<void>) | undefined;
+    const dispose = await subscribeManagedSessionDirectoryRemoval({
+      directories: createManagedSessionDirectories({ activeServerDir: directory! }), token: 'custodian-fixture',
+      stopSession: async () => ({ status: 'not_found' }),
+      onSessionDeletedChange: listener => { deleted = listener; return () => { deleted = undefined; }; },
+      onSessionAccessReset: () => () => {},
+      requesterCustody: { happyHomeDir: directory!, serverId: attribution.serverId },
+    });
+    try {
+      if (!deleted) throw new Error('Missing existing deletion subscription');
+      await deleted({ sessionId: 'deleted' });
+      await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(homes.deleted)).rejects.toMatchObject({ code: 'ENOENT' });
+      for (const path of [kept.path, homes.kept, homes.legacy, homes.owner]) await expect(access(path)).resolves.toBeUndefined();
+      // A replayed deletion fact finds nothing left and still settles.
+      await deleted({ sessionId: 'deleted' });
+    } finally { dispose(); }
+  });
+
+  it.each(['deleted', 'machine-access-lost', 'session-role-withdrawn'] as const)(
+    'cold recovery after an unclean stop removes the guest home only when the Session is %s', async cause => {
+      const host = await home();
+      const homes = await guestHomes(directory!);
+      const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+      const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials,
+        homeServerIdentityId: 'srv_original_home', materializationKey: 'csm_1_deleted' });
+      const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ ...binding,
+        serverId: attribution.serverId, serverHttpBaseUrl: origin, expectedAttribution: attribution, machineAdmissionBoundary: host.boundary });
+      // A stopped Session's home survives its custody being recovered.
+      const resumed = await recover();
+      expect(resumed?.getBoundSessionId()).toBe(binding.sessionId);
+      await resumed?.dispose();
+      await expect(access(homes.deleted)).resolves.toBeUndefined();
+      if (cause === 'deleted') host.setSessionDeleted(true);
+      if (cause === 'machine-access-lost') host.setAccess(false);
+      if (cause === 'session-role-withdrawn') host.setSessionRole('view');
+      await expect(recover()).resolves.toBeNull();
+      await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      if (cause === 'deleted') await expect(access(homes.deleted)).rejects.toMatchObject({ code: 'ENOENT' });
+      else await expect(access(homes.deleted)).resolves.toBeUndefined();
+      for (const path of [homes.kept, homes.legacy, homes.owner]) await expect(access(path)).resolves.toBeUndefined();
+    });
+
   it.each(['plain', 'e2ee'] as const)('recovers closed native-target Sync custody without a fabricated host member (%s)', async mode => {
     const secret = new Uint8Array(32).fill(27);
     const host = await home({ sessionId: 'native-sync', ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });

@@ -332,14 +332,15 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
-  it('applies the injected retained-home sanitizer to each retained materialized home', async () => {
+  it('sanitizes only stopped retained homes at daemon start, never a live home or on an exit tick', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-retained-sanitizer-');
     try {
       const baseDir = join(root, 'materialized');
-      const materializationKey = 'live-home';
-      const liveRoot = await createIdentityRoot(baseDir, materializationKey, 'claude');
-      const retainedKey = 'retained-home';
-      const retainedRoot = await createIdentityRoot(baseDir, retainedKey, 'claude');
+      const liveRoot = await createIdentityRoot(baseDir, 'live-home', 'claude');
+      const retainedRoot = await createIdentityRoot(baseDir, 'retained-home', 'claude');
+      const requesterNamespace = join(baseDir, 'requester-accounts', 'account-guest');
+      const stoppedGuestRoot = await createIdentityRoot(requesterNamespace, 'csm_guest-stopped');
+      const liveGuestRoot = await createIdentityRoot(requesterNamespace, 'csm_guest-live');
 
       const sanitizedHomeRoots: string[] = [];
       const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
@@ -347,15 +348,51 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
         nowMs: () => 10_000,
         orphanTtlMs: 1_000,
         attemptTtlMs: 1_000,
-        getLiveMaterializationKeys: () => [materializationKey],
-        getRetainedMaterializationKeys: async () => [retainedKey],
+        getLiveMaterializationKeys: () => ['live-home', 'csm_guest-live'],
+        getRetainedMaterializationKeys: async () => ['retained-home'],
         sanitizeRetainedMaterializedHome: async (homeRootDir) => {
           sanitizedHomeRoots.push(homeRootDir);
         },
       });
 
       await expect(scheduler.reconcile()).resolves.toEqual([]);
-      expect(sanitizedHomeRoots.sort()).toEqual([liveRoot, retainedRoot].sort());
+      expect(sanitizedHomeRoots.sort()).toEqual([retainedRoot, stoppedGuestRoot].sort());
+      for (const path of [liveRoot, retainedRoot, stoppedGuestRoot, liveGuestRoot]) await expectExists(path);
+      sanitizedHomeRoots.length = 0;
+      // A runner exit sanitizes only the home it just stopped (exit owner), never the whole store.
+      await expect(scheduler.cleanupPendingMaterializedHomes()).resolves.toEqual([]);
+      expect(sanitizedHomeRoots).toEqual([]);
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it.each(['identity-root', 'requester-accounts'] as const)('never sanitizes through a symlinked %s at daemon start', async link => {
+    const root = await createTempDir('happier-materialized-home-cleanup-sanitizer-link-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const outside = join(root, 'outside');
+      await mkdir(join(outside, 'account-guest', normalizeMaterializationKeyForPath('csm_guest'), 'codex'), { recursive: true });
+      await mkdir(baseDir, { recursive: true });
+      if (link === 'identity-root') {
+        await symlink(outside, join(baseDir, normalizeMaterializationKeyForPath('retained-home')), 'dir');
+      } else {
+        await symlink(outside, join(baseDir, 'requester-accounts'), 'dir');
+      }
+      const sanitizedHomeRoots: string[] = [];
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000_000,
+        attemptTtlMs: 1_000_000,
+        getLiveMaterializationKeys: () => [],
+        getRetainedMaterializationKeys: async () => ['retained-home'],
+        sanitizeRetainedMaterializedHome: async (homeRootDir) => {
+          sanitizedHomeRoots.push(homeRootDir);
+        },
+      });
+      await scheduler.reconcile();
+      expect(sanitizedHomeRoots).toEqual([]);
     } finally {
       await removeTempDir(root);
     }

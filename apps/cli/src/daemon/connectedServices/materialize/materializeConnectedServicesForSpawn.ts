@@ -46,7 +46,9 @@ import type {
   ConnectedServicesMaterializationDiagnostic,
 } from '@/daemon/connectedServices/materialization/materializer';
 import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/materialization/materializer';
-import { isConnectedServiceMaterializedHomeRetainedOnExit } from './cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
+import { settleStoppedConnectedServiceMaterializedHome } from './cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
+import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
+import { resolveMaterializedStoreRoot } from '@/daemon/sessionEncryption/requesterSessionRuntimeDirectories';
 import { copyConnectedServiceHomeEntry } from '../stateSharing/connectedServiceHomeEntrySync';
 import { readConnectedServiceStateSharingManifest, writeConnectedServiceStateSharingManifest, type TeamCredentialNativeHomeDelivery } from '../stateSharing/connectedServiceStateSharingManifest';
 import { importConnectedServiceSessionFiles, type ConnectedServiceSessionFileImportRoot } from '../stateSharing/importConnectedServiceSessionFiles';
@@ -1002,11 +1004,11 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       try { await cleanupAttemptRoot(); } catch (error) { failures.push(error); }
       if (promoted) {
         try {
-          if (await isCanonicalConnectedServiceMaterializedRoot({ baseDir: params.baseDir, rootDir })
-            && (params.probePurpose === 'probe' || !await isConnectedServiceMaterializedHomeRetainedOnExit({
-            materializationKey: params.materializationKey, homeRoot: rootDir,
-          }))) {
-            await createBestEffortCleanupDirectory(rootDir, undefined, { failureMode: 'reject' })();
+          if (await isCanonicalConnectedServiceMaterializedRoot({ baseDir: params.baseDir, rootDir })) {
+            await settleStoppedConnectedServiceMaterializedHome({ materializationKey: params.materializationKey,
+              homeRoot: rootDir, identityRoot: join(params.baseDir, normalizeMaterializationKeyForPath(params.materializationKey)), containmentRoot: resolveMaterializedStoreRoot(params.baseDir),
+              probe: params.probePurpose === 'probe',
+              remove: createBestEffortCleanupDirectory(rootDir, undefined, { failureMode: 'reject' }) });
           }
         } catch (error) { failures.push(error); }
       }
@@ -1157,9 +1159,9 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       if (!await isCanonicalConnectedServiceMaterializedRoot({ baseDir: params.baseDir, rootDir })) return;
       // Native rollouts may be the only resume state. Credential/runtime
       // retirement still runs; the existing orphan sweep owns later reclamation.
-      if (params.probePurpose === 'probe' || !await isConnectedServiceMaterializedHomeRetainedOnExit({
-        materializationKey: params.materializationKey, homeRoot: rootDir,
-      })) await cleanupFinalRoot();
+      await settleStoppedConnectedServiceMaterializedHome({ materializationKey: params.materializationKey,
+        homeRoot: rootDir, identityRoot: join(params.baseDir, normalizeMaterializationKeyForPath(params.materializationKey)), containmentRoot: resolveMaterializedStoreRoot(params.baseDir),
+        probe: params.probePurpose === 'probe', remove: cleanupFinalRoot });
     })().catch((error: unknown) => {
       rootRemovalError = error;
     });
