@@ -1,9 +1,12 @@
 import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import {
+    DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
     DATABASE_CAPTURE_RESOURCE_REF_V1,
     DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
     DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
     type DatabaseCaptureCoverageV1,
+    type DatabaseCaptureEndpointsListInputV1,
+    type DatabaseCaptureEndpointV1,
     type DatabaseCaptureSourceV1,
     type DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
@@ -23,9 +26,42 @@ export type CaptureFindingSelection = Readonly<{
 
 type CaptureFindingDetail = NonNullable<Extract<DatabaseCaptureTraceGetResultV1, { ok: true }>['findings']>[number];
 type CaptureFinding = Omit<CaptureFindingDetail, 'kind' | 'exercise'> & Readonly<{
-    kind: RepeatedQueryEvidence['kind'] | 'failing_endpoint';
+    kind: RepeatedQueryEvidence['kind'] | 'failing_endpoint' | 'endpoint_latency';
     exercise: string;
 }>;
+
+/** Summarize the exact endpoint and observation window selected by the person. */
+export function projectCaptureEndpointFinding(selection: CaptureFindingSelection, input: DatabaseCaptureEndpointsListInputV1,
+    endpoint: DatabaseCaptureEndpointV1): CaptureFinding | undefined {
+    if (input.since === undefined || input.until === undefined || input.endpoint === undefined) return undefined;
+    const { source, sourceScope, coverage } = selection;
+    const { since, until } = input;
+    const observedWindow = { fromMs: since, toMs: until };
+    const keyParts = [endpoint.serviceName, endpoint.method, endpoint.route];
+    const endpointKey = computeCanonicalDomainSeparatedDigest('happier.telemetry.capture-endpoint.v1', keyParts);
+    return {
+        v: 1, sourceRef: captureFindingSource, sourceScope, kind: 'endpoint_latency', title: 'Endpoint latency',
+        evidenceIdentity: computeCanonicalDomainSeparatedDigest('happier.telemetry.capture-endpoint-observation.v1', [
+            createCanonicalJsonSigningInput(source), sourceScope.machineId, endpointKey, String(since), String(until),
+        ]),
+        ...(source.kind === 'environment' ? { environmentObservation: {
+            shapeKey: computeCanonicalDomainSeparatedDigest('happier.telemetry.capture-finding-shape.v1', [
+                'endpoint_latency', endpoint.method, endpoint.route, '',
+            ]),
+            ...(endpoint.serviceName ? { reportedService: { kind: 'workload_reported' as const, name: endpoint.serviceName } } : {}),
+        } } : {}),
+        observedWindow, coverage: coverage.lostObservations > 0 ? { status: 'partial', reasons: ['partial_observation'] } : { status: 'complete' },
+        summary: { records: endpoint.requestCount, totalTimeMs: endpoint.totalDurationMs },
+        exercise: 'Exercise the selected route with comparable traffic. Compare mean request time across comparable observation windows.',
+        verification: {
+            observationKey: endpointKey,
+            readBefore: { action: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, input: { ...input, source } },
+            findAfter: { action: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, input: {
+                source, since: until, endpoint: input.endpoint, page: { limit: input.page.limit },
+            } },
+        },
+    };
+}
 
 const repeatTitles: Record<RepeatedQueryEvidence['kind'], string> = {
     suspected_n_plus_one: 'Suspected N+1 queries',

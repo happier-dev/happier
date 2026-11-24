@@ -176,6 +176,13 @@ export function createTelemetryCaptureReads(
       );
       return { items: page.items, nextCursor: page.nextCursor ?? null };
     },
+    async endpointFinding(endpoint: DatabaseCaptureEndpointCursorV1, since: number, until: number, signal: AbortSignal) {
+      const result = settle(DatabaseCaptureEndpointsListResultV1Schema.safeParse(await call(
+        DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+        { source: source(environment), page: { limit: 1 }, endpoint, ...window(since, until) }, signal,
+      )));
+      return result.finding;
+    },
     async summaries(
       list: Exclude<TelemetryCaptureList, 'endpoints'>,
       since: number,

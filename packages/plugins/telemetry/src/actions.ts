@@ -10,7 +10,7 @@ import type { CaptureRuntime } from './runtime.js';
 import type { CaptureListInput } from './store/capture.js';
 import type { createCaptureBackgroundOwner } from './background.js';
 import { readCaptureCostWindow } from './costs.js';
-import { projectCaptureFindings } from './analysis/findings.js';
+import { projectCaptureEndpointFinding, projectCaptureFindings } from './analysis/findings.js';
 
 /** Internal producer bindings. Public Action schemas and target admission remain
  * with the Database catalogue/access owners; operands here have already been admitted. */
@@ -200,13 +200,19 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
 }
 
 /** The ACCESS/source owner supplies this admitted result. P5 does not derive a partition from operands. */
-export type AdmittedCaptureSource = Readonly<{ source: database.DatabaseCaptureSourceV1; partition: string; runtime: CaptureRuntime }>;
+export type AdmittedCaptureSource = Readonly<{
+    source: database.DatabaseCaptureSourceV1;
+    partition: string;
+    runtime: CaptureRuntime;
+    collectorMachineId?: string;
+}>;
 export type AdmittedCaptureScope = Pick<AdmittedCaptureSource, 'source' | 'partition'>;
 export type CaptureSourceAdmission = (input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
     actionId: database.DatabaseActionIdV1) => Promise<AdmittedCaptureScope>;
 
 /** Actions and a demanded Resource share the exact same selected-source DTO projection. */
 export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSource) {
+    const machineId = selected.source.kind === 'worktree' ? selected.source.machineId : selected.collectorMachineId;
     const page = (items: readonly database.DatabaseCaptureSummaryV1[], limit: number) => {
         const last = items.at(-1);
         return { ok: true as const, source: selected.source, items: [...items], ...(last && items.length === limit ? { nextCursor: { at: last.at, id: last.id } } : {}) };
@@ -235,11 +241,10 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
             return page(await createCaptureReader(selected.runtime.store).requests({ ...input.page, since: input.since,
                 until: input.until, worktree: selected.partition }), input.page.limit);
         },
-        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1, collectorMachineId?: string) {
+        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1) {
             const { source, runtime, partition } = selected;
             const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
                 traceId: input.traceId, pageSize: input.page.limit });
-            const machineId = source.kind === 'worktree' ? source.machineId : collectorMachineId;
             const findings = machineId === undefined ? undefined : [...projectCaptureFindings({
                 source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
                 coverage: runtime.ingest.coverage(partition),
@@ -255,11 +260,17 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 worktree: selected.partition, kind: 'log' }), input.page.limit);
         },
         async listCapturedEndpoints(input: database.DatabaseCaptureEndpointsListInputV1) {
-            const items = await createCaptureReader(selected.runtime.store).endpoints({ ...input.page, since: input.since,
-                until: input.until, worktree: selected.partition, pageSize: input.page.limit });
+            const { source, runtime, partition } = selected;
+            const items = await createCaptureReader(runtime.store).endpoints({ ...input.page, since: input.since,
+                until: input.until, worktree: partition, pageSize: input.page.limit, endpoint: input.endpoint });
             const last = items.at(-1);
-            return { ok: true as const, source: selected.source, items: [...items], ...(last && items.length === input.page.limit
-                ? { nextCursor: { serviceName: last.serviceName, method: last.method, route: last.route } } : {}) };
+            const finding = input.endpoint && last && machineId ? projectCaptureEndpointFinding({
+                source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
+                coverage: runtime.ingest.coverage(partition),
+            }, input, last) : undefined;
+            return { ok: true as const, source, items: [...items], ...(finding && { finding }),
+                ...(!input.endpoint && last && items.length === input.page.limit
+                    ? { nextCursor: { serviceName: last.serviceName, method: last.method, route: last.route } } : {}) };
         },
         async clearCapture(input: database.DatabaseCaptureClearInputV1) {
             await selected.runtime.clear(selected.partition);
@@ -280,7 +291,11 @@ export function createCapturePublicActionProducers(options: Readonly<{
         read: (readers: ReturnType<typeof createCaptureSelectedSourceReaders>, partition: string) => Promise<T>): Promise<T> {
         const scope = await options.admitSource(input, context, actionId);
         const lease = await options.acquireRuntime(context);
-        try { return await read(createCaptureSelectedSourceReaders({ ...scope, runtime: lease.runtime }), scope.partition); }
+        try {
+            return await read(createCaptureSelectedSourceReaders({
+                ...scope, runtime: lease.runtime, collectorMachineId: context.chosenMachine?.machineId,
+            }), scope.partition);
+        }
         finally { await lease.release(); }
     }
     return {
@@ -307,7 +322,7 @@ export function createCapturePublicActionProducers(options: Readonly<{
             return withSource(input, context, database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, readers => readers.listCapturedTraces(input));
         },
         async getCapturedTrace(input, context) {
-            return withSource(input, context, database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, readers => readers.getCapturedTrace(input, context.chosenMachine?.machineId));
+            return withSource(input, context, database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, readers => readers.getCapturedTrace(input));
         },
         async listCapturedLogs(input, context) {
             return withSource(input, context, database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1, readers => readers.listCapturedLogs(input));

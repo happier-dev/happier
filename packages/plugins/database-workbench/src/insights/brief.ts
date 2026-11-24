@@ -49,10 +49,10 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         return findingBrief([
             `Investigate the ${verification ? 'capture' : 'database'} finding “${detail.title}” and propose the smallest justified improvement.`,
             `The source measured ${JSON.stringify(detail.summary)} before the change, from ${detail.observedWindow.fromMs} to ${detail.observedWindow.toMs} ms. It reported ${JSON.stringify(detail.coverage)} for coverage.`,
-            ...(verification ? [`Inspect the retained before trace using ${verification.readBefore.action} and its exact input in the evidence.`] : []),
+            ...(verification ? [`Inspect the retained baseline using ${verification.readBefore.action} and its exact input in the evidence.`] : []),
             ...(detail.exercise ? ['Repeat the source’s verification exercise. ' + detail.exercise] : []),
             verification
-                ? `After the agreed change, use ${verification.findAfter.action} with its verification input in the evidence and inspect the resulting trace. Compare observations for the same scope and report incomplete coverage or expired evidence.`
+                ? `After the agreed change, use ${verification.findAfter.action} with its verification input in the evidence and inspect the resulting evidence. Compare observations for the same scope and report incomplete coverage or expired evidence.`
                 : `After the agreed change, repeat ${DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1} with the exact verification input in the evidence. Compare observations for the same scope and report incomplete coverage or source evidence that expired.`,
         ], detail.title, { currentDetail: detail, verification: verification ?? (selectedSource
             ? { action: DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, input: finding.sourceInput } : undefined) });

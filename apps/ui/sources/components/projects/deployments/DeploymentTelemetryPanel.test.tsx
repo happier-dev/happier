@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DatabaseCaptureEndpointsListInputV1Schema } from '@happier-dev/database-protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
@@ -386,7 +387,7 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('opens an editable Session draft with the selected Environment finding and verification reads', async () => {
+  it.each(['request', 'endpoint'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
     await prepareSessionDraftPersistenceStorage();
     const homes = createHomeGovernanceHarness();
     installHomeGovernanceBoundaries(homes);
@@ -401,16 +402,45 @@ describe('Environment Telemetry tabs', () => {
     modal.spies.confirm.mockResolvedValue(true);
     const actualModal = await vi.importActual<typeof import('@/modal')>('@/modal');
     const confirm = vi.spyOn(actualModal.Modal, 'confirm').mockImplementation(modal.spies.confirm);
-    const { invoke } = collector(call => answers(call, { ...source, serverId }));
-    const screen = await renderScreen(panel(invoke, setUpDetail(), { lifetime: { ...lifetime, scope } }));
+    const admittedSource = { ...source, serverId };
+    const { invoke, calls } = collector(call => {
+      if (call.actionId !== DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1) return answers(call, admittedSource);
+      const input = DatabaseCaptureEndpointsListInputV1Schema.parse(call.input);
+      if (!input.endpoint) return answers(call, admittedSource);
+      return { ok: true, source: admittedSource, items: [checkout], finding: {
+        v: 1, sourceRef: { pluginId: 'happier.telemetry', localId: 'capture-findings' }, sourceScope: { serverId, machineId: 'collector' },
+        evidenceIdentity: 'retained-endpoint-latency', kind: 'endpoint_latency', title: 'Endpoint latency',
+        observedWindow: { fromMs: input.since, toMs: input.until }, coverage: { status: 'complete' },
+        summary: { records: checkout.requestCount, totalTimeMs: checkout.totalDurationMs }, verification: {
+          observationKey: 'checkout', readBefore: { action: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, input },
+          findAfter: { action: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+            input: { source: admittedSource, endpoint: input.endpoint, page: input.page, since: input.until } },
+        },
+      } };
+    });
+    const screen = await renderScreen(panel(invoke, setUpDetail('reader'), { lifetime: { ...lifetime, scope } }));
     try {
       await settle();
-      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
-      await settle();
-      await reportCollectionLayout(screen, 'telemetry.capture.traces');
-      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
-      await settle();
-      await screen.pressByTestIdAsync('project-deployments.telemetry.request.investigate');
+      if (feature === 'request') {
+        await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+        await settle();
+        await reportCollectionLayout(screen, 'telemetry.capture.traces');
+        await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+        await settle();
+        await screen.pressByTestIdAsync('project-deployments.telemetry.request.investigate');
+      } else {
+        await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
+        const menu = screen.findAll(node => node.props.triggerAccessibilityLabel === 'Actions for POST /checkout'
+          && Array.isArray(node.props.items) && typeof node.props.onSelect === 'function')[0];
+        if (!menu) throw new Error('Expected actions for the selected route');
+        expect(menu.props.items).toContainEqual(expect.objectContaining({ id: 'send-to-agent' }));
+        await act(async () => { menu.props.onSelect('send-to-agent'); });
+        expect(calls.map(call => call.input)).toEqual([
+          { source: admittedSource, page: expect.any(Object), since: expect.any(Number), until: expect.any(Number) },
+          { source: admittedSource, page: { limit: 1 }, since: expect.any(Number), until: expect.any(Number),
+            endpoint: { serviceName: checkout.serviceName, method: checkout.method, route: checkout.route } },
+        ]);
+      }
       const draftId = await waitForHomeGovernance(() => {
         const failure = modal.spies.alert.mock.calls[0];
         if (failure) {
@@ -427,10 +457,10 @@ describe('Environment Telemetry tabs', () => {
         return params.draftId;
       });
       const draft = readNewSessionDraftFromRepository({ scope, draftId });
-      expect(draft?.input).toContain('Endpoint request failed');
+      expect(draft?.input).toContain(feature === 'request' ? 'Endpoint request failed' : 'Endpoint latency');
       const evidence = JSON.stringify(draft?.composerAttachmentSeeds);
-      expect(evidence).toContain('retained-request-failure');
-      expect(evidence).toContain('happier.telemetry/actions/capture/trace/get');
+      expect(evidence).toContain(feature === 'request' ? 'retained-request-failure' : 'retained-endpoint-latency');
+      expect(evidence).toContain(feature === 'request' ? 'happier.telemetry/actions/capture/trace/get' : DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1);
     } finally {
       await screen.unmount();
       confirm.mockRestore();
@@ -591,9 +621,9 @@ describe('Environment Telemetry tabs', () => {
           Array.isArray(node.props?.secondaryActions) &&
           typeof node.props?.onSecondaryAction === 'function',
       );
-      expect(row.props.secondaryActions).toEqual([
+      expect(row.props.secondaryActions).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'add-check', label: 'Add a check…' }),
-      ]);
+      ]));
       await act(async () => {
         row.props.onSecondaryAction('add-check');
       });
@@ -606,7 +636,8 @@ describe('Environment Telemetry tabs', () => {
     const viewer = await mount(collector(answers).invoke, 'reader');
     try {
       expect(
-        viewer.findAll((node) => Array.isArray(node.props?.secondaryActions)),
+        viewer.findAll((node) => Array.isArray(node.props?.secondaryActions)
+          && node.props.secondaryActions.some((action: { id: string }) => action.id === 'add-check')),
       ).toHaveLength(0);
     } finally {
       await viewer.unmount();

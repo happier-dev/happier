@@ -6,6 +6,7 @@ import type {
   DatabaseCaptureCursorV1,
   DatabaseCaptureEndpointCursorV1,
   DatabaseCaptureEndpointV1,
+  DatabaseCaptureEndpointsListResultV1,
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
@@ -298,9 +299,19 @@ function DeploymentTelemetryTabs(props: Readonly<{
 
   // Checks are set up by the Environment's managers, in the same editor Settings → Checks and alerts opens.
   const canAddCheck = environment.capabilities.role === 'manager' && lifetime !== null;
-  const endpointActions = React.useMemo<readonly CaptureEndpointAction[] | undefined>(() => canAddCheck
-    ? [{ id: 'add-check', label: t('deploymentTelemetry.addCheck'), onSelect: setAddingCheck }]
-    : undefined, [canAddCheck]);
+  const endpointDemand = active && tab === 'endpoints' ? reads : null;
+  const { openBrief } = useCaptureFindingHandoff(lifetime, endpointDemand);
+  const readAt = state.readAt;
+  const windowMs = WINDOW_MS[windowId];
+  const endpointActions = React.useMemo<readonly CaptureEndpointAction[]>(() => [
+    ...(canAddCheck ? [{ id: 'add-check', label: t('deploymentTelemetry.addCheck'), onSelect: setAddingCheck }] : []),
+    ...(endpointDemand && readAt !== null ? [{
+      id: 'send-to-agent', label: t('deploymentTelemetry.request.investigate'),
+      onSelect: ({ serviceName, method, route }: DatabaseCaptureEndpointV1) => {
+        void openBrief(signal => endpointDemand.endpointFinding({ serviceName, method, route }, Math.max(0, readAt - windowMs), readAt, signal));
+      },
+    }] : []),
+  ], [canAddCheck, endpointDemand, openBrief, readAt, windowMs]);
 
   const data = state.data;
   const failed = state.failure !== null && !state.reading;
@@ -332,7 +343,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     />
   ) : data?.list === 'endpoints' ? (
     <CaptureEndpoints items={data.items} loading={state.reading} locale={locale}
-      {...(endpointActions ? { actions: endpointActions } : {})}
+      actions={endpointActions}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'traces' ? (
     <CaptureTraces items={data.items} loading={state.reading} locale={locale} onOpen={openRequest}
@@ -471,6 +482,57 @@ type RequestRead =
   | Readonly<{ kind: 'ready'; trace: Awaited<ReturnType<TelemetryCaptureReads['trace']>> }>
   | Readonly<{ kind: 'unavailable'; code: string }>;
 
+type SelectedCaptureFinding = NonNullable<Extract<DatabaseCaptureEndpointsListResultV1, { ok: true }>['finding']>;
+
+function useCaptureFindingHandoff(lifetime: ServerAccountScopeLifetime | null, demand: TelemetryCaptureReads | null) {
+  const [openingBrief, setOpeningBrief] = React.useState(false);
+  const inFlight = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => inFlight.current?.abort(), [lifetime, demand]);
+  const openBrief = React.useCallback(async (load: (signal: AbortSignal) => SelectedCaptureFinding | undefined | Promise<SelectedCaptureFinding | undefined>) => {
+    if (!demand || !lifetime?.isCurrent() || inFlight.current) return;
+    const abort = new AbortController();
+    inFlight.current = abort;
+    const retirement = lifetime.onRetire(() => abort.abort());
+    const { signal } = abort;
+    setOpeningBrief(true);
+    try {
+      const finding = await load(signal);
+      if (signal.aborted) return;
+      if (!finding) {
+        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: 'telemetry_unavailable' });
+        return;
+      }
+      const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(finding), {
+        handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession: { kind: 'new', seed: {} } },
+        idempotencyKey: randomUUID,
+      });
+      const prepared = await control.controller.prepare({ signal });
+      if (prepared && !signal.aborted) {
+        const { serverId, accountId } = lifetime.scope;
+        const outcome = await createFrontDoorUiActionExecutor(undefined, { serverId, expectedAccountId: accountId })(
+          SESSION_INPUT_HANDOFF_ACTION_ID_V1, prepared.input, { signal },
+        );
+        const result = SessionInputHandoffResultV1Schema.parse(outcome);
+        if (signal.aborted) return;
+        const code = result.kind === 'unavailable' ? result.reason
+          : result.kind === 'failed' ? result.failure.errorCode
+          : result.kind === 'authoringResult' && result.result.kind !== 'opened' ? result.result.reason
+          : null;
+        if (code) alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code });
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
+      }
+    } finally {
+      retirement.dispose();
+      inFlight.current = null;
+      setOpeningBrief(false);
+    }
+  }, [demand, lifetime]);
+  return { openingBrief, openBrief };
+}
+
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 function TelemetryRequestDetail(props: Readonly<{
   reads: TelemetryCaptureReads;
@@ -507,41 +569,7 @@ function TelemetryRequestDetail(props: Readonly<{
   const finding = active && read.kind === 'ready'
     ? read.trace.findings?.find(candidate => candidate.verification.observationKey === request.id)
     : undefined;
-  const [openingBrief, setOpeningBrief] = React.useState(false);
-  const openBrief = async () => {
-    if (!finding || !lifetime?.isCurrent() || openingBrief) return;
-    const abort = new AbortController();
-    const retirement = lifetime.onRetire(() => abort.abort());
-    const { signal } = abort;
-    setOpeningBrief(true);
-    try {
-      const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(finding), {
-        handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession: { kind: 'new', seed: {} } },
-        idempotencyKey: randomUUID,
-      });
-      const prepared = await control.controller.prepare({ signal });
-      if (prepared && !signal.aborted) {
-        const { serverId, accountId } = lifetime.scope;
-        const outcome = await createFrontDoorUiActionExecutor(undefined, { serverId, expectedAccountId: accountId })(
-          SESSION_INPUT_HANDOFF_ACTION_ID_V1, prepared.input, { signal },
-        );
-        const result = SessionInputHandoffResultV1Schema.parse(outcome);
-        if (signal.aborted) return;
-        const code = result.kind === 'unavailable' ? result.reason
-          : result.kind === 'failed' ? result.failure.errorCode
-          : result.kind === 'authoringResult' && result.result.kind !== 'opened' ? result.result.reason
-          : null;
-        if (code) alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code });
-      }
-    } catch (error) {
-      if (!signal.aborted) {
-        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
-      }
-    } finally {
-      retirement.dispose();
-      setOpeningBrief(false);
-    }
-  };
+  const { openingBrief, openBrief } = useCaptureFindingHandoff(lifetime, active ? reads : null);
   const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [
     request.serviceName ?? null,
@@ -561,7 +589,7 @@ function TelemetryRequestDetail(props: Readonly<{
         ) : null}
         {finding && lifetime ? (
           <TextLinkButton testID="project-deployments.telemetry.request.investigate" label={t('deploymentTelemetry.request.investigate')}
-            onPress={() => { void openBrief(); }} disabled={openingBrief} size="meta" />
+            onPress={() => { void openBrief(() => finding); }} disabled={openingBrief} size="meta" />
         ) : null}
         <Text variant="meta" style={styles.facts}>
           {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (

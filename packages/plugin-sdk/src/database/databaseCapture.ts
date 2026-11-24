@@ -8,6 +8,8 @@ import {
     databaseCaptureSelectedPage as selectedPage,
     databaseCaptureSourceInput as sourceInput,
     DatabaseCaptureCursorV1Schema,
+    DatabaseCaptureEndpointCursorV1Schema,
+    DatabaseCaptureEndpointsListInputV1Schema,
     DatabaseCapturePageV1Schema,
     DatabaseCaptureTraceGetInputV1Schema,
     DatabaseCaptureTracesListInputV1Schema,
@@ -42,7 +44,7 @@ export const DatabaseCaptureRepeatedQueryV1Schema = z.strictObject({
     repetitionCount: count, totalDatabaseTimeMs: z.number(),
     observationIds: z.array(id), callsites: z.array(z.string()), explanation: z.string(),
 });
-export const DatabaseCaptureEndpointCursorV1Schema = z.strictObject({ serviceName: z.string(), method: id, route: id });
+export { DatabaseCaptureEndpointCursorV1Schema, DatabaseCaptureEndpointsListInputV1Schema };
 export const DatabaseCaptureEndpointV1Schema = z.extend(DatabaseCaptureEndpointCursorV1Schema, {
     requestCount: count, errorCount: count, errorRate: z.nullable(z.number()), totalDurationMs: z.number(), databaseTimeMs: z.number(),
 });
@@ -81,12 +83,9 @@ export const DatabaseCaptureLogsListInputV1Schema = z.strictObject({
     ...selectedPage, serviceName: z.optional(z.string()), severityNumber: z.optional(count),
 });
 export const DatabaseCaptureLogsListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);
-export const DatabaseCaptureEndpointsListInputV1Schema = z.strictObject({
-    ...sourceInput, page: z.strictObject({ limit: DatabaseCapturePageV1Schema.shape.limit, before: z.optional(DatabaseCaptureEndpointCursorV1Schema) }),
-    since: z.optional(time), until: z.optional(time),
-});
 export const DatabaseCaptureEndpointsListResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({
-    ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, items: z.array(DatabaseCaptureEndpointV1Schema), nextCursor: z.optional(DatabaseCaptureEndpointCursorV1Schema),
+    ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, items: z.array(DatabaseCaptureEndpointV1Schema),
+    nextCursor: z.optional(DatabaseCaptureEndpointCursorV1Schema), finding: z.optional(DatabaseCaptureFindingDetailV1Schema),
 })]);
 export const DatabaseCaptureClearInputV1Schema = z.strictObject(sourceInput);
 export const DatabaseCaptureClearResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true) })]);

@@ -186,6 +186,9 @@ SELECT ${summaryFields.join(',')},substr(logLine,1,${prefixLength}) AS bodyPrefi
     const params: DaemonDatabaseValue[] = [input.worktree];
     if (input.since !== undefined) { predicates.push('at >= ?'); params.push(input.since); }
     if (input.until !== undefined) { predicates.push('at < ?'); params.push(input.until); }
+    const endpoint = input.endpoint;
+    const selectedKey = endpoint ? 'WHERE serviceName = ? AND method = ? AND route = ?' : '';
+    if (endpoint) params.push(endpoint.serviceName, endpoint.method, endpoint.route);
     const after = cursor ? 'WHERE (serviceName,method,route) > (?,?,?)' : '';
     if (cursor) params.push(cursor.serviceName, cursor.method, cursor.route);
     // Select endpoint keys before attribution. Only traces belonging to this
@@ -196,7 +199,7 @@ endpointCandidates AS (SELECT id,at,traceId,spanId,COALESCE(serviceName,'') AS s
 endpointGroups AS (
  SELECT serviceName,method,route,COUNT(*) AS requestCount,
  SUM(CASE WHEN outcome = 'error' OR httpStatusCode >= 500 THEN 1 ELSE 0 END) AS errorCount,
- SUM(COALESCE(durationMs,0)) AS totalDurationMs FROM endpointCandidates GROUP BY serviceName,method,route
+ SUM(COALESCE(durationMs,0)) AS totalDurationMs FROM endpointCandidates ${selectedKey} GROUP BY serviceName,method,route
 ),
 selectedEndpoints AS (SELECT * FROM endpointGroups ${after} ORDER BY serviceName,method,route LIMIT ?),
 endpointRequestVersions AS (
@@ -349,7 +352,7 @@ export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fing
 export type CaptureListInput = Readonly<{worktree: string; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
-export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number }>;
+export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number; endpoint?: CaptureEndpointCursor }>;
 
 export const captureDatabaseDefinition = {
  migrations: captureMigrations,

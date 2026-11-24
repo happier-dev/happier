@@ -80,6 +80,20 @@ describe('capture Action producer bindings', () => {
                 expect(database.DatabaseCaptureEndpointsListResultV1Schema.parse(endpoints)).toMatchObject({ ok: true,
                     items: [{ requestCount: 1, errorCount: 1, errorRate: 1 }],
                 });
+                await runtime.store.write([{ id: 'other', worktree: 'selected', kind: 'span', source: 'otlp', at: 2,
+                    traceId: 'other', spanId: 'root', spanKind: 2, durationMs: 900, endpointMethod: 'POST', endpointRoute: '/items' }]);
+                const endpoint = { serviceName: '', method: 'GET', route: '/items' };
+                const selection = { source, endpoint, page: { limit: 1 }, since: 1, until: 5 };
+                const selected = database.DatabaseCaptureEndpointsListResultV1Schema.parse(await host.invokeAction(
+                    database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1), selection));
+                expect(selected).toMatchObject({ ok: true, items: [{ ...endpoint, totalDurationMs: 30 }], finding: {
+                    kind: 'endpoint_latency', summary: { records: 1, totalTimeMs: 30 }, verification: {
+                        readBefore: { action: database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, input: selection },
+                        findAfter: { action: database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+                            input: { source, endpoint, page: { limit: 1 }, since: 5 } },
+                    },
+                } });
+                expect(selected).not.toHaveProperty('nextCursor');
                 await expect(host.invokeAction(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1), { source, page: { limit: 0 } })).rejects.toThrow();
             } finally { await host.dispose(); }
         } finally { fixture.close(); }

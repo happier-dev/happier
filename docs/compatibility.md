@@ -10516,6 +10516,13 @@ existing contracts. Selected Environment traces can include an
 workload-reported. Request verification keeps its own observation key. The
 Environment ingest token remains the admission authority.
 
+In unreleased 0.3 the existing capture `endpoints/list` Action accepts an
+optional exact route, method and service selection. With a bounded observation
+window it can return typed endpoint latency evidence for the selected aggregate.
+Verification reuses the scoped Action and changes only its time window. Callers
+using the selected finding pair the same strict Action schema at the daemon and
+UI. The ordinary endpoint list keeps its existing shape and paging.
+
 In unreleased 0.3, `session.access.context.set` returns the direct Team grants
 remaining at the end of the operation, including their access levels. An empty
 list means there are no direct Team grants. Earlier results omit `teamGrants`,
