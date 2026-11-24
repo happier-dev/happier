@@ -5,6 +5,7 @@ import {
     describe,
     expect,
     it,
+    vi,
 } from "vitest";
 
 import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
@@ -487,6 +488,69 @@ describe("provider account usage record storage (integration)", () => {
         });
         expect(history.entries.map(entry => projectProviderAccountUsageRecordV4(entry.record, []).content))
             .toEqual([{ t: "encrypted", c: "opaque-base", recoveryCreditDetails }]);
+    });
+
+    it('publishes freshness separately from current quota content and retains coalesced material changes', async () => {
+        const { eventRouter } = await import('@/app/events/connectionEventRouter');
+        const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+        const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate');
+        try {
+            const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+            const initial = createUsageSnapshot({ fetchedAt: Date.now() - 10_000 });
+            const reading = (offset: number, meterDelta = 0) => ({ ...initial,
+                meters: initial.meters.map(meter => ({ ...meter, used: typeof meter.used === 'number' ? meter.used + meterDelta : meter.used })),
+                fetchedAtMs: initial.fetchedAtMs + offset, observedAtMs: initial.observedAtMs + offset });
+            const write = (snapshot: typeof initial, client?: Parameters<typeof writeProviderAccountUsageRecordWithPolicy>[0]['client']) =>
+                writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: snapshot.recordId,
+                    recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok',
+                    snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, client });
+            const wake = () => UpdateContainerSchema.parse(emitted.mock.calls.filter(([event]) =>
+                event.userId === account.id && event.payload.body.t === 'account-change').at(-1)?.[0].payload);
+            const fact = (offset: number, contentChanged: boolean) => ({ recordId: initial.recordId,
+                fetchedAtMs: initial.fetchedAtMs + offset, observedAtMs: initial.observedAtMs + offset, contentChanged });
+            await write(initial);
+            const firstCursor = wake().seq;
+            expect(wake().providerAccountUsageObservations).toEqual([fact(0, true)]);
+            await write(reading(1000));
+            const freshCursor = wake().seq;
+            expect(wake().providerAccountUsageObservations).toEqual([fact(1000, false)]);
+            await expect(write(reading(500, 1))).resolves.toBe('stale');
+            expect(wake().seq).toBe(freshCursor);
+            await inTx(async tx => {
+                await write(reading(2000, 1), tx);
+                await write(reading(3000), tx);
+                await write(reading(4000), tx);
+            });
+            expect(wake().providerAccountUsageObservations).toEqual([fact(4000, true)]);
+            const throughCursor = wake().seq;
+            const page = await db.accountChange.findMany({ where: { accountId: account.id, kind: 'account' } });
+            expect(readProviderAccountUsageObservationsV1(page, firstCursor)).toEqual([fact(4000, true)]);
+            expect(readProviderAccountUsageObservationsV1(page, throughCursor - 1)).toEqual([fact(4000, false)]);
+        } finally { emitted.mockRestore(); }
+    });
+
+    it('publishes sealed freshness from admitted metadata and treats new opaque facets as material', async () => {
+        const { eventRouter } = await import('@/app/events/connectionEventRouter');
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate');
+        try {
+            const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true } });
+            const initial = createUsageSnapshot({ fetchedAt: Date.now() - 10_000 });
+            const write = (offset: number, recoveryCreditDetails?: { ciphertext: string }) =>
+                writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: initial.recordId,
+                    recordKey: initial.recordKey, payloadMode: 'sealed_account_scoped_v1', status: 'ok',
+                    sealedPayload: { format: 'account_scoped_v1', ciphertext: `opaque-${offset}`,
+                        ...(recoveryCreditDetails ? { recoveryCreditDetails } : {}) },
+                    materialFingerprint: 'same-keyed-material', fetchedAt: initial.fetchedAtMs + offset, staleAfterMs: initial.staleAfterMs });
+            const fact = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
+                && event.payload.body.t === 'account-change').at(-1)?.[0].payload.providerAccountUsageObservations;
+            await write(0);
+            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs, contentChanged: true }]);
+            await write(1000);
+            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs + 1000, contentChanged: false }]);
+            await write(2000, { ciphertext: 'opaque-new-recovery-facet' });
+            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs + 2000, contentChanged: true }]);
+        } finally { emitted.mockRestore(); }
     });
 
     it('retains advancing observation clocks and pages the requested range', async () => {

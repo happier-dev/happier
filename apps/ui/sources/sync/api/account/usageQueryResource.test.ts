@@ -4464,10 +4464,15 @@ describe('usage query captured Resource adapter', () => {
 
   it.each([
     'idle', 'unchanged', 'changed', 'resolve-503', 'record-503', 'slow', 'feed-after-read',
+    'primary-observation-only', 'primary-content-change', 'secondary-observation-only', 'secondary-content-change',
     'primary-reconnect', 'secondary-reconnect', 'snapshot-recovery', 'explicit-refresh',
   ] as const)('counts mounted allowance requests over ten minutes (%s)', async scenario => {
     const start = Math.floor(Date.now() / 60_000) * 60_000;
     const minute = 60_000;
+    const typedObservation = scenario.endsWith('-observation-only') || scenario.endsWith('-content-change');
+    const contentChanged = scenario.endsWith('-content-change');
+    const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
+    let cursor = 2;
     const rows = Array.from({ length: 15 }, (_, index) => {
       const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `quota-count-${index}` };
       const source = { bindingKind: 'account' as const, ref };
@@ -4512,6 +4517,26 @@ describe('usage query captured Resource adapter', () => {
     })) });
     publish = selected => {
       const recordIds = selected.map(row => row.snapshot.recordId);
+      if (typedObservation) {
+        const observations = selected.map(({ snapshot }) => ({ recordId: snapshot.recordId, observedAtMs: snapshot.observedAtMs,
+          fetchedAtMs: snapshot.fetchedAtMs, contentChanged }));
+        const { serverId } = captured.accountLifetime.scope;
+        if (scenario.startsWith('secondary')) {
+          const wake = { t: 'account-change' as const, changeKinds: ['account' as const],
+            entityIds: ['provider-account-usage', ...recordIds.map(id => `provider-account-usage-record:${id}`)], sessionSystemRecords: [] };
+          publishHomeAccountChangeWake(serverId, wake, 'socket', undefined, undefined, observations);
+        } else {
+          const afterCursor = cursor;
+          const changes = observations.flatMap(observation =>
+            buildProviderAccountUsageMaterialChangesV1(observation.recordId, undefined, { observation, previousContentCursor: 2 })
+              .map(change => ({ ...change, cursor: ++cursor })));
+          const exact = changes.filter((change, index) => index % 2 === 1 || index === changes.length - 2);
+          publishHomeAccountChange(serverId, exact.map(change => change.entityId), { feedPageConsumed: true, changeKinds: ['account'],
+            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(exact),
+            providerAccountUsageObservations: readProviderAccountUsageObservationsV1(exact, afterCursor) });
+        }
+        return;
+      }
       // The real Account-change ingress receives the committed record keys.
       publishHomeAccountChange(captured.accountLifetime.scope.serverId, recordIds.map(id => `provider-account-usage-record:${id}`),
         { changeKinds: ['account'], providerAccountUsageRecordIds: recordIds, feedPageConsumed: true,
@@ -4548,7 +4573,7 @@ describe('usage query captured Resource adapter', () => {
       }
       await advance(40_000);
       const feedScenarios = ['unchanged', 'changed', 'resolve-503', 'record-503', 'slow'];
-      const hasPublication = feedScenarios.includes(scenario);
+      const hasPublication = typedObservation || feedScenarios.includes(scenario);
       const afterFirstMinute = readCounts();
       const recordsPerResolve = scenario === 'resolve-503' ? 0 : 1;
       const explicitWake = scenario === 'snapshot-recovery' || scenario === 'explicit-refresh';
@@ -4561,14 +4586,15 @@ describe('usage query captured Resource adapter', () => {
       }
       for (let tick = 1; tick < 10; tick++) {
         if (hasPublication) {
-          for (const row of rows) {
+          const selected = contentChanged ? rows.slice(0, 1) : rows;
+          for (const row of selected) {
             const time = start + tick * minute;
             row.snapshot = { ...row.snapshot, fetchedAtMs: time, observedAtMs: time,
-              meters: scenario === 'changed' ? row.snapshot.meters.map(meter => ({
+              meters: scenario === 'changed' || contentChanged ? row.snapshot.meters.map(meter => ({
                 ...meter, used: 10 + tick, remaining: 90 - tick, utilizationPct: 10 + tick,
               })) : row.snapshot.meters };
           }
-          publish(rows);
+          publish(selected);
         }
         await advance(minute);
       }
@@ -4581,11 +4607,18 @@ describe('usage query captured Resource adapter', () => {
         expect(counts.slice(1)).toEqual(rows.slice(1).map(() => [1, 1]));
         expect(counts[0]![0]).toBeGreaterThan(2);
         expect(counts[0]![1]).toBeGreaterThan(2);
+      } else if (typedObservation) {
+        const afterMount = counts.map(([resolves, records], index) => [resolves! - cold[index]![0]!, records! - cold[index]![1]!]);
+        for (const openUIs of [1, 16]) {
+          expect(afterMount.map(count => count.map(requests => requests * openUIs)),
+            `only changed bodies for ${openUIs} independently mounted UIs`)
+            .toEqual(rows.map((_, index) => [0, contentChanged && index === 0 ? 9 * openUIs : 0]));
+        }
       } else {
         const attempts = hasPublication ? 10 : explicitWake ? 2 : 1;
         expect(counts).toEqual(rows.map(() => [attempts, attempts * recordsPerResolve]));
       }
-      if (scenario === 'unchanged' || scenario === 'changed' || scenario === 'slow') {
+      if (typedObservation || scenario === 'unchanged' || scenario === 'changed' || scenario === 'slow') {
         for (const entry of entries) {
           expect(entry.getSnapshot().pending).toBe('idle');
           const quota = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota!;

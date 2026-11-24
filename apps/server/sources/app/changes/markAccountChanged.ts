@@ -7,6 +7,8 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { ChangeKindSchema, readAccountSettingsVersionChangeV1, readArtifactKindsV1, readArtifactKindsChangeHintV1, type ChangeKind } from '@happier-dev/protocol/changes';
 import { PluginDomainChangeHintSchema, buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { AccountKvChangeHintV1Schema } from '@happier-dev/protocol/changes/accountKv';
+import { coalesceProviderAccountUsageObservationV1, readProviderAccountUsageChangeRecordIdV1,
+    readProviderAccountUsageObservationRowV1, type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { mergeReviewCommentChangesHintV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { DISCUSSION_CHANGE_HINT_V1, readDiscussionChangeHintV1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
 import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
@@ -33,6 +35,7 @@ interface AccountChangeWake {
     entityIds: Set<string>;
     artifactKinds?: Set<string> | null;
     discussionSettingsChangedIds?: Set<string>;
+    providerAccountUsageObservations?: Map<string, ProviderAccountUsageObservationV1 | null>;
     sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null;
     /**
      * The rows this transaction committed for the Account, as stored, keyed by kind and entity
@@ -281,6 +284,17 @@ function scheduleAccountChangeWake(
             const settingsIds = wake.discussionSettingsChangedIds ??= new Set();
             for (const entityId of entityIds) settingsIds.add(entityId);
         }
+        if (kind === 'account') {
+            for (const entityId of entityIds) {
+                const recordId = readProviderAccountUsageChangeRecordIdV1(entityId);
+                if (!recordId) continue;
+                const observations = wake.providerAccountUsageObservations ??= new Map();
+                const previous = observations.get(recordId);
+                const observation = readProviderAccountUsageObservationRowV1({ kind, entityId, cursor, hint })?.providerAccountUsageObservation;
+                observations.set(recordId, !observation || previous === null ? null
+                    : previous ? coalesceProviderAccountUsageObservationV1(previous, observation) : observation);
+            }
+        }
         collectSessionSystemRecordWakeTargets(wake, kind, entityIds, hint);
     }
     if (pending) return;
@@ -294,6 +308,8 @@ function scheduleAccountChangeWake(
             recipientFilter: { type: 'account-stored-content-v3' },
         });
         if (wake.changeKinds.size === 0) return;
+        const usageObservations = [...(wake.providerAccountUsageObservations?.values() ?? [])]
+            .filter((observation): observation is ProviderAccountUsageObservationV1 => observation !== null);
         eventRouter.emitUpdate({
             userId: accountId,
             accountChangeFromCursor: wake.fromCursor,
@@ -302,6 +318,7 @@ function scheduleAccountChangeWake(
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
                 ...(wake.artifactKinds ? { artifactKinds: [...wake.artifactKinds] } : {}),
                 ...(wake.discussionSettingsChangedIds ? { discussionSettingsChangedIds: [...wake.discussionSettingsChangedIds] } : {}),
+                ...(usageObservations.length ? { providerAccountUsageObservations: usageObservations } : {}),
                 ...(wake.sessionSystemRecords ? { sessionSystemRecords: [...wake.sessionSystemRecords.values()] } : {}),
             }),
             recipientFilter: { type: 'account-stored-content-v3',

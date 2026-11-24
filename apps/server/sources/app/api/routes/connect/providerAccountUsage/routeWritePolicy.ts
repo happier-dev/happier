@@ -15,7 +15,7 @@ import {
     readProviderAccountUsageRecordWithCurrentGuard,
     updateProviderAccountUsageRecordIfCurrent,
     retainProviderAccountUsageHistory,
-    sameProviderAccountUsageHistoryMaterial,
+    sameProviderAccountUsageMaterial,
     updateProviderAccountUsageRecordMetadataIfCurrent,
 } from "./recordStorage";
 import type {
@@ -212,6 +212,8 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 if (!await createProviderAccountUsageRecordIfAbsent(initialWrite, params.client)) continue;
                 await retainProviderAccountUsageHistory(initialWrite, params.client);
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
+                    observation: { recordId: params.recordId, fetchedAtMs: initialWrite.fetchedAt,
+                        ...(initialWrite.snapshot ? { observedAtMs: initialWrite.snapshot.observedAtMs } : {}), contentChanged: true },
                     dayStartAtMs: Math.floor(initialWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
                     historyFromAtMs: initialWrite.fetchedAt });
                 return "written";
@@ -327,12 +329,15 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {
             const historyChanged = await retainProviderAccountUsageHistory(nextWrite, params.client);
-            // Publishing a measured point also wakes Daily summary and
-            // history readers when the allowance itself has stayed flat.
-            if (historyChanged || !sameProviderAccountUsageHistoryMaterial(nextWrite, existing)
+            const contentChanged = !sameProviderAccountUsageMaterial(nextWrite, existing)
                 || nextWrite.status !== existing.status || nextWrite.staleAfterMs !== existing.staleAfterMs
-                || clearsRefreshRequest || advancesFailure) {
+                || clearsRefreshRequest || advancesFailure;
+            // History materialization still consumes accepted observations.
+            // Current-reading consumers only need the accepted clocks when its body holds.
+            if (historyChanged || contentChanged || isNewer) {
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
+                    observation: { recordId: params.recordId, fetchedAtMs: nextFetchedAt,
+                        ...(nextWrite.snapshot ? { observedAtMs: nextWrite.snapshot.observedAtMs } : {}), contentChanged },
                     ...(historyChanged ? { dayStartAtMs: Math.floor(nextFetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
                         historyFromAtMs: nextFetchedAt } : {}) });
             }

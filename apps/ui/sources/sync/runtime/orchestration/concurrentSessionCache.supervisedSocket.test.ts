@@ -682,6 +682,30 @@ describe('concurrent session cache supervised sockets', () => {
         expect(h.requests('/v1/machines')).toHaveLength(machineReads);
     });
 
+    it('applies a bodyless Account observation through the secondary socket without a quota read', async () => {
+        await h.start(); await h.ready();
+        const recordId = 'paug_v1_fixture01';
+        let asOf = 1;
+        let reads = 0;
+        const quota = observeUsageProjection({ serverId: h.homeB.id, initialReadCompleted: true,
+            readRecordId: () => recordId, applyObservation: observation => { asOf = observation.fetchedAtMs; return true; },
+            read: async () => { reads++; }, busy: () => false, nextReadAtMs: () => Number.POSITIVE_INFINITY });
+        disposers.push(() => quota.dispose());
+        const publish = (cursor: number, contentChanged?: boolean) => h.socket().trigger('update', {
+            id: `quota-${cursor}`, seq: cursor, createdAt: cursor,
+            body: { t: 'account-change', changeKinds: ['account'],
+                entityIds: ['provider-account-usage', `provider-account-usage-record:${recordId}`], sessionSystemRecords: [] },
+            ...(contentChanged === undefined ? {} : { providerAccountUsageObservations: [{ recordId, fetchedAtMs: cursor, contentChanged }] }),
+        });
+        publish(20, false);
+        expect(asOf).toBe(20);
+        expect(reads).toBe(0);
+        publish(21, true);
+        expect(reads).toBe(1);
+        publish(22);
+        expect(reads).toBe(2);
+    });
+
     it('does not interpret a machine update as an Account-change wake', async () => {
         await h.start(); await h.ready();
         const observer = observeAccountChanges();

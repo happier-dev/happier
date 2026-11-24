@@ -1,4 +1,4 @@
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isTokenOnlyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { consumeProviderAccountUsageHistoryStream } from './providerAccountUsageHistoryStream';
 import {
     createServerFetchForActiveServer,
@@ -44,7 +44,8 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryResponseV1Schema,
     buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, type ProviderAccountUsageDaySummaryV1,
     type StoredProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
-import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import type { ProviderAccountUsageDayChangeV1, ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { applyUsageObservationTime } from './usageQueryInvalidation';
 
 type UsageHttpObservation = Readonly<{
     status: number; ok: boolean; json: unknown; jsonFailure?: Readonly<{ error: unknown }>;
@@ -133,6 +134,11 @@ function hasUsageProjectionCustody(prior: ProjectionCustody | undefined, options
             : prior.materialBytes?.length === materialBytes.length && materialBytes.every((byte, index) => byte === prior.materialBytes![index]));
 }
 
+export type ProviderAccountUsageAddressedRead = Readonly<{
+    observation: ProviderAccountUsageObservationV1;
+    retained?: ProviderAccountUsageSnapshotV1;
+}>;
+
 export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     accountMode: 'plain' | 'e2ee'; request?: ServerFetch; assertCurrent?: () => void;
     readTransport?: CapturedServerReadTransport;
@@ -143,6 +149,7 @@ export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     historyView?: 'daily';
     exactHistoryRange?: Readonly<{ startAtMs: number; endAtMs: number }>;
     dayChange?: ProviderAccountUsageDayChangeV1;
+    addressedReads?: ReadonlyMap<string, ProviderAccountUsageAddressedRead>;
     changesCursor?: number;
     projectionDocuments?: ProviderAccountUsageProjectionDocuments;
     /** Settings are an independent facet, never a prerequisite for current capacity. */
@@ -190,9 +197,24 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
                 if (day.history && !prior.missingDays.some(missing => missing.dayStartAtMs === day.dayStartAtMs)) publication = { kind: 'observation', prior };
             }
         }
+        const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
+        if (addressed) {
+            const { observation, retained } = addressed;
+            const { recordId } = observation;
+            const resolution = { recordId, providerAccountId: retained?.recordKey.accountSubjectId };
+            if (retained && !observation.contentChanged) {
+                return { resolution, recordJson: null, retainedCurrent: applyUsageObservationTime(retained, observation), publication };
+            }
+            const read = await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(recordId), transportOptions);
+            const recordJson = read ? QualifiedProviderAccountUsageRecordResponseV4Schema.parse(read.json) : null;
+            if (recordJson && !recordJson.sources.some(source => sameStrictJsonValue(source, request.source))) {
+                throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+            }
+            return { resolution, recordJson, retainedCurrent: null, publication: recordId === day?.recordId ? publication : undefined };
+        }
         const sourceJson = (await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/sources/resolve?${new URLSearchParams({ source: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedServiceUsageSourceResolveV4Schema, request.source) }).toString()}`, transportOptions))?.json ?? null;
         const resolution = sourceJson === null ? null : QualifiedConnectedServiceUsageSourceResolutionV4Schema.parse(sourceJson);
-        const recordJson = resolution ? (await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(resolution.recordId)}`, transportOptions))?.json ?? null : null;
+        const recordJson = resolution ? (await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(resolution.recordId), transportOptions))?.json ?? null : null;
         return { resolution, recordJson, retainedCurrent: null, publication: resolution?.recordId === day?.recordId ? publication : undefined };
     })(), inputOptions.accountMode]);
     let options: ProviderAccountUsageQuotaReadOptions = { ...transportOptions, accountMode };
@@ -203,7 +225,9 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const enteredMonthlyPrice = !request.projection && recordJson !== null && !progressive ? await options.readEnteredMonthlyPrice?.() : undefined;
     options.assertCurrent?.();
     let current = resolution && recordJson !== null ? openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice, accountMode: options.accountMode, material, record: recordJson }) : retainedCurrent;
-    if (current && resolution && current.recordKey.accountSubjectId !== resolution.providerAccountId) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+    if (current && resolution?.providerAccountId !== undefined && current.recordKey.accountSubjectId !== resolution.providerAccountId) {
+        throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+    }
     const projectedRecordId = resolution?.recordId ?? retainedCurrent?.recordId;
     if (request.projection && projectedRecordId) return await readProviderAccountUsageProjectedQuota(credentials, request, {
         ...options, material,
@@ -1095,11 +1119,16 @@ export type ProviderAccountUsageSnapshotReadOptions = Readonly<{
     retry?: 'none';
 }>;
 
+type ProviderAccountUsageRecord = ReturnType<typeof parseQualifiedProviderAccountUsageRecordResponse>;
 const plainSnapshotReads = createScopedResolutionSingleFlight<ProviderAccountUsageSnapshotV1 | null>();
 const sealedSnapshotReads = createScopedResolutionSingleFlight<EncryptedQualifiedProviderAccountUsageRecordResponse | null>();
 
+function providerAccountUsageRecordPath(recordId: string): string {
+    return `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`;
+}
+
 async function readProviderSnapshotWithOwner<T>(credentials: AuthCredentials, recordId: ProviderAccountUsageRecordId,
-    opts: ProviderAccountUsageSnapshotReadOptions | undefined, pending: ScopedResolutionSingleFlight<T>,
+    opts: ProviderAccountUsageSnapshotReadOptions | undefined, pending: ScopedResolutionSingleFlight<T> | undefined,
     consume: (response: UsageHttpObservation) => T): Promise<T> {
     throwIfAborted(opts?.signal);
     const snapshot = getActiveServerSnapshot();
@@ -1109,14 +1138,14 @@ async function readProviderSnapshotWithOwner<T>(credentials: AuthCredentials, re
             homeCarrier: getActiveServerHomeCarrier(), generation: snapshot.generation, request } });
     const bindingKey = transport.key;
     const scope = transport.scope ?? bindingKey;
-    const path = `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`;
+    const path = providerAccountUsageRecordPath(recordId);
     const init = { method: 'GET', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
         'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification' } };
     const options = { includeAuth: false, ...(opts?.expectedActiveServer ? { expectedActiveServer: opts.expectedActiveServer } : {}) };
     // Observer-owned demand shares raw record acquisition with quota. Standalone
     // demand keeps its incumbent finite validation/retry lifecycle inside one flight.
-    const value = opts?.retry === 'none'
-        ? consume(await acquireProviderUsageHttp(credentials, path, { ...init, signal: opts.signal }, { ...opts, request, readTransport: transport }))
+    const value = !pending || opts?.retry === 'none'
+        ? consume(await acquireProviderUsageHttp(credentials, path, { ...init, signal: opts?.signal }, { ...opts, request, readTransport: transport }))
         : await pending.run(JSON.stringify([bindingKey, recordId]), signal => backoff(async () =>
             await transport.read(path, { ...init, signal }, options, async response => consume(await observeProviderUsageHttp(response)))),
             { scope, signal: opts?.signal });
@@ -1135,6 +1164,28 @@ function readSnapshotRecord(response: UsageHttpObservation, recordId: ProviderAc
     }
     if (response.jsonFailure) throw response.jsonFailure.error;
     return parseQualifiedProviderAccountUsageRecordResponse(response.json, recordId);
+}
+
+/** Read an already-bound record using the same raw acquisition as its other observers. */
+export async function getAddressedProviderAccountUsageRecord(
+    credentials: AuthCredentials,
+    recordId: ProviderAccountUsageRecordId,
+    opts: ProviderAccountUsageSnapshotReadOptions,
+): Promise<ProviderAccountUsageRecord | null> {
+    const id = parseRecordId(recordId);
+    return await readProviderSnapshotWithOwner(credentials, id, { ...opts, retry: 'none' },
+        undefined, response => readSnapshotRecord(response, id));
+}
+
+export function openAddressedProviderAccountUsageRecord(
+    credentials: AuthCredentials,
+    recordId: ProviderAccountUsageRecordId,
+    accountMode: ProviderAccountUsageQuotaReadOptions['accountMode'],
+    record: ProviderAccountUsageRecord,
+): ProviderAccountUsageSnapshotV1 {
+    const material = accountMode === 'e2ee' && !isTokenOnlyAuthCredentials(credentials)
+        ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
+    return openProviderAccountUsageRecordV4({ recordId, accountMode, record, material });
 }
 
 export async function getProviderAccountUsageSnapshotPlain(

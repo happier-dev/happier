@@ -1583,7 +1583,8 @@ async function connectManagedServer(
                             const wake = parsedAccountUpdate.data.body;
                             accountEvent = publishHomeAccountChangeWake(entry.id, wake, 'socket',
                                 sessionId => Boolean(storage.getState().sessionListRowsByServerId[entry.id]?.[sessionId]),
-                                parsedAccountUpdate.data.discussionSettingsChangedIds);
+                                parsedAccountUpdate.data.discussionSettingsChangedIds,
+                                parsedAccountUpdate.data.providerAccountUsageObservations);
                         } else {
                             accountEvent = publishHomeAccountChangeForRouting(entry.id);
                         }

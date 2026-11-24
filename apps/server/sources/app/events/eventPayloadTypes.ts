@@ -438,6 +438,7 @@ export type EphemeralEvent = Extract<EphemeralUpdate, { type: 'local-service-pub
 
 export interface UpdatePayload {
     discussionSettingsChangedIds?: UpdateContainer['discussionSettingsChangedIds'];
+    providerAccountUsageObservations?: UpdateContainer['providerAccountUsageObservations'];
     id: string;
     seq: number;
     body: {

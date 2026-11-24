@@ -7914,13 +7914,20 @@ poll. Material writes and newly retained observations publish the existing
 observation time advances history and its daily coverage even if the allowance
 is flat. The global row's advisory hint names its paired record. The Changes
 Protocol leaf owns these identities and reads the consumed page's record scope;
-coalesced record rows retain changes to several sources. A complete pair lets the
-UI reread only sources admitted to those records, retaining the other sources.
-A legacy/unscoped key, an incomplete pair, unknown scope, snapshot, foreground
-or explicit recovery keeps the full reread. New UI with an old server therefore
-retains its previous behavior; old UI with a new server still consumes the global
-key. Replacing a source's record binding publishes the existing Connected Service
-change fact so readers admitted to the previous record resolve the new binding.
+coalesced record rows retain changes to several sources. The write owner records
+the accepted observation clocks and whether the current reading changed. The
+same bodyless fact travels on the existing Account wake for secondary Homes.
+Coalescing keeps the latest accepted clock and preserves any material change.
+The durable row lets primary Home detect a material change since its cursor.
+
+With an admitted retained reading, a clock-only fact advances freshness without
+a quota GET. A material fact reads that record directly. For a sealed reading,
+the wake carries the accepted fetch clock. An older publisher that omits the
+fact keeps the previous read behavior. A legacy/unscoped key, an incomplete
+pair, unknown scope, snapshot, foreground or explicit recovery keeps the full
+reread. An older UI still consumes the global key. Replacing a source's record
+binding publishes the existing Connected Service change fact so readers
+admitted to the previous record resolve the new binding.
 This additive development contract changes no request/response envelope,
 wire epoch or authority. A server reload is needed to publish the new identities.
 The push invalidates the admitted read when the producer settles, including an unchanged-material write that clears

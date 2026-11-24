@@ -7,7 +7,9 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
+    getAddressedProviderAccountUsageRecord,
     getProviderAccountUsageSnapshotPlain,
+    openAddressedProviderAccountUsageRecord,
     getProviderAccountUsageSnapshotSealed,
 } from '@/sync/api/account/apiProviderAccountUsage';
 import {
@@ -19,7 +21,7 @@ import {
     type ProviderAccountUsageCacheState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
-import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { applyUsageObservationTime, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import {
     buildProviderAccountUsageScopeKey,
     readProviderAccountUsageSnapshotForMode,
@@ -131,6 +133,14 @@ function createUsageRowObserver(input: Readonly<{
         const observation = observeUsageProjection({
             serverId: input.serverBasis.serverId,
             readRecordId: () => recordId,
+            applyObservation(observation) {
+                const retained = readEntry();
+                if (!current() || !retained?.snapshot || retained.hadError) return false;
+                const snapshot = applyUsageObservationTime(retained.snapshot, observation);
+                if (snapshot !== retained.snapshot) updateProviderAccountUsageCacheEntries(input.credentialScope,
+                    entries => ({ ...entries, [recordId]: { ...retained, snapshot } }), 'account-observation');
+                return true;
+            },
             busy: () => reading !== null || !current(),
             nextReadAtMs: () => readEntry()?.nextFetchAtMs ?? Number.POSITIVE_INFINITY,
             presentationDeadlineMs: () => {
@@ -138,7 +148,7 @@ function createUsageRowObserver(input: Readonly<{
                 return snapshot ? snapshot.fetchedAtMs + snapshot.staleAfterMs + 1 : undefined;
             },
             publish: () => { if (current()) updateProviderAccountUsageCacheEntries(input.credentialScope, entries => entries); },
-            read() {
+            read(observation) {
                 if (reading) return reading;
                 if (!current()) return Promise.resolve();
                 const previous = readEntry();
@@ -150,10 +160,22 @@ function createUsageRowObserver(input: Readonly<{
                 reading = (async () => {
                     let entry: Outcome['entry'];
                     try {
-                        const mode = await input.resolveAccountMode();
-                        if (!current()) return;
-                        const opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId,
-                            signal: requestController.signal });
+                        let opened: ProviderAccountUsageSnapshotV1 | null;
+                        if (observation) {
+                            // Join the wake's raw acquisition before awaiting Account mode.
+                            const [record, mode] = await Promise.all([
+                                getAddressedProviderAccountUsageRecord(input.credentials, recordId, {
+                                    signal: requestController.signal, expectedActiveServer: input.serverBasis,
+                                }),
+                                input.resolveAccountMode(),
+                            ]);
+                            if (!current()) return;
+                            opened = record ? openAddressedProviderAccountUsageRecord(input.credentials, recordId, mode, record) : null;
+                        } else {
+                            const mode = await input.resolveAccountMode();
+                            if (!current()) return;
+                            opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId, signal: requestController.signal });
+                        }
                         entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: false, emptyRead: opened ? undefined : 'missing' };
                     } catch (error) {
@@ -167,7 +189,10 @@ function createUsageRowObserver(input: Readonly<{
                         controller = null;
                     }
                     if (!current()) return;
-                    enqueue({ recordId, entry, current });
+                    if (observation) {
+                        updateProviderAccountUsageCacheEntries(input.credentialScope,
+                            entries => ({ ...entries, [recordId]: entry }), 'account-observation');
+                    } else enqueue({ recordId, entry, current });
                 })();
                 return reading;
             },

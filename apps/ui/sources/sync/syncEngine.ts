@@ -16,7 +16,7 @@ import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } 
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { EMPTY_PROJECT_AUTHORING_SESSION_INPUTS } from '@/sync/store/domains/projectAuthoringSessions';
-import { readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { readProviderAccountUsageObservationsV1, readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import {
     publishHomeAccountChange,
     publishHomeAccountChangeWake,
@@ -13846,6 +13846,7 @@ class Sync {
                                     usageQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageQuery(publishedPlan),
                                     usageAccountingAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageAccounting(publishedPlan),
                                     providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes),
+                                    providerAccountUsageObservations: readProviderAccountUsageObservationsV1(changes, publishedPlan.afterCursor),
                                     providerAccountUsageDayChange: readProviderAccountUsageDayChangeV1(changes),
                                 });
                             }

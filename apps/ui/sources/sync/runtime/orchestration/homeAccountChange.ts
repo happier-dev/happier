@@ -1,5 +1,6 @@
 import { ChangeKindSchema, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, changeRowsAlreadyHeld, isAccountCurrentnessEntityIdV1, type ChangeEntry } from '@happier-dev/protocol/changes';
-import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { isProviderAccountUsageChangeEntityIdV1, readProviderAccountUsageChangeRecordIdV1,
+    type ProviderAccountUsageDayChangeV1, type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { UpdateBody } from '@happier-dev/protocol/updates';
@@ -125,6 +126,7 @@ export type HomeAccountChangeEvent = Readonly<{
     usageQueryAffects?: boolean;
     /** Exact material record scope from a consumed page; absence retains full quota recovery. */
     providerAccountUsageRecordIds?: readonly string[];
+    providerAccountUsageObservations?: readonly ProviderAccountUsageObservationV1[];
     /** Known accepted-history and summary changes for the paired quota record. */
     providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
@@ -178,6 +180,7 @@ type HomeAccountChangeDetails = Readonly<{
     savedSecretCatalogAffects?: boolean;
     usageQueryAffects?: boolean;
     providerAccountUsageRecordIds?: readonly string[];
+    providerAccountUsageObservations?: readonly ProviderAccountUsageObservationV1[];
     providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
@@ -433,11 +436,24 @@ export function publishHomeAccountChangeWake(
     source: 'socket' | 'catch-up-pending',
     isSessionListMember?: (sessionId: string) => boolean,
     discussionSettingsChangedIds?: readonly string[],
+    providerAccountUsageObservations?: readonly ProviderAccountUsageObservationV1[],
 ): HomeAccountChangeEvent {
-    if (wake.t === 'account-change') return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
-        source, changeKinds: wake.changeKinds, artifactKinds: wake.artifactKinds, sessionSystemRecords: wake.sessionSystemRecords,
-        ...(source === 'socket' && discussionSettingsChangedIds ? { discussionSettingsChangedIds } : {}),
-    }, isSessionListMember);
+    if (wake.t === 'account-change') {
+        // The focused Home consumes the durable rows with their predecessor
+        // cursor. Secondary Homes receive the coalesced facts on this wake.
+        const quotaOnly = source === 'socket' && providerAccountUsageObservations?.length
+            && wake.changeKinds?.length === 1 && wake.changeKinds[0] === 'account'
+            && wake.entityIds?.every(isProviderAccountUsageChangeEntityIdV1);
+        const recordIds = quotaOnly ? wake.entityIds?.flatMap(entityId => {
+            const id = readProviderAccountUsageChangeRecordIdV1(entityId);
+            return id === null ? [] : [id];
+        }) : undefined;
+        return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
+            source, changeKinds: wake.changeKinds, artifactKinds: wake.artifactKinds, sessionSystemRecords: wake.sessionSystemRecords,
+            ...(source === 'socket' && discussionSettingsChangedIds ? { discussionSettingsChangedIds } : {}),
+            ...(recordIds?.length ? { providerAccountUsageRecordIds: recordIds, providerAccountUsageObservations } : {}),
+        }, isSessionListMember);
+    }
     // This synthetic row routes an admitted socket fact through the incumbent
     // planner only. It advances no cursor and is never checkpoint evidence.
     const planned = planSyncActionsFromChanges([{ kind: 'account', entityId: 'self', cursor: 0, changedAt: 0,
@@ -608,6 +624,8 @@ export function publishHomeAccountChangeForRouting(
         ...(!coarse && usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
         ...(!coarse && details?.providerAccountUsageRecordIds !== undefined
             ? { providerAccountUsageRecordIds: Object.freeze([...details.providerAccountUsageRecordIds]) } : {}),
+        ...(!coarse && details?.providerAccountUsageObservations !== undefined
+            ? { providerAccountUsageObservations: details.providerAccountUsageObservations } : {}),
         ...(!coarse && details?.providerAccountUsageDayChange !== undefined
             ? { providerAccountUsageDayChange: details.providerAccountUsageDayChange } : {}),
         ...(usageAccountingAffects !== undefined ? { usageAccountingAffects } : {}),

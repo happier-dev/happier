@@ -18,6 +18,28 @@ export function isProviderAccountUsageChangeEntityIdV1(entityId: string): boolea
     || readProviderAccountUsageChangeRecordIdV1(entityId) !== null;
 }
 
+/** Bodyless quota facts. The sealed record exposes its accepted fetch clock,
+ * while its provider observation clock remains inside the sealed payload. */
+export const ProviderAccountUsageObservationV1Schema = lazyZodSchema(() => z.strictObject({
+  recordId: ProviderAccountUsageRecordIdSchema,
+  fetchedAtMs: z.number().check(z.int(), z.nonnegative()),
+  observedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
+  contentChanged: z.boolean(),
+}));
+
+export type ProviderAccountUsageObservationV1 = z.infer<typeof ProviderAccountUsageObservationV1Schema>;
+
+export function coalesceProviderAccountUsageObservationV1(previous: ProviderAccountUsageObservationV1,
+  next: ProviderAccountUsageObservationV1): ProviderAccountUsageObservationV1 {
+  return { ...(previous.fetchedAtMs > next.fetchedAtMs ? previous : next),
+    contentChanged: previous.contentChanged || next.contentChanged };
+}
+
+const ObservationRowHintSchema = lazyZodSchema(() => z.object({
+  providerAccountUsageObservation: ProviderAccountUsageObservationV1Schema,
+  previousContentCursor: z.number().check(z.int(), z.nonnegative()),
+}));
+
 const DayScopeSchema = lazyZodSchema(() => z.object({
   providerAccountUsageChangedDayStartAtMs: z.number().check(z.int(), z.nonnegative(),
     z.refine(day => day % PROVIDER_ACCOUNT_USAGE_DAY_MS === 0)),
@@ -43,7 +65,8 @@ export type ProviderAccountUsageDayChangeV1 = Readonly<{
 
 /** Publish both rows in the same transaction: old readers retain their existing key. */
 export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
-  day?: Pick<ProviderAccountUsageDayChangeV1, 'dayStartAtMs' | 'afterCursor' | 'history' | 'publication'>) {
+  day?: Pick<ProviderAccountUsageDayChangeV1, 'dayStartAtMs' | 'afterCursor' | 'history' | 'publication'>,
+  observation?: Readonly<{ observation: ProviderAccountUsageObservationV1; previousContentCursor: number }>) {
   const id = ProviderAccountUsageRecordIdSchema.parse(recordId);
   return [
     { kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
@@ -52,7 +75,8 @@ export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
         ...(day.history ? { providerAccountUsageHistoryChange: day.history } : {}),
         ...(day.publication ? { providerAccountUsageDayPublication: day.publication } : {}),
       } : {}) } },
-    { kind: 'account', entityId: `${RECORD_PREFIX}${id}` },
+    { kind: 'account', entityId: `${RECORD_PREFIX}${id}`, hint: observation ? { providerAccountUsageObservation: observation.observation,
+      previousContentCursor: observation.previousContentCursor } : {} },
   ] as const;
 }
 
@@ -68,6 +92,28 @@ function isProviderAccountUsageAuthorityChangeV1(entityId: string): boolean {
 }
 
 type UsageChangeRow = Readonly<{ kind: string; entityId: string; cursor: number; hint?: unknown }>;
+
+export function readProviderAccountUsageObservationRowV1(row: UsageChangeRow) {
+  if (row.kind !== 'account') return undefined;
+  const recordId = readProviderAccountUsageChangeRecordIdV1(row.entityId);
+  if (recordId === null) return undefined;
+  const hint = ObservationRowHintSchema.safeParse(row.hint);
+  return hint.success && hint.data.providerAccountUsageObservation.recordId === recordId
+    && hint.data.previousContentCursor < row.cursor ? hint.data : undefined;
+}
+
+/** Coalesced storage must not hide material writes after the reader's last checkpoint. */
+export function readProviderAccountUsageObservationsV1(changes: readonly UsageChangeRow[],
+  afterCursor: number | undefined): ProviderAccountUsageObservationV1[] | undefined {
+  if (afterCursor === undefined) return undefined;
+  const observations = changes.flatMap(row => {
+    const hint = readProviderAccountUsageObservationRowV1(row);
+    if (!hint) return [];
+    const observation = hint.providerAccountUsageObservation;
+    return [hint.previousContentCursor > afterCursor ? { ...observation, contentChanged: true } : observation];
+  });
+  return observations.length ? observations : undefined;
+}
 
 export function isPairedProviderAccountUsageChangeV1(global: UsageChangeRow, exact: UsageChangeRow): boolean {
   if (global.kind !== 'account' || global.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1

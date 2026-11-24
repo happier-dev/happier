@@ -247,6 +247,20 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
     expect(seen.at(-1)!.slice!.quota?.[0]?.current?.meters[0]?.usedPct).toBe(48);
     expect(home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/history'))
       .map(request => [request.method, request.path])).toEqual([]);
+    const refreshedAt = record.fetchedAtMs + 1000;
+    const readsBeforeObservation = home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')).length;
+    await act(async () => {
+      publishHomeAccountChange(home!.homes.a!.id, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
+        changeKinds: ['account'], providerAccountUsageRecordIds: [record.recordId],
+        providerAccountUsageObservations: [{ recordId: record.recordId, fetchedAtMs: refreshedAt,
+          observedAtMs: refreshedAt, contentChanged: false }],
+      });
+    });
+    await expect.poll(() => seen.at(-1)?.slice?.quota?.[0]?.current?.fetchedAtMs,
+      { message: 'Plans and Overview share the Capacity observation' }).toBe(refreshedAt);
+    expect(home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')))
+      .toHaveLength(readsBeforeObservation);
+    expect(seen.at(-1)?.slice?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(48);
     // Source facts can settle before their Resource finishes publishing bytes.
     // Begin the held refresh only after the canonical read itself is idle.
     await expect.poll(() => seen.at(-1)?.pending).toBe(false);

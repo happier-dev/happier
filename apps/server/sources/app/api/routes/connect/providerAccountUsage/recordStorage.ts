@@ -9,6 +9,7 @@ import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from '@happier-dev/p
 import { SealedProviderAccountUsageSnapshotV1Schema, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { serializeProviderAccountUsageSnapshotMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 import {
     ProviderAccountUsageRecordMetadataSchema,
     UpsertProviderAccountUsageRecordSchema,
@@ -104,11 +105,9 @@ export async function readProviderAccountUsageHistoryWitnessRow(params: Readonly
 
 type UsageHistoryMaterial = Pick<UpsertProviderAccountUsageRecordParams, "snapshot" | "sealedPayload" | "metadata">;
 
-export function sameProviderAccountUsageHistoryMaterial(next: UsageHistoryMaterial, previous: UsageHistoryMaterial): boolean {
-    if (next.snapshot && previous.snapshot) {
-        return serializeProviderAccountUsageHistoryMaterialV1(next.snapshot)
-            === serializeProviderAccountUsageHistoryMaterialV1(previous.snapshot);
-    }
+export function sameProviderAccountUsageMaterial(next: UsageHistoryMaterial, previous: UsageHistoryMaterial,
+    project = serializeProviderAccountUsageSnapshotMaterialV1): boolean {
+    if (next.snapshot && previous.snapshot) return project(next.snapshot) === project(previous.snapshot);
     if (!next.sealedPayload || !previous.sealedPayload) return false;
     const fingerprint = next.metadata?.materialFingerprint;
     const sealedFacets = (payload: SealedProviderAccountUsageSnapshotV1) => [
@@ -135,7 +134,7 @@ export async function retainProviderAccountUsageHistory(
         orderBy: { id: "desc" },
         select: { payload: true },
     });
-    if (sameClock && sameProviderAccountUsageHistoryMaterial(parsed, parseHistoryRecord(sameClock.payload))) return false;
+    if (sameClock && sameProviderAccountUsageMaterial(parsed, parseHistoryRecord(sameClock.payload), serializeProviderAccountUsageHistoryMaterialV1)) return false;
     // Derived history metadata belongs only to the current record.
     const { pageProjection: _derived, daySummaryPendingDays: _pending, ...metadata } = parsed.metadata ?? {};
     const retained = { ...parsed, ...(parsed.metadata ? { metadata } : {}) };

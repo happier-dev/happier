@@ -11,7 +11,7 @@ import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { getConnectedServiceUsageIdentity } from './connectedServiceRegistry';
 import { parseToken } from '@/utils/auth/parseToken';
-import { ConnectedServiceApiError } from '@/sync/api/account/connectedServiceApiError';
+import { HappyError } from '@/utils/errors/errors';
 
 import {
     readConnectedServiceSettingsErrorCode,
@@ -231,7 +231,19 @@ function reconcilePolling(key: string, initialReadCompleted?: boolean): void {
             && entry.error === null && !entry.producerRefreshPending
             && Date.now() <= entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs),
         readRecordId: () => entry.usageRecordId,
-        read: () => { entry.loadAttempted = true; return runLoad(key, context); },
+        applyObservation({ fetchedAtMs }) {
+            if (!entry.snapshot || entry.error !== null || entry.producerRefreshPending) return false;
+            if (fetchedAtMs > entry.snapshot.fetchedAt) {
+                entry.snapshot = { ...entry.snapshot, fetchedAt: fetchedAtMs, fetchedAtMs,
+                    staleAtMs: fetchedAtMs + entry.snapshot.staleAfterMs };
+                publish(key, entry);
+            }
+            return true;
+        },
+        read: observation => {
+            entry.loadAttempted = true;
+            return runLoad(key, context, false, observation?.recordId);
+        },
         busy: () => Boolean(entry.loadPromise || entry.refreshPromise),
         nextReadAtMs: () => entry.nextFetchAtMs,
         presentationDeadlineMs: () => entry.snapshot ? entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs + 1 : undefined,
@@ -263,6 +275,7 @@ async function runLoad(
     key: string,
     context: QualifiedQuotaSnapshotStoreContext,
     credentialMutation = false,
+    recordId?: ProviderAccountUsageRecordId,
 ): Promise<QualifiedConnectedAccountQuotaSnapshotV4 | null> {
     const entry = getOrCreateEntry(key);
     if (entry.loadPromise) return entry.loadPromise;
@@ -302,7 +315,7 @@ async function runLoad(
                 return entry.snapshot;
             }
             const read = requiresOrganization && (!currentIdentity?.providerAccountId || !currentIdentity.providerOrganizationId)
-                ? null : await readQualifiedConnectedAccountQuota(context);
+                ? null : await readQualifiedConnectedAccountQuota(context, recordId);
             if (!isCurrent()) return null;
             let snapshot = read?.snapshot ?? null;
             if (snapshot?.providerOrganizationId && !requiresOrganization) {
@@ -357,7 +370,7 @@ async function runLoad(
             // A connected receipt proves a new credential, but an unreadable replacement
             // context is unknown. Ordinary background read failures retain verified data.
             if (credentialMutation && !credentialReadCompleted) clearSnapshot(entry);
-            if (error instanceof ConnectedServiceApiError) {
+            if (error instanceof HappyError) {
                 const accessRefused = error.status === 401 || error.status === 403;
                 if (accessRefused) entry.supported = false;
                 if (accessRefused || !canRetainUsageReadFailure(error.code)) clearSnapshot(entry);

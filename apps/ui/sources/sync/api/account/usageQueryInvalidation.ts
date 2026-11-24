@@ -4,7 +4,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
-import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { isProviderAccountUsageChangeEntityIdV1, coalesceProviderAccountUsageObservationV1,
+    type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
@@ -35,6 +36,28 @@ export function isUsageQuotaHomeAccountChange(event: HomeAccountChangeEvent): bo
 export function readUsageQuotaChangedRecordIds(event: HomeAccountChangeEvent): readonly string[] | undefined {
     return event.source !== 'snapshot' && event.source !== 'connected'
         && event.providerAccountUsageRecordIds?.length ? event.providerAccountUsageRecordIds : undefined;
+}
+
+/** A mixed authority/recovery wake needs normal admission even if a record also published. */
+export function readUsageQuotaObservations(event: HomeAccountChangeEvent): readonly ProviderAccountUsageObservationV1[] | undefined {
+    const ids = readUsageQuotaChangedRecordIds(event);
+    const observations = event.providerAccountUsageObservations;
+    if (!ids || !observations) return undefined;
+    const addressed = new Map<string, ProviderAccountUsageObservationV1>(observations.map(observation => [observation.recordId, observation]));
+    const selected = ids.flatMap(id => {
+        const observation = addressed.get(id);
+        return observation ? [observation] : [];
+    });
+    return selected.length === ids.length ? selected : undefined;
+}
+
+/** Advance accepted clocks without making an older arrival current. */
+export function applyUsageObservationTime<T extends Readonly<{ fetchedAtMs: number; observedAtMs: number }>>(
+    reading: T, observation: ProviderAccountUsageObservationV1,
+): T {
+    if (observation.fetchedAtMs <= reading.fetchedAtMs) return reading;
+    return { ...reading, fetchedAtMs: observation.fetchedAtMs,
+        observedAtMs: Math.max(reading.observedAtMs, observation.observedAtMs ?? observation.fetchedAtMs) };
 }
 
 /** An unresolved source still needs acquisition; admitted sources consume only their record changes. */
@@ -89,7 +112,9 @@ export function observeUsageProjection(input: Readonly<{
     /** The caller already awaited an admitted read before attaching this observation. */
     initialReadCompleted?: boolean;
     readRecordId?(): string | null | undefined;
-    read(): Promise<unknown>;
+    /** Returns false when the addressed body is absent or needs recovery. */
+    applyObservation?(observation: ProviderAccountUsageObservationV1): boolean;
+    read(observation?: ProviderAccountUsageObservationV1): Promise<unknown>;
     busy(): boolean;
     nextReadAtMs(): number;
     /** Aging a retained observation updates presentation without another GET. */
@@ -98,14 +123,17 @@ export function observeUsageProjection(input: Readonly<{
 }>): Readonly<{ reconcile(): void; invalidate(): void; dispose(): void }> {
     let disposed = false;
     let pending = input.initialReadCompleted !== true;
+    let retainedObservation: ProviderAccountUsageObservationV1 | undefined;
     let active = isRuntimeActive();
     let timer: ReturnType<typeof setTimeout> | null = null;
     function reconcile(): void {
         if (timer !== null) { clearTimeout(timer); timer = null; }
         if (disposed || !isRuntimeActive() || input.busy()) return;
-        if (pending) {
+        const observation = pending ? undefined : retainedObservation;
+        retainedObservation = undefined;
+        if (pending || observation && (observation.contentChanged || input.applyObservation?.(observation) !== true)) {
             pending = false;
-            void input.read().then(reconcile, reconcile);
+            void input.read(observation).then(reconcile, reconcile);
             return;
         }
         const readDeadline = input.nextReadAtMs();
@@ -124,7 +152,14 @@ export function observeUsageProjection(input: Readonly<{
     function invalidate(): void { pending = true; reconcile(); }
     const detachHome = subscribeHomeAccountChange(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, input.serverId)) return;
-        if (isUsageProjectionHomeAccountChange(event, false, input.readRecordId ? [input.readRecordId()] : undefined)) invalidate();
+        const id = input.readRecordId?.();
+        if (!isUsageProjectionHomeAccountChange(event, false, input.readRecordId ? [id] : undefined)) return;
+        const observation = input.applyObservation && readUsageQuotaObservations(event)?.find(fact => fact.recordId === id);
+        if (observation) {
+            retainedObservation = retainedObservation
+                ? coalesceProviderAccountUsageObservationV1(retainedObservation, observation) : observation;
+            reconcile();
+        } else invalidate();
     }, { reconnect: 'refresh' });
     const detachRuntime = subscribeToRuntimeActiveChange(() => {
         const nextActive = isRuntimeActive();

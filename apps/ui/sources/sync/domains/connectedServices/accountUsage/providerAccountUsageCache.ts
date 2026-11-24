@@ -20,21 +20,22 @@ let providerAccountUsageCacheState: ProviderAccountUsageCacheState = {
 // Equal data can age into a different presentation at the existing observer's deadline.
 let publishedAtMs = Date.now();
 
-const providerAccountUsageCacheListeners = new Set<() => void>();
+type UsageCachePublication = 'account-observation';
+const providerAccountUsageCacheListeners = new Set<(publication?: UsageCachePublication) => void>();
 type RetainedUsageEntry = { count: number; observerCount: number; disposeObservation: (() => void) | null };
 const providerAccountUsageCacheRetainCounts = new Map<string, Map<string, RetainedUsageEntry>>();
 
-function publishProviderAccountUsageCacheState(next: ProviderAccountUsageCacheState): void {
+function publishProviderAccountUsageCacheState(next: ProviderAccountUsageCacheState, publication?: UsageCachePublication): void {
     providerAccountUsageCacheState = next;
     publishedAtMs = Date.now();
-    for (const listener of providerAccountUsageCacheListeners) listener();
+    for (const listener of providerAccountUsageCacheListeners) listener(publication);
 }
 
 export function getProviderAccountUsageCacheState(): ProviderAccountUsageCacheState {
     return providerAccountUsageCacheState;
 }
 
-export function subscribeProviderAccountUsageCache(listener: () => void): () => void {
+export function subscribeProviderAccountUsageCache(listener: (publication?: UsageCachePublication) => void): () => void {
     providerAccountUsageCacheListeners.add(listener);
     return () => {
         providerAccountUsageCacheListeners.delete(listener);
@@ -127,6 +128,7 @@ export function updateProviderAccountUsageCacheEntries(
     updater: (
         entries: Record<string, ProviderAccountUsageCacheEntry>,
     ) => Record<string, ProviderAccountUsageCacheEntry>,
+    publication?: UsageCachePublication,
 ): void {
     if (!credentialScope) return;
     const currentEntries = providerAccountUsageCacheState.entriesByCredentialScope[credentialScope] ?? {};
@@ -157,5 +159,5 @@ export function updateProviderAccountUsageCacheEntries(
         || scopes.length === 1 && scopes[0] === credentialScope)) return;
     publishProviderAccountUsageCacheState({
         entriesByCredentialScope: { [credentialScope]: nextEntries },
-    });
+    }, publication);
 }
