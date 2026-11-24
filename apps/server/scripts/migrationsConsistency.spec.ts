@@ -506,6 +506,15 @@ describe("migrations (released set and provider parity)", () => {
                     }
                     return false;
                 }
+                if (name === "20261117111000_action_trigger_membership_lookup") {
+                    // PostgreSQL-only partial GIN indexes over actionIdsJson (jsonb_path_ops). They are
+                    // not in schema.prisma and MySQL/SQLite have no equivalent index type; those
+                    // providers serve the same Action-phase lookup without it.
+                    const sql = readText(join(root, ...MIGRATION_PROVIDER_DIRS.postgres, name, "migration.sql"));
+                    expect(sql).toContain("USING GIN");
+                    expect(sql).not.toMatch(/ALTER TABLE|CREATE TABLE|DROP /);
+                    return false;
+                }
                 return true;
             });
             expect(missing, `${provider} tree is missing PostgreSQL migrations`).toEqual([]);
