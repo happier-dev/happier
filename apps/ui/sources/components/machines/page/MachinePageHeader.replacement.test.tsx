@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -143,8 +143,11 @@ it.each(['use', 'manage', 'owner', 'unknown'] as const)('shows Machine administr
     const previous = store.getState();
     const shared = createPlainSharedMachineRowFixture({ id: 'source', custodianAccountId: 'owner',
         role: role === 'use' ? 'use' : 'manage' });
-    const machine = createMachineFixture({ id: 'source', isShared: role !== 'owner', access: role === 'unknown' || role === 'owner' ? undefined : shared.access,
-        metadata: { host: 'test', platform: 'win32', happyCliVersion: 'test', happyHomeDir: 'C:\\happier', homeDir: 'C:\\Users\\test' } });
+    const metadata = { host: 'test', platform: 'win32', happyCliVersion: 'test', happyHomeDir: 'C:\\happier', homeDir: 'C:\\Users\\test' };
+    // The owner holds the published Manage access its Home row carries.
+    const machine = role === 'owner'
+        ? createHydratedPlainMachineFixture({ id: 'source', accountId: 'owner', machine: { isShared: false, metadata } })
+        : createMachineFixture({ id: 'source', isShared: true, access: role === 'unknown' ? undefined : shared.access, metadata });
     store.getState().applyMachines([machine, createMachineFixture({ id: 'candidate', isShared: false })], true, { sourceServerId: serverId });
     const target = { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
         machineName: 'Source', machineSentenceName: 'Source', isServerSwitching: false, isHydratingMachine: false, switchReady: true };
@@ -190,7 +193,8 @@ it.each([false, true])('replaces a Machine using its current active fact after a
     const serverId = homes.homes.a!.id;
     const store = getStorage();
     const previous = store.getState();
-    const machine = createMachineFixture({ id: machineId, active: initialActive, activeAt: 1_000, isShared: false });
+    const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'owner',
+        machine: { active: initialActive, activeAt: 1_000, isShared: false } });
     store.getState().applyMachines([machine, createMachineFixture({ id: replacementId, isShared: false })], true, { sourceServerId: serverId });
     // The page reads the admitted record: its activity slice is what a later presence answer updates.
     const target = { machineId, requestedServerId: serverId, serverId, activeServerId: serverId, machine: store.getState().machines[machineId]!,
