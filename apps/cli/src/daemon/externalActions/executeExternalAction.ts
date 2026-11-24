@@ -7,6 +7,7 @@ import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncr
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
 import { isReviewedMachineSetupChildRootV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { isSessionAgentReadinessRootActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -1165,6 +1166,7 @@ async function executeExternalActionRequest(input: Readonly<{
           ...(actionId.data === WORKFLOW_RUN_START_ACTION_ID_V1 && decodedWorkflowPreparation
             ? { workflowPreparation: decodedWorkflowPreparation } : {}),
           ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || isSessionAgentReadinessRootActionIdV1(actionId.data) || actionId.data === 'projects.open'
+            || actionId.data === SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1
             || actionId.data === WORKFLOW_RUN_START_ACTION_ID_V1
             || actionId.data === 'machines.managed.acquire'
             || actionId.data === 'action.operations.cancel' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)

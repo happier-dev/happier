@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isRpcMethodNotFoundError, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
 import { ScmRepositoryCloneSourceV1Schema, ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
@@ -141,9 +141,11 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;
 
 export function readProjectOpenUnsentRefusalV1(error: unknown): z.infer<typeof OpenProjectRefusalV1Schema> {
+  const code = isRpcMethodNotFoundError(error) ? RPC_ERROR_CODES.UPDATE_REQUIRED : 'machine_unreachable';
   return {
     kind: 'refused',
-    code: isRpcMethodNotFoundError(error) ? RPC_ERROR_CODES.UPDATE_REQUIRED : 'machine_unreachable',
+    code,
+    failureCause: projectActionFailureCauseV1({ ok: false, errorCode: code, error: code }, 'projects.open.transport'),
   };
 }
 

@@ -1253,7 +1253,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
         try {
           const transport = await resolveTransportForSession(input.sessionId, request.context.signal,
             { actionId: request.actionId, context: request.context }, request.context.expectedSessionAddress);
-          if (!transport.ok) return executionRunActionFailure(transport.code);
+          if (!transport.ok) {
+            return projectManagedWorkspaceReturnFailure(executionRunActionFailure(transport.code), 'workspace.return.prepare');
+          }
           const prepared = await prepareEnrolledWorkspaceReturnChildren({ sessionId: input.sessionId, machineId: input.machineId,
             metadata: readTransportSessionOwnerMetadata(transport), activeServerDir: configuration.activeServerDir,
             actionRequestId: request.context.actionRequestId, readRequesterWorkspaceScope: params.readRequesterWorkspaceScope });
@@ -1266,7 +1268,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
                 ...(context.signal ? { signal: context.signal } : {}) });
               const result = await (accountId ? runWithScmAccountScope(accountId, prepare,
                 context.externalActionExecutionAuthorization) : prepare());
-              return 'ok' in result ? result : { ok: true as const, result };
+              return 'ok' in result ? projectManagedWorkspaceReturnFailure(result, 'workspace.return.prepare')
+                : { ok: true as const, result };
             } catch (error) { return projectManagedWorkspaceReturnFailure(error, 'workspace.return.prepare'); }
           } };
         } catch (error) { return projectManagedWorkspaceReturnFailure(error, 'workspace.return.prepare'); }

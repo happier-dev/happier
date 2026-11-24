@@ -137,6 +137,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readHostAdmittedReviewedChildRoleV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { prepareAcquiredFileDownload } from '@/machines/transfer/prepareWorkspaceFileExport';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -4845,7 +4846,7 @@ export class ApiMachineClient {
         return assertResolvedHomeTargetIdentity(target, observed.serverIdentityId);
     }
 
-    /** Consume the admitted Project Open or an exact managed Project-files child of Session creation. */
+    /** Consume an admitted Project Open or an exact reviewed Session Project-files child. */
     async callProjectOpen(input: Readonly<{
         input: OpenProjectInputV1;
         context: RpcActionExecutorContext;
@@ -4865,14 +4866,15 @@ export class ApiMachineClient {
             failureCause: { phase, errorClass: 'Error', errorCode: 'project_open_unavailable', httpStatus: null },
         } as const);
         const { source, target } = SESSION_PROJECT_FILES_OPEN_CHILDREN_V1;
-        const childRole = authorization?.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        const parentActionId = authorization?.binding.actionId;
+        const childRole = parentActionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || parentActionId === SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1
             ? readHostAdmittedReviewedChildRoleV1(context, source.action, request) : null;
         const reviewedAuthorization = childRole === source.role || childRole === target.role
             ? readHostReviewedChildOriginalAuthorizationV1(context) : undefined;
-        const isSessionOpen = reviewedAuthorization !== undefined && authorization !== undefined
+        const isSessionProjectFilesOpen = reviewedAuthorization !== undefined && authorization !== undefined
             && reviewedAuthorization.token === authorization.token
             && isDeepStrictEqual(reviewedAuthorization.binding, authorization.binding);
-        const rootActionId = isSessionOpen ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.open';
+        const rootActionId = isSessionProjectFilesOpen ? authorization.binding.actionId : 'projects.open';
         if (!socket?.connected || !installation || !authorization || !requesterAuthorization || !admission || !envelope
             || requesterAuthorization.token !== authorization.token || !isDeepStrictEqual(requesterAuthorization.binding, authorization.binding)
             || !requesterAuthorization.requesterAccountProjection || !requesterAuthorization.requesterHttpProjection
@@ -4885,9 +4887,9 @@ export class ApiMachineClient {
             || configuration.activeServerId !== this.machineRuntimeServerId
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
                 { actionId: rootActionId, machineId: this.machine.id, envelope })
-            || !isSessionOpen && envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
-        const sessionAccount = isSessionOpen ? readRequesterAccountActionTransportContext(authorization) : null;
-        if (isSessionOpen && !sessionAccount) return unavailable('projects.open.requester_custody');
+            || !isSessionProjectFilesOpen && envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
+        const sessionAccount = isSessionProjectFilesOpen ? readRequesterAccountActionTransportContext(authorization) : null;
+        if (isSessionProjectFilesOpen && !sessionAccount) return unavailable('projects.open.requester_custody');
         if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
             return unavailable('projects.open.admission_currentness');
         }

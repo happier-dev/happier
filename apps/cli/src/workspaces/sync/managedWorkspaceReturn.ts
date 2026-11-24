@@ -6,7 +6,7 @@ import { readStoredScmComparison, writeStoredScmComparison, resolveStoredScmComp
 import type { ScmComparisonFile, WorkspaceManifest, WorkspaceManifestEntry } from '@happier-dev/protocol';
 import { buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, projectActionFailureCauseV1, readActionErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
@@ -62,9 +62,12 @@ export function readManagedWorkspaceReturnErrorDetails(error: unknown): ManagedW
 /** The Action and native RPC adapters expose the return owner's same typed failure. */
 export function projectManagedWorkspaceReturnFailure(error: unknown,
   phase: 'workspace.return.prepare' | 'workspace.return.apply'): ActionExecuteFailure {
+  if (isActionExecuteFailure(error)) {
+    return error.failureCause ? error : { ...error, failureCause: projectActionFailureCauseV1(error, phase) };
+  }
   const errorCode = readRpcErrorCode(error) ?? readActionErrorCodeV1(error) ?? 'action_failed';
   return { ok: false, errorCode, error: errorCode, details: readManagedWorkspaceReturnErrorDetails(error),
-    failureCause: projectActionFailureCauseV1(error, phase) };
+    failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: true }) };
 }
 
 export type ManagedWorkspaceReturnApplyEntry = Omit<ApplyCapturedWorkspaceSyncEntryAtRootInput,

@@ -64,6 +64,7 @@ const common = {
   ] },
 } as const satisfies Pick<PreNormalizedActionSpec, 'executionPlacement' | 'sessionTarget' | 'machineRuntimeDemandForInput'
   | 'originalExecution' | 'requesterAccountContentDemandForInput' | 'requiredAuthority' | 'placements' | 'surfaces' | 'inputHints'>;
+const returnExecution = { ...common.originalExecution, daemonIngressSurfaces: ['ui'] } as const;
 export const SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 = [
   { ...common, id: SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1, title: 'Capture copied Session files',
     description: 'Export this admitted Session project into its requester private finite transfer stage.',
@@ -71,11 +72,13 @@ export const SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 = [
     bindings: { rpcMethod: SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1, mcpToolName: 'session_workspace_return_capture' },
     inputSchema: SessionWorkspaceReturnCaptureInputV1Schema, outputSchema: SessionWorkspaceReturnCaptureResultV1Schema },
   { ...common, id: SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1, title: 'Review changes to bring back',
+    originalExecution: returnExecution,
     description: 'Capture the copied Session project and review every changed file before choosing what returns to the host.',
     sideEffectClass: 'read', safety: 'safe', approval: { result: 'none' },
     bindings: { rpcMethod: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], mcpToolName: 'session_workspace_return_prepare' },
     inputSchema: SessionWorkspaceReturnPrepareInputV1Schema, outputSchema: SessionWorkspaceReturnPreviewV1Schema },
   { ...common, id: SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1, title: 'Bring reviewed changes back',
+    originalExecution: returnExecution,
     description: 'Bring selected reviewed file changes to the host, keeping host conflicts unless explicitly replaced from the review.',
     sideEffectClass: 'write', safety: 'danger', approval: { result: 'required' },
     bindings: { rpcMethod: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], mcpToolName: 'session_workspace_return_apply' },

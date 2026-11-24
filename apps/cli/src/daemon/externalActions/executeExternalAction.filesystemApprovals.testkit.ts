@@ -129,6 +129,7 @@ import { createProductionDaemonWorkspaceSyncRuntime, type ProductionDaemonWorksp
   type ProductionDaemonWorkspaceSyncFactories } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
 import { createDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createDaemonWorkspaceSyncRuntime';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { WorkspaceProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -182,7 +183,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   }>, worker = false, sameMachineWorker = false,
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
-    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[] }>) {
+    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[];
+    workspaceReturn?: Readonly<{
+      sessions: Map<string, ReturnType<typeof createSessionRecordFixture>>;
+      openTarget: NonNullable<import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']>
+        & NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['openManagedProjectWorkspace']>;
+    }>;
+  }>) {
+  const returnFixture = cliPolicy?.workspaceReturn;
   const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
     || actionId === 'projects.service.relocate';
   const ingressRefusals = vi.spyOn(logger, 'warnLocalFile');
@@ -389,6 +397,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       installationId: (rpcInstallation.getStore() ?? installation).installationId });
     const admitted = homeRequest('GET', path, undefined, options?.headers);
     if (admitted) return await admitted;
+    const returnSession = returnFixture?.sessions.get(path.slice('/v2/sessions/'.length));
+    if (path.startsWith('/v2/sessions/') && returnSession) return { status: 200, data: { session: returnSession } };
     if (actionId === 'machines.terminal.open' && path === '/v2/sessions/owner-session') return { status: 200, data: { session: {
       ...createSessionNotificationContextFixture('owner-session'), encryptionMode: 'plain',
       metadata: JSON.stringify({ machineId: 'machine', path: rootPath }),
@@ -729,6 +739,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   let sourceWorkspaceSync: ProductionDaemonWorkspaceSyncRuntime | undefined;
   let pluginRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
   let releaseProjection: (() => void) | undefined;
+  let sessionsRole: Awaited<ReturnType<typeof activateSessionsRoleForMachineClient>> | undefined;
   const syncRuntimes: ProductionDaemonWorkspaceSyncRuntime[] = [];
   const syncDaemonRuntimes: ReturnType<typeof createDaemonWorkspaceSyncRuntime>[] = [];
   let harnessClosed = false;
@@ -736,6 +747,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     if (harnessClosed) return;
     spawned.forEach(pty => pty.exit(0)); setupTerminals?.dispose();
     try {
+      await sessionsRole?.stop();
       await Promise.all(syncRuntimes.map(syncRuntime => syncRuntime.stop()));
       await remoteDeploymentRuntime?.stopControlServer();
       await remoteDeploymentClient?.shutdown();
@@ -750,6 +762,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const client = new ApiMachineClient(token, { id: target.machineId, encryptionMode: 'plain', metadata: null,
     metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
       installedCredentials: credentials,
+      ...(returnFixture ? { openManagedProjectWorkspace: returnFixture.openTarget } : {}),
       get workspaceSync() { return workerWorkspaceSync?.workspaceSync; },
       get workspaceSyncHandoffAdapter() { return workerWorkspaceSync?.handoffAdapter; },
       createProjectFiniteRuntime: async (ports, ingress) => {
@@ -1256,6 +1269,18 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       ...(actionId === 'projects.service.relocate' || actionId.startsWith('machines.services.') ? { controller: pluginReloadController } : {}),
       runtimeOptions: { pluginIds: [], resolveCurrentMachineId: () => target.machineId } });
   }
+  if (returnFixture) {
+    await readProjectAccountRows({ credentials, serverId: 'srv_n2', publication: 'installed' });
+    pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
+      controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'],
+        resolveCurrentMachineId: () => target.machineId } });
+    const composed = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: configuration.happyHomeDir,
+      activeServerDir: configuration.activeServerDir, activeServerId: 'srv_n2', localMachineId: target.machineId,
+      releaseChannel: 'publicdev', credentials, openManagedProjectWorkspace: returnFixture.openTarget });
+    workerWorkspaceSync = composed;
+    composed.start();
+    syncRuntimes.push(composed);
+  }
   const startRuntime = (machineClient: ApiMachineClient, machineId: string,
     origin: typeof resolveOrigin) => startDaemonSessionControlRuntime({ machineId, credentials,
     ...(worker ? { resolveProjectWorkerAction: () => createProjectWorkerAction({ machineId: target.machineId, serverId: 'srv_n2',
@@ -1266,7 +1291,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     api, connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
     ...(connectedAccountPurposeBindingRuntime ? { sessionConnectedAccountProcessRuntime: connectedAccountPurposeBindingRuntime } : {}),
     ...(serviceAction ? { runtimeActionExecute, resolveServerFeaturesSnapshot: () => features } : {}),
-    ...(actionId === 'projects.service.relocate' ? { resolveWorkspaceSyncHandoffAdapter: () => workerWorkspaceSync?.handoffAdapter ?? null } : {}),
+    ...(actionId === 'projects.service.relocate' || returnFixture ? { resolveWorkspaceSyncHandoffAdapter: () => workerWorkspaceSync?.handoffAdapter ?? null } : {}),
     daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected Session event'); },
       stageTranscriptMessage: async () => { throw new Error('Unexpected Session message'); } },
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
@@ -1297,9 +1322,10 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   if (!installed) throw new Error('Production external Action owner was not installed');
   const owner = installed.executor;
   const prepareRequester = installed.prepareRequesterAccountContext;
-  client.setRPCHandlers({ spawnSession: async () => { throw new Error('Open must never start an Agent'); },
+  const registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('Open must never start an Agent'); },
     stopSession: async () => true, requestShutdown() {} }, { actionsSettingsProvider: settings,
     externalActionIngressOwner: installed });
+  if (returnFixture) sessionsRole = await activateSessionsRoleForMachineClient(client, registration);
   if (actionId === 'deployments.templates.instantiate') client.registerDeploymentChildRoutes(new AbortController().signal);
   const connectInstalledMachine = async () => {
     // Connect the public client rather than bypassing its live transport check.
@@ -1308,7 +1334,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     client.connect();
     await expect.poll(() => installedSocket?.connected).toBe(true);
   };
-  if (actionId === 'projects.open' || worker) await connectInstalledMachine();
+  if (actionId === 'projects.open' || worker || returnFixture) await connectInstalledMachine();
   const store = createCliApprovalsArtifactStore({ credentials, serverId: 'srv_n2' });
   const issuerParams = { ...params, ...(features ? { resolveServerFeaturesSnapshot: () => features } : {}) };
   // The production CLI composer supplies Account Actions used by placement,
@@ -1351,6 +1377,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   };
   const personMoveExecutions: ActionExecuteResult[] = [];
   const harness = { personMoveExecutions, rootPath, directory, ref, workerRef, workerRelationship: relationship, rows, rpcOutcomes, networkPaths, finiteIngress, spawned, installation, sourceInstallation, deploymentRuntime,
+    refreshProjectRows: () => readProjectAccountRows({ credentials, serverId: 'srv_n2', publication: 'installed' }),
     nativeAgentRoots,
     connectInstalledMachine,
     useNativeStreamCopy() { nativeStreamCopy = true; },
@@ -2065,6 +2092,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       releaseTrustRead();
       for (const operationId of ownOperations) await (actionId === 'projects.service.relocate' ? sourceRpc! : rpc).invokeLocal('actionOperation.cancel.v1', { operationId });
       spawned.forEach(pty => pty.exit(0)); setupTerminals?.dispose();
+      await sessionsRole?.stop();
       for (const syncRuntime of [...syncRuntimes].reverse()) await syncRuntime.stop();
       await remoteDeploymentRuntime?.stopControlServer(); await remoteDeploymentClient?.shutdown();
       await runtime.stopControlServer(); await client.shutdown();

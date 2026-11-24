@@ -126,7 +126,7 @@ export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, 
 }
 export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
 export const SESSION_TURN_CANCEL_ACTION_ID_V1 = 'session.turn.cancel' as const;
-import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
+import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
 export { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, isSessionWorkspaceReturnActionIdV1 } from './sessionWorkspaceReturnActionIdsV1.js';
 
 /** Native Service Stop consumes only its exact handle; Ask stays with the original Account. */
@@ -1239,9 +1239,11 @@ export function isWorkspaceSyncRelationshipWriteActionId(value: unknown): value 
 
 /**
  * Actions whose carried interactive review binds a proof to the invocation's request id (a Session draft's
- * sandbox acquire; a Sync destination proof's operationId). Their confirm replays the reviewed request, so the
- * proof the person saw is the one that runs; a fresh request would rebuild a different review.
+ * sandbox acquire, a Sync destination proof's operationId, or Return's staging directory). Confirm
+ * replays the reviewed request so the proof the person saw is the one that runs.
  */
 export function keepsReviewedRequestOnConfirmV1(actionId: string): boolean {
-  return isSessionSpawnNewActionIdV1(actionId) || isWorkspaceSyncRelationshipWriteActionId(actionId);
+  return isSessionSpawnNewActionIdV1(actionId)
+    || isWorkspaceSyncRelationshipWriteActionId(actionId)
+    || actionId === SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1;
 }

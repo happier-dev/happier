@@ -23,8 +23,10 @@ export function registerSessionWorkspaceReturnRpcHandlers(rpc: RpcHandlerRegistr
   } };
   scopedRpc.registerHandler(SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1, async (raw: unknown, context) => {
     const parsed = SessionWorkspaceReturnCaptureInputV1Schema.safeParse(raw);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
-    if (!service?.captureSessionWorkspaceReturn) return { ok: false, errorCode: 'workspace_source_operation_unavailable', error: 'workspace_source_operation_unavailable' };
+    if (!parsed.success) return projectManagedWorkspaceReturnFailure({ code: 'invalid_request' }, 'workspace.return.prepare');
+    if (!service?.captureSessionWorkspaceReturn) {
+      return projectManagedWorkspaceReturnFailure({ code: 'workspace_source_operation_unavailable' }, 'workspace.return.prepare');
+    }
     try {
       return SessionWorkspaceReturnCaptureResultV1Schema.parse(await service.captureSessionWorkspaceReturn({ sessionId: parsed.data.sessionId }, context));
     } catch (error) {
@@ -33,7 +35,7 @@ export function registerSessionWorkspaceReturnRpcHandlers(rpc: RpcHandlerRegistr
   });
   scopedRpc.registerHandler(SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], async (raw: unknown, context) => {
     const parsed = SessionWorkspaceReturnPrepareInputV1Schema.safeParse(raw);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
+    if (!parsed.success) return projectManagedWorkspaceReturnFailure({ code: 'invalid_request' }, 'workspace.return.prepare');
     try {
       return SessionWorkspaceReturnPreviewV1Schema.parse(await prepareManagedWorkspaceReturn({
         sessionId: parsed.data.sessionId, activeServerDir: configuration.activeServerDir,
@@ -45,7 +47,7 @@ export function registerSessionWorkspaceReturnRpcHandlers(rpc: RpcHandlerRegistr
   });
   scopedRpc.registerHandler(SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], async (raw: unknown, context) => {
     const parsed = SessionWorkspaceReturnApplyInputV1Schema.safeParse(raw);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
+    if (!parsed.success) return projectManagedWorkspaceReturnFailure({ code: 'invalid_request' }, 'workspace.return.apply');
     const run = service?.withManagedReturnTarget;
     const withManagedTarget: ManagedWorkspaceReturnTarget | undefined = context && run
       ? (workspace, apply) => run(context, workspace, apply)
