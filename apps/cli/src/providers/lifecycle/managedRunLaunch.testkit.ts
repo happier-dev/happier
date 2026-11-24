@@ -22,6 +22,8 @@ import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/provider
  * supplied by each test; no authorization, registry or materializer is mocked. */
 export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; sourceEnvelopeTransport?: 'cpx-v1'; materializationUrl?: string; materializationFiles?: Extract<AgentProviderBindingMaterializationV1, { kind: 'configFile' }>['files']; signedOutAgentCli?: boolean;
   reviewEngine?: boolean;
+  workspaceWrites?: 'deny';
+  engineWorkspaceWrites?: 'deny';
   agentIsolation?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['agentIsolation'];
   catalogModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['catalogModels'];
   connectedAccountModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['connectedAccountModels'];
@@ -89,7 +91,8 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       })) } : {}),
       systemTools: [{ id: 'fixture-runtime', title: 'Fixture runtime', executableNames: [basename(process.execPath)] }],
       agents: [...(input.reviewEngine ? [{ id: 'engine', title: 'Review engine', runtime: { kind: 'custom' }, primary: 'executionRuns',
-        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true,
+          ...(input.engineWorkspaceWrites ? { workspaceWrites: input.engineWorkspaceWrites } : {}) } },
         runnerAgents: [{ agentTarget: { kind: 'agent', identity: { pluginId, localId: 'agent' } }, providerProtocols: ['openai-responses'] }],
       }] : []), { id: 'agent', title: 'Run Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
@@ -99,6 +102,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           auth: { support: 'status_only', environmentVariables: ['RUN_NATIVE_API_KEY'], missingCredentialState: 'logged_out', loginLaunches: [] },
         } } : {}),
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true,
+          ...(input.workspaceWrites ? { workspaceWrites: input.workspaceWrites } : {}),
           executionRunContext: { versions: [1] } } },
         providerRequirements: { acceptsProtocols: ['openai-responses'], required: input.requiredCapabilities ?? { streaming: true },
           ...(input.supportsReasoningEffort !== undefined ? { supportsReasoningEffort: input.supportsReasoningEffort } : {}),

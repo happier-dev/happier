@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1, AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 
 import {
   AgentProviderBindingLaunchMaterializationV1Schema,
@@ -13,6 +14,17 @@ const envRow = (name = 'TOKEN', value: string | null = 'secret') => ({
 });
 
 describe('provider binding materialization V1', () => {
+  it('accepts the full environment key count admitted by the Provider auth-isolation declaration', () => {
+    const isolation = AgentProviderRequirementsV1Schema.shape.authIsolation.parse({
+      suppressConnectedServiceIds: [],
+      ownedEnvKeys: Array.from({ length: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys }, (_, index) => `REQUIRED_${index}`),
+      optionalOwnedEnvKeys: Array.from({ length: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys }, (_, index) => `OPTIONAL_${index}`),
+    });
+    expect(AgentProviderBindingMaterializationV1Schema.safeParse({
+      v: 1, kind: 'spawnEnv',
+      env: [...isolation.ownedEnvKeys, ...(isolation.optionalOwnedEnvKeys ?? [])].map(name => envRow(name, null)),
+    }).success).toBe(true);
+  });
   it('accepts each strict materialization shape and rejects unknown fields', () => {
     expect(AgentProviderBindingMaterializationV1Schema.parse({
       v: 1, kind: 'spawnEnv', env: [envRow()], additionalRedactionValues: ['redact-me'],

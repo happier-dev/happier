@@ -38,6 +38,9 @@ The Execution Run host carries the admitted runner through start and resume to
 the engine's SDK open request. Its existing Provider and Connected Account owners
 prepare credentials and native home for that runner, while the runtime target
 and Run identity remain the review engine.
+The engine's execution-run capability describes the workspace-write policy its
+native invocation actually enforces. A selected runner's direct Agent capability
+does not replace that execution-surface guarantee.
 
 For unnamed Voice Session creation in 0.3 development source, the inventory's
 `defaultTargetKey` comes from the shared backend preference owner using the

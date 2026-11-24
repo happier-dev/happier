@@ -2901,13 +2901,12 @@ export function createDaemonControlApp({
           ...(result.failureCause ? { failureCause: result.failureCause } : {}),
         };
       }
+      const { ok, unsetEnvKeys, ...materialization } = result;
       return {
-        ok: true as const,
+        ok,
         result: {
-          activationId: result.activationId,
-          env: { ...result.env },
-          connectedServicesBindings: result.connectedServicesBindings,
-          registration: result.registration,
+          ...materialization,
+          ...(unsetEnvKeys ? { unsetEnvKeys: [...unsetEnvKeys] } : {}),
         },
       };
     } finally {

@@ -62,6 +62,11 @@ export const AgentCredentialTransportSupportV1Schema = lazyZodSchema(() => z.str
 })));
 export type AgentCredentialTransportSupportV1 = z.infer<typeof AgentCredentialTransportSupportV1Schema>;
 
+export const AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1 = Object.freeze({
+  maxRequiredEnvKeys: 64,
+  maxOptionalEnvKeys: 64,
+} as const);
+
 export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObject({
   acceptsProtocols: z.array(ProviderWireProtocolSchema).check(z.minLength(1), z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)),
   required: z.strictObject({
@@ -88,9 +93,9 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   }),
   authIsolation: z.strictObject({
     suppressConnectedServiceIds: z.array(ConnectedAccountServiceKeyIngressSchema).check(z.maxLength(32)),
-    ownedEnvKeys: z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(64)),
+    ownedEnvKeys: z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys)),
     /** Declared session configuration keys emitted only when this binding consumes them. */
-    optionalOwnedEnvKeys: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(64))),
+    optionalOwnedEnvKeys: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys))),
   }),
   materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
   applyPolicy: ModelSelectionApplyPolicySchema,

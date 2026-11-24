@@ -8,6 +8,17 @@ The runtime target remains the engine while credential preparation uses the
 selected runner. Protocol, SDK and daemon deploy together for this closed
 development contract; no migration, compatibility epoch or adapter is added.
 
+## Provider environment capacity (unreleased 0.3)
+
+Provider environment materialization accepts the full key count admitted by the
+Agent auth-isolation declaration: 64 required plus 64 optional keys. Its row
+capacity derives from those declaration limits; byte limits and closed shapes
+are unchanged. Match 0.3 producers and readers for overlays above 32 rows;
+earlier 0.3 readers refuse them. No epoch, migration or shim is introduced.
+The inspected `../0.2` basis `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de`
+has neither of the corresponding Provider schema paths.
+
+
 ## Mounted Workflow observation setup (unreleased 0.3)
 
 An Agent saving a mounted Workflow draft can continue a seeded, read-only

@@ -1391,6 +1391,10 @@ owner. The host reuses its launch and purpose custody and materializes once per
 admitted runner. The adapters consume that result without acquiring an account.
 An unavailable selected account refuses the Run instead of borrowing another
 account or Machine login.
+The runner's launch declaration also clears competing ambient authentication
+keys through the shared materializer. Claude supplies its selected subscription
+token as well as its native home; Codex clears ambient API keys when a connected
+subscription is selected. Explicit Machine login keeps its native environment.
 
 clawpatch receives the native runner and model arguments, Codex's `CODEX_HOME`,
 and Claude's host authentication context with its materialized home or token.
@@ -1404,6 +1408,8 @@ DeepSec uses the same host materialization. Its native Codex harness accepts
 credentialed OpenAI Responses endpoints ending in `/v1` without a query or
 fragment; headers that its SDK cannot preserve are refused. Its Claude harness
 consumes the runner's supported Anthropic key/token and endpoint environment.
+An admitted Claude home without a supported token is refused because DeepSec's
+Claude SDK cannot preserve that home; it never substitutes the Machine login.
 Secrets remain in the child environment. Each Run blanks competing credential
 and endpoint keys to suppress repository dotenv overrides. Native login pins the
 selected harness; a supplied Gateway key retains the existing Gateway route.

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { decideExecutionRunRolePolicy } from './rolePolicy';
 import type { ExecutionRunSessionAdapterInput } from './retainedInteractionEligibility';
+import { ROBOREV_PLUGIN } from '@happier-dev/plugins-review-panels/manifest';
+import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 const base: ExecutionRunSessionAdapterInput = {
     scope: 'detached', hasParentSessionCustody: false,
@@ -10,6 +12,13 @@ const base: ExecutionRunSessionAdapterInput = {
 };
 
 describe('selected execution surface Role policy', () => {
+    it('admits the actual roborev native review surface for a read-only Role', () => {
+        const definition = ROBOREV_PLUGIN.manifest.contributes?.agents?.find(agent => agent.id === 'roborev');
+        expect(definition).toBeDefined();
+        expect(decideExecutionRunRolePolicy({ ...base, agentExposesSessionRuntime: false,
+            workspaceWrites: 'deny', executionRunCapabilities: readAgentExecutionRunCapabilities(definition) }))
+            .toEqual({ status: 'enforceable', surface: 'native_execution_run' });
+    });
     it.each([
         { input: base, surface: 'retained_agent_conversation', allowed: true },
         { input: { ...base, sessionCapabilities: { ...base.sessionCapabilities!, workspaceWrites: undefined } }, surface: 'retained_agent_conversation', allowed: false },

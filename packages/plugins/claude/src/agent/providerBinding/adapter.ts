@@ -8,6 +8,7 @@ import type {
 import { createHash } from 'node:crypto';
 import { normalizeProviderCredentialHeaderName } from '@happier-dev/plugin-sdk/providers';
 import { CLAUDE_PROVIDER_MODEL_ROLES } from './modelRoles.js';
+import { CLAUDE_AUTH_ISOLATION_ENV_KEYS } from '../auth/services/runtime/env.js';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'spawnEnv' }>['env'];
@@ -18,15 +19,7 @@ type ProviderCredentialTransport = NonNullable<
 export const CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 4;
 
 export const CLAUDE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
-  'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_CUSTOM_HEADERS',
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_OAUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-  'CLAUDE_CODE_OAUTH_SCOPES',
-  'CLAUDE_CODE_SETUP_TOKEN',
+  ...CLAUDE_AUTH_ISOLATION_ENV_KEYS,
   'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
 ] as const);
 

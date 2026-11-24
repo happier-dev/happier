@@ -9,7 +9,7 @@ import type {
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { ANTHROPIC_EFFORT_LEVELS } from '../../provider/catalog.js';
-import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
+import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1, CLAUDE_PROVIDER_OWNED_ENV_KEYS } from './adapter.js';
 import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../vercel-ai-gateway/src/provider/contribution.js';
 import { CLOUDFLARE_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../cloudflare-ai-gateway/src/provider/contribution.js';
@@ -270,18 +270,7 @@ describe('Claude provider-binding adapter V1', () => {
       },
       authIsolation: {
         suppressConnectedServiceIds: ['claude-subscription', 'anthropic'],
-        ownedEnvKeys: [
-          'ANTHROPIC_BASE_URL',
-          'ANTHROPIC_CUSTOM_HEADERS',
-          'ANTHROPIC_API_KEY',
-          'ANTHROPIC_AUTH_TOKEN',
-          'ANTHROPIC_OAUTH_TOKEN',
-          'CLAUDE_CODE_OAUTH_TOKEN',
-          'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-          'CLAUDE_CODE_OAUTH_SCOPES',
-          'CLAUDE_CODE_SETUP_TOKEN',
-          'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
-        ],
+        ownedEnvKeys: CLAUDE_PROVIDER_OWNED_ENV_KEYS,
         optionalOwnedEnvKeys: [
           'ANTHROPIC_DEFAULT_HAIKU_MODEL',
           'ANTHROPIC_DEFAULT_SONNET_MODEL',
@@ -339,23 +328,16 @@ describe('Claude provider-binding adapter V1', () => {
       CLAUDE_CODE_OAUTH_SCOPES: 'ambient-scopes',
       CLAUDE_CODE_SETUP_TOKEN: 'ambient-setup',
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+      CLAUDE_CODE_USE_VERTEX: '1',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      GOOGLE_APPLICATION_CREDENTIALS: '/machine/vertex-credentials.json',
+      AWS_ACCESS_KEY_ID: 'machine-aws-key',
       UNRELATED_SESSION_VALUE: 'preserved',
     };
     const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput());
     expect(AgentProviderBindingMaterializationV1Schema.parse(output)).toEqual(output);
     expect(output.kind).toBe('spawnEnv');
-    expect(output.env).toEqual([
-      { name: 'ANTHROPIC_BASE_URL', value: 'https://gateway.example.test/anthropic', source: 'provider' },
-      { name: 'ANTHROPIC_CUSTOM_HEADERS', value: null, source: 'provider' },
-      { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: null, source: 'provider' },
-      { name: 'ANTHROPIC_OAUTH_TOKEN', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_OAUTH_SCOPES', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_SETUP_TOKEN', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY', value: null, source: 'provider' },
-    ]);
+    expect(output.env.map(row => row.name)).toEqual([...new Set(output.env.map(row => row.name))]);
     expect(applyOverlay(ambient, output.env)).toEqual({
       ANTHROPIC_BASE_URL: 'https://gateway.example.test/anthropic',
       UNRELATED_SESSION_VALUE: 'preserved',
@@ -410,10 +392,10 @@ describe('Claude provider-binding adapter V1', () => {
     expect(AgentProviderBindingMaterializationV1Schema.parse(output)).toEqual(output);
 
     expect(output.env.find((row) => row.name === envKey)?.value).toBe('selected-secret');
-    expect(output.env.filter((row) => row.value !== null).map((row) => row.name)).toEqual([
+    expect(output.env.filter((row) => row.value !== null).map((row) => row.name).sort()).toEqual([
       'ANTHROPIC_BASE_URL',
       envKey,
-    ]);
+    ].sort());
   });
 
   it('rejects unsupported protocols, transports, and mismatched preparation', async () => {

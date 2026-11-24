@@ -303,6 +303,20 @@ describe('activate', () => {
       OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' });
     expect(JSON.stringify(events)).not.toContain('host-access-only');
   });
+  it('refuses a selected Claude native home without its token rather than using the Machine login', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      launchEnvironment: { values: { CLAUDE_CONFIG_DIR: '/selected/claude', AI_GATEWAY_API_KEY: 'unrelated-gateway' }, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_provider_transport_unsupported' } });
+    expect(fixture.run).not.toHaveBeenCalled();
+    expect(fixture.checkReadiness).not.toHaveBeenCalled();
+  });
   it.each([
     { route: 'Machine login', audit: false },
     { route: 'Machine login', audit: true },

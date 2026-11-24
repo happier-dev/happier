@@ -26,7 +26,9 @@ export const ROBOREV_PLUGIN = definePlugin({
     connectedAccounts: [], sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
       skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' },
-      executionRuns: { open: ['create'], checkpoint: false, stop: true },
+      // Native v0.75.0 reviews use a read-only Codex sandbox or Claude read
+      // tools; the per-run data directory owns the global unsafe settings.
+      executionRuns: { open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' },
     }),
   }, factory: createRoborevRuntime } },
   executionRunProfiles: { review: createRoborevReviewExecutionProfile() },

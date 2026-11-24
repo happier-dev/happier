@@ -22,6 +22,8 @@ import { materializeGithubCredential } from '../../../../../../packages/plugins/
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { CODEX_PLUGIN } from '../../../../../../packages/plugins/codex/src/manifest';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
@@ -42,6 +44,30 @@ const purpose = Object.freeze({ consumer, purpose: 'launch' });
 const account = Object.freeze({ service, accountId: 'account-1' });
 
 describe('materializeQualifiedConnectedAccountLaunchUses', () => {
+  it('isolates a selected Codex subscription from ambient API keys while preserving explicit Machine login', async () => {
+    const activation = await createPluginTestkit({ manifest: CODEX_PLUGIN.manifest, module: { activate: CODEX_PLUGIN.activate } });
+    try {
+      const identity = { pluginId: CODEX_PLUGIN.manifest.id, localId: 'codex' };
+      const agent = activation.registration('agents', 'codex')!;
+      const contributions = { agentDefinitionsById: new Map([['codex', {
+        identity, richDefinition: { definition: PluginAgentContributionV2Schema.parse(CODEX_PLUGIN.manifest.contributes.agents?.[0]) },
+        catalogEntry: projectAgentConnectedAccountLaunchCatalogEntry({ pluginId: identity.pluginId, agentId: 'codex', isCurrent: () => true,
+          hostAccess: CODEX_PLUGIN.manifest.hostAccess, connectedAccountLaunch: agent.connectedAccountLaunch! }),
+      }]]) };
+      const inherited = { OPENAI_API_KEY: 'machine-openai', CODEX_API_KEY: 'machine-codex', PATH: '/bin' };
+      for (const source of ['connected', 'native'] as const) {
+        const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId: 'codex', contributions,
+          bindings: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': source === 'connected'
+            ? { source, selection: 'profile', profileId: 'selected-subscription' } : { source } } } });
+        if (!snapshot) throw new Error('Codex launch declaration unavailable');
+        const prepared = await materializeQualifiedConnectedAccountLaunchUses({ snapshot,
+          connectedAccountsOwner: { getBinding: async () => null, materialize: async () => { throw new Error('Native home has already been materialized'); } },
+          signal: new AbortController().signal });
+        const child = { ...stripUnsetEnvironmentVariables(inherited, prepared.unsetEnvKeys), ...prepared.env, CODEX_HOME: '/selected/home' };
+        expect(child).toEqual(source === 'connected' ? { PATH: '/bin', CODEX_HOME: '/selected/home' } : { ...inherited, CODEX_HOME: '/selected/home' });
+      }
+    } finally { await activation.dispose(); }
+  });
   it('retains the authentication cause when an OAuth account cannot produce the required API key', async () => {
     const runtime = createXaiPortableConnectedAccountRuntime();
     const signal = new AbortController().signal;

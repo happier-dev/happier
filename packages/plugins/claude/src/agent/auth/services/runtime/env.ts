@@ -18,6 +18,41 @@ export const CLAUDE_AUTH_ENV_KEYS = [
 
 export type ClaudeAuthEnvKey = typeof CLAUDE_AUTH_ENV_KEYS[number];
 
+// Native Claude routing can select another upstream even when a token is set.
+export const CLAUDE_AUTH_ROUTING_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'CLAUDE_CODE_USE_VERTEX',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_VERTEX_REGION',
+  'ANTHROPIC_VERTEX_BASE_URL',
+  'CLOUD_ML_REGION',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'GOOGLE_CLOUD_PROJECT',
+  'GCLOUD_PROJECT',
+  'CLOUDSDK_CORE_PROJECT',
+  'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'AWS_REGION',
+  'AWS_DEFAULT_REGION',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AWS_CONFIG_FILE',
+  'AWS_ROLE_ARN',
+  'AWS_WEB_IDENTITY_TOKEN_FILE',
+  'AWS_PROFILE',
+] as const;
+
+export const CLAUDE_AUTH_ISOLATION_ENV_KEYS = [
+  ...CLAUDE_AUTH_ENV_KEYS,
+  ...CLAUDE_AUTH_ROUTING_ENV_KEYS,
+] as const;
+
 export type ClaudeSubscriptionRuntimeAuthSelection =
   | Readonly<{
       kind: 'profile';
@@ -186,7 +221,7 @@ function stripConnectedServiceRuntimeMetadata(env: Record<string, string | undef
 
 function resolveAllowedConnectedAuthEnvKeys(
   env: Readonly<Record<string, string | undefined>>,
-): Set<ClaudeAuthEnvKey> | null {
+): ReadonlySet<string> | null {
   const serviceId = readClaudeConnectedServiceRuntimeServiceFromEnv(env);
   if (!serviceId) return null;
 
@@ -222,7 +257,7 @@ export function resolveClaudeRuntimeAuthEnvDiagnostic(
 export function isolateClaudeRuntimeAuthEnv<T extends Record<string, string | undefined>>(env: T): T {
   const allowedConnectedAuthKeys = resolveAllowedConnectedAuthEnvKeys(env);
   if (allowedConnectedAuthKeys) {
-    for (const key of CLAUDE_AUTH_ENV_KEYS) {
+    for (const key of CLAUDE_AUTH_ISOLATION_ENV_KEYS) {
       if (!allowedConnectedAuthKeys.has(key)) {
         delete env[key];
       }

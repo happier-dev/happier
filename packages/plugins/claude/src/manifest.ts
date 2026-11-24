@@ -10,7 +10,10 @@ import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import {
+  CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1,
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './connectedAccounts/claudeSubscriptionProfile.js';
 import { claudeSubscriptionAccountAuthentication } from './connectedAccounts/account.js';
@@ -21,6 +24,7 @@ import {
   createClaudeConnectedServiceRuntimeAuthAdapter,
 } from './agent/auth/services/runtime/failure.js';
 import { verifyResumeReachableClaude } from './agent/auth/services/runtime/verifyResumeReachable.js';
+import { CLAUDE_AUTH_ISOLATION_ENV_KEYS } from './agent/auth/services/runtime/env.js';
 import { AGENT_DEFINITION, AGENT_STATE_SHARING_DESCRIPTOR } from './agent/definition.js';
 import {
   claudeCliSessionCommandConfig,
@@ -561,10 +565,15 @@ export const CLAUDE_PLUGIN = definePlugin({
             headerNames: ['authorization'],
           },
         }],
-        environmentUses: [...CLAUDE_KIMI_ENVIRONMENT_USES, {
-          purpose: 'model_upstream_api_key',
-          environmentKey: ANTHROPIC_API_KEY_ENV,
-        }],
+        environmentUses: [
+          ...CLAUDE_KIMI_ENVIRONMENT_USES,
+          ...CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1.keys.map(environmentKey => ({
+            purpose: 'model_upstream', environmentKey,
+          })),
+          { purpose: 'model_upstream_api_key', environmentKey: ANTHROPIC_API_KEY_ENV },
+        ],
+        environmentUnsetUses: ['model_upstream', 'model_upstream_api_key'].flatMap(purpose =>
+          CLAUDE_AUTH_ISOLATION_ENV_KEYS.map(environmentKey => ({ purpose, environmentKey }))),
         stateSharingDescriptor: AGENT_STATE_SHARING_DESCRIPTOR,
         continuity: {
           generationApplicationScope: 'shared_group_auth_surface',

@@ -792,6 +792,10 @@ describe('Claude runtime auth service classification', () => {
       CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth-token',
       CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'ambient-refresh-token',
       CLAUDE_CODE_OAUTH_SCOPES: 'user:inference',
+      CLAUDE_CODE_USE_VERTEX: '1',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      GOOGLE_APPLICATION_CREDENTIALS: '/machine/vertex-credentials.json',
+      AWS_ACCESS_KEY_ID: 'machine-aws-key',
       CUSTOM_RUNTIME_ENV: 'keep',
     };
 
@@ -802,6 +806,13 @@ describe('Claude runtime auth service classification', () => {
       CLAUDE_CONFIG_DIR: '/tmp/happier-claude-materialized',
       CUSTOM_RUNTIME_ENV: 'keep',
     });
+  });
+
+  it('preserves explicitly selected Machine cloud authentication when no Connected Account is bound', async () => {
+    const isolateClaudeRuntimeAuthEnv = readRuntimeAuthEnvIsolator(await import('./index.js'));
+    const env = { CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_USE_BEDROCK: '1',
+      GOOGLE_APPLICATION_CREDENTIALS: '/machine/vertex-credentials.json', AWS_ACCESS_KEY_ID: 'machine-aws-key' };
+    expect(isolateClaudeRuntimeAuthEnv({ ...env })).toEqual(env);
   });
 
   it('preserves only Claude subscription OAuth when no materialized key list is available', async () => {

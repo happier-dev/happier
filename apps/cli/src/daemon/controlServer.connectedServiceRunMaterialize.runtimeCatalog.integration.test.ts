@@ -277,7 +277,7 @@ describe('createDaemonControlApp connected-service run materialization bridge', 
         }
     });
 
-    it('materializes via the injected daemon handler and returns the run env', async () => {
+    it.each([{ unsetEnvKeys: undefined }, { unsetEnvKeys: ['OPENAI_API_KEY', 'CODEX_API_KEY'] }])('returns the materialized run environment and optional unsets ($unsetEnvKeys)', async ({ unsetEnvKeys }) => {
         const registration = {
             v: 1 as const,
             activationId,
@@ -293,6 +293,7 @@ describe('createDaemonControlApp connected-service run materialization bridge', 
             ok: true as const,
             activationId,
             env: { CODEX_HOME: '/stack/daemon/connected-services/materialized/run_1/codex-home' },
+            ...(unsetEnvKeys ? { unsetEnvKeys } : {}),
             connectedServicesBindings: EMITTED_RUN_BINDINGS,
             registration,
         }));
@@ -316,6 +317,7 @@ describe('createDaemonControlApp connected-service run materialization bridge', 
                 result: {
                     activationId,
                     env: { CODEX_HOME: '/stack/daemon/connected-services/materialized/run_1/codex-home' },
+                    ...(unsetEnvKeys ? { unsetEnvKeys } : {}),
                     connectedServicesBindings: EMITTED_RUN_BINDINGS,
                     registration,
                 },

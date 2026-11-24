@@ -390,6 +390,8 @@ export const CODEX_PLUGIN = definePlugin({
       factory: createCodexAgentRuntime,
       connectedAccountLaunch: {
         environmentUses: CODEX_KEY_ENVIRONMENT_USES,
+        environmentUnsetUses: ['primary', ...CODEX_KEY_DECLARATIONS.map(row => row.purpose)].flatMap(purpose =>
+          CODEX_PROVIDER_OWNED_ENV_KEYS.map(environmentKey => ({ purpose, environmentKey }))),
         switchContinuity: {
           continuityMode: 'hot_apply',
           supportedTransitions: [

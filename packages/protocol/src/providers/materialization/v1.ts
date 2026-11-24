@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
-import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
+import { AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1, AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 import { ProviderAdapterBindingKeyV1Schema } from '../sessions/adapterBindingKeyV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '../ids.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
@@ -68,7 +68,10 @@ export type AgentProviderBindingPreparedV1 = z.infer<typeof AgentProviderBinding
 export type AgentProviderBindingResolvedFactsV1 = z.infer<typeof AgentProviderBindingResolvedFactsV1Schema>;
 
 export const PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1 = Object.freeze({
-  env: Object.freeze({ maxRows: 32, maxNameBytes: 128, maxValueBytes: 32 * 1024, maxAggregateBytes: 256 * 1024 }),
+  env: Object.freeze({
+    maxRows: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys + AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys,
+    maxNameBytes: 128, maxValueBytes: 32 * 1024, maxAggregateBytes: 256 * 1024,
+  }),
   config: Object.freeze({ maxDepth: 24, maxNodes: 8_192, maxKeyBytes: 256, maxStringBytes: 256 * 1024, maxAggregateBytes: 1024 * 1024 }),
   files: Object.freeze({ maxFiles: 16, maxPathBytes: 512, maxContentBytes: 1024 * 1024, maxAggregateBytes: 4 * 1024 * 1024 }),
   redaction: Object.freeze({ maxValues: 32, maxValueBytes: 16 * 1024, maxAggregateBytes: 128 * 1024 }),

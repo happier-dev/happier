@@ -737,7 +737,11 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
         }
         const inherited = modelSelection ?? (inputSelection && 'ref' in inputSelection
             ? inputSelection : explicitTeam ?? baseline.configuration?.modelSelection);
-        const selected = readRoleEngineSessionModelSelectionV1(stamped.engine, inherited)!;
+        const modelEngine = kind === 'execution_run' && input.runnerAgentTarget !== undefined
+            ? { ...stamped.engine,
+                agentTargetKey: buildBackendTargetKeyV2(AgentExecutionTargetV1Schema.parse(input.runnerAgentTarget)) }
+            : stamped.engine;
+        const selected = readRoleEngineSessionModelSelectionV1(modelEngine, inherited)!;
         if (kind === 'spawn_new')
             result.modelSelection = selected;
         else {

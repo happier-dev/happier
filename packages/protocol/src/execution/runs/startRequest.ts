@@ -512,6 +512,7 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
 type ExecutionRunStartRequestRefinementValue = Pick<
   z.output<typeof ExecutionRunStartRequestBaseSchema>,
   | 'backendTarget'
+  | 'runnerAgentTarget'
   | 'intent'
   | 'intentInput'
   | 'localInputId'
@@ -538,6 +539,7 @@ export function refineExecutionRunStartRequest(
   value: ExecutionRunStartRequestRefinementValue,
   ctx: z.core.$RefinementCtx,
 ): void {
+  const modelTargetKey = buildBackendTargetKeyV2(value.runnerAgentTarget ?? value.backendTarget);
   if (value.resultContract && !value.localInputId) {
     ctx.addIssue({
       code: "custom",
@@ -548,22 +550,22 @@ export function refineExecutionRunStartRequest(
   if (
     value.modelSelection
     && value.modelSelection.agentTargetKey
-      !== buildBackendTargetKeyV2(value.backendTarget)
+      !== modelTargetKey
   ) {
     ctx.addIssue({
       code: "custom",
-      message: 'modelSelection must target the execution-run backend',
+      message: 'modelSelection must target the execution-run model Agent',
       path: ['modelSelection', 'agentTargetKey'],
     });
   }
   if (
     value.teamCredentialModel
     && value.teamCredentialModel.agentTargetKey
-      !== buildBackendTargetKeyV2(value.backendTarget)
+      !== modelTargetKey
   ) {
     ctx.addIssue({
       code: "custom",
-      message: 'teamCredentialModel must target the execution-run backend',
+      message: 'teamCredentialModel must target the execution-run model Agent',
       path: ['teamCredentialModel', 'agentTargetKey'],
     });
   }

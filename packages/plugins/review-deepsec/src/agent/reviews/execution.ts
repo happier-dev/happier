@@ -380,6 +380,12 @@ function prepareDeepSecModelAccess(
   if (oauthToken && agentCli !== 'codex') return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues,
     CLAUDE_CODE_OAUTH_TOKEN: oauthToken, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }),
     agentCli: 'claude', claudeSubscription: true };
+  // DeepSec's nested Claude SDK does not forward the admitted native home.
+  // Without its access token it would silently use the Machine's default login.
+  if (agentCli !== 'codex' && nativeValues.CLAUDE_CONFIG_DIR?.trim()) throw new PluginError({
+    code: 'deepsec_provider_transport_unsupported',
+    message: 'DeepSec cannot preserve the selected Claude native home without its access token. Choose another model access route.',
+  });
   const gatewayKey = Object.entries(values).find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY')?.[1];
   if (gatewayKey?.trim()) return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues, AI_GATEWAY_API_KEY: gatewayKey }),
     agentCli: agentCli ?? null, claudeSubscription: false, gateway: true };

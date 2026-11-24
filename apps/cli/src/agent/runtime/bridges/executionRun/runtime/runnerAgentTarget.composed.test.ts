@@ -10,7 +10,11 @@ import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { areExecutionRunBackendTargetsEqual } from '../backendTargets';
 
-it('opens the engine with the selected runner Provider materialized once by the retained host', async () => {
+it.each([
+    { workspaceWrites: undefined, runnerDeniesWrites: false, engineDeniesWrites: false, admitted: true },
+    { workspaceWrites: 'deny', runnerDeniesWrites: true, engineDeniesWrites: false, admitted: false },
+    { workspaceWrites: 'deny', runnerDeniesWrites: false, engineDeniesWrites: true, admitted: true },
+] as const)('uses engine enforcement with a selected runner ($workspaceWrites, engine=$engineDeniesWrites, runner=$runnerDeniesWrites)', async ({ workspaceWrites, runnerDeniesWrites, engineDeniesWrites, admitted }) => {
     let requests = 0;
     const endpoint = createServer((request, response) => {
         if (request.headers.authorization !== 'Bearer runner-fixture-token') { response.writeHead(401).end(); return; }
@@ -21,6 +25,8 @@ it('opens the engine with the selected runner Provider materialized once by the 
     const address = endpoint.address();
     if (!address || typeof address === 'string') throw new Error('Expected endpoint address');
     const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, reviewEngine: true,
+        ...(runnerDeniesWrites ? { workspaceWrites: 'deny' } : {}),
+        ...(engineDeniesWrites ? { engineWorkspaceWrites: 'deny' } : {}),
         agentIsolation: {
             requesterIdentity: selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: 'fixture-home',
                 hostAccountAgent: { accountId: 'fixture-account', custodianAccountId: 'fixture-account',
@@ -64,13 +70,15 @@ it('opens the engine with the selected runner Provider materialized once by the 
             runnerAgentTarget,
             modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'example' },
             accountSettings: fixture.snapshot.settings, instructions: 'Review with selected runner.', permissionMode: 'read_only',
+            ...(workspaceWrites ? { workspaceWrites } : {}),
             retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', connectedServices: null,
         });
         await manager.waitForTerminal(started.runId);
         const completed = manager.getPublic(started.runId);
-        expect(completed?.status, JSON.stringify(completed?.error)).toBe('succeeded');
+        expect(completed?.status, JSON.stringify(completed?.error)).toBe(admitted ? 'succeeded' : 'failed');
+        if (!admitted) expect(completed?.error).toMatchObject({ code: 'role_policy_unenforceable' });
         expect(areExecutionRunBackendTargetsEqual(completed!.backendTarget, backendTarget)).toBe(true);
-        expect(requests).toBe(1);
+        expect(requests).toBe(admitted ? 1 : 0);
         expect(acquisitions).toBe(1);
         await manager.dispose();
         await resources.retire();

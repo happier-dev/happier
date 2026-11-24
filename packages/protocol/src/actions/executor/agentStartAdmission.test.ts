@@ -358,6 +358,45 @@ describe('canonical Action agent-start adapter', () => {
     expect(changed).toMatchObject({ modelSelection: { providerConnectionId: null, modelId: 'different-native-model' } });
   });
 
+  it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
+    'projects a background Role model onto its selected runner with its %s source', source => {
+      const backendTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.review.deepsec', localId: 'deepsec' } };
+      const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+      const agentTargetKey = 'agent:happier.agent.codex/codex';
+      const modelId = 'gpt-5.6-luna';
+      const context: AgentStartContextV1 = {
+        caller: { kind: 'host' }, initiator: 'user',
+        baseline: { machineId: 'machine', directory: '/repo' }, roles: {},
+        ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'yolo',
+      };
+      const modelSource = source === 'team_resource' ? { teamCredentialModel: {
+        kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'model-resource',
+        expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey, modelId,
+      } } : { modelSelection: { agentTargetKey, modelId,
+        providerConnectionId: source === 'native' ? null : 'connection' } };
+      const projected = stampAgentStartSelectionV1({ backendTarget, runnerAgentTarget,
+        roleId: 'deepsec-review', intent: 'review', permissionMode: 'read_only', ...modelSource,
+        instructions: 'Review the fixture.', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+      }, { workDepth: 0, roleId: 'deepsec-review',
+        engine: { agentTargetKey: 'agent:happier.review.deepsec/deepsec', modelId },
+      }, 'execution_run', context);
+
+      expect(projected).toMatchObject({ backendTarget, runnerAgentTarget, modelId, ...modelSource });
+      const startRequest = ExecutionRunStartRequestSchema.safeParse(projected);
+      expect(startRequest.success, JSON.stringify(startRequest.error?.issues)).toBe(true);
+      const wrongTarget = source === 'team_resource'
+        ? { teamCredentialModel: { ...modelSource.teamCredentialModel, agentTargetKey: 'agent:happier.review.deepsec/deepsec' } }
+        : { modelSelection: { ...modelSource.modelSelection, agentTargetKey: 'agent:happier.review.deepsec/deepsec' } };
+      expect(ExecutionRunStartRequestSchema.safeParse({ ...projected, ...wrongTarget }).success).toBe(false);
+      const resolved = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start',
+        input: projected, context: {}, baseline: context.baseline });
+      expect(resolved).toMatchObject({ ok: true, requests: [{ facts: {
+        agentTarget: backendTarget, modelSelection: source === 'team_resource'
+          ? { agentTargetKey, modelId } : { ref: { agentTargetKey, modelId } },
+      } }] });
+    },
+  );
+
   it('keeps current-Session start authority narrower than a readable led Session', async () => {
     const agentStartContext: AgentStartContextV1 = {
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },

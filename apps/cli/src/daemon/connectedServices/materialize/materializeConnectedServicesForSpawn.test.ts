@@ -1,4 +1,5 @@
 import { findCatalogEntry } from '@/agent/catalog/registry';
+import { CLAUDE_AUTH_ISOLATION_ENV_KEYS } from '@happier-dev/plugins-claude/agent/auth/services/runtime';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -216,7 +217,9 @@ it('materializes native configuration from the supplied environment home', async
     const scope = declaration.fileMaterializationPurposes[0]!;
     const fixture = createForegroundPurposeOwnerFixture({
       consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
-      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+      materializeAccount: async ({ request }) => request.kind === 'environment'
+        ? { kind: 'environment', env: { ANTHROPIC_OAUTH_TOKEN: 'selected' } }
+        : { kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } },
     });
     bindingLease = fixture.owner.activateSessionPurposeBindings({
       sessionId: 'environment-home', purposes: declaration.purposes, bindings: [fixture.binding],
@@ -258,7 +261,9 @@ it.each(['copied', 'isolated'] as const)('reapplies Agent Account settings after
     const scope = declaration.fileMaterializationPurposes[0]!;
     const fixture = createForegroundPurposeOwnerFixture({
       consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
-      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+      materializeAccount: async ({ request }) => request.kind === 'environment'
+        ? { kind: 'environment', env: { ANTHROPIC_OAUTH_TOKEN: 'selected' } }
+        : { kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } },
     });
     bindingLease = fixture.owner.activateSessionPurposeBindings({
       sessionId: 'retention-profile', purposes: declaration.purposes, bindings: [fixture.binding],
@@ -423,7 +428,9 @@ it('reapplies the latest Account preference after a delayed materialization comp
     const scope = declaration.fileMaterializationPurposes[0]!;
     const fixture = createForegroundPurposeOwnerFixture({
       consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
-      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+      materializeAccount: async ({ request }) => request.kind === 'environment'
+        ? { kind: 'environment', env: { ANTHROPIC_OAUTH_TOKEN: 'selected' } }
+        : { kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } },
     });
     bindingLease = fixture.owner.activateSessionPurposeBindings({
       sessionId: 'completion-profile', purposes: declaration.purposes, bindings: [fixture.binding],
@@ -657,6 +664,56 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
+  it('projects the selected Claude access token and clears competing Machine credentials for engine runners', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-runner-auth-'));
+    let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+    let bindingLease: { dispose(): void } | undefined;
+    try {
+      const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+        agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+      })!;
+      const scope = declaration.fileMaterializationPurposes[0]!;
+      const record = buildConnectedServiceCredentialRecord({ now: 10,
+        serviceId: 'claude-subscription', profileId: 'selected-account', kind: 'oauth', expiresAt: null,
+        oauth: { accessToken: 'selected-access', refreshToken: 'selected-refresh', idToken: null,
+          scope: 'user:inference user:profile user:sessions:claude_code', tokenType: null,
+          providerAccountId: 'selected-account', providerEmail: null },
+      });
+      const fixture = createForegroundPurposeOwnerFixture({
+        consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+        materializeAccount: async input => await materializeExactV021ConnectedServiceCredential({
+          registry: runtimeFixture!.registry, serviceId: record.serviceId, account: input.account,
+          record, request: input.request, signal: input.signal,
+        }),
+      });
+      bindingLease = fixture.owner.activateSessionPurposeBindings({
+        sessionId: 'claude-runner-auth', purposes: declaration.purposes, bindings: [fixture.binding],
+      });
+      result = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'claude', materializationKey: 'claude-runner-auth', purposeBindingSessionId: 'claude-runner-auth',
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+        connectedAccountsOwner: fixture.owner,
+        connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [] },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+        processEnv: Object.fromEntries(CLAUDE_AUTH_ISOLATION_ENV_KEYS.map(key => [key, 'machine-account-secret'])),
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      });
+      expect(result?.env.CLAUDE_CONFIG_DIR).toBeTruthy();
+      expect.soft(result?.env.ANTHROPIC_OAUTH_TOKEN).toBe('selected-access');
+      expect.soft(result?.unsetEnvKeys).toEqual(expect.arrayContaining(CLAUDE_AUTH_ISOLATION_ENV_KEYS.filter(key => key !== 'ANTHROPIC_OAUTH_TOKEN')));
+      expect(result?.unsetEnvKeys ?? []).not.toContain('ANTHROPIC_OAUTH_TOKEN');
+      expect(result?.sessionConnectedAccounts).toContainEqual(expect.objectContaining({ purpose: 'model_upstream',
+        account: fixture.binding.target.kind === 'account' ? fixture.binding.target.account : undefined }));
+      expect(JSON.stringify(result?.env)).not.toContain('machine-account-secret');
+      expect(JSON.stringify(result?.env)).not.toContain('selected-refresh');
+    } finally {
+      bindingLease?.dispose();
+      await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it.each(['shared', 'isolated'] as const)('retains loadable FX native directories through %s home rematerialization', async stateMode => {
     // nl1 FX 0.0.16 refuses ACP load with DurablePathUnsafe when session-files
     // is linked, even with a valid v2 journal, lock and referenced blobs.
@@ -2789,7 +2846,10 @@ describe('materializeConnectedServicesForSpawn', () => {
       registerSecretValues: async (values) => {
         registrations.push({ values, alreadyWritten: await containsToken(registeredBaseDir) || await containsToken(registeredServerDir) });
       } });
-    expect(registrations).toEqual([{ values: expect.arrayContaining(['sk-ant-oat01-123']), alreadyWritten: false }]);
+    expect(registrations.length).toBeGreaterThan(0);
+    for (const registration of registrations) {
+      expect(registration).toEqual({ values: expect.arrayContaining(['sk-ant-oat01-123']), alreadyWritten: false });
+    }
     registeredResult?.cleanupOnExit?.();
     const result = await materializeConnectedServicesForSpawn(params);
     expect(result).not.toBeNull();
