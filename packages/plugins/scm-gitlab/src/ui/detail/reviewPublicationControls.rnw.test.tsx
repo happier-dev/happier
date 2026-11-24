@@ -9,8 +9,15 @@ import {
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
-import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
+import {
+  TriageEvidenceDisclosureProvider,
+  TriagePostMutationCompletionProvider,
+  triageSourcePanelIntentKeyV1,
+  type TriageSourcePanelActionsV1,
+  type TriageSourcePanelCommandV1,
+  type TriageSourcePanelHandlerV1,
+} from '@happier-dev/triage-sources/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -149,6 +156,7 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
   proposals: GitlabReviewProposalReadV1;
   withWalkthrough?: boolean;
   pages?: readonly (readonly GitlabStringReviewProposalV1[])[];
+  panelActions?: TriageSourcePanelActionsV1;
 }>): Promise<MountedFixture> {
   const { reviewRevision: _reviewRevision, ...issueSnapshot } = INPUT.observation.snapshot;
   const issueInput = kind === 'issue-comment'
@@ -173,15 +181,23 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
       identity: { instanceId: 'fixture-instance-196', mountNonce: 'fixture-mount-196' },
       authorPlugin: { id: GITLAB_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface(() => (
+        <TriageEvidenceDisclosureProvider disclosure={{ available: false, disclose: async () => ({ kind: 'inert' }),
+          ...(options?.panelActions ? { panelActions: options.panelActions } : {}) }}>
         <TriagePostMutationCompletionProvider onComplete={async () => { completed += 1; }}>
           {kind === 'merge-request'
-            ? options?.pages
-              ? <PagedProposalControls input={options.input} pages={options.pages} />
-              : <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />
+            // The Publish sheet lives in the merge request's Reviews panel; its draft commands bind while that panel is active.
+            ? <Tabs value="reviews" onValueChange={() => {}} ariaLabel="Merge request">
+              <Tabs.Item value="reviews" title="Reviews">
+                {options?.pages
+                  ? <PagedProposalControls input={options.input} pages={options.pages} />
+                  : <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />}
+              </Tabs.Item>
+            </Tabs>
             : kind === 'thread-reply'
               ? <GitlabThreadReplyPublicationControl input={INPUT} discussionId="discussion-7" proposals={PROPOSALS} />
               : <GitlabIssueCommentPublicationControl input={issueInput} proposals={PROPOSALS} />}
         </TriagePostMutationCompletionProvider>
+        </TriageEvidenceDisclosureProvider>
       )),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
@@ -246,7 +262,10 @@ async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<M
             rows: [{ rowId: PROPOSAL.id,
               finding: { id: 'engine-finding', title: 'Use the shared persisted finding', severity: 'high',
                 category: 'correctness', summary: 'This finding also opens in Reviews.' },
-              comment: { ...PROPOSAL, body: 'Persisted current body after a decision.', reviewId: 'embedded-review', state: 'open', reviewTriageStatus: 'reject',
+              // A finding's revised body (bodyVersion 2 of a finding comment) is what the opened finding shows.
+              comment: { ...PROPOSAL, finding: { id: 'engine-finding', title: 'Use the shared persisted finding', severity: 'high',
+                category: 'correctness', summary: 'This finding also opens in Reviews.' }, bodyVersion: 2,
+                body: 'Persisted current body after a decision.', reviewId: 'embedded-review', state: 'open', reviewTriageStatus: 'reject',
                 author: { kind: 'plugin', pluginId: 'review-engine' }, transitions: [], edits: [] } }],
           };
           return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(value)), digest: `sha256:${'1'.repeat(64)}` };
@@ -551,6 +570,46 @@ describe('mounted GitLab Review publication controls', () => {
       expect(detail.controls.presentation('Publish 0 comments')?.disabled).toBe(true);
       expect(recorded).toHaveLength(0);
     });
+  });
+
+  it('lets the mounted commands edit the open draft the person sees, and the checklist change the same draft', async () => {
+    // The Triage detail host's panel registry, as the mounted Action reaches it: bindings by intent, commands listed.
+    const bound = new Map<string, { invoke: TriageSourcePanelHandlerV1; commands: readonly TriageSourcePanelCommandV1[] }>();
+    const panelActions: TriageSourcePanelActionsV1 = {
+      bind(key, invoke, commands) { bound.set(key, { invoke, commands }); return () => { bound.delete(key); }; },
+      execute: async (operation, signal) => await bound.get(triageSourcePanelIntentKeyV1(operation))?.invoke(operation, signal ?? new AbortController().signal)
+        ?? { status: 'unavailable' },
+    };
+    const commands = () => [...bound.values()].flatMap((binding) => binding.commands);
+    const THREE_WITH_WALKTHROUGH: GitlabReviewProposalReadV1 = { status: 'ready', proposals: [
+      { ...PROPOSAL, finding: { id: 'finding-1', severity: 'blocker', category: 'correctness', title: 'Timer survives a manual reconnect', summary: 'x.' } } as typeof PROPOSAL,
+      { ...PROPOSAL, id: 'review-comment-nit', threadId: 'review-comment-nit',
+        finding: { id: 'finding-nit', severity: 'nit', category: 'style', title: 'README example uses the old option name', summary: 'y.' } } as typeof PROPOSAL,
+    ] };
+    const detail = await mountControl('merge-request', {
+      input: { ...INPUT, admittedReview: { reviewId: 'selected-review', roundOrdinal: 1 } },
+      withWalkthrough: true,
+      proposals: THREE_WITH_WALKTHROUGH,
+      panelActions,
+    });
+    const finding = (proposalId: string) => commands().find((row) =>
+      row.operation.kind === 'setPublicationFindingIncluded' && row.operation.proposalId === proposalId);
+    expect(finding(PROPOSAL.id)?.operation).toMatchObject({ included: false });
+    expect(finding('review-comment-nit')?.operation).toMatchObject({ included: true });
+    // The command leaves the blocker out of the draft the person sees, and the Publish count follows.
+    await act(async () => { expect(await panelActions.execute(finding(PROPOSAL.id)!.operation)).toEqual({ status: 'applied' }); });
+    await expect(detail.getByRole('checkbox', { name: 'Timer survives a manual reconnect' })).resolves.toMatchObject({ state: { checked: false } });
+    expect(finding(PROPOSAL.id)?.operation).toMatchObject({ included: true });
+    // The person's press changes the same draft the commands read.
+    await act(async () => detail.press(await detail.getByRole('checkbox', { name: 'README example uses the old option name' })));
+    expect(finding('review-comment-nit')?.operation).toMatchObject({ included: false });
+    expect(detail.controls.presentation('Publish 1 comment')).toBeDefined();
+    // The walkthrough switch has its command too, once a verdict carries a summary to fold it under.
+    await act(async () => detail.press(await detail.getByRole('radio', { name: 'Comment' })));
+    const walkthrough = () => commands().find((row) => row.operation.kind === 'setPublicationWalkthroughIncluded');
+    await vi.waitFor(() => expect(walkthrough()?.operation).toMatchObject({ included: false }));
+    await act(async () => { expect(await panelActions.execute(walkthrough()!.operation)).toEqual({ status: 'applied' }); });
+    await expect(detail.getByRole('switch', { name: 'Include the walkthrough' })).resolves.toMatchObject({ state: { checked: false } });
   });
 
   it('reports a declined host confirmation as canceled with no provider completion', async () => {

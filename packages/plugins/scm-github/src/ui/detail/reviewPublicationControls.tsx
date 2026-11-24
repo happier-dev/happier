@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationPublish, Stack, Status,
+  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationFindingTitle, reviewPublicationPublish, Stack, Status,
   useHappierReviewPublicationEvidence, usePluginTranslation, useReviewPublicationSelection, type ReviewCommentProposalReadV1,
 } from '@happier-dev/plugin-ui';
 import {
@@ -8,6 +8,7 @@ import {
   serializeReviewPublicationSummaryForForgeV1, type ReviewCommentPublicationPlanV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import { useTriageReviewPublicationDraftV1 } from '@happier-dev/triage-sources/ui';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
 import {
@@ -188,6 +189,16 @@ export function PullRequestReviewPublicationWrite({
   const [verdictBody, setVerdictBody] = React.useState('');
   const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
   const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
+  const draftFindings = React.useMemo(
+    () => proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
+    [proposals],
+  );
+  const draftWalkthrough = React.useMemo(
+    () => walkthrough?.length ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
+    [includeWalkthrough, walkthrough?.length],
+  );
+  // The checklist and the switch edit the draft through the same change its mounted commands make.
+  const draft = useTriageReviewPublicationDraftV1({ findings: draftFindings, selectedIds, setSelectedIds, walkthrough: draftWalkthrough });
   const selected = React.useMemo(
     () => proposals.filter(proposal => selectedIds.includes(proposal.id)),
     [proposals, selectedIds],
@@ -311,9 +322,9 @@ export function PullRequestReviewPublicationWrite({
       </>}
       proposals={proposals}
       selectedIds={selectedIds}
-      onSelectedIdsChange={setSelectedIds}
+      onSelectedIdsChange={draft.setSelectedIds}
       walkthrough={walkthrough?.length
-        ? { included: includeWalkthrough, onChange: setIncludeWalkthrough, stopCount: walkthrough.length }
+        ? { included: includeWalkthrough, onChange: draft.setWalkthroughIncluded, stopCount: walkthrough.length }
         : null}
       preview={publication?.summary ?? null}
       inlineCommentCount={publication?.plan.entries.length ?? selected.length}

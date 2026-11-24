@@ -1670,7 +1670,8 @@ export {
 export { HappierReviewSummaryHost, type HappierReviewSummaryHostProps, type HappierReviewSummaryHandle, type HappierReviewFindingWindow } from './ReviewSummaryHost.js';
 export { ReviewPublicationSummaryPreview } from './ReviewPublicationSummaryPreview.js';
 export {
-  ReviewPublicationSheet, reviewPublicationPublish, useReviewPublicationSelection, type ReviewPublicationSheetProps,
+  ReviewPublicationSheet, reviewPublicationFindingTitle, reviewPublicationPublish, useReviewPublicationSelection,
+  type ReviewPublicationSheetProps,
 } from './ReviewPublicationSheet.js';
 export {
   buildHappierWorkMap,

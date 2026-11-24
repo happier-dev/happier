@@ -165,6 +165,7 @@ const APPROVED_PRESENTATION_SUPPORT_EXPORTS = [
   'buildShareSheetSelectionStep',
   'formatHappierReviewFindingLocation',
   'orderShareAccessLevels',
+  'reviewPublicationFindingTitle',
   'reviewPublicationPublish',
   'shareSheetStepId',
 ] as const;

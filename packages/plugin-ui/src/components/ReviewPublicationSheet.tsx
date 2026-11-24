@@ -139,7 +139,8 @@ function locationLabel(
   return line ? `${name}:${line}` : name;
 }
 
-function proposalTitle(proposal: ReviewCommentProposalWithBodyV1): string {
+/** A proposed finding's one-line name: its finding's title, or the first line of its comment. */
+export function reviewPublicationFindingTitle(proposal: ReviewCommentProposalWithBodyV1): string {
   return (
     proposal.finding?.title ?? proposal.body.split('\n', 1)[0] ?? proposal.body
   );
@@ -192,14 +193,14 @@ export function ReviewPublicationSheet(
               <Item
                 key={proposal.id}
                 testID={`review-publication-finding-${proposal.id}`}
-                title={proposalTitle(proposal)}
+                title={reviewPublicationFindingTitle(proposal)}
                 subtitle={facts.filter((fact): fact is string => fact !== null).join(' · ')}
                 titleNumberOfLines={1}
                 showDivider={index < props.proposals.length - 1}
                 tone={posted ? undefined : 'secondary'}
                 icon={<Checkbox
                   checked={posted}
-                  accessibilityLabel={proposalTitle(proposal)}
+                  accessibilityLabel={reviewPublicationFindingTitle(proposal)}
                   onChange={(next) => props.onSelectedIdsChange(next
                     ? props.proposals.filter((candidate) => candidate.id === proposal.id || selected.has(candidate.id))
                       .map((candidate) => candidate.id)

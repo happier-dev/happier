@@ -9,6 +9,7 @@ import {
   Form,
   MarkdownEditor,
   ReviewPublicationSheet,
+  reviewPublicationFindingTitle,
   reviewPublicationPublish,
   Row,
   Stack,
@@ -33,6 +34,7 @@ import {
 import {
   completeTriagePostMutationIfNeeded,
   useTriagePostMutationCompletion,
+  useTriageReviewPublicationDraftV1,
 } from '@happier-dev/triage-sources/ui';
 
 import {
@@ -376,6 +378,17 @@ export function GitlabMergeRequestPublicationControls({
     setAcknowledgement(null);
   }, [includeWalkthrough, quality, selectedIds, summary, verdict, walkthrough]);
 
+  const draftFindings = React.useMemo(
+    () => proposals.proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
+    [proposals.proposals],
+  );
+  const walkthroughOffered = verdict !== 'none' && (walkthrough?.length ?? 0) > 0;
+  const draftWalkthrough = React.useMemo(
+    () => walkthroughOffered ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
+    [includeWalkthrough, walkthroughOffered],
+  );
+  // The checklist and the switch edit the draft through the same change its mounted commands make.
+  const draft = useTriageReviewPublicationDraftV1({ findings: draftFindings, selectedIds, setSelectedIds, walkthrough: draftWalkthrough });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const summaryBody = summary.trim();
   const headRevision = input.observation.snapshot.reviewRevision?.headSha;
@@ -490,9 +503,9 @@ export function GitlabMergeRequestPublicationControls({
         </>}
         proposals={proposals.proposals}
         selectedIds={selectedIds}
-        onSelectedIdsChange={setSelectedIds}
-        walkthrough={verdict !== 'none' && walkthrough?.length
-          ? { included: includeWalkthrough, onChange: setIncludeWalkthrough, stopCount: walkthrough.length }
+        onSelectedIdsChange={draft.setSelectedIds}
+        walkthrough={walkthroughOffered && walkthrough
+          ? { included: includeWalkthrough, onChange: draft.setWalkthroughIncluded, stopCount: walkthrough.length }
           : null}
         preview={submitPayload?.publicationPlan.verdict && publication ? publication.summary : null}
         inlineCommentCount={submitPayload?.publicationPlan.entries.length ?? selected.length}

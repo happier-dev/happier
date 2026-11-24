@@ -51,7 +51,7 @@ type IsEqual<Left, Right> = (
 ) ? true : false;
 
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
-  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'titleKind' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader'
+  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'titleKind' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader' | 'detailBackLabel'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
   | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'rowActionsAtRest' | 'useRowItem' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
@@ -182,6 +182,7 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'placeholder'
   | 'defaultValue'
   | 'unit'
+  | 'unsetLabel'
   | 'role'
   | 'widget'
   | 'inputType'

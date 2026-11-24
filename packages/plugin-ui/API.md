@@ -1912,6 +1912,7 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/index.d.ts`
+- value `reviewPublicationFindingTitle` from `dist/index.d.ts`
 - value `reviewPublicationPublish` from `dist/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/index.d.ts`
@@ -3897,6 +3898,7 @@ Declaration: `dist/components/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/components/index.d.ts`
+- value `reviewPublicationFindingTitle` from `dist/components/index.d.ts`
 - value `reviewPublicationPublish` from `dist/components/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/components/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/components/index.d.ts`
