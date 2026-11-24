@@ -86,7 +86,13 @@ describe('WidgetSnapshotConfirmPanel', () => {
             capture={slot.capture} watch={slot.watch} onDone={() => {}} onCancel={() => {}} testID="retry" />);
         const begin = async () => { await act(async () => { screen.findByTestId('retry.refresh')!.props.onPress(); }); };
         await begin();
-        expect(screen.findByTestId('retry.refresh')!.props.disabled).toBe(true);
+        expect(screen.findByTestId('retry.refresh')!.props).toMatchObject({
+            'aria-busy': true,
+            'aria-disabled': true,
+            disabled: false,
+        });
+        await begin();
+        expect(refresh).toHaveBeenCalledTimes(1);
         await act(async () => { fail!(new Error('read failed')); });
         expect(screen.findByTestId('retry.refresh')!.props.disabled).toBe(false);
         expect(screen.findByTestId('retry.primary')!.props.disabled).toBe(true);
