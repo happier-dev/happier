@@ -284,6 +284,12 @@ import { createSessionSubagentCustodyKeyV1 } from '@happier-dev/protocol/session
 import { createDaemonApprovalExecutionOriginCurrentness } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { resolveAvailableAccountSettings } from '../../../../../../cli/src/settings/accountSettings/resolveAvailableAccountSettings';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { registerAccountUsageRoutes } from '@/app/api/routes/account/registerAccountUsageRoutes';
+import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
+import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
@@ -4758,6 +4764,173 @@ describe("external Action execution authorization", () => {
                 expect(response.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'effect_family' });
             }
         } finally { await app.close(); }
+    });
+
+    it('composes signed viewer pricing from Environment labels, collector operands and Account prices', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const serverId = await getOrCreateServerIdentityId();
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const source = await inTx(tx => createProjectSourceInTx(tx, fixture.account.id, {
+            serverId, requestKey: crypto.randomUUID(), name: 'Viewer pricing', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const environments = await Promise.all(['Checkout', 'Preview', 'Development'].map(async title => {
+            const artifact = await createArtifact({ actorUserId: fixture.account.id, artifactId: crypto.randomUUID(),
+                header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title })),
+                body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) })),
+                dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            const result = await inTx(tx => createDeploymentEnvironmentInTx(tx, fixture.account.id, {
+                serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: fixture.machine.id,
+                contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+            }));
+            if (!result.ok) throw new Error(result.error);
+            return { environmentId: result.environmentId, artifactId: artifact.artifact.id };
+        }));
+        const { environmentId } = environments[0];
+        await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { telemetryMachineId: fixture.machine.id } });
+        await db.account.update({ where: { id: fixture.account.id }, data: {
+            settings: JSON.stringify({ t: 'plain', v: { usageModelPriceOverridesV1: { sample: {
+                kind: 'rates', inputUsdPerMillion: 5, outputUsdPerMillion: 0,
+            } } } }), settingsVersion: 1,
+        } });
+
+        const collectorPath = EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 + 'action.invoke';
+        const collectorSource = { kind: 'environment', serverId, environmentId };
+        const collectorAction = parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1);
+        const since = 100;
+        const until = 200;
+        const collectorInput = { action: collectorAction, input: { source: collectorSource, since, until, granularity: 'day' } };
+        const tokens = { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 1_000_000 };
+        const hops: { method: string; path: string; effect: unknown; status: number }[] = [];
+        const { app } = await createApp(fixture.team.id, false, undefined, async request => {
+            // The remote daemon transport returns retained operands. Home admission,
+            // the Action executor, Artifact reads and viewer pricing all run for real.
+            expect(request.actionId).toBe('action.invoke');
+            expect(request.envelope.target).toEqual({ kind: 'machine', machineId: fixture.machine.id });
+            if (request.envelope.v !== 1) throw new Error('A Plain fixture must carry Plain operands');
+            expect(request.envelope.input).toEqual(collectorInput);
+            return { kind: 'response', prepared: prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId: request.actionId, requestId: request.envelope.requestId,
+                execution: { ok: true, result: { ok: true, source: collectorSource, since, until,
+                    items: [{ bucketStartMs: 0, provider: null, modelId: 'sample', requestedModel: null, operation: null,
+                        callCount: 1, tokens, tokenCategories: tokens, reportedCost: { amount: 3, currency: 'USD' },
+                        firstSeenMs: 150, lastSeenMs: 150 }],
+                    coverage: { callCount: 1, tokenCategoryCallCount: 1, reportedCostCallCount: 1, lostObservations: 0, reason: null } } },
+            }) };
+        }, false, routes => {
+            registerDeploymentRoutes(routes);
+            registerAccountUsageRoutes(routes);
+            artifactsRoutes(routes);
+            routes.addHook('onResponse', async (request, reply) => {
+                hops.push({ method: request.method, path: request.url.split('?')[0], effect: request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER],
+                    status: reply.statusCode });
+            });
+        });
+        const network = await createRequesterCurrentnessSocketHarness();
+        let prepared: Awaited<ReturnType<typeof prepareRequesterAccountActionContext>> = null;
+        try {
+            const serverHttpBaseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            const actionId = 'usage.query';
+            const spec = getActionSpec(actionId);
+            const input = spec.inputSchema.parse({ queries: [{
+                sources: ['app_calls:' + environmentId], period: { startMs: since, endMs: until },
+                costBasis: 'api_equivalent', breakdown: ['source'], includeAccounting: true, includeComparison: false, includeQuota: false,
+                includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            }] });
+            const envelope = { ...fixture.envelope, input };
+            const authorization = await mint(app, fixture, actionId, envelope, token);
+            const installation = { installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey };
+            prepared = await prepareRequesterAccountActionContext({
+                authorization, purpose: { kind: 'external_action' }, ownCredentials: credentials,
+                machineId: fixture.machine.id, installationId: installation.installationId, installationPrivateKey: installation.privateKey,
+                serverId, serverIdentityId: serverId, serverHttpBaseUrl,
+                isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization, effectActionId: actionId,
+                    target: authorization.binding.target, ...installation, serverHttpBaseUrl }),
+                createExecutor: custody => {
+                    const params = { token, credentials: custody.credentials, sessionId: '', mode: 'plain' as const, ctx: null,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl,
+                        externalActionMachineRequestPrivateKey: installation.privateKey,
+                        externalActionMachineInstallationId: installation.installationId };
+                    return createActionExecutor({ ...createCliActionDeps(params), ...createAccountServerActionDeps(params) });
+                },
+            }).catch(() => {
+                throw new Error(`Usage requester custody unavailable after ${JSON.stringify(hops)}`);
+            });
+            if (!prepared) throw new Error(`Usage requester custody refused after ${JSON.stringify(hops)}`);
+            const { executor, authorization: requesterAuthorization } = prepared;
+            const result = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executor.execute(actionId, input, {
+                surface: 'cli', authority: 'present_user', serverId, runtimeAccountId: fixture.account.id,
+                actionRequestId: envelope.requestId, originalActionEnvelope: envelope, externalActionTarget: authorization.binding.target,
+                externalActionExecutionAuthorization: requesterAuthorization,
+                executeOrdinaryChildAction: async (child, value, options) => {
+                    expect(child).toBe('action.invoke');
+                    const childEnvelope = { v: 1 as const, requestId: options?.actionRequestId ?? crypto.randomUUID(),
+                        target: options?.externalActionTarget, input: value };
+                    const childAuthorization = await mint(app, fixture, child, childEnvelope, token);
+                    const relay = { v: 1, machineId: fixture.machine.id, envelope: childEnvelope, executionAuthorization: childAuthorization };
+                    const response = await app.inject({ method: 'POST', url: collectorPath, payload: relay,
+                        headers: machineHeaders({ authorizationToken: childAuthorization.token, effectActionId: child,
+                            method: 'POST', path: collectorPath, body: relay, privateKey: installation.privateKey }),
+                    });
+                    expect(response.statusCode).toBe(200);
+                    return ExternalActionResponseEnvelopeV1Schema.parse(response.json()).execution;
+                },
+            }));
+            const headerHops = hops.filter(hop => hop.path === '/v1/artifacts/read');
+            const diagnostic = JSON.stringify({ hops, result: result.ok ? 'ok' : result.errorCode,
+                sources: result.ok ? UsageQueryBatchResultSchema.safeParse(result.result).data?.results[0]?.sources : undefined });
+            expect(headerHops, diagnostic).toEqual(environments.map(() => ({ method: 'POST', path: '/v1/artifacts/read', effect: actionId, status: 200 })));
+            expect(hops, diagnostic).toEqual(expect.arrayContaining([
+                { method: 'GET', path: '/v1/deployments/environments', effect: 'deployments.environments.list', status: 200 },
+                { method: 'GET', path: '/v1/account/encryption/currentness', effect: actionId, status: 200 },
+                { method: 'GET', path: '/v1/account/profile', effect: actionId, status: 200 },
+                { method: 'GET', path: '/v2/account/settings', effect: actionId, status: 200 },
+                { method: 'POST', path: collectorPath, effect: 'action.invoke', status: 200 },
+                { method: 'GET', path: '/v1/account/usage/prices', effect: 'usage.prices.get', status: 200 },
+            ]));
+            if (!result.ok) throw new Error(result.errorCode);
+            const [slice] = UsageQueryBatchResultSchema.parse(result.result).results;
+            expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'available' }));
+            expect(slice.accounting?.totals.eventCount).toBe(1);
+            expect(resolveUsageCostBasis(slice.accounting!.totals.cost, 'api_equivalent')?.amountUsd).toBe(5);
+            expect(slice.accounting?.totals.cost.reportedUsd).toBe(3);
+            expect(slice.accounting?.breakdowns?.source).toContainEqual(expect.objectContaining({ label: 'Checkout' }));
+
+            const unrelated = await mint(app, fixture, 'usage.prices.refresh', {
+                ...fixture.envelope, requestId: crypto.randomUUID(), input: {},
+            }, token);
+            const siblingUsage = await mint(app, fixture, 'usage.export', { ...fixture.envelope, requestId: crypto.randomUUID(),
+                input: { query: { period: { startMs: since, endMs: until } }, format: 'json', fields: ['totals'] },
+            }, token);
+            const environmentListPath = `/v1/deployments/environments?serverId=${encodeURIComponent(serverId)}`;
+            const artifactRead = { artifactIds: [environments[0]!.artifactId] };
+            const artifactPath = '/v1/artifacts/read';
+            for (const purpose of [
+                { root: unrelated, effect: actionId, method: 'GET', path: '/v1/account/encryption/currentness' },
+                { root: unrelated, effect: actionId, method: 'GET', path: '/v2/account/settings' },
+                { root: unrelated, effect: actionId, method: 'GET', path: '/v1/account/profile' },
+                { root: siblingUsage, effect: 'deployments.environments.list', method: 'GET', path: environmentListPath },
+                { root: siblingUsage, effect: actionId, method: 'POST', path: artifactPath, body: { ...artifactRead, projection: 'headers' } },
+                { root: siblingUsage, effect: 'usage.prices.get', method: 'GET', path: '/v1/account/usage/prices' },
+                { root: authorization, effect: 'action.invoke', method: 'POST', path: collectorPath, body: {
+                    v: 1, machineId: fixture.machine.id, envelope: { ...fixture.envelope, input: collectorInput },
+                    executionAuthorization: authorization,
+                } },
+                { root: authorization, effect: actionId, method: 'POST', path: artifactPath, body: artifactRead },
+                { root: authorization, effect: 'usage.prices.get', method: 'GET', path: '/v1/account/usage/prices?accountId=other' },
+            ] as const) {
+                const method = purpose.method;
+                const body = 'body' in purpose ? purpose.body : undefined;
+                const refused = await app.inject({ method, url: purpose.path, payload: body, headers: machineHeaders({
+                    authorizationToken: purpose.root.token, effectActionId: purpose.effect, method,
+                    path: purpose.path, body, privateKey: installation.privateKey,
+                }) });
+                expect(refused.statusCode, `${purpose.root.binding.actionId}: ${method} ${purpose.path}`).toBe(401);
+            }
+        } finally { await prepared?.dispose(); await network.close(); await app.close(); }
     });
 
     it('admits scalar and batch accounting and compact Session evidence only as personal Usage read purposes', async () => {

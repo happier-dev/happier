@@ -229,7 +229,7 @@ import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
-import { isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_PRICE_ACTION_IDS, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { KvMutationRequestSchema } from '@/app/kv/kvMutate';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -1373,7 +1373,9 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
 
 /** Private Usage evidence reads retain their original signed Action root. */
 function isPersonalUsageReadEffect(rootActionId: string, effectActionId: string): boolean {
-    if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) return rootActionId === 'usage.query';
+    if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || effectActionId === USAGE_PRICE_ACTION_IDS.get) {
+        return rootActionId === 'usage.query';
+    }
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
         || isUsagePrivateRecapActionIdV1(rootActionId)
@@ -3887,7 +3889,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     // Environment names live in private headers. Listing opens only that
     // projection; the Artifact owner retains requester per-record access.
-    if (root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && verified.effectActionId === root
+    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || root === 'usage.query') && verified.effectActionId === root
         && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read') {
         const read = ArtifactReadHeadersBatchInputV1Schema.safeParse(proof.body);
         return read.success && sameManagedInput(proof.body, read.data)
@@ -4000,8 +4002,9 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
     }
     if (verified.signedChildPurpose.sibling.personalUsage) {
-        if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1)
+        if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || verified.effectActionId === USAGE_PRICE_ACTION_IDS.get) {
             return isAccountActionHttpOperation(verified.effectActionId, proof);
+        }
         if (verified.effectActionId === 'connectedServices.quota.get') return isQuotaReadHttpPurpose(proof);
         if (proof.method.toUpperCase() === 'POST') {
             const admitted = proof.path === accountUsageRoutePaths.analyticsQuery
@@ -4148,7 +4151,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     }
     // An unrestricted PAT carries the same Account route rights on its signed
     // original effect; the route still checks the concrete resource and bytes.
-    if (!isUsagePriceActionIdV1(root) && !('authentication' in verified.binding) && !isApiTokenGrantRestrictedV1(verified.binding.grant)
+    if (!('authentication' in verified.binding) && !isApiTokenGrantRestrictedV1(verified.binding.grant)
         && verified.effectActionId === root && !proof.reviewedChild) return true;
     // No specialized root claimed this request. Only an admitted operation
     // consumes it here; null leaves unrelated purposes with their own owner.
@@ -4992,6 +4995,10 @@ export async function verifyExternalActionDomainExecutionRequest(
                 || child.data.handoffPreflight && path === bindExternalActionExecutionAuthorizationHttpPathV1('session.handoff'))) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'session.agent.transition' || verified.binding.actionId === 'session.continuation.inspect') {
         if (!await isSessionAgentTransitionHttpPurpose(verified, proof)) return refuse('verification_purpose');
+    } else if (isUsagePriceActionIdV1(verified.binding.actionId)) {
+        // Catalog reads and refreshes spend only their declared transport before generic Account reads.
+        if (verified.effectActionId !== verified.binding.actionId
+            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'quota_read') {
         // Not folded into the read-root rule: the captured quota root keeps only its native quota purposes.
         if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return refuse('verification_purpose');
