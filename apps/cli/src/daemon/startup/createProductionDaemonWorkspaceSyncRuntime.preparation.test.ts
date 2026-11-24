@@ -400,7 +400,7 @@ describe('signed Project clean preparation', () => {
 
   // HANDOFF-SYNC-CHILD-1124: a person with Manage on another Account's SOURCE hands a Session to their own
   // TARGET. Home shows that TARGET row only to Accounts that can see it, so the SOURCE owner's custody reads 404.
-  it.each(['own TARGET', "another Account's TARGET", 'no admitted requester'] as const)(
+  it.each(['own TARGET', 'own TARGET, isolation on', "another Account's TARGET", 'no admitted requester'] as const)(
     'observes the handoff TARGET with the admitted requester custody and the bound SOURCE with its own (%s)', async scenario => {
     const person = 'target-owner';
     const personCredentials = { token: [
@@ -414,6 +414,9 @@ describe('signed Project clean preparation', () => {
     let observing = false;
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
       separateTargetParent: true, targetCredentials: personCredentials,
+      ...(scenario === 'own TARGET, isolation on' ? { agentIsolation: { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+        read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1' as const,
+          status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' }, workspaceRoots: [] }) } } : {}),
       readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? http(url, body) : undefined,
       // Home's Machine row read: the TARGET row exists only for an Account that can see it.
       readAdditionalHttpResponse: async (url, config) => {
@@ -459,11 +462,12 @@ describe('signed Project clean preparation', () => {
       // The person's TARGET is never read with the SOURCE owner's custody.
       expect(machineReads.filter(read => read.machineId === 'target-parent').map(read => read.accountId)).toEqual([person]);
     }
-    if (scenario === 'own TARGET') {
-      // Past the Machine read: whatever settles next is not this read's refusal.
-      const next = { code: refusal && 'code' in refusal ? refusal.code : null, message: refusal instanceof Error ? refusal.message : null };
-      console.info('[handoff-next-settlement]', JSON.stringify(next));
-      expect(next.code, JSON.stringify(next)).not.toBe('workspace_sync_child_unavailable');
+    if (scenario === 'own TARGET' || scenario === 'own TARGET, isolation on') {
+      const code = scenario === 'own TARGET' ? 'workspace_sync_requester_link_unavailable' : 'agent_isolation_unavailable';
+      // Past the Machine read. Until the person's own link owner exists for a handoff (ruling 23:16Z (a)),
+      // the installed owner refuses before any effect, typed and phased, without naming isolation (off here).
+      expect(refusal).toMatchObject({ code, failureCause: { phase: 'workspace_sync.relationship_owner.select', errorCode: code } });
+      expect(rows.some(row => row.key.kind === 'relationship-graph')).toBe(false);
       return;
     }
     expect(refusal).toMatchObject({ code: 'workspace_sync_child_unavailable',

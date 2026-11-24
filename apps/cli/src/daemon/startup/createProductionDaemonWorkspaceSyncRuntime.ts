@@ -169,6 +169,7 @@ import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/exter
 import { readWebLatencyTracePoint, timeWebLatencyPhase, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { createPrivateWorkspaceSyncSourceSeedPreparation, preparePrivateWorkspaceSyncExecution } from './workspaceSyncPrivateExecution';
 import { isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1, type ProjectOpenSyncMaterializationResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 
 export type PrepareManagedProjectFilesSyncInput = Readonly<{
@@ -2047,7 +2048,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     resolveHandoffRelationshipOwner: async (request, context) => {
       const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
       if (!retained) {
-        assertInstalledRelationshipOwner(context);
+        if (context && !canUseInstalledRelationshipOwner(context)) {
+          // Another person's link never goes into this installed Account's rows (ruling 2026-11-24 23:16Z).
+          // Refused before any effect, with its step; isolation is named only when this Machine has it on.
+          const code = resolveMachineAgentExecutionPlacementV1({ policy: input.agentIsolation?.read() ?? { enabled: false },
+            platform: process.platform }) === 'member' ? 'agent_isolation_unavailable' : 'workspace_sync_requester_link_unavailable';
+          throw Object.assign(compositionError(code, 'This Workspace Sync link needs the requester\'s own link owner'), {
+            failureCause: { phase: 'workspace_sync.relationship_owner.select', errorClass: 'Error', errorCode: code, httpStatus: null } });
+        }
         if (!relationshipOwner) throw controllerUnavailable();
         return relationshipOwner;
       }
