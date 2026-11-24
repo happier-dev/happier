@@ -221,11 +221,16 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   }));
 
-  it.each(['linux', 'windows'] as const)('answers Add Project SSH trust before settling the %s platform probe', platform => withPopoverWebGlobals(async () => {
+  it.each([
+    ['answers chooser Trust before settling the Linux probe', 'linux', 'chooser'],
+    ['keeps the Windows fallback after chooser Trust', 'windows', 'chooser'],
+    ['uses the admitted guest after Inbox Accept without waiting for another Trust click or browsing the provisional guest', 'linux', 'inbox'],
+    ['keeps chooser Decline after Inbox Accept from attaching a successfully admitted guest', 'linux', 'decline'],
+  ] as const)('%s', (_description, platform, decision) => withPopoverWebGlobals(async () => {
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
-    const homeId = `srv_add_project_hosts_${platform}`;
-    const serverId = await harness.addHome({ name: 'Project hosts', serverUrl: `https://project-hosts-${platform}.example.test`,
+    const homeId = `srv_add_project_hosts_${platform}_${decision}`;
+    const serverId = await harness.addHome({ name: 'Project hosts', serverUrl: `https://project-hosts-${platform}-${decision}.example.test`,
       serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
     const { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostRecordV1Schema } = await import('@happier-dev/protocol/remoteHosts/remoteHostRecordV1');
     const host = RemoteHostRecordV1Schema.parse({ id: 'host-a', name: 'Build host', createdAt: 1, updatedAt: 1, lastUsedAt: null,
@@ -261,6 +266,7 @@ describe('provisioner picker demand', () => {
     const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
     const { Modal } = await import('@/modal');
     const accepted = { managedId: 'attached-host', operation: { operationId: 'attach-operation' } };
+    const admitted = decision === 'inbox' ? { ...accepted, managedId: 'retained-host' } : accepted;
     const prompt = { kind: 'ssh.trustHost', message: 'Trust this SSH host?', host: 'example.test',
       keyType: 'ssh-ed25519', fingerprint: 'SHA256:fixture', existingFingerprint: null } as const;
     const scope = { accountId: 'owner', machineId: controller.machineId };
@@ -270,9 +276,12 @@ describe('provisioner picker demand', () => {
       domainRef: { kind: 'systemTask', id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } });
     const { domainRef: _question, ...operation } = running;
     const settled = ActionOperationSnapshotV1Schema.parse({ ...operation, revision: 2, settledAt: 3,
-      ...(platform === 'linux' ? { state: 'succeeded', result: accepted }
+      ...(platform === 'linux' ? { state: 'succeeded', result: admitted, domainRef: {
+        kind: 'managedMachine', id: admitted.managedId, bootstrapTask: { id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1' },
+      } }
         : { state: 'failed', error: { errorCode: 'session_holder_unavailable', error: 'session_holder_unavailable' } }) });
-    let answered = false;
+    const trustAnswers: unknown[] = [];
+    const terminalDelivery = createDeferred<void>();
     await answerExternalActionAccountForHome(harness, serverId, {
       ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
         expect(input).toMatchObject({ selection: { kind: 'one-off', homeId, controller, attachWorkspace: true,
@@ -282,22 +291,26 @@ describe('provisioner picker demand', () => {
       },
     });
     await answerExternalActionAccountForHome(harness, serverId, {
-      ...controller, actionId: 'action.operations.get', tokenEpoch: 0, requesterInvocation: 'none', execute: input => {
+      ...controller, actionId: 'action.operations.get', tokenEpoch: 0, requesterInvocation: 'none', execute: async input => {
         expect(input).toMatchObject({ operationId: accepted.operation.operationId, machineId: controller.machineId,
-          waitForTerminal: true, ...(answered ? {} : { includeManagedPrompt: true }) });
-        return { kind: 'found', operation: answered ? settled : running };
+          waitForTerminal: true });
+        if (input.includeManagedPrompt) return { kind: 'found', operation: running };
+        await terminalDelivery.promise;
+        return { kind: 'found', operation: settled };
       },
     });
     controllerRpc.respond = async request => {
       expect(request.machineId).toBe(controller.machineId);
       if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
         expect(request.payload).toEqual({ operationId: accepted.operation.operationId });
-        return { kind: 'found', operation: running };
+        if (decision === 'decline' && trustAnswers.length > 0) terminalDelivery.resolve();
+        return { kind: 'found', operation: trustAnswers.length > 0 ? settled : running };
       }
       expect(request.method).toBe(RPC_METHODS.CAPABILITIES_INVOKE);
+      trustAnswers.push(request.payload);
       expect(request.payload).toEqual({ id: 'tool.systemTasks', method: 'respond',
         params: { taskId: 'trust-task', expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } } });
-      answered = true;
+      if (decision !== 'decline') terminalDelivery.resolve();
       return { ok: true, result: null };
     };
     onTestFinished(() => { controllerRpc.respond = null; });
@@ -340,18 +353,30 @@ describe('provisioner picker demand', () => {
       expect(attached).not.toHaveBeenCalled();
       const trustModal = vi.mocked(Modal.show).mock.calls.find(([config]) =>
         config.chrome?.testID === 'ssh-host-key-modal')?.[0];
+      if (decision !== 'chooser') {
+        const { submitActionOperationTaskAnswer } = await import('@/components/inbox/actionOperations/useActionOperationTaskQuestion');
+        await act(async () => {
+          expect(await submitActionOperationTaskAnswer({ serverId, snapshot: running }, { trusted: true })).toEqual({ ok: true });
+        });
+      }
       await act(async () => {
-        const resolve = trustModal?.props?.onResolve;
-        if (typeof resolve !== 'function') throw new Error('Expected an SSH trust decision');
-        resolve(true);
+        if (decision === 'decline') trustModal?.onRequestClose?.();
+        if (decision === 'chooser') {
+          const resolve = trustModal?.props?.onResolve;
+          if (typeof resolve !== 'function') throw new Error('Expected an SSH trust decision');
+          resolve(true);
+        }
       });
-      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(platform === 'linux'
-        ? { kind: 'attached', managedId: 'attached-host', controller } : { kind: 'unsupported_platform' }));
-      expect(answered).toBe(true);
+      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(decision === 'decline'
+        ? { kind: 'failed', code: 'action_operation_unavailable', message: null }
+        : platform === 'linux' ? { kind: 'attached', managedId: admitted.managedId, controller } : { kind: 'unsupported_platform' }));
+      if (decision === 'inbox') expect(Modal.hide).toHaveBeenCalled();
+      expect(trustAnswers).toEqual([{ id: 'tool.systemTasks', method: 'respond',
+        params: { taskId: 'trust-task', expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } } }]);
       expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ name: host.name, controllerMachineId: controller.machineId }));
       expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
-    } finally { await screen.unmount(); }
+    } finally { terminalDelivery.resolve(); await screen.unmount(); }
   }));
 
   it('offers a saved Remote Host through its SSH provisioner with no account choice, then attaches it', async () => {

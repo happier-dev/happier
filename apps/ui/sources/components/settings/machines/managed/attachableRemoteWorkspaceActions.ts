@@ -14,6 +14,7 @@ import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { ManagedMachineCreationProgress } from './managedMachineCreation';
 import { createManagedProvisionerClient, projectManagedProvisionerFailure } from './managedProvisionerClient';
 
@@ -118,48 +119,68 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         return failure;
     };
     if (accepted.kind !== 'accepted') return finishFailure(accepted);
-    const { managedId } = accepted.value;
+    let { managedId } = accepted.value;
     if (accepted.value.operation) {
         const { serverId, accountId } = request.scope;
         const { machineId } = request.controller;
         const { operationId } = accepted.value.operation;
         const execute = scopedHomeActionExecutor(request.scope);
-        let includePrompt = true;
-        for (;;) {
+        const readOperation = async (signal: AbortSignal, includePrompt = false) => {
             const result = await execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
                 serverId, machineId, operationId, waitForTerminal: true, ...(includePrompt ? { includeManagedPrompt: true } : {}),
-            }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal: input.signal })
+            }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal })
                 .catch(() => null);
-            if (input.signal.aborted) return failed('aborted');
-            if (!result) return finishFailure(failed('action_operation_unavailable'));
+            if (signal.aborted) return failed('aborted');
+            if (!result) return failed('action_operation_unavailable');
             const observed = classifyHomeActionOutcome(result);
-            if (observed.kind !== 'completed') return finishFailure(failed(observed.kind === 'failed'
-                ? homeDomainFailureCode(observed.failure) : 'approval_required'));
+            if (observed.kind !== 'completed') return failed(observed.kind === 'failed'
+                ? homeDomainFailureCode(observed.failure) : 'approval_required');
             const read = ActionOperationGetV1ResponseSchema.safeParse(observed.result);
-            if (!read.success) return finishFailure(failed('invalid_action_output'));
-            if (read.data.kind !== 'found') return finishFailure(failed('operation_not_found'));
-            const snapshot = read.data.operation;
-            const terminal = readActionOperationTerminalResultV1(snapshot);
-            if (terminal) {
-                if (!terminal.ok) {
-                    const code = terminal.errorCode ?? 'action_operation_failed';
-                    return finishFailure(failed(code, projectManagedProvisionerFailure(code, terminal.details).message));
-                }
-                if (!ManagedAcceptedV1Schema.safeParse(terminal.result).success) return finishFailure(failed('invalid_action_output'));
-                break;
-            }
+            if (!read.success) return failed('invalid_action_output');
+            return read.data.kind === 'found' ? read.data : failed('operation_not_found');
+        };
+        const initial = await readOperation(input.signal, true);
+        if (initial.kind !== 'found') return finishFailure(initial);
+        const snapshot = initial.operation;
+        let terminal = readActionOperationTerminalResultV1(snapshot);
+        if (!terminal) {
             const prompt = readActionOperationTaskQuestionV1(snapshot)?.prompt;
-            if (!includePrompt || (prompt?.kind !== 'ssh.trustHost' && prompt?.kind !== 'ssh.replaceHostKey')) {
+            if (prompt?.kind !== 'ssh.trustHost' && prompt?.kind !== 'ssh.replaceHostKey') {
                 return finishFailure(failed('invalid_action_output'));
             }
             input.onProgress?.({ kind: 'acquiring', operation: snapshot });
-            const trusted = await confirmSshHostKey(prompt, { signal: input.signal });
-            if (input.signal.aborted) return failed('aborted');
-            const answer = await submitActionOperationTaskAnswer({ serverId, snapshot }, { trusted }, input.signal);
-            if (input.signal.aborted) return failed('aborted');
-            if (!answer.ok) return finishFailure(failed(answer.errorCode));
-            includePrompt = false;
+            const retired = new AbortController();
+            const cancellation = mergeAbortSignals([input.signal, retired.signal]);
+            try {
+                // Inbox can answer this task while the chooser is asking the same question.
+                const settlement = readOperation(cancellation.signal);
+                const first = await Promise.race([
+                    settlement,
+                    confirmSshHostKey(prompt, { signal: cancellation.signal }).then(trusted => ({ kind: 'decision' as const, trusted })),
+                ]);
+                if (input.signal.aborted) return failed('aborted');
+                if (first.kind === 'decision') {
+                    const answer = await submitActionOperationTaskAnswer({ serverId, snapshot }, { trusted: first.trusted }, input.signal);
+                    if (input.signal.aborted) return failed('aborted');
+                    if (!answer.ok) return finishFailure(failed(answer.errorCode));
+                    if (!first.trusted) return finishFailure(failed('host_trust_declined'));
+                }
+                const settled = first.kind === 'decision' ? await settlement : first;
+                if (settled.kind !== 'found') return finishFailure(settled);
+                terminal = readActionOperationTerminalResultV1(settled.operation);
+                if (!terminal) return finishFailure(failed('invalid_action_output'));
+            } finally {
+                retired.abort();
+                cancellation.dispose();
+            }
         }
+        if (!terminal.ok) {
+            const code = terminal.errorCode ?? 'action_operation_failed';
+            return finishFailure(failed(code, projectManagedProvisionerFailure(code, terminal.details).message));
+        }
+        const settled = ManagedAcceptedV1Schema.safeParse(terminal.result);
+        if (!settled.success) return finishFailure(failed('invalid_action_output'));
+        managedId = settled.data.managedId;
     }
     // The attached record carries the guest platform probe; its home is where the person picks a folder.
     const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId },
