@@ -143,10 +143,22 @@ describe('runAutomationNow', () => {
       expect(JSON.stringify(failure)).not.toContain('private');
     });
 
+  it('keeps the Machine admission refusal and status in the Run now failure cause', async () => {
+    post.mockResolvedValue({ status: 409, data: { error: 'target_unavailable' } });
+
+    const failure = await runAutomationNowReceipt({ token: 'token-1', automationId: 'automation-1' })
+      .catch(error => normalizeWorkflowActionThrownError(error, undefined, false, 'workflow.trigger.run_now'));
+
+    expect(failure).toMatchObject({ ok: false, errorCode: 'target_unavailable', failureCause: {
+      phase: 'workflow.trigger.run_now', errorCode: 'target_unavailable', httpStatus: 409,
+    } });
+  });
+
   it('keeps unknown HTTP bodies private while preserving the response status', async () => {
     post.mockResolvedValue({ status: 502, data: { error: 'private_token_value', message: 'private response', details: { secret: 'private' } } });
     const failure = await runAutomationNowReceipt({ token: 'token-1', automationId: 'automation-1' }).catch(normalizeWorkflowActionThrownError);
-    expect(failure).toEqual({ ok: false, errorCode: 'workflow_outcome_unresolved', error: expect.any(String) });
+    expect(failure).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved', error: expect.any(String),
+      failureCause: { errorCode: null, httpStatus: 502 } });
     expect(JSON.stringify(failure)).not.toContain('private');
   });
 

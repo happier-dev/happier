@@ -42,8 +42,11 @@ function automationHttpError(status: number, body: unknown) {
   if (code === 'automation_disabled' || code === 'automation_not_found') return createHttpStatusError(status, message, code);
   const semanticFailure = code ? normalizeWorkflowActionThrownError(Object.assign(new Error(message), { code })) : null;
   if (semanticFailure && (semanticFailure.errorCode !== 'storage_unavailable' || code === 'storage_unavailable')) {
-    return Object.assign(createHttpStatusError(status, message, semanticFailure.errorCode),
-      'details' in semanticFailure ? { details: semanticFailure.details } : {});
+    // Keep the validated refusal for the Action diagnostic alongside the HTTP status.
+    return Object.assign(createHttpStatusError(status, message, semanticFailure.errorCode), {
+      cause: semanticFailure,
+      ...('details' in semanticFailure ? { details: semanticFailure.details } : {}),
+    });
   }
   return Object.assign(createHttpStatusError(status, message, 'workflow_http_error'), {
     details: WorkflowHttpErrorDetailsV1Schema.parse({ status, ...(code ? { code } : {}) }),
