@@ -116,7 +116,7 @@ describe('Save group', () => {
 });
 
 describe('a saved group in Add', () => {
-  it('names the declared Location in the Gallery footer while letting the editor show its saved value', async () => {
+  it.each(['follow', 'own', 'own first', 'own last'] as const)('names Location in the Gallery footer only for a follower (%s)', async order => {
     const definition = { kind: 'builtin', id: 'usage_period_summary' } as const;
     const field = { path: 'location', title: 'Location', widget: 'text' } as const;
     const project = { path: 'project', title: 'Project', widget: 'text', required: true } as const;
@@ -124,21 +124,24 @@ describe('a saved group in Add', () => {
     const candidate: WidgetCandidate = { key: 'location', title: 'Location viewer', pluginName: 'Usage',
       sharedPluginName: false, icon: 'squares-four', homeDefault: 'available', target: 'app', definition, inputs };
     const path = '/private/saved-group-location';
-    const fragment: WidgetLayoutFragmentSummaryV1 = { artifactId: 'location', name: 'Saved group', childCount: 1,
+    const follower = { kind: 'widget', instance: { v: 1, definition, bindings: {
+      location: { kind: 'context', slot: 'location' }, project: { kind: 'context', slot: 'project' },
+    } } } as const;
+    const own = { ...follower, instance: { ...follower.instance, bindings: { ...follower.instance.bindings,
+      location: { kind: 'value', value: '/private/child-location' } as const } } };
+    const children = order === 'follow' ? [follower] : order === 'own' ? [own] : order === 'own first' ? [own, follower] : [follower, own];
+    const fragment: WidgetLayoutFragmentSummaryV1 = { artifactId: 'location', name: 'Saved group', childCount: children.length,
       inputs, inputSchema: { type: 'object' },
-      group: { width: 'full', frameStyle: 'card', dividers: 'hairline', context: { location: { kind: 'value', value: path } },
-        children: [{ kind: 'widget', instance: { v: 1, definition, bindings: {
-          location: { kind: 'context', slot: 'location' }, project: { kind: 'context', slot: 'project' },
-        } } }] } };
+      group: { width: 'full', frameStyle: 'card', dividers: 'hairline', context: { location: { kind: 'value', value: path } }, children } };
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], scope: { ...account, owner: { kind: 'home' } },
       context: { slots: { project: { label: 'Page project', value: { value: 'project-id', label: 'Project name' } } } },
       submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
     const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} presentation="pane" testID="gallery" onDone={() => {}} />);
     expect(screen.findByTestId('gallery.field.location.input')?.props.value).toBe(path);
-    expect(screen.getTextContent()).toContain('value=Location');
+    expect(screen.getTextContent()).toContain(order === 'own' ? 'value=null' : 'value=Location');
     expect(screen.getTextContent()).not.toContain(path);
     const named = setup.describeOutcome?.({ bindings: { location: { kind: 'value', value: 'Release notes' } } });
-    expect(named).toContain('value=Release notes');
+    expect(named).toContain(order === 'own' ? 'value=null' : 'value=Release notes');
     const several = setup.describeOutcome?.({ bindings: { ...setup.initial.bindings, project: { kind: 'context', slot: 'project' } } });
     expect(several).toContain('value=null');
   });

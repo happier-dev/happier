@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { resolveConfiguredWidgetInputs } from '@happier-dev/protocol/widgets';
 import { buildWidgetCandidateSetup } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { buildWidgetGroupInputsCandidate, collectWidgetGroupInputFields, describeWidgetGroupInputsBinding } from './widgetGroupInputs';
+import { buildWidgetGroupInputsCandidate, collectWidgetGroupInputFields, describeWidgetGroupInputsBinding, readWidgetGroupHeaderBinding } from './widgetGroupInputs';
 
 const candidate = (fields: NonNullable<WidgetCandidate['inputs']>['fields']): Extract<WidgetCandidate, { definition: unknown }> => ({
   key: 'checks', title: 'Checks', pluginName: 'Checks', sharedPluginName: false,
@@ -12,12 +12,18 @@ const candidate = (fields: NonNullable<WidgetCandidate['inputs']>['fields']): Ex
 });
 
 describe('Widget group input collection', () => {
-  it('names the bound input before its value on the group’s Inputs… row (lab wgmenu M “Project: happier”, F4 D-21)', () => {
-    const fields = [{ path: 'session', title: 'Session', widget: 'json' as const }];
-    expect(describeWidgetGroupInputsBinding({ session: { kind: 'value', value: 'abc' } }, { fields: [{ field: fields[0]!, slot: 'session', sessionTarget: false }], labels: { session: 'qa-detect' }, byChild: new Map() })).toBe('Session: qa-detect');
-    // A value with no declared field keeps its value alone; nothing chosen says nothing.
-    expect(describeWidgetGroupInputsBinding({ other: { kind: 'value', value: 'x' } }, { fields: [], labels: {}, byChild: new Map() })).toBe('other');
-    expect(describeWidgetGroupInputsBinding({}, { fields: [], labels: {}, byChild: new Map() })).toBeNull();
+  it('names only a positively labelled pin in the header and menu in either key order', () => {
+    const fields = ['Location', 'Target'].map(title => ({ slot: title.toLowerCase(), sessionTarget: false,
+      field: { path: title.toLowerCase(), title, widget: 'text' as const } }));
+    for (const order of [fields, [...fields].reverse()]) {
+      const group = Object.fromEntries(order.map(({ slot }) => [slot, { kind: 'value', value: `/private/${slot}` } as const]));
+      const withheld = { fields, byChild: new Map(), labels: { location: null, target: null } };
+      const named = { ...withheld, labels: { ...withheld.labels, location: 'Named location' } };
+      expect(readWidgetGroupHeaderBinding(group, withheld)).toBeNull();
+      expect(describeWidgetGroupInputsBinding(group, withheld)).toBeNull();
+      expect(readWidgetGroupHeaderBinding(group, named)?.value).toBe('Named location');
+      expect(describeWidgetGroupInputsBinding(group, named)).toBe('Location: Named location');
+    }
   });
   it('discovers each group field through its declaring follow-able child, retaining its dependencies', () => {
     const period = { path: 'period', title: 'Period', widget: 'select' as const, optionsSourceId: 'periods' };

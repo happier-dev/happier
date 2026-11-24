@@ -12,17 +12,12 @@ import { readWidgetBindingFieldTitle } from '../surface/widgetBindingValueLabel'
 export function readWidgetGroupHeaderBinding(
   context: WidgetInputBindingsV1 | undefined,
   readings: Pick<WidgetGroupInputReadings, 'fields' | 'labels'>,
-): Readonly<{ slot: string; title: string; value: string | null }> | null {
-  let first: ReturnType<typeof readWidgetGroupHeaderBinding> = null;
+): Readonly<{ slot: string; title: string; value: string }> | null {
   for (const [slot, binding] of Object.entries(context ?? {})) {
-    if (binding.kind !== 'value') continue;
-    const fields = readings.fields.filter(entry => entry.slot === slot);
-    const title = readWidgetBindingFieldTitle(slot, fields);
-    const pin = { slot, title, value: fields.length > 0 ? readings.labels[slot] ?? null : null };
-    if (pin.value) return pin;
-    first ??= pin;
+    const value = binding.kind === 'value' ? readings.labels[slot] : null;
+    if (value) return { slot, value, title: readWidgetBindingFieldTitle(slot, readings.fields.filter(entry => entry.slot === slot)) };
   }
-  return first;
+  return null;
 }
 
 export type WidgetGroupHeaderReading = Readonly<{
@@ -39,8 +34,7 @@ export function useWidgetGroupHeaderReading(
   return useMemo(() => {
     if (!titled) return null;
     const pin = readWidgetGroupHeaderBinding(context, readings);
-    return { binding: pin?.value ? { slot: pin.slot, value: pin.value } : null,
-      source: pin ? widgetGroupPinnedSource(pin.value ?? pin.title) : undefined };
+    return { binding: pin, source: pin ? widgetGroupPinnedSource(pin.value) : undefined };
   }, [titled, context, readings]);
 }
 
@@ -49,7 +43,7 @@ export function describeWidgetGroupInputsBinding(
   readings: WidgetGroupInputReadings,
 ): string | null {
   const pin = readWidgetGroupHeaderBinding(context, readings);
-  return pin?.value ? t('widgetFrame.groupInputsValue', { field: pin.title, value: pin.value }) : pin?.title ?? null;
+  return pin ? t('widgetFrame.groupInputsValue', { field: pin.title, value: pin.value }) : null;
 }
 
 /**

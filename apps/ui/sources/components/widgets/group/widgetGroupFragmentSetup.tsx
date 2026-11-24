@@ -213,9 +213,11 @@ export function buildWidgetGroupFragmentEntry(
             const matches = fields.filter(({ slot }) => slot === path);
             return matches.length ? matches.map(readChild(instance, descriptor)) : [];
           });
-          const reading = summarizeWidgetBindingReadings(readings);
-          name = reading?.kind === 'single' ? reading.label
-            : readWidgetBindingFieldTitle(path, declarations.filter(declaration => declaration.slot === path));
+          if (readings.length > 0) {
+            const reading = summarizeWidgetBindingReadings(readings);
+            name = reading?.kind === 'single' ? reading.label
+              : readWidgetBindingFieldTitle(path, declarations.filter(declaration => declaration.slot === path));
+          }
         }
         return t('widgetFrame.groupAddsFollowing', { name: fragment.name, count: fragment.childCount, value: name });
       },

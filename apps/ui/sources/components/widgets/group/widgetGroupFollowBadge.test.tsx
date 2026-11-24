@@ -179,10 +179,10 @@ it('prints only label-owner answers across the five mounted group input surfaces
                 const badge = screen.findByTestId('card.source')?.props.accessibilityLabel;
                 // A typed formatter must not replace a missing owner answer, even with a legible value.
                 expect.soft(badge, title + ' ' + path).toBe(caption(owner ?? title));
-                const readable = owner ?? title;
-                expect.soft(screen.findByTestId('header.source.text')?.props.children).toBe(readable);
-                expect.soft(screen.findByTestId('menu')?.props.accessibilityLabel).toContain(readable);
-                expect.soft(screen.findByTestId('setup')?.props.accessibilityLabel).toBe(readable);
+                expect.soft(screen.findByTestId('header.source.text')?.props.children).toBe(owner ?? undefined);
+                expect.soft(screen.findByTestId('header.source')?.props.accessibilityLabel).toBe(owner ?? undefined);
+                expect.soft(screen.findByTestId('menu')?.props.accessibilityLabel).toBe(owner ? `widgetFrame.groupInputsValue(field=${title},value=${owner})` : undefined);
+                expect.soft(screen.findByTestId('setup')?.props.accessibilityLabel).toBe(owner ?? title);
                 expect.soft(screen.getTextContent()).toContain('widgetFrame.groupFollowCount(following=1,count=1)');
                 await screen.unmount();
                 await editor.unmount();
@@ -349,7 +349,7 @@ it('withdraws a previously visible Session name in an already open group editor'
     }
 });
 
-it('uses the slot name in the header, Inputs menu and badge when consuming titles disagree', async () => {
+it('uses the slot name in the badge and editor when consuming titles disagree', async () => {
     const group = { operand: { kind: 'value', value: '/private/unnamed-operand' } } as const;
     const declarations = ['Directory', 'Target', 'Directory'].map(title => ({
         slot: 'operand', sessionTarget: false, field: { path: 'targetPath', title, widget: 'text' as const },
@@ -372,15 +372,11 @@ it('uses the slot name in the header, Inputs menu and badge when consuming title
             }),
         }));
         const { editor, ...captions } = output.getCurrent();
-        expect.soft(captions, order).toEqual({ header: 'operand', menu: 'operand', badge: 'operand' });
+        expect.soft(captions, order).toEqual({ header: undefined, menu: null, badge: 'operand' });
         await act(async () => editor.editInputs!.onPress());
         const popover = output.getCurrent().editor.popover;
         if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
         expect.soft(popover.props.readInherited?.(group).get('targetPath'), order).toEqual({ kind: 'single', valueLabel: 'operand' });
         await output.unmount();
-    }
-    for (const fields of [[], [declarations[0]!, declarations[2]!]]) {
-        const readings = groupReading(instance, fields, { operand: null });
-        expect(describeWidgetGroupInputsBinding(group, readings)).toBe(fields.length ? 'Directory' : 'operand');
     }
 });

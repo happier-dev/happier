@@ -9422,10 +9422,8 @@ there is no usable label, the badge names the field. A named group replaces a
 card's source only when its header names the literal pin that card follows.
 A page alias in a named group keeps the card's own source. The per-widget
 Edit inputs uses the Protocol group context for alias offers. Its Follow caption
-uses the label owner's answer or the declared field name. The header and its
-Inputs menu use a title shared by every consuming child, with the slot's name
-when no title is shared. The Gallery Add footer also uses the group reading,
-while the editable control continues to show its saved value.
+uses the label owner's answer or the declared field name. Headers and Inputs menus show only named pins.
+The Gallery Add footer names a setting only if a child follows it. Controls show their saved values.
 `widgetGroupMenu` builds the group ⋯ and each widget's group
 entries (Move to group, Remove from group, Ungroup, Group with…) through the
 frame menu's order, and every width choice shows unavailable widths with the
