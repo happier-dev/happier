@@ -551,6 +551,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     : {
       ...(props.option.subtitleLines === undefined ? {} : { subtitleLines: props.option.subtitleLines }),
       ...(menuTitleOneLine && (props.option.subtitle || props.option.subtitleContent) ? { titleLines: 1 } : {}),
+      ...(props.option.labelLines === undefined ? {} : { titleLines: props.option.labelLines }),
     };
   // The overlay carries no role of its own: it is part of the option, and the
   // option's cell (this wrapper at two columns, the node inside it at one)

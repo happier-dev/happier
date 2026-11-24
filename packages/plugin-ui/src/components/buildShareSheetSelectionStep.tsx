@@ -218,7 +218,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         if (suggestionsShown && !refusal) suggestionSections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
         if (refusal) {
-            if (!refusalsShown.has(refusal.message)) controls.push({ id: `refusal:${kind}`, label: refusal.message, disabled: true,
+            if (!refusalsShown.has(refusal.message)) controls.push({ id: `refusal:${kind}`, label: refusal.message, labelLines: 0, disabled: true,
                 testID: `${idPrefix}${ns}-directory-refusal:${kind}` });
             refusalsShown.add(refusal.message);
         } else if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,

@@ -107,6 +107,8 @@ type SelectionListOptionBase = Readonly<{
     subtitle?: string;
     /** Item's existing text allowance; 0 lets a complete disclosure grow without truncation. */
     subtitleLines?: number;
+    /** The same allowance for the label: 0 lets a status sentence (a refusal and its next step) wrap whole. */
+    labelLines?: number;
     /** Rich visual subtitle; `subtitle` remains the searchable plain-text value. */
     subtitleContent?: SelectionListLazyVisual;
     /**
