@@ -1,5 +1,5 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { routeSessionCatalogControl as routeCatalogControl, unavailableSessionCatalog } from '@happier-dev/session-core/state';
 
 import { resolveInactiveSessionCatalogControls } from '@/agent/catalog/sessionControlAdapters';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -31,12 +31,6 @@ type RouteSessionCatalogControlParams = Readonly<{
   resolveAdapter?: ResolveSessionCatalogControlAdapter;
 }> & SessionStoredContentCryptoContext;
 
-function unsupported(operation: SessionCatalogControlOperation, diagnostic: string): unknown {
-  return operation === 'vendorPlugins'
-    ? { unsupported: true, vendorPlugins: [], diagnostic }
-    : { unsupported: true, skills: [], diagnostic };
-}
-
 function readString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -63,21 +57,6 @@ function resolveSessionMachineHomeDir(
 
 function resolveAgentId(metadata: Record<string, unknown>): CatalogAgentId | null {
   return resolveAgentIdFromSessionMetadata(metadata);
-}
-
-function shouldFallbackFromLiveSessionCatalogRpc(result: unknown): boolean {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
-  const raw = result as Record<string, unknown>;
-  const errorCode = typeof raw.errorCode === 'string' ? raw.errorCode : '';
-  const error = typeof raw.error === 'string' ? raw.error : '';
-  return errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-    || errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
-    || errorCode === 'unsupported_session_runtime_method'
-    || errorCode === 'session_rpc_failed'
-    || error === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-    || error === RPC_ERROR_CODES.METHOD_NOT_FOUND
-    || error === 'unsupported_session_runtime_method'
-    || error === 'session_rpc_failed';
 }
 
 function buildAdapterParams(
@@ -107,26 +86,28 @@ function buildAdapterParams(
 }
 
 export async function routeSessionCatalogControl(params: RouteSessionCatalogControlParams): Promise<unknown> {
-  if (params.rawSession.active === true) {
-    const liveResult = await params.callLiveSessionRpc();
-    if (!shouldFallbackFromLiveSessionCatalogRpc(liveResult)) {
-      return liveResult;
-    }
-  }
-
   const metadata = params.metadata;
-  if (!metadata) {
-    return unsupported(params.operation, 'session_catalog_control_metadata_unavailable');
-  }
+  return await routeCatalogControl({
+    active: params.rawSession.active === true,
+    metadataAvailable: metadata !== null,
+    operation: params.operation,
+    callLiveSessionRpc: params.callLiveSessionRpc,
+    ...(metadata ? { callInactiveCatalog: () => readInactiveSessionCatalog(params, metadata) } : {}),
+  });
+}
 
+async function readInactiveSessionCatalog(
+  params: RouteSessionCatalogControlParams,
+  metadata: Record<string, unknown>,
+): Promise<unknown> {
   const currentMachineId = readString(params.currentMachineId);
   if (!currentMachineId) {
-    return unsupported(params.operation, 'session_catalog_control_current_machine_unknown');
+    return unavailableSessionCatalog(params.operation, 'session_catalog_control_current_machine_unknown');
   }
 
   const sessionMachineId = readString(metadata.machineId) ?? resolveRawSessionString(params.rawSession, 'machineId');
   if (!sessionMachineId) {
-    return unsupported(params.operation, 'session_catalog_control_session_machine_unknown');
+    return unavailableSessionCatalog(params.operation, 'session_catalog_control_session_machine_unknown');
   }
   if (
     !await resolveMachineControlLocalityProof({
@@ -139,22 +120,22 @@ export async function routeSessionCatalogControl(params: RouteSessionCatalogCont
       credentials: { token: params.token },
     })
   ) {
-    return unsupported(params.operation, 'session_catalog_control_remote_unavailable');
+    return unavailableSessionCatalog(params.operation, 'session_catalog_control_remote_unavailable');
   }
 
   const resolveAdapter = params.resolveAdapter ?? resolveInactiveSessionCatalogControls;
   const adapter = await resolveAdapter(resolveAgentId(metadata));
   if (!adapter) {
-    return unsupported(params.operation, 'session_catalog_control_unsupported');
+    return unavailableSessionCatalog(params.operation, 'session_catalog_control_unsupported');
   }
 
   const adapterParams = buildAdapterParams(params, metadata, sessionMachineId);
   if (params.operation === 'vendorPlugins') {
     return typeof adapter.listVendorPlugins === 'function'
       ? await adapter.listVendorPlugins(adapterParams)
-      : unsupported(params.operation, 'session_catalog_control_unsupported');
+      : unavailableSessionCatalog(params.operation, 'session_catalog_control_unsupported');
   }
   return typeof adapter.listSkills === 'function'
     ? await adapter.listSkills(adapterParams)
-    : unsupported(params.operation, 'session_catalog_control_unsupported');
+    : unavailableSessionCatalog(params.operation, 'session_catalog_control_unsupported');
 }

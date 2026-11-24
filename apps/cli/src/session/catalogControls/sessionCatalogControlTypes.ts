@@ -3,7 +3,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
-export type SessionCatalogControlOperation = 'vendorPlugins' | 'skills';
+export type { SessionCatalogControlOperation } from '@happier-dev/session-core/state';
 
 export type SessionCatalogControlAdapterParams = Readonly<{
   token: string;

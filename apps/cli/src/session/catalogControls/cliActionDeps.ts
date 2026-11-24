@@ -1,3 +1,4 @@
+import { unavailableSessionCatalog } from '@happier-dev/session-core/state';
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity } from '../actions/cliActionDeps/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -30,16 +31,12 @@ export function createCliSessionCatalogActionDeps(
     request: Readonly<{ cwd?: string }>,
   ): Promise<unknown> => {
     if (!params.credentials) {
-      return operation === 'vendorPlugins'
-        ? { unsupported: true, vendorPlugins: [], diagnostic: 'not_authenticated' }
-        : { unsupported: true, skills: [], diagnostic: 'not_authenticated' };
+      return unavailableSessionCatalog(operation, 'not_authenticated');
     }
 
     const transport = await resolveTransportForSession(sessionId);
     if (!transport.ok) {
-      return operation === 'vendorPlugins'
-        ? { unsupported: true, vendorPlugins: [], diagnostic: transport.code }
-        : { unsupported: true, skills: [], diagnostic: transport.code };
+      return unavailableSessionCatalog(operation, transport.code);
     }
 
     const metadata = readTransportSessionOwnerMetadata(transport);

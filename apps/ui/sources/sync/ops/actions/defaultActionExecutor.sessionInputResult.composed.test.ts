@@ -60,7 +60,7 @@ it('enumerates the UI catalog and probes the Session read guards with schema-val
     }
     // These are routed to their domain owners. Changes to the list surface as a contract diff.
     expect(unsupported.sort()).toEqual([
-        'session.skill_catalog.list', 'session.vendor_plugin_catalog.list', 'session.wait.idle',
+        'session.wait.idle',
     ]);
 });
 
