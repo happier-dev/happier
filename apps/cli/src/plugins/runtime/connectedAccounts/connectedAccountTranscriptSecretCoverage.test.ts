@@ -9,6 +9,7 @@ import { saveCredential as saveXaiCredential } from '../../../../../../packages/
 import { geminiConnectedAccountRuntime } from '../../../../../../packages/plugins/gemini/src/connectedAccounts/runtime';
 import { CODERABBIT_ACCOUNT_RUNTIME, stageCodeRabbitNativeAuth } from '../../../../../../packages/plugins/review-coderabbit/src/connectedAccount';
 import { xaiConnectedAccountRuntime } from '../../../../../../packages/plugins/grok/src/connectedAccounts/runtime';
+import { museConnectedAccountRuntime, stageMuseNativeCredentials } from '../../../../../../packages/plugins/muse/src/connectedAccounts/museAccountRuntime';
 
 /**
  * Every bundled Connected Account that an Agent Session receives (environment or files) must
@@ -42,6 +43,22 @@ async function storedShapes(): Promise<
       private_key_id: 'key-1', private_key: `-----BEGIN PRIVATE KEY-----\n${fake('gemini-private-key')}\n-----END PRIVATE KEY-----\n`,
       client_email: 'agent@project.iam.gserviceaccount.com', client_id: '1' }) } },
     { attemptCredentials: recordingStore(values) } as unknown as Parameters<typeof mode.complete>[1]);
+    return values;
+  };
+  // Muse's own writers: native login staging, and the API-key mode's completion.
+  const museNative = async (name: string, obtainedVia: string) => {
+    const values: Record<string, string> = {};
+    await stageMuseNativeCredentials(recordingStore(values) as unknown as Parameters<typeof stageMuseNativeCredentials>[0], {
+      access_token: fake(`${name}-access`), api_key: fake(`${name}-key`), api_base_url: 'https://api.meta.ai/v1',
+      obtained_via: obtainedVia, mechanism: 'oauth' });
+    return { ...values, expiresAtMs: future };
+  };
+  const museApiKey = async () => {
+    const values: Record<string, string> = {};
+    const mode = museConnectedAccountRuntime.authentication.modes['api-key'];
+    if (mode?.kind !== 'manual') throw new Error('Expected the Muse api-key mode');
+    await mode.complete({ fields: { apiKey: fake('muse-manual') } },
+      { attemptCredentials: recordingStore(values) } as unknown as Parameters<typeof mode.complete>[1]);
     return values;
   };
   // CodeRabbit's login staging over a login file holding a token field.
@@ -166,25 +183,9 @@ async function storedShapes(): Promise<
       'native-import': devinSession('devin-native'),
     },
     'happier.agent.muse/muse-account': {
-      device: {
-        accessToken: fake('muse-access'),
-        apiKey: fake('muse-key'),
-        credentialMode: 'native',
-        nativeMechanism: '"oauth"',
-        expiresAtMs: future,
-        nativeApiBaseUrl: 'https://api.meta.ai/v1',
-        nativeObtainedVia: 'device',
-      },
-      'api-key': { apiKey: fake('muse-manual'), credentialMode: 'manual' },
-      'native-import': {
-        accessToken: fake('muse-native'),
-        apiKey: fake('muse-native-key'),
-        credentialMode: 'native',
-        nativeMechanism: '"oauth"',
-        expiresAtMs: future,
-        nativeApiBaseUrl: 'https://api.meta.ai/v1',
-        nativeObtainedVia: 'login',
-      },
+      device: await museNative('muse', 'device'),
+      'api-key': await museApiKey(),
+      'native-import': await museNative('muse-native', 'login'),
     },
     'happier.agent.antigravity/antigravity-account': Object.fromEntries(
       ['oauth-personal', 'native-import'].map((mode) => [
