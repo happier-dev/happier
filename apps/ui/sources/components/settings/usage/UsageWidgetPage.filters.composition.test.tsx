@@ -1105,6 +1105,62 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findByType(UsageFilterBar).props.costBasisPending).toBe(true);
     });
 
+    it.each([['costs', 'header'], ['work', 'ledger']] as const)('places one Retry for a settled Work gap on the %s view (%s), never the outage line (J-B46)', async (layoutId, place) => {
+        const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
+            { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
+            { createSessionFixture }] = await Promise.all([
+            import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
+            import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'), import('@/dev/testkit/fixtures/sessionFixtures'),
+        ]);
+        const machineId = `gap-machine-${layoutId}`;
+        const [read, failing] = [`gap-read-${layoutId}`, `gap-failing-${layoutId}`];
+        // The daemon's answer is the boundary: one Session answers with a link, the other fails retryably.
+        installSessionActionRpcBoundary(request => ScmWorkEvidenceReadResponseSchema.parse({ sessions: ScmWorkEvidenceReadRequestSchema.parse(request.params)
+            .sessions.map(session => session.sessionId === failing ? { sessionId: session.sessionId, status: 'error', errorCode: 'scm_read_failed' }
+                : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true, branchEvidence: [], evidence: [{ sessionId: session.sessionId,
+                    turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+                    attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+                        baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Linked',
+                        url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } }] }) }));
+        const nowMs = Date.now();
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: `https://usage-work-gap-${layoutId}.test`, accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [read, failing].map(sessionId => ({
+                    id: `cost-${sessionId}`, observedAtMs: nowMs - 60_000, sessionId, turnId: 'turn', agentId: null, modelId: null, machineId: null,
+                    projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost })) });
+                if (request.path === '/v2/usage/query-batch') return undefined;
+                return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        const scope = { serverId: server.id, accountId: 'account-a' };
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        getStorage().getState().applySessions([read, failing].map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id,
+            active: true, metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+        await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a',
+            machine: { activeAt: nowMs, presenceProtocolVersion: 1 } })]);
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <UsageWidgetPage initialFilters={{ layoutId, period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        // Every visible Work Retry, by test ID: the header's, or one at a ledger total.
+        const retries = () => [...new Set(screen.findAll(node => typeof node.props?.testID === 'string'
+            && (node.props.testID === 'usage-page.header.retry' || node.props.testID.endsWith('.workRetry'))).map(node => node.props.testID as string))];
+        await waitForHomeGovernance(() => expect(retries().length).toBeGreaterThan(0));
+        const unique = retries();
+        expect(unique).toHaveLength(1);
+        expect(unique[0]!.endsWith('.workRetry')).toBe(place === 'ledger');
+        expect(screen.getTextContent()).not.toContain(t('usage.board.page.workNotRead'));
+        if (place === 'header') expect(screen.getTextContent()).toContain(t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' }));
+        else expect(screen.findAllHostsByTestId('usage-page.header.workGap')).toHaveLength(0);
+    });
+
     it('publishes the failed page read Retry and recovers through the agent command', async () => {
         let readFails = true;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });

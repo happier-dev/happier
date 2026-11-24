@@ -26,7 +26,7 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline,readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, readUsagePageWorkRetryPlacement,readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -530,6 +530,20 @@ describe('shared Usage identity and dependent coverage', () => {
             .toEqual({ reason: failedWork, retry: true, offline: false, refused: false });
         // A typed refusal keeps its own line, never a Retry.
         expect.soft(header({ status: 'error', errorCode: 'forbidden' })).toEqual({ reason: '', retry: false, offline: false, refused: true });
+    });
+    it('places the one Retry for a settled Work gap: at the ledger when the view has it, else the header, and the header when it already retries (J-B46)', () => {
+        const slice = (...sources: readonly Readonly<Record<string, unknown>>[]) =>
+            ({ sources }) as unknown as Parameters<typeof readUsagePageWorkRetryPlacement>[0][number];
+        const failed = { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } };
+        expect.soft(readUsagePageWorkRetryPlacement([slice(failed)], true)).toBe('body');
+        // Costs, Agents or a Work view without the ledger: the header carries it.
+        expect.soft(readUsagePageWorkRetryPlacement([slice(failed)], false)).toBe('header');
+        // Coach failed beside it: the header's batch Retry is the one; the ledger draws no second button.
+        expect.soft(readUsagePageWorkRetryPlacement([slice(failed, { source: 'how_you_work', status: 'error' })], true)).toBe('header');
+        // Nothing a Retry can change: Machines unreachable alone, a typed refusal, a read in flight.
+        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'partial', errorCode: 'machine_offline' })], false)).toBeNull();
+        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'error', errorCode: 'forbidden' })], false)).toBeNull();
+        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'pending' })], false)).toBeNull();
     });
     it('says a settled partial activity read once for the header, never while it is still reading', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>

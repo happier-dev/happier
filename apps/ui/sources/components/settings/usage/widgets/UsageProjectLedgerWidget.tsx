@@ -23,6 +23,7 @@ import {
   leadingUsageRows,
   usagePeriodPhrase,
   useUsagePluginTheme,
+  UsageWorkRetryAtBodyContext,
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
@@ -105,6 +106,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const linksReadAt = usageWorkLinksReadAt(props.slice);
   // The settled answer's retryable gap is reread from where it is said, the total, through the page model's own
   // failed-only reread: the read the header's Retry ran before it went silent over settled Work (r226 #61 / J-B46).
+  const retryAtBody = React.useContext(UsageWorkRetryAtBodyContext);
   const [retryingWork, setRetryingWork] = React.useState(false);
   const { refresh } = props.model;
   const pressRetryWork = React.useCallback(async () => {
@@ -176,6 +178,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   // A read set of links still says when it was read, in the total's one quiet line (J-A35).
   const totalNote = [linksReadAt, summary.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
   const totalNoteText = totalNote ? `${totalNote.charAt(0).toLocaleUpperCase()}${totalNote.slice(1)}` : null;
+  // One visible Retry per batch failure: the page decides whether it sits here (J-B46).
+  const retryWorkHere = retryAtBody && !allocationRead && linksNotice.retryLabel !== null;
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
   const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
@@ -538,23 +542,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 <Text style={[styles.totalValue, title]}>{format(summary.total)}</Text>
               </View>
             ) : null}
-            <View style={styles.statusLine}>
-              <Text style={[styles.reasonLabel, caption]}>
-                {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
-                  ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
-              </Text>
-              {/* The gap's own Retry ends its sentence: a quiet link, the spinner in its place while the reread runs. */}
-              {!allocationRead && linksNotice.retryLabel !== null ? (
-                <View style={styles.statusRetry}>
-                  {/* The press returns the reread, so the shared pressable is busy (announced, presses refused) until it settles. */}
-                  <View style={retryingWork ? styles.statusRetryHeld : null}>
-                    <TextLinkButton label={t('common.retry')} accessibilityLabel={linksNotice.retryLabel} tone="quiet"
-                      onPress={pressRetryWork} testID={`${props.testID}.workRetry`} />
-                  </View>
-                  {retryingWork ? <View style={styles.statusRetrySpinner}><ActivitySpinner size="small" /></View> : null}
-                </View>
-              ) : null}
-            </View>
+            <Text style={[styles.reasonLabel, caption]}>
+              {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
+                ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
+            </Text>
           </>
         ) : (
           <>
@@ -584,6 +575,18 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           </>
         )}
       </View>)}
+      {/* The gap's Retry, when the page places it here: its own control right under the sentence that states the gap,
+          never inside the total's accessible group or its datum button. The press returns the reread, so the shared
+          pressable is busy (announced, presses refused) while the spinner holds the link's place. */}
+      {retryWorkHere ? (
+        <View style={styles.statusRetry}>
+          <View style={retryingWork ? styles.statusRetryHeld : null}>
+            <TextLinkButton label={t('common.retry')} accessibilityLabel={linksNotice.retryLabel ?? t('common.retry')} tone="quiet"
+              onPress={pressRetryWork} testID={`${props.testID}.workRetry`} />
+          </View>
+          {retryingWork ? <View style={styles.statusRetrySpinner}><ActivitySpinner size="small" /></View> : null}
+        </View>
+      ) : null}
       {summary.missingMoneyCount > 0 ? (
         <Text style={[styles.reasonLabel, caption]} testID={`${props.testID}.unpriced`}>
           {t('usage.board.page.factUnpriced')} · {t('usage.board.page.unpricedRecords', { count: summary.missingMoneyCount.toLocaleString() })} ·{' '}
@@ -642,9 +645,8 @@ const styles = StyleSheet.create((theme) => ({
     fontVariant: ['tabular-nums'],
   },
   reasonLabel: { ...Typography.default(), color: theme.colors.text.tertiary, flexShrink: 1 },
-  // The total's gap sentence and its Retry: the link ends the sentence and moves beneath it only when it cannot fit.
-  statusLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
-  statusRetry: { position: 'relative' },
+  // The gap's Retry sits right under its sentence, pulled up to the sentence's rhythm rather than the body's gap.
+  statusRetry: { position: 'relative', alignSelf: 'flex-start', marginTop: -theme.space.s8 },
   statusRetryHeld: { opacity: 0 },
   statusRetrySpinner: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'flex-start', justifyContent: 'center' },
   reasonValue: {

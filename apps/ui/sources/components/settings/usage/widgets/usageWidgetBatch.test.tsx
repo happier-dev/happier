@@ -1022,7 +1022,7 @@ describe('Usage page batch', () => {
   it('rereads the Sessions whose Work links failed retryably from the Retry beside the ledger total, with the header silent (J-B46)', async () => {
     const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
       { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
-      { UsageProjectLedgerWidget }, { readUsagePageFailure }] = await Promise.all([
+      { UsageProjectLedgerWidget }, { readUsagePageFailure, UsageWorkRetryAtBodyContext }] = await Promise.all([
       import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
       import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'),
       import('./UsageProjectLedgerWidget'), import('./usageBodyKit'),
@@ -1073,8 +1073,9 @@ describe('Usage page batch', () => {
       const { model, query } = useUsageWidgetModel(input, 'usage_project_ledger');
       observed = model;
       if (model.slice) headerSaid.push(readUsagePageFailure([model.slice])?.reason ?? null);
-      return model.slice && query ? <UsageProjectLedgerWidget id="usage_project_ledger" model={model} slice={model.slice} query={query}
-        serverId={server.id} testID="ledger" /> : null;
+      // The default Work view mounts the ledger, so the page places the Work gap's Retry at its total.
+      return model.slice && query ? <UsageWorkRetryAtBodyContext.Provider value><UsageProjectLedgerWidget id="usage_project_ledger" model={model}
+        slice={model.slice} query={query} serverId={server.id} testID="ledger" /></UsageWorkRetryAtBodyContext.Provider> : null;
     }
     const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses}><Ledger /></UsageWidgetBatchProvider>
@@ -1087,7 +1088,7 @@ describe('Usage page batch', () => {
       // The gap is said at the total, with its Retry beside it; never a second alert.
       const retry = () => screen.findHostByTestId('ledger.workRetry');
       await expect.poll(() => retry()).not.toBeNull();
-      expect(retry()?.props.accessibilityLabel).toContain(t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' }));
+      expect(retry()?.props.accessibilityLabel).toBe(`${t('common.retry')}: ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
       const before = requested.length;
       failingAnswers = true;
       await screen.pressByTestIdAsync('ledger.workRetry');

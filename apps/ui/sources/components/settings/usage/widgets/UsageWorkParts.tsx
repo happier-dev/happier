@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { getPreferredLanguage, t } from '@/text';
-import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, useUsagePluginTheme } from './usageBodyKit';
+import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, readUsageWorkReadAsOfMs, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -67,7 +67,10 @@ export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ t
       : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
     unreadOther,
   ].filter(Boolean).join(' · ');
-  const retryLabel = canRetryUsageCoverageFailure(source) ? [t('common.retry'), unreadOther].filter(Boolean).join(': ') : null;
+  // The Retry's name counts only what it can change: Sessions that failed or timed out, never refused ones.
+  const retryable = (unread.timed_out ?? 0) + (unread.failed ?? 0);
+  const retryLabel = !canRetryUsageCoverageFailure(source) ? null
+    : retryable > 0 ? `${t('common.retry')}: ${t('usage.board.work.workUnreadOther', formatCount(retryable))}` : t('common.retry');
   return { title: t('usage.board.work.workPartialTitle'), cause: cause || null, retryLabel };
 }
 
@@ -76,9 +79,8 @@ export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ t
  * the links can be older than the figures beside them; said always while a read Work answer is shown (J-A35).
  */
 export function usageWorkLinksReadAt(slice: Pick<UsageQueryResultSlice, 'sources'>): string | null {
-  const source = slice.sources.find(row => row.source === 'work');
-  if (source?.asOfMs === undefined || source.status === 'error' || source.status === 'unknown' || source.status === 'not_loaded') return null;
-  return t('usage.board.work.linksReadAt', { time: formatUsageObservedAt(source.asOfMs) });
+  const asOfMs = readUsageWorkReadAsOfMs(slice);
+  return asOfMs === null ? null : t('usage.board.work.linksReadAt', { time: formatUsageObservedAt(asOfMs) });
 }
 
 export function usageWorkBranchName(ref: string): string {

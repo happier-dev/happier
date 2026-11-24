@@ -802,10 +802,38 @@ function isUsageWorkSettledWithEvidence(source: UsageQuerySourceState): boolean 
   return source.source === 'work' && source.status === 'partial';
 }
 
+/**
+ * Work statuses that carry a readable answer: read whole or in part, a pending replacement keeping the prior one, or
+ * the prior one retained after a failed reread. Unsupported (outside a repository), failed and refused read no links.
+ */
+const USAGE_WORK_READABLE_STATUSES: ReadonlySet<UsageQuerySourceState['status']> = new Set(['available', 'partial', 'pending', 'stale']);
+
+/** When the readable Work answer on screen was read: its own as-of, never accounting's (J-A35). */
+export function readUsageWorkReadAsOfMs(slice: Pick<UsageQueryResultSlice, 'sources'>): number | null {
+  const source = slice.sources.find(row => row.source === 'work');
+  return source?.asOfMs !== undefined && USAGE_WORK_READABLE_STATUSES.has(source.status) ? source.asOfMs : null;
+}
+
 /** A settled Work answer whose Sessions failed retryably: its Retry sits at the ledger total, and the page publishes it. */
 export function readUsagePageWorkRetryable(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
   return slices.some(slice => slice.sources.some(source => isUsageWorkSettledWithEvidence(source) && canRetryUsageCoverageFailure(source)));
 }
+
+/**
+ * Where the one visible Retry for a settled Work answer's retryable gap sits (J-B46), decided once by the page and
+ * consumed by the header and the ledger: in the header when it already offers the batch Retry for another failed
+ * read, or when no body on the view states the Work gap; otherwise at that body (the ledger total). Null when the
+ * settled answer has nothing a Retry can change.
+ */
+export function readUsagePageWorkRetryPlacement(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[],
+  workGapStatedByBody: boolean): 'header' | 'body' | null {
+  if (!readUsagePageWorkRetryable(slices)) return null;
+  if (readUsagePageFailure(slices)?.retryable) return 'header';
+  return workGapStatedByBody ? 'body' : 'header';
+}
+
+/** The page's placement for the Work gap's Retry, read by the body that states the gap; outside a page, no Retry there. */
+export const UsageWorkRetryAtBodyContext = React.createContext(false);
 
 export function readUsagePageWorkOffline(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
   return slices.some(slice => slice.sources.some(source => isUsageWorkOffline(source) && !isUsageWorkSettledWithEvidence(source)));
@@ -1041,7 +1069,7 @@ export function readUsagePageFreshness(slices: readonly Pick<UsageQueryResultSli
             olderSource = readUsageOldestAccountingObservation(slice.accounting) ?? olderSource;
           }
         }
-      } else if (source.source === 'work' && source.asOfMs !== undefined && source.status !== 'error' && source.status !== 'unknown') {
+      } else if (source.source === 'work' && source.asOfMs !== undefined && USAGE_WORK_READABLE_STATUSES.has(source.status)) {
         workAsOf = workAsOf === null ? source.asOfMs : Math.min(workAsOf, source.asOfMs);
       } else if ((source.source === 'quota' || source.source.startsWith('quota:')) && source.asOfMs !== undefined) {
         quotaAsOf = quotaAsOf === null ? source.asOfMs : Math.max(quotaAsOf, source.asOfMs);
