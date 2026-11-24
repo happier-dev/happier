@@ -18,6 +18,7 @@ import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
 import { StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
@@ -486,8 +487,10 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
   // Details open beneath the row's actions, never beside them: an open disclosure is a block, not a control.
   return <View style={styles.controlStack}>
     {actions}
-    {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
-    {providerDetails ? <ApprovalTechnicalDetails lines={providerDetails} /> : null}
+    <ItemGroupRowPositionBoundary>
+      {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
+      {providerDetails ? <ApprovalTechnicalDetails lines={providerDetails} /> : null}
+    </ItemGroupRowPositionBoundary>
   </View>;
 }
 
