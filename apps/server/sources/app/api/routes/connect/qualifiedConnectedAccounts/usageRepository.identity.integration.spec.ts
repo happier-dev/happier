@@ -7,6 +7,12 @@ import {
     it,
 } from "vitest";
 
+import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import { buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota } from '../../../../../../../cli/src/daemon/connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import { readVercelQuota } from '../../../../../../../../packages/plugins/machine-vercel/src/quota';
+import { teamId, teamResponse } from '../../../../../../../../packages/plugins/machine-vercel/src/fixtures/accountPlanResponses';
+
 import { db } from "@/storage/db";
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
@@ -288,6 +294,65 @@ describe("qualified Connected Account usage stored identity", () => {
             source: { ref, bindingKind: 'account' }, fetchedAt: Date.now(), planLabel: 'legacy account scope' });
         await expect(writeQualifiedProviderAccountUsageRecord(write)).rejects.toMatchObject({ kind: 'mismatch' });
         expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toBeNull();
+    });
+
+    it('replaces a retained Vercel OAuth quota failure with a verified team plan and no usage meters', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const ref = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'vercel-oauth' };
+        const providerIdentity = { accountId: 'vercel-user', organizationId: teamId };
+        const credential = await mutateQualifiedConnectedServiceCredential({ accountId: account.id, ref,
+            expectedCredentialRevision: null, authenticationModeId: 'oauth',
+            content: { t: 'plain', v: { token: 'fixture-token' } }, metadata: { scopes: [], providerIdentity },
+        });
+        if (credential.status !== 'written') throw new Error('Expected credential create');
+        const profile = { ref, providerIdentity, status: 'connected', authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned', credentialRevision: credential.credentialRevision,
+            configurationRevision: null, configurationReady: true, kind: 'oauth', expiresAt: null, scopes: [],
+        } as const;
+        const project = (quota: Awaited<ReturnType<typeof readVercelQuota>>) =>
+            buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({ profile, quota, staleAfterMs: 120_000 });
+        const write = (snapshot: ReturnType<typeof project>, status: 'ok' | 'error') =>
+            writeQualifiedProviderAccountUsageRecord({ accountId: account.id, source: { ref, bindingKind: 'account' },
+                expectedCredentialRevision: credential.credentialRevision, expectedConfigurationRevision: null,
+                recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1',
+                status, snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+        const observedAtMs = Date.now();
+        const retained = project({ observedAtMs: 0, providerOrganizationId: teamId, planLabel: null, limits: [] });
+        await expect(write({ ...retained, state: 'error_last_known_good', confidence: 'unknown',
+            diagnostics: [{ kind: 'provider_http', observedAtMs: observedAtMs - 1 }] }, 'error'))
+            .resolves.toMatchObject({ sourceOutcome: { status: 'linked' } });
+
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const read = async () => {
+                const response = await app.inject({ method: 'GET', url: '/v4/connect/qualified/quotas',
+                    headers: { 'x-test-user-id': account.id }, query: { ref: JSON.stringify(ref) } });
+                expect(response.statusCode, response.body).toBe(200);
+                return QualifiedConnectedAccountQuotaResponseV4Schema.parse(response.json());
+            };
+            const before = await read();
+            expect(before.metadata.status).toBe('error');
+            expect(openQualifiedConnectedAccountQuotaResponseV4({ response: before, expectedRef: ref }))
+                .toMatchObject({ meters: [], diagnostics: [{ kind: 'provider_http' }] });
+
+            // Substitute vendor HTTP and secret access while exercising production acquisition and Home storage.
+            const quota = await readVercelQuota({
+                account: ref, signal: new AbortController().signal, invokedAtMs: observedAtMs,
+                configuration: { target: { modeId: 'oauth' }, values: { teamId } },
+                credentials: { async get() { return 'fixture-token'; } },
+                services: { http: createPluginHttpFixture({ async request(request) {
+                    expect(request.url).toBe(`https://api.vercel.com/v2/teams/${teamId}`);
+                    return { status: 200, finalUrl: request.url, headers: {},
+                        body: new TextEncoder().encode(JSON.stringify(teamResponse('pro'))) };
+                } }) },
+            } as ConnectedAccountReadContext);
+            await write(project(quota), 'ok');
+            const after = await read();
+            expect(after.sourceResolution.recordId).toBe(before.sourceResolution.recordId);
+            expect(after.metadata.status).toBe('ok');
+            const settled = openQualifiedConnectedAccountQuotaResponseV4({ response: after, expectedRef: ref });
+            expect(settled).toMatchObject({ planLabel: 'Pro', fetchedAt: observedAtMs, meters: [] });
+            expect(settled?.diagnostics).toBeUndefined();
+        });
     });
 
     it('links identity-free usage only to the organization stored on an account that names only its organization', async () => {

@@ -418,7 +418,11 @@ no structured default; the builder applies Happier's shared selection policy.
 The connection detail and Connected Account source use the same credits parser
 and Usage view. Sign-in supplies the selected team as a query parameter on
 `/v1/credits`. The Enterprise and Flex plans show lifetime spend with the balance
-hidden. Team member model access carries scope for inference only.
+hidden. In 0.3 development, the Vercel Connected Account quota read supplies the
+selected Team's plan from the Vercel control plane with an empty meter list.
+A successful Team read replaces an earlier quota failure for that Team. Gateway
+credits appear in the Gateway Usage section. Team member model access carries
+scope for inference only.
 
 A Team admin can select the qualified Gateway purpose for brokered model access.
 The broker uses the purpose on the saved Team source. The Team source owner

@@ -50,5 +50,6 @@ export async function readVercelQuota(context: ConnectedAccountReadContext): Pro
   if (!object(value) || value.id !== teamId) return { observedAtMs, planLabel: null, limits: [] };
   const plan = object(value) && object(value.billing) && typeof value.billing.plan === 'string'
     ? PLAN_LABELS[value.billing.plan.trim().toLowerCase() as keyof typeof PLAN_LABELS] : undefined;
-  return { observedAtMs, planLabel: plan ?? null, limits: [] };
+  // Publish the plan on the same team-scoped usage record as the Account's retained outcome.
+  return { observedAtMs, providerOrganizationId: teamId, planLabel: plan ?? null, limits: [] };
 }

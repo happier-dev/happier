@@ -35,10 +35,15 @@ describe('Vercel account plan quota', () => {
     expect(requests).toEqual([`https://api.vercel.com/v2/teams/${teamId}`]);
   });
 
-  it('recognizes Flex for an explicitly selected signed-in team', async () => {
+  it('reports the selected OAuth team plan in its organization scope without Gateway credit meters', async () => {
     const { context, requests } = readContext(teamResponse('flex'), 200, { teamId }, undefined, 'oauth');
-    await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: 'Flex' });
+    await expect(connectedAccountRuntime.quota?.(context)).resolves.toEqual({ observedAtMs: 1_000, providerOrganizationId: teamId, planLabel: 'Flex', limits: [] });
     expect(requests).toEqual([`https://api.vercel.com/v2/teams/${teamId}`]);
+  });
+
+  it('does not attest a different team returned by the plan endpoint', async () => {
+    const { context } = readContext({ ...teamResponse('pro'), id: 'team_other' });
+    await expect(connectedAccountRuntime.quota?.(context)).resolves.toEqual({ observedAtMs: 1_000, planLabel: null, limits: [] });
   });
 
   it('uses a personal account defaultTeamId only after the documented user response supplies it', async () => {

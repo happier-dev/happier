@@ -26,7 +26,7 @@ await loadSyncSingletonForTests();
 afterEach(async () => { vi.useRealTimers(); standardCleanup(); await account.reset(); rpc.reset(); });
 
 describe('Provider usage presentation demand', () => {
-    it('opens one Account detail usage source and shows spend for the selected Enterprise Account', async () => {
+    it.each(['Pro', 'Enterprise'] as const)('shows each available Gateway credit meter once for the selected %s Account', async planLabel => {
         const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
         installProviderSettingsRpcBoundary(rpc);
         const gateway = 'happier.provider.vercel-ai-gateway/vercel-ai-gateway';
@@ -59,11 +59,12 @@ describe('Provider usage presentation demand', () => {
         } }] });
         const requests = () => rpc.state.requests.filter(request => request.method === method);
         const screen = await renderScreen(React.createElement(ItemList, null,
-            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel: 'Enterprise' })));
+            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel })));
         expect(requests()).toHaveLength(0);
         await screen.pressByTestIdAsync('connected-account-provider-usage');
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')).not.toBeNull());
-        expect(screen.findByTestId('provider-connection-usage:meter:balance')).toBeNull();
+        expect(screen.findAllHostsByTestId('provider-connection-usage:meter:spend-lifetime')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('provider-connection-usage:meter:balance')).toHaveLength(planLabel === 'Pro' ? 1 : 0);
         expect(requests().map(request => request.payload)).toEqual([{ machineId, connectedAccountSource: {
             account: profile.ref, purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
                 purpose: 'model-inference' }, endpointTemplateId: 'vercel-chat', usageSourceId: 'credits',
