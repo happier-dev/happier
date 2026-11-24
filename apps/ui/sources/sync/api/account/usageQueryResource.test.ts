@@ -9946,6 +9946,117 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it('keeps mounted Week links and does no Work RPC for accounting-only pages with the same selectors', async () => {
+    const machineIds = Array.from({ length: 15 }, (_, i) => `week-machine-${i}`);
+    const sessions = Array.from({ length: 1_300 }, (_, i) => ({
+      id: `week-session-${i}`, machineId: machineIds[i < 16 ? 0 : 1 + i % 14]!,
+    }));
+    const added = { id: 'week-session-added', machineId: machineIds[0]! };
+    const all = [...sessions, added];
+    const reachable = sessions.slice(0, 16).map(session => session.id);
+    let page = 0;
+    let membership = sessions;
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+      ...value, totals: { ...value.totals, eventCount: membership.length + page },
+      contributions: [...membership.map(session => ({ ...workContribution, id: `cost-${session.id}`,
+        sessionId: session.id, machineId: session.machineId })),
+      ...Array.from({ length: page }, (_, i) => ({ ...workContribution, id: `append-${i}`,
+        sessionId: sessions[0]!.id, machineId: sessions[0]!.machineId }))],
+    }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions(all.map(session => createSessionFixture({ id: session.id, serverId: scope.serverId,
+      metadata: { machineId: session.machineId, path: '/repo', host: 'test', homeDir: '/home/test' },
+    })));
+    await publishMachineInventoryForTest(scope, machineIds.map((id, index) => createHydratedPlainMachineFixture({
+      id, accountId: 'account-a', machine: { active: index === 0, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })));
+    const evidence = { sessionId: sessions[0]!.id, turnId: workContribution.turnId, repositoryKey: 'work-ledger',
+      checkpointRef: 'checkpoint/turn', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: {
+        provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+          nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1',
+        baseBranch: 'main', headBranch: 'feature', state: 'merged',
+      } } satisfies UsageWorkEvidence;
+    const held = createDeferred<void>();
+    let hold = false;
+    scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
+      if (hold) await held.promise;
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(session => ({
+        sessionId: session.sessionId, status: 'partial', pullRequestsRead: true,
+        evidence: session.sessionId === evidence.sessionId ? [evidence] : [],
+      })) });
+    });
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, includeQuota: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true,
+      includeCoach: false, workProjection: 'detail' });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const read = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const counts: number[] = [];
+    const stop = entry.subscribe(() => {
+      const slice = read();
+      if (slice) counts.push(slice.work?.outcomes.length ?? 0);
+    }, true);
+    const waitForPage = async () => {
+      const expected = membership.length + page;
+      await expect.poll(() => read()?.accounting?.totals.eventCount).toBe(expected);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+    };
+    const advance = (kind: 'push' | 'account-page' | 'session-page' = 'push') => {
+      const readiness = { sessionIds: [], machineIds: [] };
+      if (kind === 'push') {
+        publishHomeAccountChange(scope.serverId, [], { changeKinds: ['account'],
+          usageAccountingChange: { sessionId: null }, sessionReadinessChanges: readiness });
+      } else {
+        const session = kind === 'session-page';
+        publishHomeAccountChange(scope.serverId, [session ? sessions[0]!.id : 'self'], {
+          feedPageConsumed: true, usageAccountingAffects: true, changeKinds: [session ? 'session' : 'account'],
+          sessionReadinessChanges: readiness,
+        });
+      }
+    };
+    const attemptedSessions = () => scmTransport.mock.calls.map(([request]) =>
+      (request.payload as ScmWorkEvidenceReadRequest).sessions.map(session => session.sessionId));
+    try {
+      await waitForPage();
+      expect(read()?.sources.find(source => source.source === 'work')).toMatchObject({
+        status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1_284 },
+      });
+      expect(read()?.work?.outcomes).toHaveLength(1);
+      expect(attemptedSessions()).toEqual([reachable]);
+      scmTransport.mockClear();
+      counts.length = 0;
+      for (const kind of ['push', 'account-page', 'session-page'] as const) {
+        page++;
+        membership = page === 2 ? [...sessions].reverse() : sessions;
+        advance(kind);
+        await waitForPage();
+      }
+      expect.soft(attemptedSessions(), 'three accounting-only pages, zero Work RPCs').toHaveLength(0);
+      scmTransport.mockClear();
+      membership = all;
+      hold = true;
+      advance();
+      await expect.poll(() => scmTransport.mock.calls.length).toBe(1);
+      await expect.poll(() => read()?.sources.find(source => source.source === 'work')?.status).toBe('pending');
+      expect(read()?.work?.outcomes).toHaveLength(1);
+      expect(attemptedSessions()).toEqual([[...reachable, added.id]]);
+      held.resolve();
+      await waitForPage();
+      expect(counts).not.toContain(0);
+
+      scmTransport.mockClear();
+      await entry.refresh();
+      expect(attemptedSessions()).toEqual([[...reachable, added.id]]);
+    } finally {
+      held.resolve();
+      stop();
+    }
+  });
+
   it.each(['unavailable', 'refused'] as const)('keeps the mounted Work count unknown when a refresh returns %s', async failure => {
     const machineId = 'work-refresh-machine';
     const sessionId = workContribution.sessionId;

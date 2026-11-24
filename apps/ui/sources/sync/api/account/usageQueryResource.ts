@@ -12,6 +12,7 @@ import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/pl
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
+import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -1381,6 +1382,8 @@ function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?
     };
 }
 
+type UsageWorkTurns = ReturnType<typeof readUsageWorkSessionTurns>;
+
 function readWorkSessionIds(accounting: UsageAccountingSourceSnapshot['value']): readonly string[] {
     return [...new Set(readUsageWorkSessionTurns(accounting)?.map(turn => turn.sessionId) ?? [])];
 }
@@ -1389,6 +1392,8 @@ type UsageWorkSessionTarget = Readonly<{ machineId: string; cwd: string } | { er
 type UsageWorkSessionTargets = ReadonlyMap<string, UsageWorkSessionTarget>;
 type UsageWorkMachineInput = Readonly<{
     queryKey: string; sessionIds: readonly string[]; targetKey: string; machineKey: string;
+    turns?: UsageWorkTurns;
+    source?: UsageWorkSourceSnapshot;
 }>;
 
 function resolveUsageWorkSessionTargets(scope: UsageQueryAccountContext['accountLifetime']['scope'],
@@ -1462,8 +1467,11 @@ export async function readUiUsageQueryBatch(
     options?: Readonly<{
         /** Async consumers return their existing progress drain so settlement can reuse its projection. */
         onProgress?: (reproject: UsageQueryReprojection) => void | Promise<void>;
-        /** The Resource retains the exact Session targets consumed by this Work read. */
-        onWorkAdmission?: (queryKey: string, targets: UsageWorkSessionTargets) => void;
+        /** A mounted Resource can reuse the Work answer on its exact admitted inputs. */
+        admitWork?: (query: UsageQuery, targets: UsageWorkSessionTargets, turns: UsageWorkTurns) => Readonly<{
+            retained?: UsageWorkSourceSnapshot;
+            settle(source: UsageWorkSourceSnapshot): void;
+        }>;
         /** Only the shared explicit Read now Action may open unconverted wide-window Sessions. */
         readUnconvertedHistory?: boolean;
         /** Explicit Retry carries the current batch's settled dispositions into the new read. */
@@ -1516,7 +1524,7 @@ export async function readUiUsageQueryBatch(
             return reproject(signal);
         } finally {
             readOptions.onProgress = undefined;
-            readOptions.onWorkAdmission = undefined;
+            readOptions.admitWork = undefined;
         }
     }
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
@@ -1755,17 +1763,21 @@ export async function readUiUsageQueryBatch(
             if (await accountingTasks.get(getUsageQueryKey(query)) === false) return;
             requireCurrent(context, signal);
             const queryKey = getUsageQueryKey(query);
-            const targets = resolveUsageWorkSessionTargets(context.accountLifetime.scope,
-                readWorkSessionIds(accounting.get(queryKey)?.value), sessionWorkTargets);
-            readOptions?.onWorkAdmission?.(queryKey, targets);
-            const sources = await collectUsageWorkSources({
-                queries: [query], accounting: [...accounting.values()], sessionReads: sessionWorkReads,
-                assertCurrent: () => requireCurrent(context, signal),
-                resolveSession: async sessionId => targets.get(sessionId) ?? null,
-                readMachine: readWorkMachine,
-            });
-            work = work.map((source, sourceIndex) => sourceIndex === index
-                ? { ...sources[0]!, ...(sources[0]!.status === 'error' ? {} : { asOfMs: accountingNowMs }) } : source);
+            const turns = readUsageWorkSessionTurns(accounting.get(queryKey)?.value);
+            const sessionIds = [...new Set(turns?.map(turn => turn.sessionId) ?? [])].sort();
+            const targets = resolveUsageWorkSessionTargets(context.accountLifetime.scope, sessionIds, sessionWorkTargets);
+            const admission = readOptions?.admitWork?.(query, targets, turns);
+            const source = admission?.retained ?? await (async () => {
+                const [read] = await collectUsageWorkSources({
+                    queries: [query], accounting: [...accounting.values()], sessionReads: sessionWorkReads,
+                    assertCurrent: () => requireCurrent(context, signal),
+                    resolveSession: async sessionId => targets.get(sessionId) ?? null,
+                    readMachine: readWorkMachine,
+                });
+                return read!.status === 'error' ? read! : { ...read!, asOfMs: accountingNowMs };
+            })();
+            admission?.settle(source);
+            work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);
             publish();
         }),
         ...evidenceQueries.map(async query => {
@@ -1858,7 +1870,7 @@ export async function readUiUsageQueryBatch(
         // Clear the observer on its private cell, including on cancellation.
         if (readOptions) {
             readOptions.onProgress = undefined;
-            readOptions.onWorkAdmission = undefined;
+            readOptions.admitWork = undefined;
         }
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
@@ -1887,6 +1899,7 @@ type UsageQueryReadDemand = Readonly<{
     allowanceOnly: boolean;
     authorityChanged: boolean;
     retryFailuresOnly: boolean;
+    accountingOnlyWorkWake?: boolean;
     /** Nothing reached this watch since its previous read, whose bytes are therefore still current. */
     unchanged: boolean;
     hasPendingChanges(): boolean;
@@ -2551,6 +2564,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         && canRetryUsageCoverageFailure(source))).map(slice => slice.key)));
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
                 const ownWorkInputs = new Map(admission?.workMachineInputs.map(input => [input.queryKey, input]));
+                // Work uses selector membership and its targets. Accounting
+                // revisions wake totals, but do not themselves change links.
+                const accountingOnly = admission?.settled === true && !retained.error
+                    && admission.inputs[0] === readInputs[0]
+                    && (admission.inputs[1] === readInputs[1] || readDemand.some(demand => demand.accountingOnlyWorkWake === true))
+                    && !readDemand.some(demand => demand.accountingOnlyWorkWake === false)
+                    && readInputs.slice(2).some((identity, index) => identity !== admission.inputs[index + 2]);
                 const seedWorkInputs = new Map<string, UsageWorkMachineInput>();
                 const sharedAllowance = allowance;
                 const heads = [...(sharedAllowance?.heads.values() ?? [])];
@@ -2596,9 +2616,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     for (const slice of value.results) {
                         const status = slice.requestedQuery.includeWorkEvidence
                             ? slice.sources.find(source => source.source === 'work')?.status : undefined;
-                        // A pending or retained failure still describes the seed's Work, even
-                        // after its replacement has issued SCM for a different target.
-                        const workInput = (status === 'pending' || status === 'stale' ? seedWorkInputs : acquiredWorkInputs).get(slice.key);
+                        // Pending and stale links belong to the seed's targets.
+                        // Remember a failed replacement only on those same targets;
+                        // an accounting wake cannot turn it into current PR coverage.
+                        const seed = seedWorkInputs.get(slice.key);
+                        const acquired = acquiredWorkInputs.get(slice.key);
+                        const workInput = status === 'pending' ? seed : status === 'stale'
+                            ? seed && (acquired?.targetKey === seed.targetKey && acquired.machineKey === seed.machineKey
+                                ? { ...seed, turns: acquired.turns, source: acquired.source } : { ...seed, source: undefined })
+                            : acquired;
                         if (workInput) workMachineInputs.push(workInput);
                         if (publishSlices) slicesByQuery.set(slice.key, { slice, workInput });
                     }
@@ -2759,8 +2785,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         if (!retainedProjection) acquiredWorkInputs.clear();
                         return await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
-                            onWorkAdmission: (queryKey, targets) => {
-                                acquiredWorkInputs.set(queryKey, readWorkMachineInput(queryKey, targets));
+                            admitWork: (query, targets, turns) => {
+                                const queryKey = getUsageQueryKey(query);
+                                const input = readWorkMachineInput(queryKey, targets);
+                                const prior = accountingOnly ? seedWorkInputs.get(queryKey) : undefined;
+                                const retained = turns?.length && prior?.targetKey === input.targetKey
+                                    && prior.machineKey === input.machineKey
+                                    && hasSameUsageQueryWorkEvidenceMembership({ query, admittedTurns: turns, previousAdmittedTurns: prior.turns })
+                                    ? prior.source : undefined;
+                                return { retained, settle: source => acquiredWorkInputs.set(queryKey, { ...input, turns, source }) };
                             },
                             retainedProjection,
                             retryFailuresOnly,
@@ -2870,6 +2903,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 let allowanceOnlyDemand: boolean | undefined;
                 let woken = false;
                 let retryFailuresOnly = false;
+                let accountingOnlyWorkWake: boolean | undefined;
                 let accountingWakeScheduled = false;
                 // Disclosure withdrawals also cover socket churn. The canonical
                 // finite currentness owner distinguishes those from mode changes.
@@ -2927,6 +2961,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         && (change.usageAccountingChange !== undefined
                             || change.feedPageConsumed === true && change.usageAccountingAffects === true)
                         && !allowanceChanged;
+                    // A consumed accounting page can also rotate the general
+                    // Session evidence input. Its readiness facts say whether
+                    // any Session or Machine actually changed Work admission.
+                    const readiness = accountingWake ? change.sessionReadinessChanges : undefined;
+                    accountingOnlyWorkWake = accountingOnlyWorkWake !== false && !accountModeChanged
+                        && !!readiness && readiness !== 'all' && !readiness.sessionIds.length && !readiness.machineIds.length;
                     // Accounting pushes and consumed pages change freshness, not the admitted
                     // read's lifetime. Let that read settle as stale instead of
                     // feeding an endless chain of queued replacement reads.
@@ -2962,6 +3002,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     reference,
                     requestAllowanceRead(failedOnly) {
                         retryFailuresOnly = failedOnly;
+                        accountingOnlyWorkWake = false;
                         woken = true;
                         if (!readsAllowance) return;
                         allowanceReadDemand = true; allowanceRecordIds = undefined; allowanceDayChange = undefined;
@@ -2981,6 +3022,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             allowanceDayChange: authorityChanged ? undefined : allowanceDayChange,
                             projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
                             retryFailuresOnly: !authorityChanged && retryFailuresOnly,
+                            accountingOnlyWorkWake,
                             allowanceOnly: !authorityChanged && allowanceOnlyDemand === true,
                             unchanged: !authorityChanged && !woken, hasPendingChanges: () => woken, isCurrent: witness.isCurrent,
                             finish() { if (activeReadDemand === demand) activeReadDemand = undefined; } };
@@ -2992,6 +3034,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         allowanceOnlyDemand = undefined;
                         woken = false;
                         retryFailuresOnly = false;
+                        accountingOnlyWorkWake = undefined;
                         return demand;
                     },
                     readsAllowance,
