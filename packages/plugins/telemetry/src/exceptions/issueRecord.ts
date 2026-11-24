@@ -32,6 +32,7 @@ const resolutionSchema = defineProtocolObject(
  * Environment id, which the server already knows, is server-readable.
  * Occurrences and stacks never enter this record; they stay on the collector.
  */
+export const TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX = 'by-environment';
 export const TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1 = defineAccountCollection(
   {
     id: 'exception-issues',
@@ -64,7 +65,7 @@ export const TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1 = defineAccountCollection(
     identityFields: ['id'],
     indexes: [
       {
-        id: 'by-environment',
+        id: TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX,
         fields: [
           { field: 'environmentId', direction: 'asc' },
           { field: 'id', direction: 'asc' },

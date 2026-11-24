@@ -7,6 +7,7 @@ import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
+import { TELEMETRY_ACCOUNT_DEFINITION, TELEMETRY_OPEN_ISSUES_FIELD } from './exceptions/serviceFacts.js';
 import { createCaptureActionProducers, createCaptureActions, createCapturePublicActionProducers } from './actions.js';
 import { createCaptureResourceRuntime, TELEMETRY_SERVICE_SUMMARY_FIELDS } from './resources.js';
 import { captureSourcePartition } from './partition.js';
@@ -53,16 +54,15 @@ const EXCEPTION_DETAIL_RENDERER_ID = 'exception-detail';
 const EXCEPTION_DETAIL_FALLBACK_RENDERER_ID = 'exception-detail-fallback';
 
 export const DATABASE_CAPTURE_PLUGIN = definePlugin({
- id: 'happier.telemetry', version: '0.0.0', displayName: 'Telemetry',
+ ...TELEMETRY_ACCOUNT_DEFINITION,
  description: 'Machine-local database observations and application telemetry.',
  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
- hostAccess: { required: [], optional: [{ id: 'account-storage', capability: 'storage.account', reason: 'Read the Project capture preference and keep native exception issues.', scope: { enabled: true } }] },
  machineRoles: {
   local: { title: 'Local database capture', description: 'Record database observations and application telemetry for local Workspaces.', partOf: 'workspaces', backgroundServices: ['local-capture'] },
   telemetry: { title: 'Telemetry', description: 'Collect telemetry from deployed applications.', defaultActive: DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1[0].defaultActive, backgroundServices: ['telemetry-collector'] },
  },
  daemonDatabases: { capture: localCaptureBackground.databaseDefinition },
- resources: { [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
+ resources: { ...TELEMETRY_ACCOUNT_DEFINITION.resources, [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
   source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
   runtime: createCaptureResourceRuntime({ subscribe: localCaptureBackground.subscribe }),
  } },
@@ -80,7 +80,7 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
   }, ...Object.entries(TELEMETRY_SERVICE_SUMMARY_FIELDS).map(([id, { title, unit }]) => ({
    id, title, source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number' as const, unit },
    byline: true as const,
-  }))],
+  })), TELEMETRY_OPEN_ISSUES_FIELD],
  } }, views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
   ...TELEMETRY_WIDGET_RENDERERS,
   // The detail reads occurrences and writes lifecycle through this plugin's own Actions.

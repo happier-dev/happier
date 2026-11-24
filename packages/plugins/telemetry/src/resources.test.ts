@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { definePlugin, PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import { PluginServiceListFieldResourceResultV1Schema } from '@happier-dev/plugin-sdk/ui';
 import * as database from '@happier-dev/database-protocol';
@@ -11,9 +11,61 @@ import { captureSourcePartition } from './partition.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { captureMigrations } from './store/capture.js';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
+import type { ExceptionIssueRecord } from './exceptions/issueRecord.js';
 
 const source = { kind: 'worktree' as const, serverId: 'home', machineId: 'machine', projectId: 'project', workspaceId: 'workspace' };
 const unavailable = () => { throw new Error('Unused public host service'); };
+
+it('counts open issues across the bounded own and Team reads for the demanded Environments', async () => {
+    const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN });
+    try {
+        const resource = host.registration('resources', 'environment-open-issues');
+        expect(resource).toBeDefined();
+        if (!resource) throw new Error('The Environment issue read is not registered');
+        const row = (rowId: string, status: ExceptionIssueRecord['status'], environmentId = 'app') => ({
+            rowId, revision: 1, value: { id: rowId, environmentId, fingerprint: rowId, title: rowId, status,
+                count: 1, firstSeenAtMs: 1, lastSeenAtMs: 1, asOfMs: 1, createdAtMs: 1, updatedAtMs: 1 },
+        });
+        const own = vi.fn(async (_query: { cursor?: string }) => _query.cursor === 'own-next'
+            ? { rows: [row('resolved', 'resolved')], changeCursor: 2 }
+            : { rows: [row('same-id', 'open')], nextCursor: 'own-next', changeCursor: 2 });
+        const sharedRow = (ownerAccountId: string, rowId: string, access: 'owner' | 'view') => ({
+            ...row(rowId, 'open'), ownerAccountId, access,
+        });
+        const shared = vi.fn(async ({ query }: { query: { cursor?: string } }) => query.cursor === 'team-next'
+            ? { rows: [sharedRow('other', 'same-id', 'view')] }
+            : { rows: [sharedRow('own', 'same-id', 'owner'), sharedRow('other', 'same-id', 'view')], nextCursor: 'team-next' });
+        const dispose = vi.fn();
+        let invalidated: (() => void) | undefined;
+        const watch = vi.fn((_query: unknown, callback: () => void) => {
+            invalidated = callback;
+            return { dispose };
+        });
+        // The SDK Account Collection is the transport and envelope boundary.
+        const accountStorage = { collection: () => ({ query: own, sharing: { sharedWithMe: shared }, watch }) } as unknown as
+            NonNullable<PluginDynamicResourceInvocationOptionsV1['accountStorage']>;
+        const options = createTestResourceInvocationContext({ accountStorage, context: {
+            kind: 'surface', mountInstanceKey: 'services', launchInput: {
+                entity: 'service', serverId: 'home', environmentIds: ['app', 'empty'], includeTrend: false,
+            },
+        } });
+        const notify = vi.fn();
+        const observation = await resource.observe(notify, options);
+        const value = await resource.read(options);
+        const snapshot = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(value)));
+        expect(snapshot.items).toEqual([
+            { environmentId: 'app', value: null, facts: { 'open-issues': { value: 2 } } },
+            { environmentId: 'empty', value: null, facts: { 'open-issues': { value: 0 } } },
+        ]);
+        const index = { index: 'by-environment', prefixes: [['app'], ['empty']], order: 'asc' };
+        expect(own.mock.calls.map(([query]) => query)).toEqual([index, { ...index, cursor: 'own-next' }]);
+        expect(shared.mock.calls.map(([request]) => request)).toEqual([{ query: index }, { query: { ...index, cursor: 'team-next' } }]);
+        invalidated?.();
+        expect(notify).toHaveBeenCalledOnce();
+        await observation.dispose();
+        expect(dispose).toHaveBeenCalledOnce();
+    } finally { await host.dispose(); }
+});
 
 describe('capture demanded Resource through real public Actions', () => {
     it('reads one mounted Environment batch and releases its selected push subscriptions', async () => {

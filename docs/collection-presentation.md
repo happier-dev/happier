@@ -182,6 +182,10 @@ admission. It reads `facts[field.id]` from each matched row for the second
 line. The host sends `includeTrend: false` when the batch has only byline
 consumers. Column demand keeps the existing trend. Telemetry publishes p95
 and error rate with their coverage in the same read as Requests.
+Open issues come from one Account-scoped batch across the mounted Environments.
+The Telemetry Resource reads the existing own and admitted Team-shared Collection
+index, counts open protected records by owner and row, and refreshes on entitled
+Collection changes. An answered empty read returns zero.
 
 Services Apps' optional **Requests · 24 h** field uses this declaration and is
 off by default. Its row is an Environment: the existing telemetry metric owner

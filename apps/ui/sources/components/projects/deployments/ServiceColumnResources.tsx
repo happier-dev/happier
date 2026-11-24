@@ -45,23 +45,26 @@ export function ServiceColumnResources(props: Readonly<{ projection: PluginUiPro
   const owner = React.useMemo(() => createPluginMountedResourceDemand<ServiceColumnDemand, ServiceColumnValue>(), [props.lifetime]);
   const revision = React.useSyncExternalStore(owner.subscribeDemand, owner.getRevision, owner.getRevision);
   const groups = React.useMemo(() => {
-    const groups = new Map<string, ServiceColumnDemand[]>();
+    const groups = new Map<string, { machineId: string | null; demands: ServiceColumnDemand[] }>();
     for (const demand of owner.demands()) {
-      const key = JSON.stringify([demand.resource, demand.collectorMachineId]);
-      const members = groups.get(key) ?? [];
-      members.push(demand); groups.set(key, members);
+      const declaration = readPluginUiResourceProjection(props.projection?.resourcesById, demand.resource);
+      const machineId = declaration?.execution?.target === 'account' ? null : demand.collectorMachineId;
+      const key = JSON.stringify([demand.resource, machineId]);
+      const group = groups.get(key) ?? { machineId, demands: [] };
+      group.demands.push(demand);
+      groups.set(key, group);
     }
     return groups;
-  }, [owner, revision]);
+  }, [owner, props.projection, revision]);
   return <DemandContext.Provider value={owner}>
-    {props.lifetime && [...groups].map(([key, demands]) => <ServiceColumnGroup key={key} owner={owner} demands={demands}
+    {props.lifetime && [...groups].map(([key, group]) => <ServiceColumnGroup key={key} owner={owner} {...group}
       projection={props.projection} lifetime={props.lifetime!} />)}
     {props.children}
   </DemandContext.Provider>;
 }
 
 function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly ServiceColumnDemand[];
-  projection: PluginUiProjectionModel | null; lifetime: ActiveServerAccountScopeLifetime }>) {
+  machineId: string | null; projection: PluginUiProjectionModel | null; lifetime: ActiveServerAccountScopeLifetime }>) {
   const first = props.demands[0]!;
   const presented = useLayoutPresentationActive();
   const declared = readPluginUiResourceProjection(props.projection?.resourcesById, first.resource);
@@ -70,23 +73,23 @@ function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly Se
   const sections = React.useMemo(() => slicePluginSections(['resourcesById'], first.resource.pluginId), [first.resource.pluginId]);
   // Global declarations name the column. The existing per-Machine owner admits the actual collector's executable Resource.
   const current = usePluginUiProjectionCurrentness({ serverId: props.lifetime.scope.serverId,
-    machineId: first.collectorMachineId, enabled: !account && first.collectorMachineId !== null,
+    machineId: props.machineId, enabled: props.machineId !== null,
     load: presented, sections, reloadRevision });
   const projection = account ? props.projection : current.pluginUiProjection;
   const declaration = readPluginUiResourceProjection(projection?.resourcesById, first.resource);
   const environmentIds = [...new Set(props.demands.map(demand => demand.environmentId))].sort();
   const trendRequested = props.demands.some(demand => !demand.field.declaration.byline);
-  const context = { kind: 'surface' as const, mountInstanceKey: `services:${JSON.stringify([first.resource, first.collectorMachineId])}`,
+  const context = { kind: 'surface' as const, mountInstanceKey: `services:${JSON.stringify([first.resource, props.machineId])}`,
     launchInput: { entity: 'service', serverId: props.lifetime.scope.serverId, environmentIds,
       ...(trendRequested ? {} : { includeTrend: false }) } };
   const binding = declaration && resolvePluginContextualResourceBinding({ projection, accountLifetime: props.lifetime,
-    machineId: first.collectorMachineId, serverId: props.lifetime.scope.serverId, requireReadAuthority: true,
+    machineId: props.machineId, serverId: props.lifetime.scope.serverId, requireReadAuthority: true,
     isCurrent: () => account || current.interactionEnabled }, declaration, context);
   if (binding) return <ServiceColumnResourceBatch owner={props.owner} demands={props.demands} binding={binding} resource={first.resource} />;
   // The currentness owner withdrew this collector. Retained figures stay readable with one explanation for the source.
   const reading = current.phase === 'establishing';
   const retained = props.demands.some(demand => props.owner.read(demand.key)?.value != null);
-  if (!first.collectorMachineId || reading && !retained) return null;
+  if (!props.machineId || reading && !retained) return null;
   return <SurfaceFreshnessLine busy={reading} reason={reading ? t('common.loading') : t('common.unavailable')}
     {...(reading ? {} : { action: { label: t('common.retry'), onPress: reload } })} />;
 }

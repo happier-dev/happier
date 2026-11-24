@@ -14,6 +14,7 @@ import {
   type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
+  TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX,
   TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1,
   type ExceptionIssueRecord,
 } from './issueRecord.js';
@@ -228,7 +229,7 @@ async function readAll(
   let cursor: string | undefined;
   do {
     const page = await issues.query(
-      { index: 'by-environment', order: 'asc', ...(cursor ? { cursor } : {}) },
+      { index: TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, order: 'asc', ...(cursor ? { cursor } : {}) },
       { signal: context.signal },
     );
     items.push(

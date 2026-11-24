@@ -21,6 +21,7 @@ describe('Telemetry plugin manifest', () => {
     expect(extension?.filterFields?.filter(field => field.byline)).toMatchObject([
       { id: 'http-p95', source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number', unit: 'ms' } },
       { id: 'http-error-rate', source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number', unit: '1' } },
+      { id: 'open-issues', source: { resource: 'environment-open-issues' }, value: { kind: 'number', unit: '{issue}' } },
     ]);
     expect(projectPluginPortableUiDeclarationsV1(manifest)[`listExtension:happier.telemetry:${TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1}`])
       .toMatchObject({ listExtension: { entity: 'service' } });

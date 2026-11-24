@@ -1,0 +1,75 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFieldResourceResultV1 } from '@happier-dev/plugin-sdk/ui';
+
+import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1, TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX } from './issueRecord.js';
+
+export const TELEMETRY_OPEN_ISSUES_FIELD = {
+    id: 'open-issues', title: 'Open issues', source: { resource: 'environment-open-issues' },
+    value: { kind: 'number', unit: '{issue}' }, byline: true,
+} as const;
+
+function environmentIssueDemand(options: PluginDynamicResourceInvocationOptionsV1) {
+    if (options.context.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
+    if (!options.accountStorage) throw new PluginError({ code: 'plugin_account_storage_unavailable' });
+    const { environmentIds } = PluginServiceListFieldResourceInputV1Schema.parse(options.context.launchInput);
+    return {
+        issues: options.accountStorage.collection(TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1),
+        environmentIds: [...new Set(environmentIds)],
+    };
+}
+
+const issueResource: PluginDynamicResourceRuntime = {
+    async read(options) {
+        const { issues, environmentIds } = environmentIssueDemand(options);
+        if (!environmentIds.length) return JSON.stringify({ items: [] });
+        const query = { index: TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, order: 'asc', prefixes: environmentIds.map(id => [id]) } as const;
+        const perEnvironment = new Map(environmentIds.map(id => [id, new Set<string>()]));
+        const cancellation = { signal: options.signal };
+
+        const readOwn = async () => {
+            let cursor: string | undefined;
+            do {
+                const page = await issues.query({ ...query, ...(cursor ? { cursor } : {}) }, cancellation);
+                for (const row of page.rows) {
+                    if (row.value.status === 'open') perEnvironment.get(row.value.environmentId)?.add(JSON.stringify([null, row.rowId]));
+                }
+                cursor = page.nextCursor;
+            } while (cursor);
+        };
+        const readShared = async () => {
+            let cursor: string | undefined;
+            do {
+                const page = await issues.sharing.sharedWithMe({ query: { ...query, ...(cursor ? { cursor } : {}) } }, cancellation);
+                for (const row of page.rows) {
+                    if (row.access !== 'owner' && row.value.status === 'open') {
+                        perEnvironment.get(row.value.environmentId)?.add(JSON.stringify([row.ownerAccountId, row.rowId]));
+                    }
+                }
+                cursor = page.nextCursor;
+            } while (cursor);
+        };
+        await Promise.all([readOwn(), readShared()]);
+        return JSON.stringify({ items: [...perEnvironment].map(([environmentId, rows]) => ({
+            environmentId, value: null, facts: { [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: rows.size } },
+        })) } satisfies PluginServiceListFieldResourceResultV1);
+    },
+    observe(invalidate, options) {
+        // Own and shared notifications use the same entitled Account Collection change channel.
+        return environmentIssueDemand(options).issues.watch({ kind: 'collection' }, invalidate);
+    },
+};
+
+export const TELEMETRY_SERVICE_ISSUE_RESOURCES = {
+    [TELEMETRY_OPEN_ISSUES_FIELD.source.resource]: {
+        source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', hostAccess: ['account-storage'],
+        execution: { target: 'account', account: { artifactId: 'telemetry-account-runtime', exportName: 'activate' } },
+        runtime: issueResource,
+    },
+} as const;
+
+export const TELEMETRY_ACCOUNT_DEFINITION = {
+    id: 'happier.telemetry', version: '0.0.0', displayName: 'Telemetry',
+    hostAccess: { required: [], optional: [{ id: 'account-storage', capability: 'storage.account', reason: 'Read the Project capture preference and keep native exception issues.', scope: { enabled: true } }] },
+    resources: TELEMETRY_SERVICE_ISSUE_RESOURCES,
+} as const;

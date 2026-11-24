@@ -57,7 +57,8 @@ export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentB
   const text = typeof scalar === 'number' && declared.kind === 'number'
     ? declared.unit === 'ms' ? formatServiceCheckLatency(scalar)
       : declared.unit === '1' ? formatServiceCheckShare(scalar)
-        : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
+        : declared.unit === '{issue}' ? new Intl.NumberFormat(locale).format(scalar)
+          : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
     : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
   const label = `${props.fact.title} ${text}`;
   const measurement = value?.provenance;
