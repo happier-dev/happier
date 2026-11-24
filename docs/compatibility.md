@@ -2597,8 +2597,13 @@ originating Machine custody, including in public approval reads.
 On a foreign admitted `machines.agents.list` root, the receiving handler returns
 the Machine's Agent roster and detection facts with the definition catalog
 marked unavailable. It never reads the executor's Account ACP catalog for that
-root. Requester definitions use the existing executable-only `draftDefinitions`
-input; custodian catalog reads retain their existing behavior.
+root. In-process callers pass a requester's definition through the
+executable-only `draftDefinitions` argument; it is not a field of the
+`machines.agents.list` Action input. Session start readiness reads the withheld
+catalog as "not inspected" and leaves a requester's own definition to the
+launch, which resolves it under that requester's custody and refuses an absent
+command or unknown definition before runner launch. Custodian catalog reads
+retain their existing behavior.
 
 ## Voice `voice` carrier retirement (0.2 → 0.3)
 

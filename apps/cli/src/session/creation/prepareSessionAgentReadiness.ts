@@ -4,6 +4,7 @@ import { MachinesAgentsListOutputSchema, buildMachineAgentInventoryKey, resolveM
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, type AgentInstallJobConsent } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { REQUESTER_DEFINITION_CATALOG_WITHHELD_REASON } from '@/session/actions/cliActionDeps/machineInventory';
 
 type SpawnArgs = Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0];
 type ReadinessResult = Extract<SessionSpawnNewResultV1, { type: 'error' }> | ActionApprovalRequestCreatedResult | ActionExecuteFailure;
@@ -36,10 +37,14 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   const selectionKey = buildMachineAgentInventoryKey(selection);
   const agent = facts.data.items.find(item => buildMachineAgentInventoryKey(item) === selectionKey);
   if (!agent) {
-    // An unregistered probe says nothing about the executable. The ordinary
-    // native launch resolver still decides whether a runnable CLI exists.
+    // An unregistered probe says nothing about the executable, nor does a foreign
+    // requester's own definition, which the inventory withholds by contract. The
+    // ordinary native launch resolver still decides whether a runnable CLI exists.
     const unavailable = facts.data.unavailable?.find(item => buildMachineAgentInventoryKey(item) === selectionKey);
-    return unavailable?.reason === 'probe_failed' && unavailable.errorCode === 'unknown-capability'
+    const requesterDefinitionWithheld = input.definitionId !== undefined
+      && facts.data.definitionCatalog?.reason === REQUESTER_DEFINITION_CATALOG_WITHHELD_REASON;
+    return requesterDefinitionWithheld
+      || unavailable?.reason === 'probe_failed' && unavailable.errorCode === 'unknown-capability'
       ? null : refusal();
   }
   const intent = resolveMachineAgentAcquireIntentV1(agent);

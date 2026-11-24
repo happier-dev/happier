@@ -3335,8 +3335,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (originalGet) return originalGet(url, options);
       throw new Error(`Unexpected member start GET ${path}`);
     });
+    const postedPaths: string[] = [];
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
       const path = new URL(String(url)).pathname;
+      postedPaths.push(path);
       const availability = readBundledPluginAvailabilityHttpFixture(path, body);
       if (availability) return homeResponse(availability);
       if (path === '/v2/sessions/lookup-by-tags') return homeResponse({ sessions: [] });
@@ -3381,9 +3383,24 @@ describe('Custom ACP fresh daemon launch composition', () => {
       expect(launchPreparations).toBe(1);
       expect(admissionRequests.slice(admittedRequests.length)).toEqual([{ actorAccountId: 'df38-member', valid: true }]);
       expect(admittedRequests).toEqual([{ actorAccountId: 'df38-member', valid: true }]);
-      if (process.platform !== 'linux') return;
-
+      // Start readiness leaves a guest's own definition to this launch. An absent
+      // command or a definition the guest has not saved is refused here with the
+      // Agent's typed code, before runner launch and before any Session row.
       access = true;
+      for (const definitionId of ['missing', 'not-saved-by-member']) {
+        const postsBefore = postedPaths.length;
+        const refusedLaunch = await executeSpawnSessionRequest({ ...input, options: { ...input.options,
+          agentTarget: AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId }) } });
+        expect({ definitionId, refusedLaunch }, JSON.stringify(refusedLaunch)).toMatchObject({ definitionId,
+          refusedLaunch: definitionId === 'missing' ? { type: 'error', errorCode: 'agent_cli_missing', agentId: 'custom-acp' }
+            : { type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: expect.stringContaining(definitionId) } });
+        expect(launchPreparations).toBe(1);
+        expect(postedPaths.slice(postsBefore).filter(path => path.startsWith('/v1/sessions') || path.startsWith('/v2/sessions')
+          && path !== '/v2/sessions/lookup-by-tags')).toEqual([]);
+      }
+      if (process.platform !== 'linux') return;
+      const nativeAdmissionStart = admissionRequests.length;
+
       const attribution = { serverId: 'df38-home', accountId: 'df38-member', machineId: 'df38-machine',
         installationId: installation.installationId };
       const requesterIdentity = { kind: 'isolated' as const, requester: attribution, separationRequired: true,
@@ -3413,7 +3430,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
           }, new AbortController().signal),
         });
         expect(launchPreparations).toBe(1);
-        expect(admissionRequests.slice(2)).toEqual([{ actorAccountId: attribution.accountId, valid: true }]);
+        expect(admissionRequests.slice(nativeAdmissionStart)).toEqual([{ actorAccountId: attribution.accountId, valid: true }]);
         if (nativeRefusal.type !== 'error') throw new Error('Expected native setup refusal before runner launch');
         const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(nativeRefusal));
         expect(response.errorDetail).toMatchObject({ kind: 'launch_error', code: 'agent_isolation_unavailable',

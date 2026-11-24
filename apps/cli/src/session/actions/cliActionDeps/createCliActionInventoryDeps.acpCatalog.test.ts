@@ -27,6 +27,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliMachineInventoryActionDeps } from './machineInventory';
+import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
 import { createCapabilitiesService } from '@/capabilities/service';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
@@ -233,6 +234,42 @@ describe('ACP Action inventory row authority', () => {
       expect(requests).toContain(`GET ${ACP_CATALOG_ROWS_ROUTE_V1}`);
     }
   });
+  it.each([['guest', 'guest-own', null], ['custodian', 'host-only', null], ['custodian', 'not-saved', 'agent_cli_not_ready']] as const)(
+    'decides Session start readiness for a %s custom ACP definition %s through the real inventory owner', async (actor, definitionId, refusal) => {
+      const hostRecord = { v: 1, definitions: [{ ...record.definitions[0], id: 'host-only', title: 'Host private Agent',
+        launch: { kind: 'command', command: process.execPath, args: [] } }] } satisfies AcpCatalogRecordV1;
+      const { deps, credentials, requests } = await createInventory('ready', { initialRecord: hostRecord });
+      const service = createCapabilitiesService({ capabilities: [createAcpAgentInventoryCapability({ accountId: 'custodian' })],
+        checklists: { 'machine-details': [], 'new-session': [] }, buildContext: async () => ({ cliSnapshot: null }) });
+      // Machine RPC is the boundary; the inventory Action, its foreign-root rule,
+      // the ACP capability and the readiness decision all remain real.
+      const machineDeps = createCliMachineInventoryActionDeps({ credentials }, {
+        inventoryDeps: deps, callMachineAction: async input => {
+          if (input.method === 'daemon.extensions.contributionRegistryProjection.describe') {
+            return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {} } };
+          }
+          if (input.method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+          return await service.detect(input.request as CapabilitiesDetectRequest);
+        },
+      });
+      const executor = createActionExecutor({ ...deps, ...machineDeps });
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+        accountId: actor, custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'machines.agents.list', requestId: 'readiness',
+        machineId: 'machine', installationId: 'installation', target: { kind: 'machine', machineId: 'machine' },
+        requestEnvelopeDigest: 'a'.repeat(43),
+      } });
+      const context = { surface: 'cli' as const, authority: 'account_automation' as const,
+        externalActionExecutionAuthorization: authorization };
+      const agentId = buildQualifiedPluginContributionKey(CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1);
+      const result = await prepareSessionAgentReadiness({ machineId: 'machine', serverId: 'home', agentId, definitionId,
+        invoke: (action, input) => executor.execute(action, input, context) });
+      // A guest's own definition is not this Machine's to inspect (11c33c09ff5):
+      // readiness leaves the executable to the launch, which reads it under the
+      // guest's own custody. The custodian's own catalog keeps its pre-birth answer.
+      expect(result).toEqual(refusal ? { result: { type: 'error', code: refusal, agentId, retryable: false } } : null);
+      if (actor === 'guest') expect(requests).toEqual([]);
+    });
   it.each(['models', 'session_modes', 'config_options', 'summary'] as const)('returns native %s evidence in the Session workspace unless a probe directory is explicit', async kind => {
     await withTempDir('happier-acp-action-probe-', async directory => {
       // Genuine executable boundary: the real ACP transport negotiates this

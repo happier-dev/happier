@@ -19,6 +19,9 @@ import { SESSION_AGENT_READINESS_CHILDREN_V1, isSessionAgentReadinessRootActionI
 import { readProjectedAgentDeclarationV1 } from '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1';
 type MachinesAgentsList = NonNullable<ActionExecutorDeps['machinesAgentsList']>;
 
+/** The inventory's typed answer when a foreign root's own definition catalog is withheld (11c33c09ff5). */
+export const REQUESTER_DEFINITION_CATALOG_WITHHELD_REASON = 'requester-account-unavailable';
+
 export type MachineInventoryProviderIsolationObserver = Readonly<{
   agentTargetKey: string;
   reportSuppression: (serviceIds: readonly string[]) => void;
@@ -113,7 +116,7 @@ export function createCliMachineInventoryActionDeps(
           // A foreign root admits Machine facts, not this executor's Account catalog.
           // Requester-owned definitions arrive only through the draft path above.
           const observedDefinitions: ReturnType<typeof projectAcpCatalogForMachineInventory> = binding && binding.accountId !== binding.custodianAccountId
-            ? { definitionCatalog: { status: 'unavailable', reason: 'requester-account-unavailable' } }
+            ? { definitionCatalog: { status: 'unavailable', reason: REQUESTER_DEFINITION_CATALOG_WITHHELD_REASON } }
             : !args.agentId || args.definitionId
               ? projectAcpCatalogForMachineInventory(catalog ?? await inventoryDeps.readAccountAcpCatalog({ signal: context.signal })) : {};
           const definitionInventory = args.definitionId && 'definitions' in observedDefinitions
