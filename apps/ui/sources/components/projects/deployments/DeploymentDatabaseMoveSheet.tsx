@@ -20,7 +20,8 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
-import { deploymentDatabaseMoveDestination } from './deploymentRestore';
+import { deploymentDatabaseMoveDestination, deploymentDatabaseMoveManagedRefusal } from './deploymentRestore';
+import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { DEPLOYMENT_DATABASE_CATALOG_FILTER, deploymentEnvironmentRoute } from './deploymentNavigation';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -67,6 +68,19 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const select = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
     setSelectedId(row.environment.id); setRefusal(null);
   }, []);
+  // A managed destination is refused by the same Move destination owner before it is chosen, so its row says why
+  // where it is listed; the chosen row shows its own read working instead of a line that resizes the sheet.
+  const providerTitle = useDeploymentPlatformTargetTitles(props.lifetime, true);
+  const selectedReading = selectedId !== null && selected.snapshot.status !== 'ready' && selected.snapshot.status !== 'unavailable';
+  const rowStatus = (row: DeploymentEnvironmentCollectionV1['items'][number]) => {
+    const managed = row.managedDataTargetLink;
+    if (managed && deploymentDatabaseMoveManagedRefusal([managed])) {
+      const provider = managed.source.kind === 'plugin' ? providerTitle(managed.source) : null;
+      return { unavailable: provider ? t('projects.deployments.databaseMoveManaged', { provider })
+        : t('projects.deployments.databaseMoveManagedUnnamed') };
+    }
+    return selectedReading && row.environment.id === selectedId ? { working: true as const } : null;
+  };
   const reviewDestination = async () => {
     if (busy || !destination || !selection) return;
     setBusy(true); setRefusal(null);
@@ -135,6 +149,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
       <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
+        lifetime={props.lifetime} rowStatus={rowStatus}
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
           && row.databaseMoveCandidate === true}
         loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
@@ -144,15 +159,18 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
           props.onClose();
           router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: DEPLOYMENT_DATABASE_CATALOG_FILTER }) as never);
         } }} />
-      {selectedId && !selection ? <SurfaceStateCard testID={`project-deployments.move.destination.${selected.snapshot.status === 'ready'
-        ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'failed' : 'loading'}`} size="line"
-        kind={selected.snapshot.status === 'ready' ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'error' : 'loading'}
-        title={selected.snapshot.status === 'ready' || selected.snapshot.status === 'unavailable'
-          ? destinationRefusal === 'unsupported' ? t('common.unavailable') : destinationRefusal === 'backup_required'
-            ? t('projects.deployments.databaseMoveBackupsRequired') : t('projects.deployments.databaseMoveSelectionUnavailable')
-          : t('projects.deployments.loading')}
+      {/* Only a destination refused after its read speaks here: what is wrong, and what to do, per reason. */}
+      {selectedId && !selection && !selectedReading ? <SurfaceStateCard testID={`project-deployments.move.destination.${
+        selected.snapshot.status === 'ready' ? 'unavailable' : 'failed'}`} size="line"
+        kind={selected.snapshot.status === 'ready' ? 'unavailable' : 'error'}
+        title={selected.snapshot.status === 'unavailable' ? t('projects.deployments.databaseMoveReadFailed')
+          : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupported')
+          : destinationRefusal === 'backup_required' ? t('projects.deployments.databaseMoveBackupsRequired')
+          : t('projects.deployments.databaseMoveSelectionUnavailable')}
         diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
-        reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined}
+        reason={selected.snapshot.status === 'unavailable'
+          ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
+          : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy') : undefined}
         // A prerequisite leads to where it is met: the destination's own Settings › Backups (PAGE-ACCEPT-176 D23).
         {...(destinationRefusal === 'backup_required' && destination ? { action: {
           label: t('projects.deployments.settingsSections.setupTitle'),

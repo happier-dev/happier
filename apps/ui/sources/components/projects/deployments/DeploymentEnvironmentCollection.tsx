@@ -254,6 +254,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         title: platform ?? t('projects.deployments.platformLink.platform') } satisfies DeploymentPlatformIdentity : null,
       /** How it runs on a Machine target ("Compose"); a platform names itself in Runs on. */
       runtimeKind: compose,
+      /** Where it runs in one line ("Machine · Compose", or its platform): a chooser row's distinguishing fact. */
+      where: where ?? null,
       /** The address it serves at (the collection's resolved live address); null when none or not known. */
       liveAddress: liveAddress ?? null,
       /** Who did the latest deploy (its captured actor) for the row's who-and-what line; null when none was captured. */
@@ -332,22 +334,40 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   emptyBody?: string;
   /** Where an empty list leads to meet its prerequisite (Move: Store databases). */
   emptyAction?: SurfaceStateAction;
+  /** The Home/Account whose plugins name a platform Environment's target in its row. */
+  lifetime?: ServerAccountScopeLifetime | null;
+  /**
+   * The caller's decision about one listed row, from its own destination owner: unavailable with the reason it shows
+   * in place of where it runs, or the chosen row's own read still working.
+   */
+  rowStatus?: (item: EnvironmentItem) => Readonly<{ unavailable: string } | { working: true }> | null;
 }>) {
   const { theme } = useUnistyles();
   const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true },
     { includeDatabaseMoveCandidates: props.includeDatabaseMoveCandidates });
-  const items = (collection.snapshot.value?.items ?? []).filter(props.eligible);
+  const items = (collection.snapshot.value?.items ?? EMPTY_ENVIRONMENTS).filter(props.eligible);
   const rows = useDeploymentEnvironmentRowSelection(items, row => row.environment.id, props.onSelect);
+  // The rail's identity mark and where-it-runs fact, so two destinations never read the same (one row anatomy).
+  const parts = useDeploymentEnvironmentRowParts(items, `${props.testID}.row`, props.lifetime ?? null);
+  const partsById = new Map(parts.map(part => [part.environmentId, part]));
   const failure = collection.snapshot.failure;
   return (
     <ItemGroup title={props.title}>
       {/* The chosen destination carries its check, so a lone option still reads as chosen or not (D23); no selection fill,
           which read as a disabled row (R14-D11). */}
-      {rows.map(row => <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
-        title={row.title} accessibilityRole="radio" accessibilityChecked={props.selectedId === row.environment.id} disabled={props.disabled}
-        showChevron={false} onPress={row.onPress}
-        rightElement={props.selectedId === row.environment.id
-          ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />)}
+      {rows.map(row => {
+        const part = partsById.get(row.environment.id);
+        const status = props.rowStatus?.(row) ?? null;
+        const unavailable = status && 'unavailable' in status ? status.unavailable : null;
+        return <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
+          title={row.title} subtitle={unavailable ?? part?.where ?? undefined}
+          icon={<DeploymentEnvironmentMark platform={part?.platformMark ?? null} />}
+          accessibilityRole="radio" accessibilityChecked={props.selectedId === row.environment.id}
+          disabled={props.disabled || unavailable !== null} loading={status !== null && 'working' in status}
+          showChevron={false} onPress={row.onPress}
+          rightElement={props.selectedId === row.environment.id
+            ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />;
+      })}
       {collection.hasPreviousPage ? <SectionActionButton testID={`${props.testID}.previous`}
         icon="caret-left" title={t('common.previous')} disabled={props.disabled} onPress={collection.previousPage} /> : null}
       {collection.hasNextPage ? <SectionActionButton testID={`${props.testID}.next`}

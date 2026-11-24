@@ -27,6 +27,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         backupConfigured: z.optional(z.boolean()),
         /** Move destination: dedicated PostgreSQL on a native data target, or a live managed data link; omission is unknown. */
         databaseMoveCandidate: z.optional(z.boolean()),
+        /** Move destination's live managed data link, so its row can name the provider and the Move owner refuse it. */
+        managedDataTargetLink: z.optional(DeploymentTargetLinkHeaderV1Schema),
         /** Actual opened template configuration; omitted when the private Artifact is unavailable. */
         previewTemplateConfigured: z.optional(z.boolean()),
         /** The catalog listing an App was installed from (its pointer only), opened from the private template provenance. */

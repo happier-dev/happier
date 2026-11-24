@@ -55,15 +55,21 @@ export function hasDeploymentManagedDataLink(links: readonly DeploymentTargetLin
     && link.detachedAtMs === undefined && link.deletedAtMs === undefined);
 }
 
+/**
+ * A destination whose data lives on a provider: the current dataV1 contract declares no restore/import role, even
+ * beside an own-server runtime, so Move never copies into it. The listed row and the opened detail both ask this.
+ */
+export function deploymentDatabaseMoveManagedRefusal(links: readonly DeploymentTargetLinkHeaderV1[]): 'unsupported' | null {
+  return hasDeploymentManagedDataLink(links) ? 'unsupported' : null;
+}
+
 /** Copy admission owns destination support; Create/Link and saved connections are not an import. */
 export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnvironmentReadDetailV1,
   'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks' | 'databaseMoveCandidate'> | null): DatabaseMoveDestination | null {
   if (!detail) return null;
-  // The current dataV1 contract declares no restore/import role, even beside an own-server runtime.
   // Never substitute an empty provider database or the App's native service for its managed data.
-  if (hasDeploymentManagedDataLink(detail.targetLinks.map(({ targetLink }) => targetLink))) {
-    return { kind: 'unavailable', reason: 'unsupported' };
-  }
+  const managed = deploymentDatabaseMoveManagedRefusal(detail.targetLinks.map(({ targetLink }) => targetLink));
+  if (managed) return { kind: 'unavailable', reason: managed };
   if (!deploymentDataTargetOperands(detail)) return null;
   if (detail.databaseMoveCandidate !== true) return { kind: 'unavailable', reason: 'unsupported' };
   if (!detail.content.backup || !('configRevision' in detail.content.backup))

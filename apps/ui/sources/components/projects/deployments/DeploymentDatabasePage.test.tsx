@@ -1039,6 +1039,8 @@ describe('Environment → Database → Move', () => {
         expect(view.screen.findByTestId(`project-deployments.move.destination:${environmentId}`)).toBeNull();
       }
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      // Reading the chosen destination works on its own row, never as a line that grows and shrinks the sheet.
+      expect(view.screen.findByTestId('project-deployments.move.destination.loading')).toBeNull();
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
       // One Account page supplies the picker; selecting opens the cross-Project detail through the same owner.
       expect(view.movePickerQueries.map(query => ({ machineId: query.get('machineId'), projectSourceId: query.get('projectSourceId') })))
@@ -1096,8 +1098,9 @@ describe('Environment → Database → Move', () => {
       expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start')).toEqual([]);
     } finally { await view.dispose(); }
   });
-  it('offers a managed data link from the real Move page and explains unsupported import without a copy or cutover', async () => {
-    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  it('lists a managed data link from the real Move page as unavailable with its reason, never as a selectable destination', async () => {
+    const { Item } = await import('@/components/ui/lists/Item');
+    const { t } = await import('@/text');
     // Like the live App: an app-plus-database definition is no native destination, so only the managed fact offers it.
     const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, moveDestinationWithApp: true,
       movePickerScope: true, storedDefinition: true, databaseOnly: true });
@@ -1115,10 +1118,14 @@ describe('Environment → Database → Move', () => {
         .filter(path => path.startsWith('/v1/deployments/') || path.startsWith('/v1/artifacts/'));
       expect(pickerPaths).toEqual(['/v1/deployments/environments', '/v1/artifacts/read']);
       expect(view.movePickerQueries.at(-1)?.get('dataTargetLinks')).toBe('true');
-      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
-      await view.settle('project-deployments.move.destination.unavailable');
-      await waitForHomeGovernance(() => expect(view.screen.findAllByType(SurfaceStateCard)
-        .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported'));
+      // The managed row explains itself where it is listed (the Move destination owner refuses its import) and
+      // cannot be chosen; a native destination beside it stays selectable and says where it runs.
+      const row = (id: string) => view.screen.findAllByType(Item)
+        .find(node => node.props.testID === `project-deployments.move.destination:${id}`)!.props;
+      expect(row('database-dedicated')).toMatchObject({ disabled: true,
+        subtitle: t('projects.deployments.databaseMoveManagedUnnamed') });
+      expect(row('database-other-machine').disabled).toBe(false);
+      expect(row('database-other-machine').icon).toBeTruthy();
       expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
       expect(view.screen.findByTestId('project-deployments.move.review')).toBeNull();
       expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);

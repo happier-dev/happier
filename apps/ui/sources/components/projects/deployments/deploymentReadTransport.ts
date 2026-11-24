@@ -429,8 +429,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const page = metadata.value;
             const environmentsById = new Map(page.items.map(row => [row.id, row]));
             const runtimeByEnvironment = new Map(page.runtimeTargetLinks?.map(link => [link.environmentId, link]));
-            const managedDataEnvironments = new Set(page.dataTargetLinks?.filter(link => hasDeploymentManagedDataLink([link]))
-                .map(link => link.environmentId));
+            const managedDataEnvironments = new Map(page.dataTargetLinks?.filter(link => hasDeploymentManagedDataLink([link]))
+                .map(link => [link.environmentId, link] as const));
             const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const receipts = query.environmentIds === undefined
                 ? (page.currentDeployments ?? []).filter(row => environmentsById.has(row.environmentId)) : [];
@@ -485,6 +485,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     } else coverage = 'partial';
                 } else if (current) currentDeployment = current.receipt;
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
+                const managedDataTargetLink = managedDataEnvironments.get(environment.id);
                 let liveAddress: string | null | undefined;
                 if (addressMetadata && (runtimeTargetLink || environment.runtimeTargetLinkId === undefined)) {
                     if (!runtimeTargetLink?.activeDeploymentId) liveAddress = null;
@@ -514,8 +515,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
                         ...(includeDatabaseMoveCandidates
-                            ? { databaseMoveCandidate: managedDataEnvironments.has(environment.id)
-                                || await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink) } : {}),
+                            ? { databaseMoveCandidate: managedDataTargetLink !== undefined
+                                || await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink),
+                                ...(managedDataTargetLink ? { managedDataTargetLink } : {}) } : {}),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined,
                         ...(opened.content.template ? { catalogTemplate: { sourceId: opened.content.template.templateRef.sourceId,
                             itemId: opened.content.template.templateRef.itemId, version: opened.content.template.templateRef.version } } : {}) } : {}),

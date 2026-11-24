@@ -86,6 +86,7 @@ import {
   disclosePlatformFields,
   drawPlatformFields,
 } from './platformTargetLink';
+import { managedDataTargets } from './managedData';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
 type ProductionBranchOutcome = NonNullable<Extract<Awaited<ReturnType<Actions['link']>>, { ok: true }>['productionBranchOutcome']>;
@@ -193,13 +194,15 @@ const NO_TITLES: ReadonlyMap<string, string> = new Map();
 const titleKey = (pluginId: string, localId: string) => `${pluginId}/${localId}`;
 
 /**
- * Platform targets' own names (Vercel, Cloudflare Pages), read once from the Account's deployment-target
- * declarations while `wanted`. Every Environment row, header and Settings row names its platform through this.
+ * Platform and managed data targets' own names (Vercel, Cloudflare Pages, Neon), read once from the Account's
+ * deployment-target declarations while `wanted`. Every Environment row, header and Settings row names its platform
+ * through this, and Move names the provider a destination's data lives on.
  */
 export function useDeploymentPlatformTargetTitles(lifetime: ServerAccountScopeLifetime | null, wanted: boolean) {
   const { state } = useDeploymentPlatformTargets(wanted ? lifetime : null);
   const titles = React.useMemo(() => state.status === 'ready'
-    ? new Map(state.targets.map(target => [titleKey(target.pluginId, target.targetId), target.title]))
+    ? new Map([...state.targets, ...managedDataTargets(state.declarations)]
+      .map(target => [titleKey(target.pluginId, target.targetId), target.title]))
     : NO_TITLES, [state]);
   return React.useCallback(
     (source: PlatformTargetSource) => titles.get(titleKey(source.contribution.pluginId, source.contribution.localId)) ?? null,

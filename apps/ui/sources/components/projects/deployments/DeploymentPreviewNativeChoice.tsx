@@ -103,6 +103,7 @@ function NativeSource(props: Props & CustomModalInjectedProps & Readonly<{
   const id = props.testID;
   return <>
     {controller ? <DeploymentEnvironmentChooser controller={controller} testID={`${id}.source`} title={t('projects.deployments.settingsSections.previewEditor.nativeSource')}
+      lifetime={props.lifetime}
       eligible={() => true} selectedId={environmentId} disabled={false} onSelect={item => { setEnvironmentId(item.environment.id); setSelectedService(null); }}
       loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
       emptyTitle={t('projects.deployments.settingsSections.previewEditor.nativeSourceEmpty')}
