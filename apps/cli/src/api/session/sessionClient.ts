@@ -1909,11 +1909,13 @@ export class ApiSessionClient extends EventEmitter {
             },
         });
         // Same-machine callers (the daemon) reach these handlers on the owner-only local channel.
-        // Only the Session owner's own runtime serves locally: a shared editor's runtime holds another
-        // Account's grant that only the server can scope.
-        this.localSessionRpcRetirement = options.localMachineId && this.metadataAuthorityKind === 'owner' ? registerLocalSessionRpcTarget({
+        // Only the Session owner's own runtime serves Session RPC locally: a shared editor's runtime
+        // holds another Account's grant that only the server can scope. Every runtime that writes
+        // this transcript still takes the daemon's transcript registration (register-then-serve).
+        this.localSessionRpcRetirement = options.localMachineId ? registerLocalSessionRpcTarget({
             sessionId: this.sessionId,
             credentialToken: this.token,
+            ...(this.metadataAuthorityKind === 'owner' ? {} : { rpcCalls: false as const }),
             handleRequest: async (request, localActionContext) => this.closed
                 ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
                 : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel', localActionContext)),

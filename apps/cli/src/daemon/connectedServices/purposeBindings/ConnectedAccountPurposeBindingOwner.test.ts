@@ -12,12 +12,14 @@ import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccount
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
+import { ConnectedAccountRequestAuthError } from '../requestAuth/ConnectedAccountRequestAuthService';
 import {
   composeConnectedAccountSessionPurposeBindingSnapshot,
   createConnectedAccountPurposeBindingOwner,
   type ConnectedAccountPurposeBindingOwnerDependencies,
   type ConnectedAccountPurposeBindingOwner,
   type ConnectedAccountPurposeBindingStore,
+  scopeConnectedAccountPurposeBindingLease,
 } from './ConnectedAccountPurposeBindingOwner';
 
 const purpose = {
@@ -183,6 +185,30 @@ const authorized = {
   serviceRefs: [service],
   assertGenerationCurrent: () => undefined,
 } as const;
+
+
+describe('Session request-auth register-then-serve', () => {
+    const lease = { isCurrent: () => true, requestAuth: {}, resolvePurposeBinding: () => null } as never;
+    it('serves a subject whose consumer writes no transcript without any runner channel', async () => {
+        const subject = scopeConnectedAccountPurposeBindingLease({
+            lease, subjectId: 'run:no-transcript', uses: [], registerRedaction: () => undefined,
+        });
+        await expect(subject.registerRedaction(['dummy-no-transcript-credential'])).resolves.toBeUndefined();
+    });
+
+    it("refuses a Session subject's serve when the runtime that writes its transcript is unreachable", async () => {
+        const subject = scopeConnectedAccountPurposeBindingLease({
+            lease, subjectId: 'session:unhosted', uses: [], registerRedaction: () => undefined,
+            transcriptSessionId: 'sess-without-reachable-runtime',
+        });
+        // The owner's typed refusal: the helper's closed vocabulary maps it to request_auth_unavailable,
+        // and the daemon log keeps the cause.
+        const refusal = await subject.registerRedaction(['dummy-unregistered-credential']).then(() => null, (error: unknown) => error);
+        expect(refusal).toBeInstanceOf(ConnectedAccountRequestAuthError);
+        expect(refusal).toMatchObject({ code: 'request_auth_credential_unavailable',
+            diagnostic: { causeCode: 'session_transcript_runtime_unavailable' } });
+    });
+});
 
 describe('ConnectedAccountPurposeBindingOwner', () => {
   it('reads the recorded group and profile revisions without selecting or materializing credentials', async () => {

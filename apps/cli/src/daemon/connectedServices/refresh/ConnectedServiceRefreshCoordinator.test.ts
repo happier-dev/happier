@@ -2072,12 +2072,18 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     completeCredentialAuthorityBoundaryFixture(api);
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-    const materializer = vi.fn(async () => ({
-      env: { CLAUDE_CONFIG_DIR: materializedRoot },
-      diagnostics: [],
-      cleanupOnFailure: true,
-      cleanupOnExit: true,
-    }));
+    const events: string[] = [];
+    const materializer = vi.fn(async (params: { registerSecretValues?: (values: readonly string[]) => Promise<void> }) => {
+      // The owner hands the refreshed home credential to the live Session before writing it.
+      await params.registerSecretValues?.(['dummy-refreshed-home-token']);
+      events.push('home-written');
+      return {
+        env: { CLAUDE_CONFIG_DIR: materializedRoot },
+        diagnostics: [],
+        cleanupOnFailure: true,
+        cleanupOnExit: true,
+      };
+    });
     materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
       agentId === 'claude' ? materializer : undefined,
     );
@@ -2086,6 +2092,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         ? { isMaterializedHomeStale: vi.fn(async () => true) }
         : undefined,
     );
+    // The running Session's runner is a separate process reached over the local channel.
+    const registerSessionTranscriptSecrets = vi.fn(async (input: Readonly<{ sessionId: string; values: readonly string[] }>) => {
+      events.push(`registered:${input.sessionId}:${input.values.join(',')}`);
+    });
     const purposeSnapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
       agentId: 'claude',
       bindings: ConnectedServiceBindingsV2IngressSchema.parse({
@@ -2125,6 +2135,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       resolveQualifiedPurposeBindingSnapshot: async () => purposeSnapshot,
       activatePurposeBindings,
       onAuthUpdated,
+      registerSessionTranscriptSecrets,
     });
 
     coordinator.registerSpawnTarget({
@@ -2162,6 +2173,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       binding: { serviceId: 'claude-subscription', profileId: 'work' },
       affectedTargets: [expect.objectContaining({ pid: 123, agentId: 'claude' })],
     }));
+    expect(events).toEqual(['registered:happy-session-1:dummy-refreshed-home-token', 'home-written']);
   });
 
   async function buildClaudeGroupHomeOwnershipHarness() {

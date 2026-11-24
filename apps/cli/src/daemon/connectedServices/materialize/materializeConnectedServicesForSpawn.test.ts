@@ -1,7 +1,7 @@
 import { findCatalogEntry } from '@/agent/catalog/registry';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2772,6 +2772,25 @@ describe('materializeConnectedServicesForSpawn', () => {
         CLAUDE_CONFIG_DIR: sourceClaudeConfigDir,
       },
     } satisfies MaterializeParams;
+    // Register-then-write: a live Session's runner holds the credential before any file carries it.
+    const containsToken = async (dir: string): Promise<boolean> => {
+      for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory() ? await containsToken(path)
+          : entry.isFile() && (await readFile(path, 'utf8').catch(() => '')).includes('sk-ant-oat01-123')) return true;
+      }
+      return false;
+    };
+    const registrations: Array<Readonly<{ values: readonly string[]; alreadyWritten: boolean }>> = [];
+    const registeredBaseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-registered-test-'));
+    const registeredServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-registered-server-test-'));
+    const registeredResult = await materializeConnectedServicesForSpawn({ ...params, baseDir: registeredBaseDir,
+      activeServerDir: registeredServerDir,
+      registerSecretValues: async (values) => {
+        registrations.push({ values, alreadyWritten: await containsToken(registeredBaseDir) || await containsToken(registeredServerDir) });
+      } });
+    expect(registrations).toEqual([{ values: expect.arrayContaining(['sk-ant-oat01-123']), alreadyWritten: false }]);
+    registeredResult?.cleanupOnExit?.();
     const result = await materializeConnectedServicesForSpawn(params);
     expect(result).not.toBeNull();
     expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR, '.credentials.json'), 'utf8'))).toEqual({

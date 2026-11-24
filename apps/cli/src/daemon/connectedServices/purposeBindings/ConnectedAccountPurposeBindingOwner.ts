@@ -457,8 +457,18 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
       }
       await input.registerRedaction(values);
       if (input.transcriptSessionId) {
-        const { registerLocalSessionTranscriptSecrets } = await import('@/session/transport/rpc/localSessionRpcChannel');
-        await registerLocalSessionTranscriptSecrets({ sessionId: input.transcriptSessionId, values });
+        const { registerLocalSessionTranscriptSecrets, SessionTranscriptRuntimeUnavailableError } =
+          await import('@/session/transport/rpc/localSessionRpcChannel');
+        try {
+          await registerLocalSessionTranscriptSecrets({ sessionId: input.transcriptSessionId, values });
+        } catch (error) {
+          // The owner's typed refusal: nothing is served, and the daemon log keeps the cause.
+          if (error instanceof SessionTranscriptRuntimeUnavailableError) {
+            throw new ConnectedAccountRequestAuthError('request_auth_credential_unavailable',
+              { causeCode: 'session_transcript_runtime_unavailable' });
+          }
+          throw error;
+        }
       }
     },
     resolvePurposeUse(rawPurpose) {

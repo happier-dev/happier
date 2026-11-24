@@ -637,6 +637,8 @@ export class ConnectedServiceRefreshCoordinator {
     accountSettingsProvider?: () => AccountSettings | Readonly<Record<string, unknown>> | null | undefined;
     processEnv?: NodeJS.ProcessEnv;
     runtimeRegistry?: ConnectedServiceRuntimeRegistry;
+    /** The running Session's runner (local Session channel); defaults to the real channel. */
+    registerSessionTranscriptSecrets?: (input: Readonly<{ sessionId: string; values: readonly string[] }>) => Promise<void>;
     isAccountRuntimeCurrent?: (signal?: AbortSignal) => Promise<boolean>;
     runAccountOperation?: <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
     allowNativeAccountState?: boolean;
@@ -3371,6 +3373,17 @@ export class ConnectedServiceRefreshCoordinator {
           ...(target.childSelectionsByServiceId
             ? { selectionsByServiceId: this.buildResolvedSelectionsByServiceId(target.childSelectionsByServiceId) }
             : {}),
+          // A running Session's runner holds the refreshed credential before it is written into
+          // the Session's home (register-then-write); an unreachable runner keeps the old home.
+          ...(target.sessionId ? { registerSecretValues: async (values: readonly string[]) => {
+            const sessionId = target.sessionId!;
+            if (this.params.registerSessionTranscriptSecrets) {
+              await this.params.registerSessionTranscriptSecrets({ sessionId, values });
+              return;
+            }
+            const { registerLocalSessionTranscriptSecrets } = await import('@/session/transport/rpc/localSessionRpcChannel');
+            await registerLocalSessionTranscriptSecrets({ sessionId, values });
+          } } : {}),
         }), true, signal);
         if (target.agentLaunchTarget) {
           const current = this.runtimeRegistry.replaceAgentLaunchMaterials(target, materialized?.agentLaunchMaterials ?? null);
@@ -3379,6 +3392,17 @@ export class ConnectedServiceRefreshCoordinator {
         }
       } catch (error) {
         signal?.throwIfAborted();
+        if ((error as { code?: unknown } | null)?.code === 'session_transcript_runtime_unavailable') {
+          // Not a credential failure: the Session keeps its previous home until its runner is reachable.
+          failed.push({ target, binding, diagnostic: {
+            code: 'session_transcript_runtime_unavailable', providerId: target.agentId, severity: 'blocking',
+            serviceId: binding.serviceId, reason: "The runtime that writes this Session's transcript is not reachable",
+          } });
+          logger.warn('[DAEMON RUN] Connected-service rematerialization skipped; Session transcript runtime unreachable', {
+            serviceId: binding.serviceId, agentId: target.agentId,
+          });
+          continue;
+        }
         if (!(error instanceof ConnectedServiceMaterializationBlockedError)) throw error;
         const primaryDiagnostic = error.diagnostics[0];
         if (!primaryDiagnostic) throw error;

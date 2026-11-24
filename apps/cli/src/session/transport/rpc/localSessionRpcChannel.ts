@@ -76,6 +76,8 @@ type LocalSessionRpcDescriptorV1 = Readonly<{
   endpoint: Readonly<{ kind: 'unix' | 'named_pipe'; path: string }>;
   pid: number;
   admittedStartContextVersion?: 1;
+  /** Published only for transcript registration: Session RPC keeps the server path. */
+  rpcCalls?: false;
 }>;
 
 export type LocalSessionRpcTarget = Readonly<{
@@ -97,10 +99,18 @@ export type LocalSessionRpcTarget = Readonly<{
    * credentials) in this Session's transcript scope, for the Session's life.
    */
   registerTranscriptSecrets?: (values: readonly string[]) => void;
+  /**
+   * False when this runtime writes the Session's transcript but its Session RPC must keep the
+   * server admission (another person's runtime of a shared Session). Restricted credential kinds
+   * keep the server path regardless.
+   */
+  rpcCalls?: false;
 }>;
 
 type RegisteredTarget = Readonly<{
   target: LocalSessionRpcTarget;
+  /** Whether this target serves Session RPC locally; otherwise it only takes transcript registration. */
+  rpcCalls: boolean;
   accountId: string;
   authority: LocalCallerAuthority;
   descriptorPath: string;
@@ -241,7 +251,7 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
   const separator = method.indexOf(':');
   const sessionId = separator > 0 ? method.slice(0, separator) : '';
   const registered = current.targets.get(sessionId);
-  if (!registered) return { status: 404, error: 'Session is not hosted on this local channel', errorCode: 'local_session_unavailable' };
+  if (!registered?.rpcCalls) return { status: 404, error: 'Session is not hosted on this local channel', errorCode: 'local_session_unavailable' };
   const authorization = resolveSocketRpcSameAccountSessionAuthorizationV1(method.slice(separator + 1), sessionId,
     { admittedAgentStart: Boolean(localActionContext) });
   if (!authorization) return forbidden;
@@ -302,7 +312,7 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
     const parsed = SocketRpcCancellationPayloadSchema.safeParse(body && typeof body === 'object' ? (body as { cancel?: unknown }).cancel : undefined);
     const sessionId = body && typeof body === 'object' ? (body as { sessionId?: unknown }).sessionId : undefined;
     const registered = typeof sessionId === 'string' ? current.targets.get(sessionId) : undefined;
-    if (parsed.success && registered && await isTrustedCaller(registered.target, request)) registered.target.cancelRequest(parsed.data.requestId);
+    if (parsed.success && registered?.rpcCalls && await isTrustedCaller(registered.target, request)) registered.target.cancelRequest(parsed.data.requestId);
     reply(response, 200, { ok: true });
     return;
   }
@@ -402,31 +412,35 @@ async function writeDescriptor(path: string, descriptor: LocalSessionRpcDescript
  * retirement that removes the descriptor and, after the last Session, closes the endpoint.
  */
 export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarget): Promise<() => Promise<void>> {
-  // Only a host holding a full Account/terminal credential of the Session owner serves locally; a
-  // restricted host (ephemeral runner, API token) keeps every call on the server's admission.
+  // Only a host holding a full Account/terminal credential of the Session owner serves Session RPC
+  // locally; a restricted host (ephemeral runner, API token) or another person's runtime keeps every
+  // call on the server's admission. Any runtime that writes the transcript still takes the daemon's
+  // transcript registration here (register-then-serve).
   const hostKind = readCredentialKind(target.credentialToken);
-  if (!hostKind || !LOCAL_ROUTE_CREDENTIAL_KINDS.has(hostKind)) return async () => {};
+  const rpcCalls = target.rpcCalls !== false && hostKind !== null && LOCAL_ROUTE_CREDENTIAL_KINDS.has(hostKind);
+  if (!rpcCalls && !target.registerTranscriptSecrets) return async () => {};
   const accountId = readAccountIdFromToken(target.credentialToken);
-  if (!accountId) throw new Error('Local Session RPC requires the Session Account credential');
+  if (rpcCalls && !accountId) throw new Error('Local Session RPC requires the Session Account credential');
   ingress ??= startIngress().catch(error => { ingress = null; throw error; });
   const current = await ingress;
   const descriptorPath = resolveDescriptorPath(target.sessionId);
   const registered: RegisteredTarget = {
-    target, accountId, descriptorPath,
+    target, rpcCalls, accountId: accountId ?? '', descriptorPath,
     authority: resolveSocketRpcCallerAuthority({ credentialKind: readCredentialKind(target.credentialToken) }),
   };
   current.targets.set(target.sessionId, registered);
   try {
     await writeDescriptor(descriptorPath, {
-      v: DESCRIPTOR_VERSION, sessionId: target.sessionId, accountId,
+      v: DESCRIPTOR_VERSION, sessionId: target.sessionId, accountId: accountId ?? '',
       admittedStartContextVersion: 1,
+      ...(rpcCalls ? {} : { rpcCalls: false as const }),
       endpoint: { kind: current.endpoint.kind, path: current.endpoint.endpointPath }, pid: process.pid,
     });
   } catch (error) {
     if (current.targets.get(target.sessionId) === registered) current.targets.delete(target.sessionId);
     throw error;
   }
-  target.onPublished?.(method => current.targets.get(target.sessionId) === registered
+  if (rpcCalls) target.onPublished?.(method => current.targets.get(target.sessionId) === registered
     && resolveSocketRpcSameAccountSessionAuthorizationV1(method, target.sessionId) !== null);
   let retired = false;
   return async () => {
@@ -566,10 +580,20 @@ export async function registerLocalSessionTranscriptSecrets(input: Readonly<{
 }>): Promise<void> {
   if (input.values.length === 0) return;
   const descriptor = readDescriptor(input.sessionId);
-  if (!descriptor) throw new LocalSessionRpcUnavailableError('Session is not hosted on this local channel');
-  const response = await postJson(descriptor, TRANSCRIPT_SECRETS_PATH, { sessionId: input.sessionId, values: [...input.values] });
-  if (response.status !== 200) {
-    throw new LocalSessionRpcUnavailableError('Local Session host did not register the transcript secrets');
+  if (!descriptor) throw new SessionTranscriptRuntimeUnavailableError();
+  const response = await postJson(descriptor, TRANSCRIPT_SECRETS_PATH, { sessionId: input.sessionId, values: [...input.values] })
+    .catch((error: unknown) => {
+      if (error instanceof LocalSessionRpcUnavailableError) throw new SessionTranscriptRuntimeUnavailableError();
+      throw error;
+    });
+  if (response.status !== 200) throw new SessionTranscriptRuntimeUnavailableError();
+}
+
+/** The runtime that writes this Session's transcript is not reachable: a served secret would leak. */
+export class SessionTranscriptRuntimeUnavailableError extends Error {
+  readonly code = 'session_transcript_runtime_unavailable';
+  constructor() {
+    super("The runtime that writes this Session's transcript is not reachable, so its credential is not served");
   }
 }
 
@@ -603,7 +627,7 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
   const credentialKind = readCredentialKind(input.token);
   if (!credentialKind || !LOCAL_ROUTE_CREDENTIAL_KINDS.has(credentialKind)) return null;
   const descriptor = readDescriptor(input.sessionId);
-  if (!descriptor || descriptor.accountId !== readAccountIdFromToken(input.token)) return null;
+  if (!descriptor || descriptor.rpcCalls === false || descriptor.accountId !== readAccountIdFromToken(input.token)) return null;
   if (input.localActionContext && (descriptor.admittedStartContextVersion !== 1
     || input.method !== SESSION_RPC_METHODS.EXECUTION_RUN_START)) return null;
   const callerAuthority = resolveSocketRpcCallerAuthority({ credentialKind, authorityCeiling: input.authorityCeiling });

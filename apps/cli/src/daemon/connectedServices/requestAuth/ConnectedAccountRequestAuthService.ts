@@ -32,6 +32,7 @@ export type ConnectedAccountRequestAuthDiagnostic = Readonly<{
         | 'plugin_host_access_operation_denied' | 'plugin_final_generation_retired'
         | 'plugin_connected_account_purpose_undeclared' | 'plugin_services_turn_authority_unavailable'
         | 'account_encryption_currentness_unavailable' | 'account_storage_currentness_unavailable'
+        | 'session_transcript_runtime_unavailable'
         | QualifiedConnectedAccountMaterialFailureCode;
     httpStatus?: number;
     errorClass?: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>['errorClass'];

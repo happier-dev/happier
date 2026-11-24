@@ -566,8 +566,36 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       // Registered in that Session only: another Session's content (here: none) is not masked.
       expect(redactTranscriptSecrets({ text: servedCredential })).toEqual({ text: servedCredential });
       expect(relay.calls).toBe(0);
+      // The runtime that writes that Session's transcript is not reachable: the typed cause says so.
       await expect(registerLocalSessionTranscriptSecrets({ sessionId: 'sess-not-hosted', values: [servedCredential] }))
-        .rejects.toMatchObject({ code: 'local_session_unavailable' });
+        .rejects.toMatchObject({ code: 'session_transcript_runtime_unavailable' });
+    } finally { await retire(); }
+  });
+
+  it.each([
+    ['an API-token runner', token('acct-owner', 'api_token'), true],
+    ["a shared Session's runtime of another person", OWNER, false],
+  ] as const)('%s that writes a transcript accepts the registration on its channel, while its RPC calls keep the server path', async (_label, credentialToken, rpcCalls) => {
+    const servedCredential = 'dummy-request-auth-served-to-restricted-runner';
+    const created = createHost();
+    let sameTurnLine!: () => unknown;
+    const retire = await runAddedHostedSession({ environment: process.env, workingDirectory: process.cwd(), end: () => {} }, async () => {
+      sameTurnLine = bindToHostedSessionScope(() => redactTranscriptSecrets({ text: `turn output ${servedCredential}` }));
+      return await registerLocalSessionRpcTarget({ sessionId: SESSION, credentialToken,
+        ...(rpcCalls ? {} : { rpcCalls: false as const }),
+        handleRequest: (request, localActionContext) => created.manager.handleRequest(request, undefined, 'local_session_channel', localActionContext),
+        cancelRequest: requestId => created.manager.cancelTransportRequest(requestId),
+        readTrustedCaller: async () => trusted.birth,
+        registerTranscriptSecrets: bindToHostedSessionScope((values: readonly string[]) => {
+          for (const value of values) registerSessionTranscriptSecret(value);
+        }) });
+    });
+    try {
+      await registerLocalSessionTranscriptSecrets({ sessionId: SESSION, values: [servedCredential] });
+      expect(sameTurnLine()).toEqual({ text: 'turn output [redacted]' });
+      // Its ordinary Session RPC stays on the server admission.
+      await call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST);
+      expect(relay.calls).toBe(1);
     } finally { await retire(); }
   });
 

@@ -175,6 +175,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
   purposeBindingSessionId?: string;
   writeArtifacts?: MaterializationArtifactWrite;
   waitForArtifactWrite?: () => Promise<void>;
+  registerSecretValues?: (values: readonly string[]) => Promise<void>;
 }>): Promise<ConnectedServicesMaterialization> {
   const lease = await observeConnectedServiceMaterializationPhase(params, 'plugin_registry',
     () => acquireAuthoritativePluginRuntimeRegistryLease());
@@ -252,11 +253,20 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     const secretValues = new Set<string>();
     const materializeAccount: StablePluginConnectedAccountsOwner['materialize'] = async input => {
       if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
+      const materializationSecretValues: string[] = [];
       const materialization = await connectedAccountsOwner.materialize({ ...input,
         observeMaterializationSecretValues: (values) => {
-          for (const value of values) if (value.length > 0) secretValues.add(value);
+          for (const value of values) {
+            if (value.length === 0) continue;
+            secretValues.add(value);
+            materializationSecretValues.push(value);
+          }
           input.observeMaterializationSecretValues?.(values);
         } });
+      // A live Session's runner holds these values before any file or env carrying them is written.
+      if (params.registerSecretValues && materializationSecretValues.length > 0) {
+        await params.registerSecretValues(materializationSecretValues);
+      }
       // The purpose owner verifies this exact Account before and after producing
       // credentials. A declared target or a native home alone is not such proof.
       if (!params.legacyV021 && input.expectedAccount) {
@@ -895,6 +905,11 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
   connectedAccountsOwner?: Parameters<typeof materializeQualifiedConnectedAccountLaunchUses>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
+  /**
+   * Rematerializing a running Session: registers each materialization's secret values with that
+   * Session's runner before they are written (register-then-write). A rejection aborts the write.
+   */
+  registerSecretValues?: (values: readonly string[]) => Promise<void>;
 }>): Promise<ConnectedServicesMaterialization | null> {
   const rootDir = resolveConnectedServiceMaterializedRootDir({
     baseDir: params.baseDir,
