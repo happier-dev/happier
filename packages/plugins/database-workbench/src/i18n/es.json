@@ -14,6 +14,8 @@
   "plugins.database.capture.off": "La captura está desactivada",
   "plugins.database.capture.on": "La captura está activada",
   "plugins.database.capture.pending": "Esperando aprobación.",
+  "plugins.database.capture.preparing": "Preparando la captura…",
+  "plugins.database.capture.restartRequired": "Reinicia los servicios afectados en «Servidores de desarrollo» para aplicar el cambio en la captura.",
   "plugins.database.capture.retry": "Reintentar la captura",
   "plugins.database.capture.status": "Comprobar el estado de la captura",
   "plugins.database.capture.title": "Captura local",
@@ -28,5 +30,18 @@
   "plugins.database.insights.setup.enable": "Activar estadísticas",
   "plugins.database.insights.setup.enableFailed": "No se han podido activar las estadísticas.",
   "plugins.database.insights.setup.pending": "Esperando aprobación.",
-  "plugins.database.insights.setup.restartRequired": "Añade pg_stat_statements a shared_preload_libraries y reinicia PostgreSQL antes de volver a intentarlo."
+  "plugins.database.insights.setup.restartRequired": "Añade pg_stat_statements a shared_preload_libraries y reinicia PostgreSQL antes de volver a intentarlo.",
+  "plugins.database.readSetup.actionUnavailable": "Este host no puede confirmar el usuario de solo lectura.",
+  "plugins.database.readSetup.attach": "Usar un usuario de solo lectura existente",
+  "plugins.database.readSetup.back": "Volver a las opciones de configuración",
+  "plugins.database.readSetup.confirmAttach": "Usar este usuario",
+  "plugins.database.readSetup.create": "Crear un usuario de solo lectura",
+  "plugins.database.readSetup.description": "Elige un usuario de solo lectura para {database} y así podrás explorar sus tablas.",
+  "plugins.database.readSetup.pending": "Esperando aprobación.",
+  "plugins.database.readSetup.review": "Revisar el usuario de solo lectura",
+  "plugins.database.readSetup.reviewDescription": "Estas sentencias crearán el rol {role} y le concederán acceso de lectura a {database}.",
+  "plugins.database.readSetup.savedSecret": "Elige la URL de conexión de un usuario de solo lectura para {database}. Si no aparece en la lista, guárdala primero en «Secretos guardados».",
+  "plugins.database.readSetup.title": "Configurar el acceso de solo lectura",
+  "plugins.database.readSetup.unknown": "No se pudo verificar el resultado de la configuración.",
+  "plugins.database.readSetup.unverifiedServer": "La conexión está cifrada, pero no se ha verificado la identidad del servidor."
 }

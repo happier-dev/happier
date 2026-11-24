@@ -14,6 +14,8 @@
   "plugins.database.capture.off": "Die Erfassung ist deaktiviert",
   "plugins.database.capture.on": "Die Erfassung ist aktiviert",
   "plugins.database.capture.pending": "Warten auf Genehmigung.",
+  "plugins.database.capture.preparing": "Erfassung wird vorbereitet…",
+  "plugins.database.capture.restartRequired": "Starte die betroffenen Dienste unter „Entwicklungsserver“ neu, um die Änderung an der Erfassung anzuwenden.",
   "plugins.database.capture.retry": "Erfassung erneut versuchen",
   "plugins.database.capture.status": "Erfassungsstatus prüfen",
   "plugins.database.capture.title": "Lokale Erfassung",
@@ -28,5 +30,18 @@
   "plugins.database.insights.setup.enable": "Statistiken aktivieren",
   "plugins.database.insights.setup.enableFailed": "Statistiken konnten nicht aktiviert werden.",
   "plugins.database.insights.setup.pending": "Warten auf Genehmigung.",
-  "plugins.database.insights.setup.restartRequired": "Füge pg_stat_statements zu shared_preload_libraries hinzu und starte PostgreSQL neu, bevor du es erneut versuchst."
+  "plugins.database.insights.setup.restartRequired": "Füge pg_stat_statements zu shared_preload_libraries hinzu und starte PostgreSQL neu, bevor du es erneut versuchst.",
+  "plugins.database.readSetup.actionUnavailable": "Dieser Host kann den Nur-Lese-Zugang nicht bestätigen.",
+  "plugins.database.readSetup.attach": "Vorhandenen Nur-Lese-Zugang verwenden",
+  "plugins.database.readSetup.back": "Zurück zu den Einrichtungsoptionen",
+  "plugins.database.readSetup.confirmAttach": "Diesen Zugang verwenden",
+  "plugins.database.readSetup.create": "Nur-Lese-Zugang erstellen",
+  "plugins.database.readSetup.description": "Wähle einen Nur-Lese-Zugang für {database}, damit du die Tabellen durchsuchen kannst.",
+  "plugins.database.readSetup.pending": "Warten auf Genehmigung.",
+  "plugins.database.readSetup.review": "Nur-Lese-Zugang prüfen",
+  "plugins.database.readSetup.reviewDescription": "Diese Anweisungen erstellen die Rolle {role} und erteilen ihr Lesezugriff auf {database}.",
+  "plugins.database.readSetup.savedSecret": "Wähle die Verbindungs-URL für einen Nur-Lese-Zugang zu {database}. Falls sie in der Liste fehlt, speichere sie zuerst unter „Gespeicherte Geheimnisse“.",
+  "plugins.database.readSetup.title": "Lesezugriff einrichten",
+  "plugins.database.readSetup.unknown": "Das Ergebnis der Einrichtung konnte nicht überprüft werden.",
+  "plugins.database.readSetup.unverifiedServer": "Die Verbindung ist verschlüsselt, aber die Identität des Servers wurde nicht überprüft."
 }

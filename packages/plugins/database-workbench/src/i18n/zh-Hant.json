@@ -14,6 +14,8 @@
   "plugins.database.capture.off": "擷取已關閉",
   "plugins.database.capture.on": "擷取已開啟",
   "plugins.database.capture.pending": "正在等待核准。",
+  "plugins.database.capture.preparing": "正在準備擷取…",
+  "plugins.database.capture.restartRequired": "請在「開發伺服器」中重新啟動受影響的服務，以套用擷取變更。",
   "plugins.database.capture.retry": "重試擷取",
   "plugins.database.capture.status": "檢查擷取狀態",
   "plugins.database.capture.title": "本機擷取",
@@ -28,5 +30,18 @@
   "plugins.database.insights.setup.enable": "啟用統計資料",
   "plugins.database.insights.setup.enableFailed": "無法啟用統計資料。",
   "plugins.database.insights.setup.pending": "正在等待核准。",
-  "plugins.database.insights.setup.restartRequired": "請將 pg_stat_statements 加入 shared_preload_libraries，重新啟動 PostgreSQL 後再試。"
+  "plugins.database.insights.setup.restartRequired": "請將 pg_stat_statements 加入 shared_preload_libraries，重新啟動 PostgreSQL 後再試。",
+  "plugins.database.readSetup.actionUnavailable": "此主機無法確認唯讀登入帳號。",
+  "plugins.database.readSetup.attach": "使用現有的唯讀登入帳號",
+  "plugins.database.readSetup.back": "返回設定選項",
+  "plugins.database.readSetup.confirmAttach": "使用此帳號",
+  "plugins.database.readSetup.create": "建立唯讀登入帳號",
+  "plugins.database.readSetup.description": "請選擇可登入 {database} 的唯讀帳號，以便瀏覽其中的資料表。",
+  "plugins.database.readSetup.pending": "正在等待核准。",
+  "plugins.database.readSetup.review": "檢查唯讀登入帳號",
+  "plugins.database.readSetup.reviewDescription": "這些陳述式將建立角色 {role}，並授予其對 {database} 的讀取權限。",
+  "plugins.database.readSetup.savedSecret": "請選擇用來以唯讀帳號登入 {database} 的連線 URL。如果清單中沒有該 URL，請先將它儲存到「已儲存的密鑰」。",
+  "plugins.database.readSetup.title": "設定唯讀存取",
+  "plugins.database.readSetup.unknown": "無法驗證設定結果。",
+  "plugins.database.readSetup.unverifiedServer": "連線已加密，但伺服器身分未經驗證。"
 }

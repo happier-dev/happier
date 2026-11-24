@@ -14,6 +14,8 @@
   "plugins.database.capture.off": "La capture est désactivée",
   "plugins.database.capture.on": "La capture est activée",
   "plugins.database.capture.pending": "En attente d’approbation.",
+  "plugins.database.capture.preparing": "Préparation de la capture…",
+  "plugins.database.capture.restartRequired": "Redémarrez les services concernés dans « Serveurs de développement » pour appliquer la modification de la capture.",
   "plugins.database.capture.retry": "Réessayer la capture",
   "plugins.database.capture.status": "Vérifier l’état de la capture",
   "plugins.database.capture.title": "Capture locale",
@@ -28,5 +30,18 @@
   "plugins.database.insights.setup.enable": "Activer les statistiques",
   "plugins.database.insights.setup.enableFailed": "Les statistiques n’ont pas pu être activées.",
   "plugins.database.insights.setup.pending": "En attente d’approbation.",
-  "plugins.database.insights.setup.restartRequired": "Ajoutez pg_stat_statements à shared_preload_libraries et redémarrez PostgreSQL avant de réessayer."
+  "plugins.database.insights.setup.restartRequired": "Ajoutez pg_stat_statements à shared_preload_libraries et redémarrez PostgreSQL avant de réessayer.",
+  "plugins.database.readSetup.actionUnavailable": "Cet hôte ne peut pas confirmer le compte de connexion en lecture seule.",
+  "plugins.database.readSetup.attach": "Utiliser un compte de connexion en lecture seule existant",
+  "plugins.database.readSetup.back": "Revenir aux options de configuration",
+  "plugins.database.readSetup.confirmAttach": "Utiliser ce compte",
+  "plugins.database.readSetup.create": "Créer un compte de connexion en lecture seule",
+  "plugins.database.readSetup.description": "Choisissez un compte de connexion en lecture seule pour {database} afin de parcourir ses tables.",
+  "plugins.database.readSetup.pending": "En attente d’approbation.",
+  "plugins.database.readSetup.review": "Vérifier le compte de connexion en lecture seule",
+  "plugins.database.readSetup.reviewDescription": "Ces instructions créeront le rôle {role} et lui accorderont un accès en lecture à {database}.",
+  "plugins.database.readSetup.savedSecret": "Choisissez l’URL de connexion d’un compte en lecture seule pour {database}. Si elle ne figure pas dans la liste, enregistrez-la d’abord dans « Secrets enregistrés ».",
+  "plugins.database.readSetup.title": "Configurer l’accès en lecture seule",
+  "plugins.database.readSetup.unknown": "Impossible de vérifier le résultat de la configuration.",
+  "plugins.database.readSetup.unverifiedServer": "La connexion est chiffrée, mais l’identité du serveur n’a pas été vérifiée."
 }
