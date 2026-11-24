@@ -377,9 +377,14 @@ function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOp
 }
 
 /** Only declared retained output targets; never infer a Project from a Machine setup. */
-export function readActionOperationOutputAttachment(snapshot: ActionOperationSnapshot): ProjectCommandAttachmentV1 | MachineSetupOutputAttachment | null {
+export function readActionOperationOutputAttachment(snapshot: ActionOperationSnapshot):
+    ProjectCommandAttachmentV1 | (MachineSetupOutputAttachment & Readonly<{ operationId?: string }>) | null {
     const attachment = snapshot.domainRef;
-    return attachment?.kind === 'projectCommand' || attachment?.kind === 'machineSetup' ? attachment : null;
+    if (attachment?.kind === 'projectCommand' || (attachment?.kind === 'machineSetup' && attachment.terminalId)) return attachment;
+    const details = snapshot.error?.details;
+    const setup = details && 'kind' in details && details.kind === 'finiteCommand' ? details.failedSetupOperation : undefined;
+    if (setup?.terminalId) return { kind: 'machineSetup', ...setup };
+    return attachment?.kind === 'machineSetup' ? attachment : null;
 }
 
 /** Output belongs to the actual accepted checkout; the process cwd may be below its root. */

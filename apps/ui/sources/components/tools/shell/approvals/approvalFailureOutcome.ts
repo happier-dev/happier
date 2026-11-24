@@ -21,6 +21,7 @@ import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { describeMachineSetupStoppedCommand } from '@/components/machines/setup/machineSetupReasonText';
 import { t } from '@/text';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { isWorkflowOperationErrorCode, WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -174,7 +175,10 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
     const targetReason = scope === 'deployment' && failure.errorCode === 'target_unavailable'
         ? resolveActionExecutionFailureMessage(failure, '', { closedCodesOnly: true }) || null : null;
-    const reason = targetReason ?? (finiteCommand.success && finiteCommand.data.exitCode !== null
+    const stoppedSetupStep = failure.errorCode === 'machine_setup_setup_failed' && finiteCommand.success && finiteCommand.data.step !== undefined
+        ? describeMachineSetupStoppedCommand(t('projects.scripts.setup.step', { n: finiteCommand.data.step + 1 }), finiteCommand.data)
+        : null;
+    const reason = targetReason ?? stoppedSetupStep ?? (finiteCommand.success && finiteCommand.data.exitCode !== null
             ? t('localServices.actions.failure.exitCode', { code: String(finiteCommand.data.exitCode) })
             : machineSetup.success && remedy ? remedy
             : missingSecrets?.success

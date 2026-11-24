@@ -11743,9 +11743,11 @@ Review can show the current revision. An unavailable candidate returns
 In unreleased 0.3, a failed finite Machine Setup or retained Project command also
 carries closed `finiteCommand` failure details for current V2 operation and
 approval readers: the execution phase, optional zero-based command index, exit
-code and signal. The shared failure presenter displays the command index as a
-one-based step and can show the retained request ID. Command bodies, environment
-values and process output are excluded from this diagnostic. Released V1
+code and signal. A combined Setup failure can also carry the failed native Setup
+operation's address and its retained terminal ID. Action details shows the
+one-based step and exit code, and **See what ran** opens that terminal when the
+receipt carries it. The existing terminal access rules apply. Command bodies,
+environment values and process output stay outside the diagnostic. Released V1
 operation and approval projections omit these details.
 
 The development completion contract retains the original active operation and

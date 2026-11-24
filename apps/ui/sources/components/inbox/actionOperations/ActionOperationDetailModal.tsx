@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -649,6 +650,17 @@ export const ActionOperationDetailModal = React.memo(
               title={detail.failure.reason}
               titleLines={0}
             />
+            {projectCommandRef?.kind === 'machineSetup' && projectCommandRef.operationId ? (
+              <CountedDisclosureItem
+                testID="action-operation-setup-output"
+                title={t('teams.join.setupPage.seeWhatRan')}
+              >
+                <View style={styles.output}>
+                  <ProjectCommandOutputPane operation={operation} ownerStatesExit
+                    title={t('managedMachines.creation.setup')} height={280} />
+                </View>
+              </CountedDisclosureItem>
+            ) : null}
             {detail.failure.technicalLines.length > 0 ? (
               <TechnicalDetailsDisclosure
                 testID="action-operation-technical-details"

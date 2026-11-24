@@ -104,6 +104,8 @@ export const ProjectCommandOutputPane = React.memo(
     const machineName = machine
       ? getMachineDisplayName(machine)
       : attachment.machineId;
+    const outputOperationId = (attachment.kind === 'machineSetup' ? attachment.operationId : undefined)
+      ?? props.operation.snapshot.operationId;
     // The host's bottom terminal already shows this PTY; the page keeps one surface for it.
     if (docked && props.onOpenInTerminal) {
       return (
@@ -130,7 +132,7 @@ export const ProjectCommandOutputPane = React.memo(
         ]}
       >
         <WorkspaceEmbeddedTerminalPane
-          scopeId={`project-command:${attachment.serverId}:${props.operation.snapshot.operationId}${props.terminalId ? `:${props.terminalId}` : ''}`}
+          scopeId={`project-command:${attachment.serverId}:${outputOperationId}${props.terminalId ? `:${props.terminalId}` : ''}`}
           workspaceRefId={attachment.kind === 'projectCommand' ? attachment.workspaceRefId : undefined}
           machineId={attachment.machineId}
           serverId={attachment.serverId}

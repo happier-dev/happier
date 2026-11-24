@@ -11,6 +11,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionOperationRpc } from '@/sync/ops/actionOperations';
+import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const resumeRpc = vi.hoisted(() => ({ signals: [] as (AbortSignal | undefined)[] }));
@@ -33,8 +34,12 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    // The attempt ordinal is the one parameter these assertions read.
-    return createTextModuleMock({ translate: (key, params) => key === 'workflows.run.attempt' ? `Attempt ${String(params?.attempt)}` : key });
+    return createTextModuleMock({ translate: (key, params) => {
+        if (key === 'workflows.run.attempt') return `Attempt ${String(params?.attempt)}`;
+        if (key === 'projects.scripts.setup.step') return `Step ${String(params?.n)}`;
+        if (key === 'machinePresets.setup.commandStoppedWithExit') return `${String(params?.step)} exited with code ${String(params?.code)}`;
+        return key;
+    } });
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -108,6 +113,30 @@ describe('ActionOperationDetailModal', () => {
                 '/workflows/runs/5b423e3b-62a0-47ba-b4e1-93fe5895a517?invocationId=b7ea2558-7e4c-4e56-8439-4678c89f21c2&serverId=setup-home',
             );
             expect(onClose).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
+
+    it('shows the failed Setup step and opens the exact child terminal from the combined receipt', async () => {
+        const serverId = 'setup-home';
+        const parent = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'failed-combined-setup', revision: 2, actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1,
+            state: 'failed', scope: { accountId: 'account-1', machineId: 'controller' }, title: 'Apply machine setup',
+            createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+            error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed', details: {
+                kind: 'finiteCommand', phase: 'setup', step: 22, exitCode: 1, signal: null,
+                failedSetupOperation: { operationId: 'failed-native-setup', terminalId: 'failed-script-output', serverId, machineId: 'guest' },
+            } },
+        });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [parent] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={parent.operationId} onClose={() => {}} />);
+        try {
+            expect(screen.getTextContent()).toContain('Step 23 exited with code 1');
+            expect(screen.tree.findAllByType(WorkspaceEmbeddedTerminalPane)).toHaveLength(0);
+            await screen.pressByTestIdAsync('action-operation-setup-output.header');
+            expect(screen.tree.findByType(WorkspaceEmbeddedTerminalPane).props).toMatchObject({
+                scopeId: 'project-command:setup-home:failed-native-setup',
+                serverId, machineId: 'guest', attachedTerminalId: 'failed-script-output',
+            });
         } finally { await screen.unmount(); }
     });
 

@@ -551,7 +551,7 @@ async function publishManagedDevbox(serverId: string, role?: 'use', daemonState?
   const scope = { serverId, accountId: 'owner' };
   const machine = createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(), ...(daemonState ? { daemonState } : {}),
     ...(setup ? { metadata: { ...createMachineFixture().metadata!, setup }, metadataVersion: 2, daemonStateVersion: 2 } : {}),
-    ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) });
+    access: { role: role ?? 'manage', resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner', displayName: 'Owner' } } });
   await act(async () => {
     storage.setState({ settingsScope: scope });
     await publishMachineInventoryForTest(scope, [machine]);

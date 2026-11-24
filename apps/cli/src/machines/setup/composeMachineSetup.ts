@@ -372,7 +372,17 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           }
           if (!progress.reason) continue;
           const completed = ActionOperationCompletionOutputV1Schema.safeParse(progress.result);
-          const details = completed.success ? completed.data.operation.error?.details : progress.result;
+          const child = completed.success ? completed.data.operation : undefined;
+          const attachment = child?.domainRef;
+          const childDetails = child?.error?.details;
+          let details = child ? childDetails : progress.result;
+          if (child?.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && attachment?.kind === 'machineSetup'
+            && childDetails && 'kind' in childDetails && childDetails.kind === 'finiteCommand') {
+            details = { ...childDetails, failedSetupOperation: {
+              operationId: child.operationId, serverId: attachment.serverId, machineId: attachment.machineId,
+              ...(attachment.terminalId === undefined ? {} : { terminalId: attachment.terminalId }),
+            } };
+          }
           let setupRetry: MachineSetupRetryV1 | undefined;
           if (run.state === 'interrupted') {
             const input = { runId, invocationId: index.id };

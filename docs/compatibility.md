@@ -13688,6 +13688,13 @@ Protocol, Home and daemon readers. Previously minted Setup roots lack the
 Agent selection and need a fresh review to admit an Agent install. No retained
 storage format changes.
 
+Current development V2 operation reads can include an optional `failedSetupOperation`
+in a combined Machine Setup Apply's `finiteCommand` failure details. It carries
+the native Setup operation's address and optional retained terminal ID. Updated
+readers accept earlier failures without the field. Earlier strict 0.3 readers
+require matching Protocol sources when the address is present. Released V1
+operation projections omit the failure details.
+
 Managed controller failures in the current development V2 read retain a strict
 `managedControllerRequest` diagnostic with the static request path, failure category,
 observed HTTP status when available, and safe machine-readable code when supplied.

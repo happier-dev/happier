@@ -261,15 +261,30 @@ describe('Combined Machine setup child settlement', () => {
       ...(state === 'failed' ? details : {}),
     } });
   });
-  it.each<{ errorCode: string; details: Record<string, WorkflowJsonValue> }>([
-    { errorCode: 'machine_setup_setup_failed', details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } },
+  const failedScript = { kind: 'finiteCommand', phase: 'setup', step: 22, exitCode: 1, signal: null } as const;
+  const scriptTerminal = { kind: 'machineSetup', serverId: 'home', machineId: 'guest', terminalId: 'script-output', exitCode: 1 } as const;
+  const scriptCompletion = { operation: {
+    version: 1, operationId: 'native-script-child', revision: 5, requestId: 'native-request',
+    actionId: 'machines.setup.apply', state: 'failed', scope: { accountId: 'actor', machineId: 'guest' },
+    title: 'Set up machine', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported',
+    domainRef: scriptTerminal, error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed', details: failedScript },
+  } } as const;
+  const scriptFailureCase = { errorCode: 'machine_setup_setup_failed', completion: scriptCompletion,
+    details: { ...failedScript, failedSetupOperation: {
+      operationId: scriptCompletion.operation.operationId, serverId: scriptTerminal.serverId,
+      machineId: scriptTerminal.machineId, terminalId: scriptTerminal.terminalId,
+    } } };
+  it.each<{ errorCode: string; details: Record<string, WorkflowJsonValue>; completion?: Record<string, WorkflowJsonValue>; receiver?: boolean }>([
+    scriptFailureCase,
+    { ...scriptFailureCase, receiver: true },
     { errorCode: 'native_effect_failed', details: { kind: 'machineSetup',
       failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } } },
     { errorCode: 'target_unavailable', details: { reason: 'machine_offline',
       requiredFact: 'machine_online', remedy: 'reconnect_machine' } },
-  ])('retains the child $errorCode facts through stored Workflow content and the parent operation', async ({ errorCode, details }) => {
+  ])('retains the child $errorCode facts through stored Workflow content and the parent operation (receiver: $receiver)', async ({ errorCode, details, completion, receiver = false }) => {
     const failureCause = projectActionFailureCauseV1(Object.assign(new Error('denied'), { code: 'EACCES' }), 'machines.setup.apply');
-    const fixture = await retainedSetup('failed', errorCode, details, undefined, undefined, false, failureCause);
+    const fixture = await retainedSetup('failed', errorCode, completion ?? details, undefined, undefined, false, failureCause, receiver);
+    const expectedDetails = receiver ? { ...details, setupOperation: { operationId: 'setup-operation', runId: fixture.runId } } : details;
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.setup.apply');
     const scope = { accountId: 'actor', machineId: 'guest' };
@@ -278,7 +293,7 @@ describe('Combined Machine setup child settlement', () => {
     await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
       execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
     expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
-      error: { errorCode, details, failureCause } });
+      error: { errorCode, details: expectedDetails, failureCause } });
     const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'setup-operation'))));
     const restartedStore = createActionOperationStore();
     restartedStore.project(retained);
@@ -287,7 +302,7 @@ describe('Combined Machine setup child settlement', () => {
     const operations = createActionOperationRpcHandlers({ store: restartedStore, runner: restartedRunner,
       machineId: scope.machineId, resolveAccountId: async () => scope.accountId });
     expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
-      .toMatchObject({ ok: false, errorCode, details, failureCause });
+      .toMatchObject({ ok: false, errorCode, details: expectedDetails, failureCause });
   });
   it('keeps an interrupted Setup uncertain while its current native child has no terminal outcome', async () => {
     const fixture = await retainedSetup('running', 'outcome_uncertain');
