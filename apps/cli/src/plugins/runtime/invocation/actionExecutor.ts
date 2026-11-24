@@ -187,17 +187,30 @@ function unavailable(code: string, data?: JsonValue): TargetActionExecutionResul
   });
 }
 
+/** Closed, content-free facts naming an untyped handler throw for the failure diagnostic only. */
+type UntypedFailureCause = Readonly<{ causeClass: string; causeCode?: string }>;
+const untypedFailureCauses = new WeakMap<object, UntypedFailureCause>();
+const CAUSE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/;
+
 function failed(
   code: string,
   error: unknown,
   actionHandlerInvocation?: PluginActionHandlerInvocation,
 ) {
   const pluginError = readPluginActionError(error);
-  return Object.freeze({
+  const result = Object.freeze({
     status: 'failed',
     ...(pluginError ?? { code, message: error instanceof Error ? error.message : code }),
     ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
   });
+  if (!pluginError) {
+    const name = error instanceof Error ? error.name : typeof error;
+    const errorCode = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code : undefined;
+    untypedFailureCauses.set(result, { causeClass: CAUSE_IDENTIFIER.test(name) ? name : 'Error',
+      ...(errorCode && CAUSE_IDENTIFIER.test(errorCode) ? { causeCode: errorCode } : {}) });
+  }
+  return result;
 }
 
 
@@ -262,7 +275,11 @@ export function createTargetActionExecutor(deps: Readonly<{
   hostConsumesExecutedValue?: true;
   /** Captured before executable normalization can consume confidential operands. */
   rawDiagnosticConfidentiality?: ReturnType<typeof readTargetActionDiagnosticConfidentiality>;
-  diagnostic?: (fact: Readonly<{ qualifiedId: string; occurrenceId: string; surface: string; status: string; code?: string }>) => void | Promise<void>;
+  diagnostic?: (fact: Readonly<{ qualifiedId: string; occurrenceId: string; surface: string; status: string; code?: string;
+    /** An untyped handler throw: its class and identifier-like code, never its message or data. */
+    causeClass?: string; causeCode?: string;
+    /** Redaction replaced the handler's code with the stable generic code. */
+    projectionCollapsed?: true }>) => void | Promise<void>;
 }>) {
   type ExecuteArgs = Readonly<{
     pluginId: string;
@@ -323,6 +340,9 @@ export function createTargetActionExecutor(deps: Readonly<{
             qualifiedId: action?.qualifiedId ?? `${args.pluginId}/actions/${args.localId}`,
             occurrenceId: action?.occurrenceId ?? 'unavailable',
             surface: args.surface, status: publicResult.status, ...('code' in publicResult ? { code: publicResult.code } : {}),
+            ...untypedFailureCauses.get(result),
+            ...('code' in result && 'code' in publicResult && result.code !== publicResult.code
+              && publicResult.code === 'plugin_action_execution_failed' ? { projectionCollapsed: true as const } : {}),
           });
         } catch { /* Diagnostics are failure-isolated from authorization and execution. */ }
         observingCredentialUse = false;

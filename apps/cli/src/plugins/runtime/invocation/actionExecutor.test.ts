@@ -499,6 +499,18 @@ describe('target action executor', () => {
     expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ qualifiedId: 'acme.alpha/actions/run', status: 'unavailable' }));
   });
 
+  it('names an untyped handler throw by class and code in the failure diagnostic, never its message', async () => {
+    const diagnostic = vi.fn(async () => {});
+    const executor = createExecutor({ resolve: () => resolved(), diagnostic, invoke: async () => {
+      throw Object.assign(new TypeError('secret-bearing detail postgres://user:pw@host/db'), { code: 'ERR_DEPLOYMENT_HOST' });
+    } });
+    await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
+      .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed' });
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', code: 'plugin_action_execution_failed',
+      causeClass: 'TypeError', causeCode: 'ERR_DEPLOYMENT_HOST' }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('postgres://');
+  });
+
   it('normalizes requester rejection, cancellation, and invocation throws without escaping the final owner', async () => {
     const invoke = vi.fn(async () => { throw new Error('handler escaped'); });
     const requesterFailure = createExecutor({

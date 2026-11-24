@@ -1355,6 +1355,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         logger.warnLocalFile('Plugin Action failed', {
                             pluginId: invocation.pluginId, localId: invocation.localId, code: fact.code,
                             requestId: invocation.requestId ?? correlationId,
+                            ...(fact.causeClass ? { causeClass: fact.causeClass } : {}),
+                            ...(fact.causeCode ? { causeCode: fact.causeCode } : {}),
+                            ...(fact.projectionCollapsed ? { projectionCollapsed: true } : {}),
                         });
                     }
                 },
