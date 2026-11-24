@@ -1,14 +1,16 @@
 import * as React from 'react';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
-import { createManagedProvisionerClient } from './managedProvisionerClient';
+import { createManagedProvisionerClient, projectManagedProvisionerFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 import { readManagedLaunchName } from '@/components/approvals/approvalReferenceReading';
 import { useManagedWorkspaceControlTarget } from './useManagedWorkspaceStart';
 
-export type ManagedWorkspaceForgetOutcome = 'forgotten' | 'failed';
+export type ManagedWorkspaceForgetOutcome = { kind: 'forgotten' } | ManagedProvisionerFailure | { kind: 'ignored' };
 
 /**
  * Forget an attached workspace from its Project page (remote workspaces F9, lab `project-forget`): the same
@@ -42,19 +44,19 @@ export function useManagedWorkspaceForget(scope: WorkspaceScopeBase): Readonly<{
   return {
     workspaceName,
     async forget() {
-      if (inFlight.current || !binding.isCurrent()) return 'failed';
+      if (inFlight.current) return { kind: 'ignored' };
+      if (!binding.isCurrent()) return { kind: 'failed', code: 'action_account_scope_changed' };
       inFlight.current = true;
       const request = new AbortController();
-      const retirement = binding.onRetire(() => request.abort());
-      type Settled = Readonly<{ outcome: ManagedWorkspaceForgetOutcome }>;
-      const settle = (outcome: ManagedWorkspaceForgetOutcome) => (): Settled => ({ outcome });
+      // Removing the current Project can unmount this reader before the Account mutation acknowledges.
+      const retirement = readServerAccountScopeOwnerLifetime(binding).onRetire(() => request.abort());
       try {
         const client = createManagedProvisionerClient(binding.scope, attached.homeId);
-        const settled = await awaitActionApprovalResult<unknown, Settled>({
+        return await awaitActionApprovalResult<unknown, ManagedWorkspaceForgetOutcome>({
           signal: request.signal,
-          succeeded: settle('forgotten'),
-          failed: settle('failed'),
-          aborted: settle('failed'),
+          succeeded: () => ({ kind: 'forgotten' }),
+          failed: (code, failure) => projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause),
+          aborted: () => ({ kind: 'failed', code: 'action_account_scope_changed' }),
           execute: async (callbacks) => {
             const result = await client.execute(
               'machines.managed.retire',
@@ -67,10 +69,13 @@ export function useManagedWorkspaceForget(scope: WorkspaceScopeBase): Readonly<{
               { ...callbacks, confirmed: true, onApprovalPending: approval.requestApproval },
             );
             if (result.kind === 'approval_pending') return { approvalPending: true as const };
-            return { outcome: result.kind === 'succeeded' ? 'forgotten' : 'failed' };
+            if (result.kind === 'admitted') return { kind: 'failed', code: 'invalid_action_output' };
+            return result.kind === 'succeeded' ? { kind: 'forgotten' } : result;
           },
         });
-        return settled.outcome;
+      } catch (error) {
+        return projectManagedProvisionerFailure(readActionErrorCodeV1(error) ?? 'managed_request_failed',
+          undefined, undefined, projectActionFailureCauseV1(error));
       } finally {
         retirement.dispose();
         inFlight.current = false;

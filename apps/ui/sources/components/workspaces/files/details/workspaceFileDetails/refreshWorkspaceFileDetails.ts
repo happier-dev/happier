@@ -1,7 +1,6 @@
 import { t } from '@/text';
 import { config } from '@/config';
-import { callDaemonWorkspaceStatFileRpc } from '@/sync/domains/transfers/runtime/transferRuntime';
-import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { workspaceReadFile, workspaceStatFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { isBinaryContent, isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { decodeBase64 } from '@/encryption/base64';
@@ -133,18 +132,12 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                 let statSizeBytes: number | null = null;
                 let binaryPreviewRevision: string | null = null;
 
+                const target = workspaceFileSystemTargetFromScope(input.scope);
                 if (maxPreviewBytes != null || viewer.previewable) {
-                    const stat = await callDaemonWorkspaceStatFileRpc({
-                        machineId: input.scope.machineId,
-                        serverId: input.scope.serverId,
-                        rootPath: input.scope.rootPath,
-                        ...(input.scope.workspace ? { workspace: input.scope.workspace } : {}),
-                        request: { path: input.filePath },
-                        signal: input.signal,
-                    });
+                    const stat = await workspaceStatFile(target, input.filePath, { signal: input.signal });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                     // Binary viewers need successful target metadata; video additionally needs a stable player revision.
-                    if (!stat.success && (input.scope.workspace || wantsBinaryPreview)) return fileFailure(stat.error, stat.errorCode);
+                    if (!stat.success && (target.kind === 'managed' || wantsBinaryPreview)) return fileFailure(stat.error, stat.errorCode);
                     if (stat.success && wantsBinaryPreview && (stat.exists !== true
                         || (videoPreview && (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
                             || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))))) {
@@ -181,7 +174,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     };
                 }
 
-                const readResponse = await workspaceReadFile(workspaceFileSystemTargetFromScope(input.scope), input.filePath, {
+                const readResponse = await workspaceReadFile(target, input.filePath, {
                     maxBytes: maxPreviewBytes ?? 256 * 1024,
                     knownSizeBytes: statSizeBytes,
                     signal: input.signal,

@@ -4,6 +4,7 @@ import { Modal, type IModal } from '@/modal';
 import { t } from '@/text';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useManagedWorkspaceForget } from '@/components/settings/machines/managed/useManagedWorkspaceForget';
+import { describeManagedActionFailureDiagnostic } from '@/components/settings/machines/managed/managedNativeFailurePresentation';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { readCurrentProjectAccountRows, readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
@@ -63,8 +64,9 @@ export function useForgetAttachedWorkspaceAction(
         if (!confirmed) return;
         setPending(true);
         try {
-          if ((await run()) === 'failed')
-            Modal.alert(t('common.requestFailed'));
+          const result = await run();
+          if (result.kind === 'failed')
+            Modal.alert(t('common.requestFailed'), describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause));
         } finally {
           setPending(false);
         }

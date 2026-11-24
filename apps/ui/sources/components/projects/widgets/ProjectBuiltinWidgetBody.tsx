@@ -7,7 +7,7 @@ import { ProjectAutomationsWidgetBody } from './ProjectAutomationsWidgetBody';
 import type { WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationPaneScopeId, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { buildProjectCheckoutOpenRoute } from '@/components/projects/activation/projectOpenRoute.mjs';
 import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
@@ -192,6 +192,7 @@ function CodeBody(props: Props): React.ReactElement {
 
 function ReadmeBody(props: Props): React.ReactElement {
     const scope = useScope(props.checkout);
+    const visible = useDestinationVisibility();
     const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspace.workspaceId, props.workspace.serverId));
     const key = tryBuildWorkspaceCacheKey(scope);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(key);
@@ -217,7 +218,7 @@ function ReadmeBody(props: Props): React.ReactElement {
         title={t('projects.code.readUnavailable')} action={{ label: t('common.retry'), onPress: () => setRefresh(value => value + 1) }} />;
     if (!read.path) return <SurfaceStateCard testID={props.testID} size="line" kind="empty" title={t('projects.widgets.readmeMissing')} />;
     return <View testID={props.testID}><WorkspaceFileDetailsView scopeId={scopeId} scope={scope} filePath={read.path} presentation="panel"
-        targetKind="project" workspaceRefId={props.workspace.workspaceId} /></View>;
+        embeddedActive={visible} targetKind="project" workspaceRefId={props.workspace.workspaceId} /></View>;
 }
 
 /**

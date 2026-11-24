@@ -4,6 +4,7 @@ import { Modal, ModalProvider } from '@/modal';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -30,6 +31,8 @@ import { HOME_WIDGET_BODY_ROWS } from '@/components/widgets/frame/WidgetFrame';
 let disposeActionLoader: (() => void) | undefined;
 let projectInspection: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
 let directoryBrowsing: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
+let fileReading: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
+const guestReadme = 'Guest workspace README marker';
 beforeAll(async () => {
     disposeActionLoader = await installRealActionExecutorModuleLoader();
     projectInspection = await createExternalActionAccountHttpBoundary({
@@ -51,6 +54,14 @@ beforeAll(async () => {
         execute: input => {
             boundary.directoryReads.push(input);
             return { success: true, entries: boundary.rootReadme ? [{ name: 'readme.MD', type: 'file' }] : [] };
+        },
+    });
+    fileReading = await createExternalActionAccountHttpBoundary({
+        serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane', accountId: 'account-a', machineId: 'm1',
+        installationId: 'project-test-installation', actionId: 'daemon.filesystem.readFile', tokenEpoch: 0,
+        execute: input => {
+            expect(input).toMatchObject({ path: '/home/coder/repo/readme.MD', workspace: { kind: 'managed', managedId: 'native-guest' } });
+            return { success: true, content: encodeBase64(new TextEncoder().encode(guestReadme), 'base64') };
         },
     });
 });
@@ -123,6 +134,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
         if (inspection) return inspection;
         const directory = await directoryBrowsing.handle(new URL(String(url)), init);
         if (directory) return directory;
+        const file = await fileReading.handle(new URL(String(url)), init);
+        if (file) return file;
         // The real Account bootstrap and Action front door read these Home-owned baselines.
         if (path === AUTHORING_MEMORY_ROUTE_V1 && (init?.method ?? 'GET') === 'GET')
             return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
@@ -147,6 +160,13 @@ const runtime = installSessionPaneRuntimeTestHarness({
         vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
             if (event !== 'rpc-call') throw new Error(`Unexpected event: ${event}`);
             const request = z.looseObject({ method: z.string(), params: z.unknown() }).parse(payload);
+            if (request.method.endsWith(`:${RPC_METHODS.STAT_FILE}`)) {
+                // Only the guest holds the README. A local stat must not supply its metadata.
+                const stat = z.looseObject({ workspace: z.looseObject({ managedId: z.literal('native-guest') }),
+                    file: z.looseObject({ path: z.literal('/home/coder/repo/readme.MD') }) }).safeParse(request.params);
+                return { ok: true, result: stat.success ? { success: true, exists: true, sizeBytes: guestReadme.length }
+                    : { success: false, error: 'File not found on controller' } };
+            }
             // 4505883b9e2 added native observation. These cases leave its external
             // long poll pending, then release the transport handles at teardown.
             if (request.method.endsWith(`:${RPC_METHODS.SCM_WORKSPACE_WATCH}`)) return new Promise(resolve => {
@@ -605,23 +625,18 @@ describe('Project Local Changes', () => {
         expect(screen.findHostByTestId('local-changes')).not.toBeNull();
         expect(storage.getState().sessions).toEqual({});
     });
-    it('shows an attached workspace README read from its guest while the controller is online (RWS QA cut 34)', async () => {
-        // Cut 34 saw no README contents on attached checkouts with an online controller: the body lists and opens it on the guest.
+    it('renders the managed V2 README in Overview without an open file tab (RWS QA cut 38)', async () => {
         const managed = { v: 2 as const, kind: 'managed' as const, id: 'wr_1', serverId: runtime.serverId, managedId: 'native-guest',
             controller: { machineId: 'm1', installationId: 'project-test-installation' }, rootPath: '/home/coder/repo',
             projectKey: 'project', createdAtMs: 1 };
         boundary.rootReadme = true;
         const screen = await mount(managed.rootPath, 'project_readme', { checkout: managed });
-        await vi.waitFor(async () => {
-            await flushHookEffects();
+        try {
             expect(screen.findByType(WorkspaceFileDetailsView).props.filePath).toBe('readme.MD');
-        });
-        // The file itself is read from the same guest address.
-        expect(screen.findByType(WorkspaceFileDetailsView).props.scope.workspace).toMatchObject({ kind: 'managed', managedId: 'native-guest' });
-        // The listing went to the guest through its controller, with the managed address intact.
-        expect(boundary.directoryReads).toContainEqual(expect.objectContaining({ rootPath: managed.rootPath,
-            workspace: expect.objectContaining({ kind: 'managed', managedId: 'native-guest' }) }));
-        await screen.unmount();
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(guestReadme));
+        } finally {
+            await screen.unmount();
+        }
     });
     it('opens captured Explain into the real editable ordinary draft without sending or creating a Session', async () => {
         const { openWorkspaceScmAuthoringDraft } = await import('@/components/projects/scm/workspaceScmAuthoring');

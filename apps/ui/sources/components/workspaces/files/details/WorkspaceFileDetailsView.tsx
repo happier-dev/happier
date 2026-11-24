@@ -204,6 +204,8 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
     /** The real host owns link/publication identity; augmentation never selects it. */
     targetKind?: 'session' | 'project';
     presentation?: 'screen' | 'panel';
+    /** A visible widget can host the viewer without owning a Details tab. */
+    embeddedActive?: boolean;
     /** The host names the repository (the Code page): its root leads the header's breadcrumb. */
     breadcrumbRoot?: string | null;
     /** A breadcrumb folder opens here (the Code page's own listing); otherwise it reveals the folder in Files. */
@@ -655,7 +657,9 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const [copyContentBusy, setCopyContentBusy] = React.useState(false);
 
     const { view: fileView, initialChanges, patchView: patchFileView } = useWorkspaceFileView(pane, tabKey, props.initialChanges);
-    const isActive = props.openableContentViewer?.details.active ?? (presentation === 'screen' || (paneFacts?.detailsOpen === true && paneFacts.activeTabKey === tabKey));
+    const embedded = props.embeddedActive !== undefined;
+    const isActive = props.embeddedActive ?? props.openableContentViewer?.details.active
+        ?? (presentation === 'screen' || (paneFacts?.detailsOpen === true && paneFacts.activeTabKey === tabKey));
     // Edit takes over the reader's open Find: the query, its options and the current match travel to the
     // editor's own Find once, as a launch seed, the same input a Find launch into Edit gives it.
     const editorSelectedRef = React.useRef(false);
@@ -792,7 +796,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     });
     const recentActivation = React.useRef<string | null>(null);
     React.useEffect(() => {
-        if (!isActive) { recentActivation.current = null; return; }
+        if (!isActive || embedded) { recentActivation.current = null; return; }
         if (!scope || !editorAccountScope || isLoading || isDiffLoading || error || (!fileContent && diffContent === null)) return;
         const workspaceKey = tryBuildWorkspaceCacheKey(scope);
         if (!workspaceKey) return;
@@ -800,7 +804,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         if (recentActivation.current === activation) return;
         recentActivation.current = activation;
         recordWorkspaceFileOpen(editorAccountScope, workspaceKey, filePath);
-    }, [diffContent, editorAccountScope, error, fileContent, filePath, isActive, isDiffLoading, isLoading, scope]);
+    }, [diffContent, editorAccountScope, embedded, error, fileContent, filePath, isActive, isDiffLoading, isLoading, scope]);
     const copyFileContent = React.useCallback(async () => {
         if (!fileContent || fileContent.isBinary || copyContentBusy) return;
         setCopyContentBusy(true);

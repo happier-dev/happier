@@ -187,7 +187,11 @@ describe('managed configurator uses the exact Home Action front door', () => {
         }
     });
 
-    it.each(['coder', 'ssh'] as const)('forgets every attached Project checkout without deleting the %s resource', async providerId => {
+    it.each([
+        { providerId: 'coder', refusal: null },
+        { providerId: 'ssh', refusal: null },
+        { providerId: 'ssh', refusal: 'intent_changed' },
+    ] as const)('settles $providerId Forget after row removal or preserves the $refusal refusal', async ({ providerId, refusal }) => {
         // Remote workspaces F9: Forget from the Project page never deletes the remote workspace (QA cut 29 step 7).
         const homeId = 'srv_forget_workspace';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://forget-workspace.test',
@@ -207,6 +211,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         });
         harness.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
         const retired: unknown[] = [];
+        const acknowledge = createDeferred<void>();
         const { workspaceId, ...locator } = workspace;
         const rows = [workspaceId, 'sibling', 'other-attachment'].map((id, index) => {
             const key = { kind: 'workspace-ref', serverId: homeId, id };
@@ -217,7 +222,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         });
         harness.answer(serverId, 'POST /v1/account/project-rows/list', { select: () =>
             ({ body: { status: 'listed', coverage: 'complete', rows } }) });
-        harness.answer(serverId, 'POST /v1/account/project-rows/mutate', { select: value => {
+        harness.answer(serverId, 'POST /v1/account/project-rows/mutate', { select: async value => {
             expect(retired).toHaveLength(1);
             const mutation = ProjectAccountRowMutationRequestV1Schema.parse(value);
             const changed = mutation.mutations.map(item => {
@@ -227,6 +232,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
                 if (index === -1) rows.push(row); else rows[index] = row;
                 return row;
             });
+            await acknowledge.promise;
             return { body: { status: 'updated', rows: changed, cursor: 1 } };
         } });
         // Home archives the attachment independently of the encrypted Project rows.
@@ -234,6 +240,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
             const request = value as { action?: string; input?: unknown };
             expect(request.action).toBe('machines.managed.retire');
             retired.push(request.input);
+            if (refusal) return { status: 409, body: { code: refusal } };
             return { body: { machine: { ...machine, archivedAt: 5 }, replayed: false } };
         } });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
@@ -244,16 +251,24 @@ describe('managed configurator uses the exact Home Action front door', () => {
         try {
             await waitForHomeGovernance(() => expect(hook.getCurrent()?.workspaceName).toBe('api-dev'));
             const current = hook.getCurrent()!;
-            let outcomes: unknown[] = [];
-            await act(async () => { outcomes = await Promise.all([current.forget(), current.forget()]); });
-            expect(outcomes, JSON.stringify(harness.requests.map(request => request.path))).toContain('forgotten');
+            const outcome = current.forget();
+            const liveRowIds = () => rows.flatMap(row => row.key.kind === 'workspace-ref' && row.content !== null ? [row.key.id] : []);
+            if (refusal) {
+                await expect(outcome).resolves.toMatchObject({ kind: 'failed', code: refusal });
+                expect(liveRowIds()).toEqual([workspaceId, 'sibling', 'other-attachment']);
+            } else {
+                await waitForHomeGovernance(() => expect(liveRowIds()).toEqual(['other-attachment']));
+                // The row update closes the Project while its HTTP acknowledgement is still in flight.
+                await hook.unmount();
+                acknowledge.resolve();
+                await expect(outcome).resolves.toEqual({ kind: 'forgotten' });
+            }
             expect(retired).toEqual([{ homeId, managedId: machine.id, expectedIntentRevision: 3, manualResponsibility: true }]);
             expect(harness.requestsFor('/v1/actions/machines.managed.delete')).toHaveLength(0);
             expect(harness.requestsFor('/v1/account/project-rows/mutate'), JSON.stringify(harness.requests.map(request => request.path)))
-                .toHaveLength(1);
-            expect(rows.flatMap(row => row.key.kind === 'workspace-ref' && row.content !== null ? [row.key.id] : []))
-                .toEqual(['other-attachment']);
+                .toHaveLength(refusal ? 0 : 1);
         } finally {
+            acknowledge.resolve();
             await hook.unmount();
         }
     });
