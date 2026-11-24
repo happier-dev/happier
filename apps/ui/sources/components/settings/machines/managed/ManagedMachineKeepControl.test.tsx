@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
+import { t } from '@/text';
+import { ManagedMachinePolicySection } from './ManagedMachineDetailSections';
+import { ManagedMachineKeepControl } from './ManagedMachineKeepControl';
 import { buildRetentionChoices } from './managedRetentionPresentation';
 
 installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -10,7 +13,6 @@ afterEach(() => standardCleanup());
 
 describe('retained wake choices', () => {
     it('offers the input wake beside a Stop rule on the compact detail, never beside Always on or a destruction rule', async () => {
-        const { ManagedMachinePolicySection } = await import('./ManagedMachineDetailSections');
         const onChange = vi.fn();
         const stop = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
         const keep = { policy: { retention: stop, wakeOnAcceptedMessage: false },
@@ -31,8 +33,6 @@ describe('retained wake choices', () => {
     });
 
     it('prices Always on in its row and says what starting it bills, or that input waits when it is off (lab af-config K)', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
-        const { t } = await import('@/text');
         const props = { inherited: true, presentation: 'choices' as const, effects: ['stop', 'delete'] as const, canWake: true,
             consequence: () => 'Kept', onChange: vi.fn(), onReset: vi.fn(), testID: 'keep',
             costs: { alwaysOn: '$0.12 an hour', starting: 'Starting it bills at $0.12 an hour.' } };
@@ -58,7 +58,6 @@ describe('retained wake choices', () => {
 
 describe('a rule that cannot be edited yet', () => {
     it('keeps the choices in place, read-only, with the reason where the consequence goes', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const onChange = vi.fn();
         const policy = { retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const, wakeOnAcceptedMessage: true };
         const props = { policy, inherited: false, presentation: 'choices' as const, effects: ['stop', 'delete'] as const,
@@ -80,12 +79,36 @@ describe('a rule that cannot be edited yet', () => {
         expect(onChange).not.toHaveBeenCalled();
         await screen.unmount();
     });
+
+    it('reveals the unavailable Keep diagnostic inline only while Technical details is open', async () => {
+        const code = 'credential_scope_denied';
+        const details = 'policy.keep.technical-details';
+        const screen = await renderScreen(<ManagedMachinePolicySection testID="policy" description="Keep this machine"
+            keep={{
+                policy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+                inherited: false,
+                capabilitiesAvailable: false,
+                disabled: true,
+                unavailableReason: 'The selected Account cannot manage this provider resource.',
+                unavailableDetails: [{ key: 'code', label: 'Error code', value: code }],
+                consequence: () => 'Kept',
+                onChange: vi.fn(),
+                onReset: vi.fn(),
+            }} />);
+        expect(screen.getTextContent()).toContain('The selected Account cannot manage this provider resource.');
+        expect(screen.findAllByTestId(`${details}.header`)).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain(code);
+        await screen.pressByTestIdAsync(details);
+        expect(screen.getTextContent()).toContain(code);
+        await screen.pressByTestIdAsync(details);
+        expect(screen.getTextContent()).not.toContain(code);
+        await screen.unmount();
+    });
 });
 
 describe('explicit interrupting deadline', () => {
     const at = new Date(2099, 0, 2, 18, 30).getTime();
     const render = async (onChange: (policy: unknown) => void, deadline: boolean) => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         return renderScreen(<ManagedMachineKeepControl
             policy={{ retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true }}
             inherited presentation="choices" effects={['stop', 'delete']} canWake deadline={deadline}
@@ -122,8 +145,6 @@ describe('explicit interrupting deadline', () => {
     });
 
     it('names a set deadline once and keeps its interruption in view', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
-        const { t } = await import('@/text');
         const screen = await renderScreen(<ManagedMachineKeepControl
             policy={{ retention: { kind: 'deadline', at, effect: 'stop' }, wakeOnAcceptedMessage: true }}
             inherited presentation="choices" effects={['stop', 'delete']} canWake deadline
@@ -174,7 +195,6 @@ describe('explicit interrupting deadline', () => {
     });
 
     it('retains the deadline review when Reset is pending, then clears it only after a successful Reset', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const onReset = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         const onChange = vi.fn().mockResolvedValue(false);
         const screen = await renderScreen(<ManagedMachineKeepControl
@@ -204,7 +224,6 @@ describe('explicit interrupting deadline', () => {
 
 describe('finite resource lifetime control', () => {
     it('names the retention choice group for native and web accessibility', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const screen = await renderScreen(<ManagedMachineKeepControl
             policy={{ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }}
             inherited presentation="choices" consequence={() => 'Kept'}
@@ -216,7 +235,6 @@ describe('finite resource lifetime control', () => {
     });
 
     it('discloses a known live native expiry as information without offering a creation duration mutation', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const onChange = vi.fn();
         const screen = await renderScreen(<ManagedMachineKeepControl policy={{ retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false }}
             inherited presentation="field" finiteOnly effects={['delete']} canWake nativeExpiry="Native lease ends in two hours"
@@ -229,7 +247,6 @@ describe('finite resource lifetime control', () => {
         await screen.unmount();
     });
     it('offers one finite lifetime field with no retained-forever or wake option', async () => {
-        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const retention = { kind: 'unused', afterMs: 3_600_000, effect: 'delete' } as const;
         const onDuration = vi.fn(); const onPolicy = vi.fn();
         const screen = await renderScreen(<ManagedMachineKeepControl policy={{ retention, wakeOnAcceptedMessage: false }}

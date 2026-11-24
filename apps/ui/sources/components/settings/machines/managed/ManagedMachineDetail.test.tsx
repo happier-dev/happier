@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createServerAccountConnectionProbeHttpResponse, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -67,6 +68,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprova
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import sodium from 'libsodium-wrappers';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
@@ -224,6 +226,29 @@ function readNativeControllerRequest(init?: RequestInit) {
     const body: unknown = JSON.parse(String(init?.body));
     const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
     return ExternalActionRequestEnvelopeV1Schema.parse(carrier.success ? carrier.data.envelope : body);
+}
+
+/** Serve the signed requester operation list used after a detail Action settles. */
+async function createManagedOperationListBoundary(params: Readonly<{
+    serverUrl: string;
+    homeId: string;
+    machines: readonly NonNullable<ManagedMachineReadSnapshotV1['controller']>[];
+    list: (machineId: string) => { items: ActionOperationSnapshotV1[]; nextCursor: null };
+}>) {
+    const actionId = ACTION_OPERATION_LIST_ACTION_ID_V1;
+    const authorizationPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+    const boundaries = await Promise.all(params.machines.map(({ machineId, installationId }) =>
+        createExternalActionAccountHttpBoundary({ serverUrl: params.serverUrl, serverIdentityId: params.homeId,
+            accountId: 'owner', tokenEpoch: 0, machineId, installationId, actionId, requesterInvocation: 'none',
+            execute: () => params.list(machineId),
+        })));
+    return (url: URL, init?: RequestInit) => {
+        if (url.pathname !== authorizationPath && url.pathname !== `/v1/actions/${actionId}`) return null;
+        const { machineId } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        const boundary = boundaries.find(candidate => candidate.machine.id === machineId);
+        if (!boundary) throw new Error('Unexpected Machine in the signed operation refresh');
+        return boundary.handle(url, init);
+    };
 }
 
 /** Native HTTP boundary for tests whose current provisioner declares static capabilities. */
@@ -2647,6 +2672,25 @@ describe('managed Machine detail', () => {
         unreachable: undefined,
     } as const;
     const providerRefusalCases = Object.keys(providerRefusals) as (keyof typeof providerRefusals)[];
+    it('reveals a failed Move candidate diagnostic inline while keeping Move unavailable', async () => {
+        const code = 'requester_credential_disclosure_required';
+        const details = 'move-candidates.blocked.technical-details';
+        const screen = await renderScreen(<ManagedControllerMoveList testID="move-candidates" onMove={vi.fn()}
+            candidates={[{
+                id: 'blocked', name: 'Blocked controller', icon: null, subtitle: providerRefusals[code],
+                online: true, current: false, reachable: false,
+                technicalDetails: [{ key: 'code', label: 'Error code', value: code }],
+            }]} />);
+        expect(screen.getTextContent()).toContain(providerRefusals[code]);
+        expect(screen.findByTestId('move-candidates.blocked.move')).toBeNull();
+        expect(screen.findAllByTestId(`${details}.header`)).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain(code);
+        await screen.pressByTestIdAsync(details);
+        expect(screen.getTextContent()).toContain(code);
+        await screen.pressByTestIdAsync(details);
+        expect(screen.getTextContent()).not.toContain(code);
+        await screen.unmount();
+    });
     it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager', ...providerRefusalCases] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_move');
@@ -3203,16 +3247,23 @@ describe('managed Machine detail', () => {
             progress: { kind: 'phase', phase: 'managed.intent.busy', label: 'Waiting for unused machine' } };
         const { ActionOperationListV1ResponseSchema, ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
         ActionOperationSnapshotV1Schema.parse(failed);
-        operationRpcBoundary.answer = ActionOperationListV1ResponseSchema.parse({
+        const controllerOperations = ActionOperationListV1ResponseSchema.parse({
             items: basis === 'enrolled-incomplete-retention' ? [failed, retention]
                 : basis === 'enrolled-failure' || basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' ? [failed] : [],
             nextCursor: null,
+        });
+        operationRpcBoundary.answer = controllerOperations;
+        const readOperations = await createManagedOperationListBoundary({ serverUrl: target.serverUrl, homeId,
+            machines: machine.enrolledMachineId ? [controller, { machineId: machine.enrolledMachineId, installationId: 'guest-installation' }] : [controller],
+            list: machineId => ({ items: machineId === controller.machineId ? controllerOperations.items : [], nextCursor: null }),
         });
         const retries: unknown[] = [];
         const inspections: unknown[] = [];
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             expect(url.origin).toBe(target.serverUrl);
+            const operations = await readOperations(url, init);
+            if (operations) return operations;
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
             const authorization = managedControllerAuthorization(machine, url, init);
@@ -3633,8 +3684,9 @@ describe('managed Machine detail', () => {
                 || request.method === ACTION_OPERATION_RPC_METHODS_V2.get)).toHaveLength(0);
         } finally { await screen.unmount(); installationBoundary.dispose(); }
     });
-    it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices', 'auth.approveRemoteProvisioning'] as const)(
-        'renders the managed %s question and delivers both decisions through the real respond Action', async kind => {
+    it.each((['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices', 'auth.approveRemoteProvisioning'] as const)
+        .flatMap(kind => [true, false].map(approved => ({ kind, approved }))))(
+        'renders $kind and delivers the decision (approved: $approved) through the real respond Action', async ({ kind, approved }) => {
         const enrollmentRetry = kind === 'auth.approveRemoteProvisioning';
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-trust.test', scope: 'tab' });
         const homeId = 'srv_managed_trust';
@@ -3665,7 +3717,13 @@ describe('managed Machine detail', () => {
                 bootstrapTask: { id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } } };
         const answers: unknown[] = [];
         const retries: unknown[] = [];
-        const listOperations = () => ({ items: !enrollmentRetry || retries.length > 0 ? [operation] : [], nextCursor: null });
+        const settled: ActionOperationSnapshotV1 = { ...operation, state: approved ? 'succeeded' : 'cancelled', revision: 2, settledAt: 3 };
+        const listOperations = () => ({
+            items: enrollmentRetry && retries.length === 0 ? [] : [answers.length > 0 ? settled : operation],
+            nextCursor: null,
+        });
+        const readOperations = await createManagedOperationListBoundary({ serverUrl: target.serverUrl, homeId,
+            machines: [controller], list: listOperations });
         operationRpcBoundary.handler = request => {
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) return listOperations();
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) return { kind: 'found', operation };
@@ -3674,6 +3732,8 @@ describe('managed Machine detail', () => {
         };
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            const operations = await readOperations(url, init);
+            if (operations) return operations;
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
             const authorization = managedControllerAuthorization(machine, url, init);
@@ -3688,7 +3748,6 @@ describe('managed Machine detail', () => {
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.provisioners.list' ? { provisioners: [] }
                         : actionId === 'machines.managed.bootstrap.retry' ? { managedId: machine.id, operation: { operationId: operation.operationId } }
-                        : actionId === 'action.operations.list' ? listOperations()
                         : actionId === 'machines.managed.get' ? machine : { machines: [machine] } } });
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
@@ -3723,29 +3782,30 @@ describe('managed Machine detail', () => {
                 expect(screen.getTextContent()).not.toContain(prompt.fingerprint);
             }
             expect(answers).toEqual([]);
-            for (const approved of [true, false]) {
-                if ('host' in prompt) {
-                    await screen.pressByTestId('managed-machine.installation-prompt-review');
-                    const sheet = sheets.at(-1);
-                    expect(sheet?.chrome?.testID).toBe('ssh-host-key-modal');
-                    expect(sheet?.props?.request).toMatchObject({ fingerprint: prompt.fingerprint, existingFingerprint: prompt.existingFingerprint });
-                    await act(async () => { sheet?.props?.onResolve?.(approved); });
-                } else {
-                    await screen.pressByTestId(`managed-machine.installation-prompt-${approved ? 'approve' : 'decline'}`);
-                }
-                await waitForHomeGovernance(async () => {
-                    await flushHookEffects();
-                    expect(answers).toHaveLength(approved ? 1 : 2);
-                });
+            if ('host' in prompt) {
+                await screen.pressByTestId('managed-machine.installation-prompt-review');
+                const sheet = sheets.at(-1);
+                expect(sheet?.chrome?.testID).toBe('ssh-host-key-modal');
+                expect(sheet?.props?.request).toMatchObject({ fingerprint: prompt.fingerprint, existingFingerprint: prompt.existingFingerprint });
+                await act(async () => { sheet?.props?.onResolve?.(approved); });
+            } else {
+                await screen.pressByTestId(`managed-machine.installation-prompt-${approved ? 'approve' : 'decline'}`);
             }
             const answerKey = kind === 'ssh.trustHost' || kind === 'ssh.replaceHostKey' ? 'trusted'
                 : kind === 'daemon.replaceRemoteBackgroundServices' ? 'replaceExistingServices' : 'approved';
-            expect(answers).toEqual([true, false].map(approved => ({ id: 'tool.systemTasks', method: 'respond',
-                params: { taskId: 'trust-task', expectedPromptKind: kind, answer: { [answerKey]: approved } } })));
-            expect(sheets).toHaveLength(hostKey ? 2 : 0);
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(answers).toEqual([{ id: 'tool.systemTasks', method: 'respond',
+                    params: { taskId: 'trust-task', expectedPromptKind: kind, answer: { [answerKey]: approved } } }]);
+                expect([...actionOperationStore.getSnapshot().operationsByKey.values()]
+                    .find(item => item.snapshot.operationId === operation.operationId)?.snapshot.state).toBe(settled.state);
+                expect(screen.findByTestId(`managed-machine.installation-prompt-${hostKey ? 'review' : 'approve'}`)).toBeNull();
+            });
+            expect(sheets).toHaveLength(hostKey ? 1 : 0);
         } finally { show.mockRestore(); await screen.unmount(); }
     });
-    it('asks the administrator password on the detail page through the creation presenter and delivers it only as the exact prompt response', async () => {
+    it.each(['respond', 'cancel'] as const)(
+        'asks for an administrator password and handles the exact prompt decision (%s)', async decision => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-establish.test', scope: 'tab' });
         const homeId = 'srv_managed_establish';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -3772,6 +3832,13 @@ describe('managed Machine detail', () => {
         const answers: unknown[] = [];
         const actionPaths: string[] = [];
         const cancelInputs: unknown[] = [];
+        const readOperations = await createManagedOperationListBoundary({ serverUrl: target.serverUrl, homeId,
+            machines: [controller], list: () => ({ items: [
+                answers.length > 0 || cancelInputs.length > 0
+                    ? { ...operation, revision: 2, settledAt: 3, state: decision === 'respond' ? 'succeeded' : 'cancelled' }
+                    : operation,
+            ], nextCursor: null }),
+        });
         operationRpcBoundary.handler = request => {
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) return { items: [operation], nextCursor: null };
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) return { kind: 'found', operation };
@@ -3780,6 +3847,8 @@ describe('managed Machine detail', () => {
         };
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            const operations = await readOperations(url, init);
+            if (operations) return operations;
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
             const authorization = managedControllerAuthorization(machine, url, init);
@@ -3830,22 +3899,27 @@ describe('managed Machine detail', () => {
             expect(answers).toEqual([]);
             expect(actionPaths).not.toContain('/v1/machines/managed/actions/cancel');
 
-            asked.mockResolvedValue(secret);
-            await screen.pressByTestId('managed-machine.installation-prompt-approve');
-            await waitForHomeGovernance(async () => {
-                await flushHookEffects();
-                expect(answers).toEqual([{ id: 'tool.systemTasks', method: 'respond',
-                    params: { taskId: 'establish-task', expectedPromptKind: 'administrator.establish',
-                        expectedPromptId: prompt.promptId, answer: { password: secret } } }]);
-            });
-
-            // Declining ends the creation through the existing Cancel Action, never through the respond path.
-            await screen.pressByTestId('managed-machine.installation-prompt-decline');
-            await waitForHomeGovernance(async () => {
-                await flushHookEffects();
-                expect(cancelInputs).toEqual([expect.objectContaining({ managedId: machine.id, expectedIntentRevision: machine.intentRevision })]);
-            });
-            expect(answers).toHaveLength(1);
+            if (decision === 'respond') {
+                asked.mockResolvedValue(secret);
+                await screen.pressByTestId('managed-machine.installation-prompt-approve');
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(answers).toEqual([{ id: 'tool.systemTasks', method: 'respond',
+                        params: { taskId: 'establish-task', expectedPromptKind: 'administrator.establish',
+                            expectedPromptId: prompt.promptId, answer: { password: secret } } }]);
+                    expect([...actionOperationStore.getSnapshot().operationsByKey.values()]
+                        .find(item => item.snapshot.operationId === operation.operationId)?.snapshot.state).toBe('succeeded');
+                    expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
+                });
+                expect(cancelInputs).toEqual([]);
+            } else {
+                await screen.pressByTestId('managed-machine.installation-prompt-decline');
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(cancelInputs).toEqual([expect.objectContaining({ managedId: machine.id, expectedIntentRevision: machine.intentRevision })]);
+                });
+                expect(answers).toEqual([]);
+            }
             expect(additionalConfirmations).toEqual([]);
 
             // The password reaches nothing but that one response, and no Controller access is added.
