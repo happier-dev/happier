@@ -321,6 +321,18 @@ function isTechnicalApprovalKey(key: string | undefined): boolean {
     || key === 'creationKey' || key === 'idempotencyKey';
 }
 
+/**
+ * Inside a structured value, a commit hash or a Git ref (`sourceHeadSha`, `fetchRef`) is a code people compare, not
+ * a fact they read: it waits in Technical details beside the address and branch it pins. Nested only, so an Action
+ * whose deciding argument is itself a ref keeps it in view.
+ */
+function isRevisionCodeApprovalEntry(key: string | undefined, value: unknown): boolean {
+  if (key === undefined || typeof value !== 'string') return false;
+  // Named and shaped alike, so a `…Ref` naming a secret or a template stays a readable fact.
+  return /^(?:sha|[a-z][A-Za-z]*Sha)$/.test(key) && /^[0-9a-fA-F]{7,64}$/.test(value)
+    || /^(?:ref|[a-z][A-Za-z]*Ref)$/.test(key) && value.startsWith('refs/');
+}
+
 /** A typed resource audience names the person, Team or Group itself, rather than its discriminator and keys. */
 function readApprovalPrincipalReference(value: unknown): ApprovalActionReference | undefined {
   if (!isRecord(value)) return undefined;
@@ -746,7 +758,7 @@ function appendApprovalStructuredEntries(
     // A session-looking key there stays data, so an arbitrary value cannot borrow a session's name.
     const keyReference = describeApprovalKeyReference(key, value);
     const reference = keyReference?.kind === 'session' || keyReference?.kind === 'discussion' ? undefined : keyReference;
-    const technical = !reference && (isTechnicalApprovalKey(key) || isEmptyApprovalValue(value)
+    const technical = !reference && (isTechnicalApprovalKey(key) || isRevisionCodeApprovalEntry(key, value) || isEmptyApprovalValue(value)
       || isApprovalSentinelValue(key, value)
       || widgetStructure && key !== undefined && ['id', 'instanceId', 'groupId', 'artifactId', 'pluginId', 'localId', 'pageId', 'area', 'layoutId', 'kind'].includes(key));
     output.push({

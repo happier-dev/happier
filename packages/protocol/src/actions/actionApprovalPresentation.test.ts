@@ -259,6 +259,23 @@ describe('approval field presentation', () => {
     expect(JSON.stringify(admission)).not.toContain('private');
   });
 
+  it('keeps a structured value\'s commit hashes and Git refs under Technical details, its address and branch in view', () => {
+    // Label rule (owner): facts read as Details; codes and ids (a head sha, a fetch ref) are Technical details.
+    const row = describeApprovalActionFields({
+      actionId: 'scm.reviewWorkspace.materializePrepared',
+      actionArgs: { cwd: '/repo', displayName: 'Review #12', sourceTip: {
+        repository: { kind: 'github', deployment: 'github.com', repository: 'acme/app' },
+        cloneUrl: 'https://github.com/acme/app.git', branch: 'fix/login',
+        sourceHeadSha: 'a1b2c3d4e5f6', fetchRef: 'refs/pull/12/head' } },
+    }).rows.find(candidate => candidate.kind === 'value' && candidate.path === 'sourceTip');
+    const entries = row?.kind === 'value' ? row.entries ?? [] : [];
+    const technicalOf = (value: string) => entries.find(entry => entry.value === value)?.technical === true;
+    expect(technicalOf('a1b2c3d4e5f6')).toBe(true);
+    expect(technicalOf('refs/pull/12/head')).toBe(true);
+    expect(technicalOf('https://github.com/acme/app.git')).toBe(false);
+    expect(technicalOf('fix/login')).toBe(false);
+  });
+
   it('marks a destructive Session target for expanded identity presentation', () => {
     expect(describeApprovalActionFields({
       actionId: 'session.delete',
