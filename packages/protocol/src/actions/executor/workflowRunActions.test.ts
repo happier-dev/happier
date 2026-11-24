@@ -224,6 +224,34 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
+  it('names the missing reviewer selection in the catalog Start failure', async () => {
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        throw new Error('A missing reviewer selection must not reach storage');
+      } }),
+      resolveMaterializationContext: async () => ({ effects: {
+        resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async value => value === 'origin-1'
+          ? { address: { serverId: 'home', sessionId: value }, machineId: 'machine-a' } : null,
+      } }),
+    });
+    const execute = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner });
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const result = await execute({
+      actionId: 'workflow.run.start',
+      input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'catalog', workflow: 'builtin:review-and-converge' } }),
+      context: { callerPermissionMode: 'default', defaultSessionId: 'origin-1', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+        project: { machineId: 'machine-a', directory: '/repo' } } },
+    }, { agentTarget, machineId: 'machine-a', directory: '/repo' });
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'invalid_input',
+      error: expect.stringMatching(/required.*reviewers/i),
+      details: { issues: [{ code: 'missing_reference', path: '/inputs/reviewers' }] },
+    });
+  });
+
   it.each(['typed', 'typed_wrong_session', 'builtin', 'converge', 'converge_explicit_steps', 'literal', 'builtin_wrong_session', 'root_wrong_session',
     'literal_transcript', 'literal_transcript_source_only', 'literal_transcript_foreign_session', 'literal_transcript_foreign_home',
     'literal_source_without_transcript'] as const)(

@@ -79,10 +79,12 @@ export class WorkflowInputErrorV1 extends Error {
   readonly issues: readonly WorkflowValidationIssue[];
   readonly details: Readonly<{ issues: readonly WorkflowValidationIssue[] }>;
   constructor(name: string, issueCode: 'invalid_input' | 'missing_reference') {
-    super('invalid_input');
+    const missingInput = issueCode === 'missing_reference'
+      ? `Choose a value for the required Workflow input "${name}".` : undefined;
+    super(missingInput ?? 'invalid_input');
     this.issues = [{ code: issueCode,
       path: `/inputs/${name.replace(/~/g, '~0').replace(/\//g, '~1')}`, severity: 'error',
-      message: issueCode === 'missing_reference' ? 'Choose a value for this required input.' : 'The selected input is unavailable or invalid.' }];
+      message: missingInput ?? 'The selected input is unavailable or invalid.' }];
     this.details = { issues: this.issues };
   }
 }
