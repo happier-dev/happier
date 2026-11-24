@@ -1,10 +1,11 @@
 import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { resolveMemberRunnableAgentCliLaunch, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
+import { isHomeSelectionFlag } from '@/cli/commands/shared/argvFlags';
 import { resolveTerminalShell } from './shells';
 import { readSystemToolAuthentication, systemToolAuthenticationEnvironment, createSystemToolAuthenticationResolver } from '@/capabilities/cliAuth/systemToolAuthentication';
 
@@ -16,6 +17,8 @@ export type TerminalLaunchProcess = Readonly<{
   windowsVerbatimArguments?: boolean;
   initialInput?: string;
 }>;
+
+export type MemberTerminalLaunchContext = MemberAgentCliLaunchContext & Readonly<{ homeApplicationUrl?: string }>;
 
 export class AgentLoginLaunchError extends Error {
   constructor(readonly code: 'agent_login_unsupported' | 'agent_cli_missing') {
@@ -30,12 +33,27 @@ export async function resolveDaemonTerminalLaunch(
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     /** Admitted native launch material for a separated member. */
-    memberLaunch?: MemberAgentCliLaunchContext;
+    memberLaunch?: MemberTerminalLaunchContext;
   }> = {},
 ): Promise<TerminalLaunchProcess> {
   const buildLaunchSpec = deps.buildLaunchSpec ?? buildHappyCliSubprocessLaunchSpec;
   const resolveHappierCli = (args: string[]): TerminalLaunchProcess => {
-    if (deps.memberLaunch) return { file: deps.memberLaunch.managedHappierBinaryPath, args };
+    if (deps.memberLaunch) {
+      const { managedHappierBinaryPath, homeApplicationUrl } = deps.memberLaunch;
+      if (!homeApplicationUrl) throw new PluginError({
+        code: 'requester_home_unavailable',
+        message: 'The admitted Home has no application address for this terminal launch.',
+        retryable: false,
+      });
+      if (launchRequest.kind === 'happier_cli' && args.some(isHomeSelectionFlag)) {
+        throw new PluginError({
+          code: 'terminal_invalid_request',
+          message: 'This terminal launch selects the admitted Home. Remove Home selection flags from the command.',
+          retryable: false,
+        });
+      }
+      return { file: managedHappierBinaryPath, args: ['--server-url', homeApplicationUrl, ...args] };
+    }
     const launch = buildLaunchSpec(args);
     return { file: launch.filePath, args: launch.args, env: launch.env };
   };

@@ -70,6 +70,8 @@ export type PrepareRequesterNativeOperationInput = Readonly<{
 export async function prepareRequesterNativeOperation(input: PrepareRequesterNativeOperationInput, host: Readonly<{
   machine?: HostAgentIsolationLaunchContext;
   homeServerIdentityId?: string | null;
+  /** Public application address from the same authenticated Machine Home. */
+  homeApplicationUrl?: string;
   machineId: string;
   installationId: string | null | undefined;
   reloadController?: Parameters<typeof prepareRequesterOperationMaterial>[0]['reloadController'];
@@ -141,6 +143,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     }
     input.signal.throwIfAborted();
     return { requesterIdentity: selected, memberIdentity, workingDirectory, agentIsolation,
+      ...(host.homeApplicationUrl ? { homeApplicationUrl: host.homeApplicationUrl } : {}),
       materialTarget: { runtimeHome: launch.runtimeHome, ...(memberIdentity ? { memberIdentity } : {}) },
       ...(material ? { material, connectedAccounts: material.connectedAccounts,
         prepareConnectedAccountOperationSelection: material.prepareConnectedAccountOperationSelection } : {}),

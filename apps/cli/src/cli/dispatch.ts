@@ -30,7 +30,7 @@ import {
   withCliApiToken,
 } from '@/auth/cliApiToken';
 import type { EphemeralResolvedServerSelection } from '@/server/serverSelection';
-import { argvBeforeOptionTerminator, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { argvBeforeOptionTerminator, isHomeSelectionFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { isFamilyHelpRequest, isTopLevelHelpRequest } from './processArgs';
 
 function isCredentialFreeInvocation(args: readonly string[]): boolean {
@@ -78,20 +78,7 @@ function buildUnknownCommandMessage(command: string, suggestedCommand: string | 
 
 function hasEphemeralServerSelectionPrefixArgs(args: readonly string[]): boolean {
   for (const arg of argvBeforeOptionTerminator(args)) {
-    if (
-      arg === '--server'
-      || arg.startsWith('--server=')
-      || arg === '--server-url'
-      || arg.startsWith('--server-url=')
-      || arg === '--webapp-url'
-      || arg.startsWith('--webapp-url=')
-      || arg === '--local-server-url'
-      || arg.startsWith('--local-server-url=')
-      || arg === '--public-server-url'
-      || arg.startsWith('--public-server-url=')
-    ) {
-      return true;
-    }
+    if (isHomeSelectionFlag(arg)) return true;
     if (!arg.startsWith('--')) return false;
   }
   return false;

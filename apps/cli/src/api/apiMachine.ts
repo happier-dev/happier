@@ -620,6 +620,8 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     resolveServerFeaturesSnapshot?: () => Promise<Awaited<ReturnType<typeof fetchServerFeaturesSnapshot>> | undefined>;
     /** Existing authenticated connection projection; never fetch or infer Home per input frame. */
     resolveCurrentServerIdentityId?: () => string | null;
+    /** Application address of the daemon's resolved authenticated Home, separate from its transport listener. */
+    homeApplicationUrl?: string;
     createCapabilitiesApiClient?: MachineRpcHandlerDeps['createCapabilitiesApiClient'];
     /** Test seam for the canonical Resource lifecycle owner. */
     resourceSessionLifecycle?: Pick<
@@ -1208,6 +1210,7 @@ export class ApiMachineClient {
         return prepareRequesterNativeOperation(input, {
             machine: this.lifecycleDependencies.agentIsolation,
             homeServerIdentityId: this.lifecycleDependencies.resolveCurrentServerIdentityId?.(),
+            homeApplicationUrl: this.lifecycleDependencies.homeApplicationUrl,
             machineId: this.machine.id,
             installationId: this.machineRpcAdmissionBoundary.resolveInstallationId(),
             reloadController: pluginReloadController,

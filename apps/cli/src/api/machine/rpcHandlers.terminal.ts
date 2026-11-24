@@ -1,5 +1,5 @@
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
-import { readMemberAgentCliLaunchContext, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
+import { readMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
 import { matchesTerminalRequesterCustody } from '@/terminal/pty/custody';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
@@ -51,6 +51,7 @@ import { getSharedTerminalProcessRegistry, type TerminalProcessRegistry } from '
 import {
   resolveDaemonTerminalLaunch,
   AgentLoginLaunchError,
+  type MemberTerminalLaunchContext,
   type TerminalLaunchProcess,
 } from '@/terminal/pty/launch';
 
@@ -109,7 +110,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   admissionDrain?: DaemonAdmissionDrain;
   operationRuntime?: Pick<HostActionOperationRuntime, 'observeExecution'>;
   resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent,
-    memberLaunch?: MemberAgentCliLaunchContext) => TerminalLaunchProcess | Promise<TerminalLaunchProcess>;
+    memberLaunch?: MemberTerminalLaunchContext) => TerminalLaunchProcess | Promise<TerminalLaunchProcess>;
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
   /** Requester Account reads for Session and accepted Project custody. */
   accountReadRuntime?: (ingress: RpcHandlerContext) => MachineTerminalOwnSessionReadRuntime | null | Promise<MachineTerminalOwnSessionReadRuntime | null>;
@@ -182,12 +183,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     ?? ((launch, memberLaunch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform,
       ...(memberLaunch ? { memberLaunch } : {}) }));
   const resolveRequestedLaunch = async (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined,
-    member?: Readonly<{ agentIsolation: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext; signal: AbortSignal }>) => {
+    member?: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>, signal?: AbortSignal) => {
     if (!launch) return { ok: true as const, launchProcess: undefined };
     try {
-      const admitted = member && launch.kind !== 'shell_command'
+      const admitted = member?.memberIdentity && launch.kind !== 'shell_command'
         ? readMemberAgentCliLaunchContext(member.agentIsolation, 'terminal_launch') : undefined;
-      const memberLaunch = admitted && member ? { ...admitted, signal: member.signal } : undefined;
+      const memberLaunch = admitted && member ? { ...admitted, homeApplicationUrl: member.homeApplicationUrl, signal } : undefined;
       return { ok: true as const, launchProcess: await resolveLaunch(launch, memberLaunch) };
     } catch (error) {
       if (isPluginError(error)) return { ok: false as const, ...normalizeActionExecutorThrownError(error) };
@@ -855,9 +856,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }
       }
-      const member = nativeOperation?.memberIdentity && context
-        ? { agentIsolation: nativeOperation.agentIsolation, signal: context.signal } : undefined;
-      const launch = await resolveRequestedLaunch(warm && member && parsed.data.launch?.kind === 'agent_login' ? undefined : parsed.data.launch, member);
+      const launch = await resolveRequestedLaunch(
+        warm && nativeOperation?.memberIdentity && parsed.data.launch?.kind === 'agent_login' ? undefined : parsed.data.launch,
+        nativeOperation, context?.signal);
       if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
       launchProcess = launch.launchProcess;
       if (!warm) launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,
@@ -1049,9 +1050,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }
       }
-      const member = nativeOperation?.memberIdentity && context
-        ? { agentIsolation: nativeOperation.agentIsolation, signal: context.signal } : undefined;
-      const launch = await resolveRequestedLaunch(parsed.data.launch, member);
+      const launch = await resolveRequestedLaunch(parsed.data.launch, nativeOperation, context?.signal);
       if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
       launchProcess = launch.launchProcess;
       launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,

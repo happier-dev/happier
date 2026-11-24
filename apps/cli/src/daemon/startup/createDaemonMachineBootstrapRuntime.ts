@@ -163,6 +163,7 @@ export function createDaemonMachineBootstrapRuntime(
     requesterServerId?: BootstrapRuntime['requesterServerId'];
     resolveCurrentMachineExecutionOriginContext?: BootstrapRuntime['resolveCurrentMachineExecutionOriginContext'];
     resolveCurrentServerIdentityId?: ApiMachineClientLifecycleDependencies['resolveCurrentServerIdentityId'];
+    homeApplicationUrl?: ApiMachineClientLifecycleDependencies['homeApplicationUrl'];
     resolveRequesterSessionRuntimeContext?: BootstrapRuntime['resolveRequesterSessionRuntimeContext'];
     readRequesterNativeOfferedModel?: ApiMachineClientLifecycleDependencies['readRequesterNativeOfferedModel'];
     readRequesterSessionCredentialBindings?: BootstrapRuntime['readRequesterSessionCredentialBindings'];
@@ -498,6 +499,7 @@ export function createDaemonMachineBootstrapRuntime(
             acquireServiceExportForward: params.acquireServiceExportForward,
             onMachineControlReadinessChange: params.onMachineControlReadinessChange,
             ...(params.resolveCurrentServerIdentityId ? { resolveCurrentServerIdentityId: params.resolveCurrentServerIdentityId } : {}),
+            homeApplicationUrl: params.homeApplicationUrl,
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
             readSpawnFailureLimits: params.readSpawnFailureLimits,
             readMachineEffectiveCores: params.readMachineEffectiveCores,

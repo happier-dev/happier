@@ -5,6 +5,12 @@
  */
 export { argvBeforeOptionTerminator } from '../../processArgs';
 
+export function isHomeSelectionFlag(argument: string): boolean {
+  const name = argument.split('=', 1)[0];
+  return name === '--server' || name === '--server-url' || name === '--local-server-url'
+    || name === '--webapp-url' || name === '--public-server-url';
+}
+
 export function hasFlag(argv: readonly string[], flag: string): boolean {
   return argv.includes(flag);
 }

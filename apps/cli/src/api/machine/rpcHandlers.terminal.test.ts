@@ -22,6 +22,7 @@ vi.mock('node:fs/promises', async original => {
 import {
   TERMINAL_STREAM_MAX_FRAMES,
   AuthTokenProvenanceSchema,
+  DaemonTerminalEnsureResponseSchema,
   TerminalStreamReadResponseSchema,
   decodeTerminalStreamBytesFrame,
   type TerminalStreamBytesFrame,
@@ -78,7 +79,7 @@ import { buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/pr
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
-import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame, type AgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
@@ -482,6 +483,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const h = await finiteHarness({ observeInteractiveStop: true });
     const context: RpcHandlerContext = { ...h.ingress,
       machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian', role: 'use' } };
+    const signedContext: RpcHandlerContext = { ...context,
+      callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'member-terminal-root', binding: {
+        accountId: 'owner', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
+        actionId: 'machines.terminal.open', requestId: 'member-foreground', requestEnvelopeDigest: 'a'.repeat(43),
+        target: { kind: 'machine', machineId: 'machine' },
+      } }) };
     const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: 'stable-home' });
     if (identity.kind !== 'isolated') throw new Error('Expected admitted Use member');
     const requesterIdentity = { ...identity, homeServerIdentityId: 'stable-home' };
@@ -507,6 +515,10 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
     const publishedCli = native.effects.installedCli;
     let publishedCliCanExec = true;
+    const homeApplicationUrl = 'https://member-home.example.test:8443';
+    const daemonOnlyUrl = 'https://daemon-ambient.example.test';
+    let admittedHomeApplicationUrl: string | undefined = homeApplicationUrl;
+    const frames: AgentLaunchPayload[] = [];
     class MemberPty extends FakeInteractivePty {
       accepted = false;
       override kill(): void { this.exit(0); }
@@ -514,7 +526,8 @@ describe('registerMachineTerminalRpcHandlers', () => {
         if (!this.accepted) {
           this.accepted = true;
           void readAgentLaunchFrame(Readable.from([Buffer.from(data, 'base64')], { objectMode: false })).then(frame => {
-            if (frame.executable.startsWith('/bin/') || publishedCliCanExec && frame.executable === publishedCli && frame.args.join(' ') === 'codex') {
+            frames.push(frame);
+            if (frame.executable.startsWith('/bin/') || publishedCliCanExec && frame.executable === publishedCli) {
               this.emitBytes(AGENT_LAUNCH_TERMINAL_ACCEPTED);
             } else {
               // The guest's daemon-private CLI cannot be executed under the member UID.
@@ -555,7 +568,8 @@ describe('registerMachineTerminalRpcHandlers', () => {
         nativeOperationRuntime: { prepareNativeOperation: input => {
           const retainedInput = { ...input, resolveRequesterIdentity: async () => input.requesterIdentity };
           return prepareRequesterNativeOperation(retainedInput, {
-            machine, homeServerIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
+            machine, homeServerIdentityId: 'stable-home', homeApplicationUrl: admittedHomeApplicationUrl,
+            machineId: 'machine', installationId: 'installation',
             reloadController: createPluginReloadController(),
           });
         } } },
@@ -585,19 +599,50 @@ describe('registerMachineTerminalRpcHandlers', () => {
       const entrypoint = join(h.root, 'private-cli.mjs');
       await writeFile(entrypoint, '');
       const launcherEnvironment = createEnvKeyScope(['HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', 'HAPPIER_CLI_SUBPROCESS_RUNTIME',
-        'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', 'HAPPIER_CLI_SUBPROCESS_PREFER_TSX']);
+        'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', 'HAPPIER_CLI_SUBPROCESS_PREFER_TSX',
+        'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_DAEMON_TOKEN',
+        'HAPPIER_SESSION_CREDENTIAL_FILE']);
       launcherEnvironment.patch({ HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint, HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
-        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined, HAPPIER_CLI_SUBPROCESS_PREFER_TSX: 'false' });
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined, HAPPIER_CLI_SUBPROCESS_PREFER_TSX: 'false',
+        HAPPIER_SERVER_URL: daemonOnlyUrl, HAPPIER_LOCAL_SERVER_URL: daemonOnlyUrl, HAPPIER_WEBAPP_URL: daemonOnlyUrl,
+        HAPPIER_DAEMON_TOKEN: 'daemon-private-token', HAPPIER_SESSION_CREDENTIAL_FILE: '/daemon/private/access.key' });
       try {
         const cli = { terminalKey: 'member-foreground', launch: { kind: 'happier_cli', args: ['codex'] }, cols: 100, rows: 30 };
         publishedCliCanExec = false;
-        const refused = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, context);
-        expect.soft(refused).toMatchObject({ ok: false, errorCode: 'agent_launch_failed', details: { phase: 'exec', errno: 'EACCES' } });
+        const refused = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, signedContext);
+        expect(refused).toMatchObject({ ok: false, errorCode: 'agent_launch_failed', details: { phase: 'exec', errno: 'EACCES' } });
         publishedCliCanExec = true;
-        const openedCli = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, context);
-        expect(openedCli, JSON.stringify(openedCli)).toMatchObject({ ok: true, reused: false });
-        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(cli, context))
+        const openedCli = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(cli, signedContext);
+        expect(DaemonTerminalEnsureResponseSchema.parse(openedCli)).toMatchObject({ ok: true, reused: false });
+        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(cli, signedContext))
           .resolves.toMatchObject({ ok: true, reused: false });
+        for (const frame of frames.slice(-2)) {
+          expect(frame.args).toEqual(['--server-url', homeApplicationUrl, 'codex']);
+          expect(frame.environment).not.toHaveProperty('HAPPIER_SERVER_URL');
+          expect(frame.environment).not.toHaveProperty('HAPPIER_LOCAL_SERVER_URL');
+          expect(frame.environment).not.toHaveProperty('HAPPIER_WEBAPP_URL');
+          expect(frame.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
+          expect(frame.environment).not.toHaveProperty('HAPPIER_SESSION_CREDENTIAL_FILE');
+          expect(frame.selectedMaterials).toEqual([]);
+        }
+
+        const spawned = h.provider.spawned.length;
+        for (const args of [[`--server-url=${daemonOnlyUrl}`, 'codex'], ['auth', 'login', '--', '--server-url', daemonOnlyUrl]]) {
+          const foreignHome = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({
+            ...cli, terminalKey: 'member-home-override', launch: { kind: 'happier_cli', args },
+          }, signedContext);
+          expect(DaemonTerminalEnsureResponseSchema.parse(foreignHome)).toMatchObject({
+            ok: false, errorCode: 'terminal_invalid_request',
+          });
+        }
+
+        admittedHomeApplicationUrl = undefined;
+        const noHome = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ ...cli, terminalKey: 'member-no-home' }, signedContext);
+        expect(DaemonTerminalEnsureResponseSchema.parse(noHome)).toMatchObject({
+          ok: false, errorCode: 'requester_home_unavailable',
+          error: expect.stringMatching(/Home.*address/i),
+        });
+        expect(h.provider.spawned).toHaveLength(spawned);
       } finally { launcherEnvironment.restore(); }
     } finally { registration.dispose(); await h.dispose(); }
   });

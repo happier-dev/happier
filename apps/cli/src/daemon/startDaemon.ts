@@ -3852,6 +3852,7 @@ export async function startDaemon(
         requesterServerId: requesterRuntimeServerId,
         resolveCurrentMachineExecutionOriginContext,
         resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
+        homeApplicationUrl: homeTarget.applicationUrl,
         resolveRequesterSessionRuntimeContext,
         resolveExecutionRunLiveBrokerAuthority,
         readRequesterNativeOfferedModel,

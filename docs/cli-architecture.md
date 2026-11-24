@@ -2791,7 +2791,15 @@ development readers reject the terminal-plan field rather than ignoring it.
 Requester identity and placement are admitted once per operation and carried
 through preparation. Member preparation checks local custody once without
 rereading Machine policy. Prepared native material and workspace roots feed the
-same admission; withdrawal applies at the next admission and cancellation stays
+same admission. For member-separated Happier CLI terminals in 0.3 development,
+the prepared native operation supplies the admitted Home's application address.
+Open and Restart pass it as a CLI argument for typed commands, Session attach,
+and ACP sign-in. The member signs in with their own Account, and daemon control
+and credential variables are excluded from the native launch. If the Home
+address is unavailable, the terminal returns `requester_home_unavailable`
+before PTY spawn.
+
+Withdrawal applies at the next admission and cancellation stays
 local. The ACL owner writes the complete access ACL, closing normal group/other
 grants and replacing directory defaults in the same `setfacl` invocation. Its
 nonzero exit detects unavailable ACL support; no `getfacl` read-back is required.

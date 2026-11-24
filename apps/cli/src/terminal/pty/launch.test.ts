@@ -3,6 +3,8 @@ import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+
 import { resolveDaemonTerminalLaunch } from './launch';
 
 describe('resolveDaemonTerminalLaunch', () => {
@@ -68,6 +70,27 @@ describe('resolveDaemonTerminalLaunch', () => {
       env: undefined,
     });
     expect(buildLaunchSpec).toHaveBeenCalledWith(['attach', 'session-1']);
+  });
+
+  it('uses the admitted member Home for attaching and ACP sign-in', async () => {
+    const memberLaunch = {
+      memberIdentity: {
+        ...deriveAgentIsolationMemberIdentity({
+          homeServerIdentityId: 'stable-home',
+          requester: { serverId: 'stable-home', machineId: 'machine', installationId: 'installation', accountId: 'member' },
+        }),
+        agentUid: 41001,
+        agentGid: 41001,
+      },
+      managedHappierBinaryPath: '/opt/happier/current/happier',
+      runtimeHome: '/member/runtime',
+      homeApplicationUrl: 'https://member-home.example.test:8443',
+    };
+    const homeArgs = ['--server-url', memberLaunch.homeApplicationUrl];
+    await expect(resolveDaemonTerminalLaunch({ kind: 'session_attach', sessionId: 'session-1' }, { memberLaunch }))
+      .resolves.toEqual({ file: memberLaunch.managedHappierBinaryPath, args: [...homeArgs, 'attach', 'session-1'] });
+    await expect(resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'antigravity' }, { memberLaunch }))
+      .resolves.toEqual({ file: memberLaunch.managedHappierBinaryPath, args: [...homeArgs, 'agents', 'auth', 'login', 'antigravity'] });
   });
 
   it('delegates a typed Happier CLI launch to the same canonical runtime owner', async () => {
