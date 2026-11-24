@@ -636,7 +636,8 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
 }> & (Readonly<{ serverId?: string; machineId: string; kind?: never }>
     | Pick<ManagedWorkspaceRefV2, 'v' | 'kind' | 'serverId' | 'managedId' | 'controller'>)>(input: Readonly<{
     groups: ReadonlyArray<Readonly<{ projectKey: Readonly<{ projectKey: string }>; items: readonly TRef[] }>>;
-    projectName: (ref: TRef) => string;
+    /** Project display owner's title; null while unresolved, retaining the preceding settled name. */
+    projectName: (ref: TRef) => string | null;
     machine: (machineId: string) => ProjectsTreeMachineFacts;
     managedName?: (serverId: string, managedId: string) => string | null;
     /** Only current authorized catalog rows from the same Home/Account as these accepted refs. */
@@ -688,7 +689,7 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
         const project: ProjectsTreeProject = {
             key: group.projectKey.projectKey,
             source: sourceTarget,
-            name: first.label?.trim() ? input.projectName(first) : source?.name ?? input.projectName(first),
+            name: input.projectName(first) ?? previousByKey.get(group.projectKey.projectKey)?.name ?? t('projects.detail.groupTitle'),
             teamLabel,
             ...(sourceTarget && teamId && teamLabel ? { teamSetupHref: teamSetupPath({ serverId: sourceTarget.serverId, teamId }) } : {}),
             newFromSession: false,

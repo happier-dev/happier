@@ -13,7 +13,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -229,6 +229,52 @@ describe('ProjectsListView', () => {
         routerPushSpy.mockReset();
         shownModals.length = 0;
         phoneRowRenders.clear();
+    });
+
+    it('keeps the elected Project title across checkout sort, search and refresh', async () => {
+        deviceTypeMock = 'phone';
+        machinesMock = [createMachine({ id: 'machine', host: 'Machine' })];
+        workspaceRefsV1Mock = [
+            { id: 'young', serverId, machineId: 'machine', rootPath: '/a-young', projectKey: 'anchor', createdAtMs: 2 },
+            { id: 'old', serverId, machineId: 'machine', rootPath: '/z-baseline', projectKey: 'anchor', createdAtMs: 1 },
+        ];
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
+        const { useProjectPickerOptions } = await import('./useProjectPickerOptions');
+        const { listWidgetGroupProjects } = await import('@/components/widgets/group/widgetGroupCopy');
+        let choices: ReturnType<typeof useProjectPickerOptions> = [];
+        function Choices() { choices = useProjectPickerOptions(); return null; }
+        storage.getState().applyMachines(machinesMock, true);
+        storage.getState().applyReady();
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: workspaceRefsV1Mock, organizations: [
+            { key: { kind: 'project-organization', serverId, projectKey: 'anchor' }, revision: 0, value: { hidden: false } },
+        ] });
+        const screen = await renderScreen(<AppPaneProvider><PhoneTabNavRowProvider leading={null} trailing={null}>
+            <Choices /><ProjectsListView />
+        </PhoneTabNavRowProvider></AppPaneProvider>);
+        const titles = () => screen.root.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string'));
+        expect(titles()).toContain('z-baseline');
+        expect(choices.find(choice => choice.projectKey === 'anchor')?.label).toBe('z-baseline');
+        expect(listWidgetGroupProjects(workspaceRefsV1Mock, serverId)).toEqual([{ projectId: 'anchor', label: 'z-baseline' }]);
+        await act(async () => { screen.findByTestId('projects-search:toggle')!.props.onPress(); });
+        await act(async () => { screen.findByTestId('projects-search')!.props.onChangeText('a-young'); });
+        expect(titles()).toContain('z-baseline');
+        await act(async () => { screen.findByTestId('projects-search')!.props.onChangeText(''); });
+        expect(titles()).toContain('z-baseline');
+        const held = storage.getState().projectAccountRows!;
+        await act(async () => applyProjectAccountRowsFixture(storage, { ...held, status: 'loading',
+            workspaceRefs: [...workspaceRefsV1Mock].reverse().map(ref => ({ ...ref, lastOpenedAtMs: ref.id === 'old' ? 100 : 0 })) }));
+        expect(titles()).toContain('z-baseline');
+        expect(choices.find(choice => choice.projectKey === 'anchor')?.label).toBe('z-baseline');
+        await act(async () => applyProjectAccountRowsFixture(storage, { ...held, organizations: [
+            { key: { kind: 'project-organization', serverId, projectKey: 'anchor' }, revision: 1,
+                value: { hidden: false, label: 'Named project' } },
+        ] }));
+        expect(titles()).toContain('Named project');
+        expect(choices.find(choice => choice.projectKey === 'anchor')?.label).toBe('Named project');
+        expect(listWidgetGroupProjects(workspaceRefsV1Mock, serverId, storage.getState().projectAccountRows!.organizations))
+            .toEqual([{ projectId: 'anchor', label: 'Named project' }]);
     });
 
     it('PF3 renders only the changed phone row among 150 Projects on one checkout fact change', async () => {

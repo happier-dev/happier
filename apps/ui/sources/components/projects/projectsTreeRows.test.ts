@@ -32,6 +32,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         };
         const before = buildProjectsTreeProjects(input);
         expect(buildProjectsTreeProjects({ ...input, previousProjects: before })).toBe(before);
+        expect(buildProjectsTreeProjects({ ...input, projectName: () => null, previousProjects: before })).toBe(before);
         const after = buildProjectsTreeProjects({ ...input, previousProjects: before,
             machine: id => ({ name: id === 'machine-27' ? 'Renamed Machine' : id, homeDir: null, online: true }),
         });
@@ -86,7 +87,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
                 ? { branch: 'main', isWorktree: false, attention: 'working' as const, newFromSession: false }
                 : { branch: 'fix-modal', isWorktree: true, attention: 'needs-you' as const, newFromSession: true },
         });
-        expect(projects[0]).toMatchObject({ name: 'Repository', teamLabel: 'Acme', newFromSession: true });
+        expect(projects[0]).toMatchObject({ name: 'first', teamLabel: 'Acme', newFromSession: true });
         expect(projects[0]).toHaveProperty('source', { serverId: 'home-a', source: {
             id: 'source-a', revision: 1, createdByAccountId: 'owner', name: 'Repository',
             audience: [{ principal: { kind: 'team', teamId: 'team-a' }, level: 'view' }],

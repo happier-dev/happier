@@ -18,6 +18,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 
 import { buildProjectsListGroups } from './projectsListGrouping';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
+import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { useOpenProject } from './useOpenProject';
 import { seedAndOpenProjectDraft } from './activation/projectOpenDraftSeed';
 import { useAddProjectFromRemoteWorkspace } from './useAddProjectFromRemoteWorkspace';
@@ -111,12 +112,13 @@ export function useProjectsListModel() {
     }, [allMachines]);
 
     const groups = React.useMemo(() => {
-        return buildProjectsListGroups({
+        const listed = buildProjectsListGroups({
             activeServerId: String(activeServer.serverId ?? '').trim(),
             workspaceRefs: Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [],
             pinnedWorkspaceRefIds: Array.isArray(pinnedWorkspaceRefIdsV1) ? pinnedWorkspaceRefIdsV1 : [],
             projectOrganizations,
         });
+        return { ...listed, projectDisplays: buildProjectGroupDisplayIndex(workspaceRefsV1, projectOrganizations) };
     }, [activeServer.serverId, pinnedWorkspaceRefIdsV1, projectOrganizations, workspaceRefsV1]);
 
     const treeRefs = React.useMemo(() => [...groups.projectGroups, ...groups.hiddenProjectGroups]
@@ -156,7 +158,7 @@ export function useProjectsListModel() {
     const treeProjection = React.useMemo(() => {
         const project = (projectGroups: typeof groups.projectGroups, previousProjects: ProjectsTreeProject[]) => buildProjectsTreeProjects({
             previousProjects,
-            groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
+            groups: projectGroups, projectName: ref => groups.projectDisplays.get(projectGroupIdentityKey(projectWorkspaceRefV1(ref)))?.title ?? null,
             machine: readTreeMachine, managedName: readManagedName,
             sources: composition.sources, teamName: composition.teamName,
         });
@@ -169,7 +171,7 @@ export function useProjectsListModel() {
         const treeProjects = project(groups.projectGroups, previousTreeProjects.current.visible);
         previousTreeProjects.current = { visible: treeProjects, hidden: hiddenTreeProjects };
         return { treeProjects, hiddenTreeProjects, hiddenItems: buildProjectsTreeHiddenItems(hiddenTreeProjects) };
-    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesReady, readTreeMachine, readManagedName]);
+    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, groups.projectDisplays, machinesReady, readTreeMachine, readManagedName]);
     const newSessionHere = React.useCallback(async (ref: WorkspaceRefV1): Promise<ActionExecuteResult> => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
@@ -431,7 +433,8 @@ export function useProjectsListModel() {
      * its Machine, which adds it. Built when the menu opens, never while it is closed; an empty read draws no entry.
      */
     const readFromSessions = React.useCallback(() => {
-        const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName,
+        const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups,
+            projectName: ref => groups.projectDisplays.get(projectGroupIdentityKey(projectWorkspaceRefV1(ref)))?.title ?? null,
             machine: readTreeMachine, managedName: readManagedName });
         const refs = Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [];
         const serverId = activeServer.serverId;
@@ -448,7 +451,7 @@ export function useProjectsListModel() {
                 path: formatPathRelativeToHome(folder.path, where.homeDir ?? undefined), attention: null,
                 ...(where.online === false ? { offline: true } : {}) }] };
         })];
-    }, [activeServer.serverId, groups.unlistedProjectGroups, readManagedName, readTreeMachine, workspaceRefsV1]);
+    }, [activeServer.serverId, groups.unlistedProjectGroups, groups.projectDisplays, readManagedName, readTreeMachine, workspaceRefsV1]);
     const addFromSessions = React.useCallback((key: string) => {
         if (!key.startsWith(SESSION_FOLDER_KEY_PREFIX)) { showHiddenProject(key); return; }
         const rest = key.slice(SESSION_FOLDER_KEY_PREFIX.length);

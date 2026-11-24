@@ -5,7 +5,8 @@ import { t } from '@/text';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useManagedWorkspaceForget } from '@/components/settings/machines/managed/useManagedWorkspaceForget';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
+import { readCurrentProjectAccountRows, readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
+import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -13,8 +14,6 @@ import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/worksp
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-
-import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 
 /**
  * The Project page "…" row that forgets the attached workspace this checkout lives in (lab `project-more`,
@@ -41,7 +40,10 @@ export function useForgetAttachedWorkspaceAction(
     if (!managed || !workspaceName || !run) return;
     // Every Project with a checkout on this workspace stops opening (decision 4), each named once.
     const projects = new Map<string, string>();
-    for (const ref of readProjectWorkspaceRefs(getStorage().getState())) {
+    const state = getStorage().getState();
+    const refs = readProjectWorkspaceRefs(state);
+    const displays = buildProjectGroupDisplayIndex([...refs, managed], readCurrentProjectAccountRows(state)?.organizations);
+    for (const ref of refs) {
       if (
         !isManagedWorkspaceRefV2(ref) ||
         ref.managedId !== managed.managedId ||
@@ -50,10 +52,10 @@ export function useForgetAttachedWorkspaceAction(
         continue;
       const key = projectWorkspaceRefV1(ref).projectKey;
       if (!projects.has(key))
-        projects.set(key, resolveWorkspaceRefDisplayName(ref));
+        projects.set(key, displays.get(projectGroupIdentityKey(projectWorkspaceRefV1(ref)))?.title ?? t('projects.detail.groupTitle'));
     }
     if (projects.size === 0)
-      projects.set('', resolveWorkspaceRefDisplayName(managed));
+      projects.set('', displays.get(projectGroupIdentityKey(projectWorkspaceRefV1(managed)))?.title ?? t('projects.detail.groupTitle'));
     const names = [...projects.values()];
     fireAndForget(
       (async () => {

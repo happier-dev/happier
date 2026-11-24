@@ -2,7 +2,7 @@ import * as React from 'react';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
-import { resolveWorkspaceRefDisplayNames } from './resolveWorkspaceRefDisplayName';
+import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScopeLifetime, useProjectOrganizations, useWorkspaceRefs } from '@/sync/domains/state/storage';
@@ -23,9 +23,10 @@ export function useProjectPickerOptions(): readonly ProjectPickerOption[] {
         const { projectGroups } = projectProjectListV1({ serverId,
             workspaceRefs: Array.isArray(workspaceRefs) ? workspaceRefs : [], organizations,
             normalizeServerId: resolveServerProfileScopeIdForIdentifier });
-        const names = resolveWorkspaceRefDisplayNames(projectGroups.flatMap(group => group.items.slice(0, 1)));
-        return projectGroups.flatMap((group, index) => group.items.length > 0
-            ? [{ serverId, projectKey: group.projectKey.projectKey, label: names[index] ?? group.projectKey.projectKey }]
+        const displays = buildProjectGroupDisplayIndex(workspaceRefs ?? [], organizations);
+        return projectGroups.flatMap(group => group.items.length > 0
+            ? [{ serverId, projectKey: group.projectKey.projectKey,
+                label: displays.get(projectGroupIdentityKey(group.projectKey))?.title ?? group.projectKey.projectKey }]
             : []);
     }, [organizations, serverId, workspaceRefs]);
 }

@@ -2,14 +2,15 @@ import * as React from 'react';
 import type { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { WidgetLayoutFragmentOriginV1, WidgetLayoutGroupV1, WidgetProjectAreaV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
-import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { buildProjectGroupDisplayIndex } from '@/sync/domains/workspaces/projectGroupDisplay';
+import type { ProjectOrganizationRow } from '@/sync/domains/workspaces/projectAccountRows';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { runCopyWidgetGroupCommandV1 } from '@/components/widgets/definitions/widgetLayoutFragmentCommands';
-import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, useProjectOrganizations } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
@@ -41,19 +42,17 @@ export function resolveWidgetGroupCopyDestinations(input: Readonly<{
 }
 
 /** The Account's Projects on one server, once each, by their display name. */
-export function listWidgetGroupProjects(refs: ReturnType<typeof useWorkspaceRefs>, serverId: string): readonly Readonly<{ projectId: string; label: string }>[] {
-    const seen = new Map<string, string>();
-    for (const ref of Array.isArray(refs) ? refs : []) {
-        if (ref.serverId !== serverId) continue;
-        const identity = projectWorkspaceRefV1(ref);
-        if (!seen.has(identity.projectKey)) seen.set(identity.projectKey, resolveWorkspaceRefDisplayName(ref));
-    }
-    return [...seen].map(([projectId, label]) => ({ projectId, label }));
+export function listWidgetGroupProjects(refs: ReturnType<typeof useWorkspaceRefs>, serverId: string,
+    organizations: readonly ProjectOrganizationRow[] = []): readonly Readonly<{ projectId: string; label: string }>[] {
+    return [...buildProjectGroupDisplayIndex(refs ?? [], organizations).values()]
+        .flatMap(display => areServerProfileIdentifiersEquivalent(display.project.serverId, serverId) && display.baseline
+            ? [{ projectId: display.project.projectKey, label: display.title ?? t('projects.detail.groupTitle') }] : []);
 }
 
 function useCopyProjects(serverId: string): readonly Readonly<{ projectId: string; label: string }>[] {
     const refs = useWorkspaceRefs();
-    return React.useMemo(() => listWidgetGroupProjects(refs, serverId), [refs, serverId]);
+    const organizations = useProjectOrganizations();
+    return React.useMemo(() => listWidgetGroupProjects(refs, serverId, organizations), [organizations, refs, serverId]);
 }
 
 /**
