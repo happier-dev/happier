@@ -123,7 +123,7 @@ export function validateSessionUserActionAnswer(
   }
 }
 
-export const SessionUserActionAnswerInputSchema = lazyZodSchema(() => z.looseObject({
+export const SessionUserActionAnswerInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.optional(z.string().check(z.minLength(1))),
   requestId: z.optional(z.string().check(z.minLength(1))),
   decision: z.optional(z.enum(['approve', 'reject', 'request_changes'])),
@@ -131,6 +131,10 @@ export const SessionUserActionAnswerInputSchema = lazyZodSchema(() => z.looseObj
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
   answers: z.optional(z.array(SessionUserActionAnswerItemSchema).check(z.minLength(1))),
   updatedPermissions: z.optional(StrictJsonValueSchema),
+  allowedTools: SessionPermissionRespondPayloadV1Schema.shape.allowedTools,
+  execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment,
+  // Activity question taps stamp their notification turn, as for permission answers.
+  turnId: SessionPermissionRespondInputSchema.shape.turnId,
 }).check(z.superRefine(validateSessionUserActionAnswer)));
 
 export const SessionUserActionAnswerPluginInputSchema = lazyZodSchema(() => z.strictObject({
