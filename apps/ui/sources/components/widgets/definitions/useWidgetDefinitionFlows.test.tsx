@@ -1073,7 +1073,9 @@ describe('widget definition flows', () => {
             const preview = screen.findByTestId('sessionCopy.save.preview');
             expect(preview).not.toBeNull();
             expect(preview!.findAllByType(WidgetSurface)).toHaveLength(0);
-            await vi.waitFor(() => { expect(preview!.findAll(node => node.props.children === 'Checks').length).toBeGreaterThan(0); });
+            await vi.waitFor(() => {
+                expect(preview!.findAll(node => node.props.children === 'Checks').length, screen.getTextContent()).toBeGreaterThan(0);
+            });
             expect(preview!.findByType(SessionBoardDeclarativeContent).props).toMatchObject({ snapshot: true, actionBinding: null });
             expect(harness.requests.some(request => request.path === '/v1/artifacts' && request.input)).toBe(false);
         } finally { await act(async () => { screen.tree.unmount(); }); await disconnect(); storage.setState(previous); }

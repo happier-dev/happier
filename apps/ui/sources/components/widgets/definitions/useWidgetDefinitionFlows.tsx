@@ -53,7 +53,12 @@ export type WidgetDefinitionSessionItem = Readonly<{
 /** Save borrows the primary body's admitted snapshot, never another executable or Resource read. */
 function WidgetSavePreview(props: Readonly<{ slot: WidgetSnapshotCaptureSlot; sourceLabel: string; testID: string }>): React.ReactElement {
     const [, changed] = React.useReducer((revision: number) => revision + 1, 0);
-    React.useEffect(() => props.slot.watch(changed), [props.slot]);
+    React.useLayoutEffect(() => {
+        const unwatch = props.slot.watch(changed);
+        // The mounted body can publish between this preview's render and subscription.
+        changed();
+        return unwatch;
+    }, [props.slot]);
     const preview = buildWidgetSnapshotPreview(props.slot.capture(), props.sourceLabel, Date.now());
     return preview
         ? <SessionBoardDeclarativeContent document={preview.document} snapshot actionBinding={null} testID={props.testID} />
