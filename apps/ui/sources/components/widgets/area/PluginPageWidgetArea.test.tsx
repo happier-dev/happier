@@ -81,12 +81,10 @@ vi.mock('@/components/plugins/surfaces', () => ({
     },
 }));
 // Popover positioning/portal and modal placement are platform overlay boundaries; their content renders.
-vi.mock('@/components/ui/popover', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
-    Popover: (props: { open: boolean; children: React.ReactNode | ((p: { maxHeight: number; maxWidth: number }) => React.ReactNode) }) => (
-        props.open ? <>{typeof props.children === 'function' ? props.children({ maxHeight: 640, maxWidth: 800 }) : props.children}</> : null
-    ),
-}));
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal, {
+        maxHeight: 640, maxWidth: 800, placement: 'bottom',
+    }));
 vi.mock('@/components/ui/overlays/FloatingOverlay', async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     FloatingOverlay: (props: { children: React.ReactNode }) => <>{props.children}</>,
@@ -388,16 +386,15 @@ describe('a plugin page widget area', () => {
         } };
         const screen = await renderScreen(page(hostApi, 'happier'));
         await flushHookEffects({ cycles: 6 });
-        const menu = screen.findByTestId('prs.pinned.group.inputs.menu')!.findByType(ItemRowActions);
-        const edit = menu.props.actions.find((entry: { id: string }) => entry.id === 'groupInputs');
-        const editInputs = edit?.onPress;
-        if (!editInputs) throw new Error('Missing group inputs action');
-        await act(async () => editInputs());
+        await screen.pressByTestIdAsync('prs.pinned.group.inputs.menu.trigger');
+        await screen.pressByTestIdAsync('groupInputs');
         const fieldId = 'prs.pinned.group.inputs.groupInputs.field.repository';
-        const field = screen.findAllByType(DropdownMenu).find(row => row.props.testID === fieldId)!;
-        expect(field.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'follow' })]));
-        // Select through the real field control; overlay placement is the platform boundary above.
-        await act(async () => field.props.onSelect('follow'));
+        const readDraftBinding = () => screen.findAllByType(DropdownMenu).find(row => row.props.testID === fieldId)?.props.selectedId;
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.trigger`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.trigger`);
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.binding.follow`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.binding.follow`);
+        await vi.waitFor(() => expect(readDraftBinding()).toBe('follow'));
         await screen.pressByTestIdAsync('prs.pinned.group.inputs.groupInputs.submit');
         await flushHookEffects({ cycles: 6 });
         const group = (await fixture.store.read()).items.find(item => item.kind === 'group');
@@ -405,7 +402,7 @@ describe('a plugin page widget area', () => {
             expect(screen.findByTestId(`${fieldId}.trigger`)).toBeNull();
             expect(group?.kind === 'group' ? group.context : null).toEqual({ repository: { kind: 'context', slot: 'repository' } });
         } else {
-            expect(screen.findAllByType(DropdownMenu).find(row => row.props.testID === fieldId)!.props.selectedId).toBe('follow');
+            expect(readDraftBinding()).toBe('follow');
             expect(group?.kind === 'group' ? group.context ?? {} : null).toEqual({});
             expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.refusals.areaUnavailable');
         }
