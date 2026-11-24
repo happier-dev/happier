@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -45,7 +46,8 @@ function TriggerFromActivityEventContent(props: Readonly<{ evidence: AutomationR
  */
 export function ActivityEventTriggerPopover(props: Readonly<{
     source: Readonly<{ kind: 'plugin'; evidence: AutomationRunPluginEventTriggerEvidenceV1 }>
-        | Readonly<{ kind: 'when'; when: SessionLifecycleWhen }>;
+        | Readonly<{ kind: 'when'; when: SessionLifecycleWhen }>
+        | Readonly<{ kind: 'eventSeed'; seed: PluginUiOpenAutomationEventRequestV1 }>;
     lifetime: ActiveServerAccountScopeLifetime;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
@@ -58,10 +60,13 @@ export function ActivityEventTriggerPopover(props: Readonly<{
     const testID = props.testID ?? 'activity-event-trigger';
     return <TriggerPopover testID={testID} anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose} sessionId={null} initial={null}
-            {...(source.kind === 'plugin'
-                ? { whenKinds: ['pluginEvent'] as const, activityEvent: source.evidence,
-                    initialWhen: { kind: 'pluginEvent', value: null, eventRef: source.evidence.eventRef } as const }
-                : { whenKinds: [source.when.kind], initialWhen: source.when, initialThenKind: 'runWorkflow' as const })}
+            {...(source.kind === 'when'
+                ? { whenKinds: [source.when.kind], initialWhen: source.when, initialThenKind: 'runWorkflow' as const }
+                : { whenKinds: ['pluginEvent'] as const,
+                    initialWhen: { kind: 'pluginEvent', value: null,
+                        eventRef: source.kind === 'plugin' ? source.evidence.eventRef : source.seed.eventRef } as const,
+                    ...(source.kind === 'plugin' ? { activityEvent: source.evidence }
+                        : { initialEventSeed: source.seed, initialThenKind: 'runWorkflow' as const }) })}
             {...(props.newTitle === undefined ? {} : { newTitle: props.newTitle })}
             workflowOptions={thenOptions.workflowOptions}
             accountLifetime={props.lifetime}

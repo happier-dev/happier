@@ -11,6 +11,8 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import { WorkflowRunListResultV1Schema, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { buildDeploymentReceiptCompletionWakeV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { createWorkflowActivityProjection } from './workflowActivityProjection';
@@ -24,6 +26,58 @@ afterEach(async () => {
     await boundary?.dispose();
     boundary = null;
     vi.restoreAllMocks();
+});
+
+it('publishes only a fresh, paired Deployment receipt from the listening Home', async () => {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://deployment-events-home.test' });
+    let membershipReads = 0;
+    boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'deployment-events-account',
+        fixtureResponse: async (actionId, input) => {
+            if (actionId !== 'workflow.run.list' || input.projection !== 'membership') {
+                throw new Error(`Unexpected receipt Event read: ${actionId}`);
+            }
+            membershipReads += 1;
+            return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
+        } });
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer(boundary.credentials);
+    boundary.prime();
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { publishHomeAccountChangeWake } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { getWorkflowActivitySource } = await import('./workflowActivitySource');
+    const serverId = getActiveServerAccountScope()!.serverId;
+    const source = getWorkflowActivitySource()!;
+    const receipt = { projectSourceId: 'project-source', environmentId: 'environment', deploymentId: 'receipt', revision: 2 };
+    const wake = buildDeploymentAccountChangeV1(receipt).entityId;
+    const seen: WorkflowActivityLiveFact[] = [];
+    const release = source.acquire({ onLive: batch => seen.push(...batch), onRetained() {} });
+    releases.push(release);
+    await vi.waitFor(() => expect(membershipReads).toBe(1));
+    const occurredAt = source.listeningSince()!;
+    const completion = (state: 'failed' | 'succeeded', time: number, deploymentId = receipt.deploymentId) =>
+        buildDeploymentReceiptCompletionWakeV1(receipt.environmentId, deploymentId, { state, revision: receipt.revision, occurredAt: time });
+    const publish = (home: string, ...entityIds: string[]) => publishHomeAccountChangeWake(home,
+        { t: 'account-change', changeKinds: ['account'], entityIds }, 'catch-up-pending');
+
+    publish('unrelated-home', wake, completion('failed', occurredAt));
+    publish(serverId, wake);
+    publish(serverId, wake, completion('failed', occurredAt, 'different-receipt'));
+    publish(serverId, wake, completion('failed', occurredAt - 1));
+    publish(serverId, wake, completion('succeeded', occurredAt));
+    expect(seen).toEqual([]);
+    publish(serverId, wake, completion('failed', occurredAt));
+    expect(seen).toEqual([expect.objectContaining({
+        kind: 'deployment', coverage: 'live', event: 'failed', occurredAt,
+        projectSourceId: receipt.projectSourceId, environmentId: receipt.environmentId,
+        deploymentId: receipt.deploymentId, sourceRevision: receipt.revision,
+    })]);
+    release();
+    publish(serverId, wake, completion('failed', occurredAt + 1));
+    expect(seen).toHaveLength(1);
+    expect(membershipReads).toBe(1);
 });
 
 it('opens a 240-Run membership page and reads names only for its Event rows, children and exact off-page Workflow cause', async () => {

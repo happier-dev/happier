@@ -129,7 +129,7 @@ export const WorkflowEventsFilters = React.memo(function WorkflowEventsFilters(
     };
     for (const key of keys) {
       const kind = projection.getRow(key)?.kind;
-      if (kind !== undefined) next[kind] += 1;
+      if (kind !== undefined && kind !== 'deployment') next[kind] += 1;
     }
     return next;
   }, [keys, projection]);

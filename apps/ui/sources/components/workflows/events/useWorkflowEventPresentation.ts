@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
+import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
 import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
 import { useExecutionRunHeaders } from '@/hooks/session/useExecutionRunHeaders';
 import { TRIGGER_LIFECYCLE_GLYPHS } from '@/components/workflows/triggers/triggerEventGroups';
@@ -152,6 +153,19 @@ export function useWorkflowEventPresentation(
     if (fact === undefined) return null;
     const runsStarted = retainedRuns === undefined ? NO_RUNS : readWorkflowEventStartedRuns(fact, retainedRuns);
     switch (fact.kind) {
+      case 'deployment': {
+        const result = formatWorkflowRunStateLabel(fact.event);
+        return {
+          fact, runsStarted, glyph: 'rocket-launch', agentId: null, rowTitle: null, needsYou: false,
+          title: t('machineServices.events.deploymentFailed.title'), subtitle: null,
+          lines: [{ key: 'result', label: t('workflows.events.result'), value: result }],
+          open: serverId === null ? null : {
+            label: t('projects.deployments.overviewStatus.openReceipt'),
+            href: buildDeploymentEnvironmentHref({ serverId, projectSourceId: fact.projectSourceId,
+              environmentId: fact.environmentId, deploymentId: fact.deploymentId }),
+          },
+        };
+      }
       case 'session': {
         const glyph = readSessionEventGlyph(fact.event);
         const lines: WorkflowEventFactLine[] = [];

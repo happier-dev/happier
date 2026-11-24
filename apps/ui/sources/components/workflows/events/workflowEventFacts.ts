@@ -9,6 +9,7 @@ import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActi
 import { t } from '@/text';
 import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers/workflowTriggerStarts';
+import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { resolveWorkflowProjectTargetOnMachine } from '@/components/workflows/screens/resolveContextualWorkflowTarget';
 import {
   buildTriggerDefinition,
@@ -105,7 +106,14 @@ export function readWorkflowEventDraftIntent(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
   placement?: Omit<Parameters<typeof resolveWorkflowProjectTargetOnMachine>[0], 'machineId'>,
   match?: WorkflowEventMatch | null,
-): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent' | 'project'> | null {
+): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent' | 'eventSeed' | 'project'> | null {
+  if (fact.kind === 'deployment') {
+    if (fact.homeServerIdentityId === null) return null;
+    const eventSeed = subjectStarterEventSeed('deploymentFailed', {
+      deploymentEnvironment: { serverId: fact.homeServerIdentityId, projectSourceId: fact.projectSourceId, environmentId: fact.environmentId },
+    });
+    return eventSeed === undefined ? null : { eventSeed };
+  }
   if (fact.kind === 'machine') {
     const project = placement === undefined ? null
       : resolveWorkflowProjectTargetOnMachine({ ...placement, machineId: fact.machineId });

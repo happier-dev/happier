@@ -218,9 +218,13 @@ export function useWorkflowEventIntents(
   const [linking, setLinking] = React.useState<ActiveServerAccountScopeLifetime | null>(null);
   const keyRef = React.useRef(0);
   const fact = !active || presentation === null ? null : presentation.fact;
-  const automatable = fact !== null && readWorkflowEventDraftIntent(fact) !== null;
+  const draftIntent = fact === null ? null : readWorkflowEventDraftIntent(fact);
+  const automatable = draftIntent !== null;
   const match = options?.match ?? null;
   const linkWhen = fact === null || options?.addTo === false ? null : readWorkflowEventLinkWhen(fact, match);
+  const linkSource = options?.addTo === false ? null
+    : draftIntent?.eventSeed ? { kind: 'eventSeed' as const, seed: draftIntent.eventSeed }
+    : linkWhen ? { kind: 'when' as const, when: linkWhen } : null;
   const title = presentation?.title ?? '';
   const readPlacement = React.useCallback(() => {
     // Read on the person's press: placing the draft on the event's Machine needs no live Machine/history subscription.
@@ -252,7 +256,7 @@ export function useWorkflowEventIntents(
   }, []);
   useCurrentUiContextLocalCommands(automatable ? [
     { key: 'make-workflow', title: t('workflows.events.makeWorkflow'), invoke: make },
-    ...(linkWhen === null ? [] : [{ key: 'add-to-workflow', title: t('workflows.events.addToAWorkflowTitle'), invoke: addTo }]),
+    ...(linkSource === null ? [] : [{ key: 'add-to-workflow', title: t('workflows.events.addToAWorkflowTitle'), invoke: addTo }]),
     { key: 'automate', title: t('workflows.events.automate'), invoke: open },
   ] : [], { contextKey: fact?.key });
   const builder = opening === null ? null : (
@@ -267,10 +271,10 @@ export function useWorkflowEventIntents(
       onRequestClose={() => setOpening(null)}
     />
   );
-  const addToEditor = linking === null || linkWhen === null ? null : (
+  const addToEditor = linking === null || linkSource === null ? null : (
     <ActivityEventTriggerPopover
       testID="workflow-event-add-to"
-      source={{ kind: 'when', when: linkWhen }}
+      source={linkSource}
       lifetime={linking}
       anchorRef={addToAnchorRef}
       newTitle={t('workflows.events.addToAWorkflowTitle')}
@@ -281,7 +285,7 @@ export function useWorkflowEventIntents(
     anchorRef, headerRef, addToAnchorRef, builder, addToEditor,
     open: automatable ? open : null,
     make: automatable ? () => { make(); } : null,
-    addTo: automatable && linkWhen !== null ? addTo : null,
+    addTo: automatable && linkSource !== null ? addTo : null,
   };
 }
 

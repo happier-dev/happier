@@ -4,6 +4,7 @@ import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifac
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentReceiptCompletionWakeV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import {
     ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     isAutomationDefinitionChangeV1,
@@ -620,7 +621,7 @@ export function planSyncActionsFromChanges(
             || change.entityId === CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1)) continue;
         // Deployment observers consume these exact keys. They change neither
         // Account settings/profile nor Session membership on content-free wakes.
-        if (readDeploymentAccountChangeV1(change) !== null) continue;
+        if (isDeploymentAccountChange(change)) continue;
         if (isSessionSystemRecordChangeEntityV1(change)) {
             if (!readSessionSystemRecordChangeV1(change)) unsupportedChanges.push({ cursor: String(change.cursor), kind: String(kind), entityId: change.entityId });
             continue;
@@ -1229,6 +1230,12 @@ export function homeAccountChangeAffectsPrivateAccountRows(
     return event.accountSettingsAffects !== false || event.changeKinds?.includes('kv') === true;
 }
 
+function isDeploymentAccountChange(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
+    return readDeploymentAccountChangeV1(change) !== null
+        || (change.kind === 'account' && change.hint === undefined
+            && readDeploymentReceiptCompletionWakeV1(change.entityId) !== null);
+}
+
 /** Usage observes opened Machine inputs directly and consumes neither draft nor workflow Run rows. */
 export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): boolean {
     const workflowEntityIds = new Set(planned.workflowRunIdsToRefresh.map(runId => `workflow-run:${runId}`));
@@ -1242,7 +1249,7 @@ export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): b
         if (change.kind === 'account' && (change.entityId === 'public-profile'
             || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
             || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change)
-            || readDeploymentAccountChangeV1(change) !== null)) return false;
+            || isDeploymentAccountChange(change))) return false;
         // Session evidence, allowances, settings and unknown changes retain
         // their incumbent freshness/admission path, including on mixed pages.
         return true;

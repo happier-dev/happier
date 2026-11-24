@@ -29,6 +29,8 @@ export type WorkflowActivityLiveFact = Readonly<{
         | Readonly<{ turnId: string; requestId: string; requestKind: SessionUserActionRequiredRequestKindV1 }>
         | Readonly<{ turnId?: never; requestId?: never; requestKind?: never }>
     ))
+    | Readonly<{ kind: 'deployment'; event: 'failed'; homeServerIdentityId: string | null;
+        projectSourceId: string; environmentId: string; deploymentId: string; sourceRevision: number }>
     | Readonly<{ kind: 'machine'; machineId: string; event: 'online' | 'offline'; sourceRevision: number }>
     | Readonly<{ kind: 'run'; runId: string; event: 'terminal' | 'needs_attention'; sourceRevision: number; state: WorkflowRunStateV1 }>
 );
