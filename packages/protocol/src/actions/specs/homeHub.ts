@@ -39,7 +39,7 @@ type SimpleHomeLayoutApprovalEffect = 'move' | 'moveIntoGroup' | 'moveOutOfGroup
 
 export type HomeLayoutApprovalEffect =
   | Readonly<{ kind: SimpleHomeLayoutApprovalEffect }>
-  | Readonly<{ kind: 'groupCreate'; widgetIds: readonly string[] }>;
+  | Readonly<{ kind: 'groupCreate'; title?: string; widgetIds: readonly string[] }>;
 
 export function readHomeLayoutApprovalEffect(input: unknown): HomeLayoutApprovalEffect | null {
   const parsed = HomeHubLayoutUpdateInputSchema.safeParse(input);
@@ -70,7 +70,7 @@ export function readHomeLayoutApprovalEffect(input: unknown): HomeLayoutApproval
     case 'inputs_reset': return { kind: 'resetInputs' };
     case 'widget_size':
     case 'size': return { kind: 'size' };
-    case 'group_create': return { kind: 'groupCreate', widgetIds: intent.instanceIds };
+    case 'group_create': return { kind: 'groupCreate', title: intent.title, widgetIds: intent.instanceIds };
     case 'group_add': return { kind: 'addGroup' };
     case 'group_ungroup': return { kind: 'ungroup' };
     case 'group_set': return { kind: 'groupAppearance' };

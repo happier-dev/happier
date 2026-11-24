@@ -3,7 +3,7 @@
 export type ActionConfirmationTranslations = Readonly<{
     governance: Readonly<{
         homeLayout: Readonly<Record<Exclude<import('@happier-dev/protocol/actions/specs/homeHub').HomeLayoutApprovalEffect['kind'], 'groupCreate'>, string>
-            & { groupCreate: (params: Readonly<{ widgets: string }>) => string }>;
+            & { groupCreateTitle: string; groupCreate: (params: Readonly<{ group: string; widgets: string }>) => string }>;
         teamArchive: string;
         teamPolicyInherit: string;
         teamPolicyInheritMayExpand: string;
@@ -65,7 +65,8 @@ export const actionConfirmationTranslationsEnglish = { en: {
                 removeItem: "Removes the selected item from Home, including its widgets if it’s a group.",
                 groupWidth: "Changes a group’s width.",
                 network: "Changes a widget’s network access.",
-                groupCreate: ({ widgets }) => `Adds a group with ${widgets}.`,
+                groupCreateTitle: "Add a group to Home",
+                groupCreate: ({ group, widgets }) => `Adds the group “${group}” with ${widgets}.`,
             },
             teamArchive: "Waiting invitations are permanently revoked. Restoring the Team does not restore them.",
             teamPolicyInherit: "Use the Home’s sign-in policy.",

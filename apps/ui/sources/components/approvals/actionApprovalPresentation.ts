@@ -119,6 +119,8 @@ export function readActionApprovalSubject(input: ActionApprovalPresentationInput
     if (input.actionId === 'teams.members.add' && readTeamMemberApprovalPresentation(input.preview, input.actionArgs)) return undefined;
     const serviceControl = readLocalServiceControlSubject(input);
     if (serviceControl) return serviceControl;
+    // A layout change may act on several widgets. Its title describes the change.
+    if (input.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID) return undefined;
     const references = describeApprovalActionFields({ ...input, actionArgs: input.actionArgs }).rows.flatMap(row => row.kind === 'value'
         ? [...(row.reference ? [row.reference] : []), ...(row.entries?.flatMap(entry => entry.reference ? [entry.reference] : []) ?? [])]
         : []);
@@ -196,7 +198,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const command = spec.id === CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID && input.execution?.ok
         ? CurrentUiContextCommandInvokeOutputSchema.safeParse(input.execution.result) : null;
     const commandTitle = command?.success ? command.data.commandTitle : undefined;
-    const subject = teamMember ? `${teamMember.accountName} · ${teamMember.teamName}`
+    const subject = spec.id === HOME_HUB_LAYOUT_UPDATE_ACTION_ID ? null
+        : teamMember ? `${teamMember.accountName} · ${teamMember.teamName}`
         : createdMachineName?.kind === 'value' ? createdMachineName.value : commandTitle ?? input.subject;
     const confirmLabel = readActionApprovalConfirmLabel(spec.id)
         ?? (input.kind === 'confirmation' ? resolveActionTitle(spec.id, spec) : resolveActionConfirmVerb(undefined));
@@ -262,6 +265,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         ? appendTeamCredentialSourceSummary('', teamCredentialSources) : '';
     let canonicalCopySummary: string | null = null;
     let canonicalGovernanceSummary: string | null = null;
+    let homeLayoutTitle: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
         teamCredentialSources: spawnCredentialSuffix ? [] : teamCredentialSources,
@@ -269,6 +273,9 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         ...(input.status === undefined || input.status === 'open' || input.kind === 'confirmation' ? {
             formatGovernanceSummary: (review, legacy) => {
                 canonicalGovernanceSummary = legacy()?.trim() ?? null;
+                if (review.kind === 'homeLayout' && (review.effect.kind === 'groupCreate' || review.effect.kind === 'addGroup')) {
+                    homeLayoutTitle = t('actionConfirmations.governance.homeLayout.groupCreateTitle');
+                }
                 return formatPendingGovernanceSummary(review, input.homeLayoutWidgets);
             },
         } : {}),
@@ -304,7 +311,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         ? draftSubject : null;
     const subjectInReview = input.kind === 'confirmation' && input.preview !== undefined
         && readActionApprovalSubject(input) !== undefined;
-    const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
+    const title = t('actionPresentation.title', { actionId: spec.id, source: homeLayoutTitle ?? titleSource,
         subject: subjectInReview ? null : roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}`
             : subject ?? (confirmationDraftSubject ? null : draftSubject ?? null) });
     return {

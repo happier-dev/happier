@@ -17,7 +17,8 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
-const { readApprovalPreviewSummary } = await import('./actionApprovalPresentation');
+const { readActionApprovalSubject, readApprovalPreviewSummary } = await import('./actionApprovalPresentation');
+const { resolveApprovalRequestTitle } = await import('./approvalRequestTitle');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { storage } = await import('@/sync/domains/state/storage');
@@ -48,7 +49,7 @@ const summaryCases = {
     widget_inputs: [{ kind: 'widget_inputs', instanceId: 'widget-1', bindings: {} }, 'Changes what a widget uses.'],
     widget_inputs_reset: [{ kind: 'widget_inputs_reset', instanceId: 'widget-1' }, 'Resets what a widget uses.'],
     widget_size: [{ kind: 'widget_size', instanceId: 'widget-1', size: 'medium' }, 'Changes a widget’s size.'],
-    group_create: [{ kind: 'group_create', groupId: 'group-1', instanceIds: ['widget-1'] }, 'Adds a group with Unavailable.'],
+    group_create: [{ kind: 'group_create', groupId: 'group-1', instanceIds: ['widget-1'] }, 'Adds the group “Unavailable” with Unavailable.'],
     group_add: [{ kind: 'group_add', group: { kind: 'group', id: 'group-1', width: 'full',
         children: [{ kind: 'widget', instance: summaryWidget }] } }, 'Adds a group to Home.'],
     group_ungroup: [{ kind: 'group_ungroup', instanceId: 'group-1' }, 'Ungroups the widgets and keeps them on Home.'],
@@ -73,15 +74,18 @@ it.each([
     const actionId = 'home.hub.layout.update';
     const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent });
     expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'open' })).toBe(expected);
+    expect(readActionApprovalSubject({ actionId, actionArgs })).toBeUndefined();
+    const title = resolveApprovalRequestTitle({ storedTitle: 'Customize Home', actionId, actionArgs, status: 'open', subject: 'Machines' }).title;
+    expect(title).toBe(intent.kind === 'group_create' || intent.kind === 'group_add' ? 'Add a group to Home' : 'Customize Home');
 });
 
 it('presents a Home group request in French even when the stored summary is English', async () => {
     await preloadTranslations('fr');
     setPreferredLanguageFromSettings('fr');
     const actionId = 'home.hub.layout.update';
-    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: summaryCases.group_create[0] });
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: { ...summaryCases.group_create[0], title: 'W28 label group' } });
     expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'open' }, undefined,
-        ['Machines', 'Services locaux'])).toBe('Ajoute un groupe avec Machines et Services locaux.');
+        ['Machines', 'Services locaux'])).toBe('Ajoute le groupe « W28 label group » avec Machines et Services locaux.');
 });
 
 it.each([
@@ -209,14 +213,14 @@ it('keeps an allocated Home Group ID technical and names a saved destination on 
     </InjectedAuthProvider>;
     const create = await renderScreen(review(createIntent));
     try {
-        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain('Adds a group with Capacity Widget and Budget Widget.'));
+        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain('Adds the group “Capacity lab” with Capacity Widget and Budget Widget.'));
         expect(create.getTextContent()).toContain(title);
         expect(create.getTextContent()).toContain('Widgets');
         expect(create.getTextContent()).not.toContain('Instance ids');
         expect(create.getTextContent()).not.toContain('Group create');
         expect(create.getTextContent()).not.toContain(allocatedGroupId);
         await create.update(review(createIntent, null));
-        expect(create.getTextContent()).toContain('Adds a group with Unavailable and Unavailable.');
+        expect(create.getTextContent()).toContain('Adds the group “Capacity lab” with Unavailable and Unavailable.');
         expect(create.getTextContent()).not.toContain('Capacity Widget');
         await create.pressByTestIdAsync('approvals.technical-details.header');
         expect(create.getTextContent()).toContain(allocatedGroupId);

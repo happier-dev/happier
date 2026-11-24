@@ -4,6 +4,7 @@ import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugin
 import { t } from '@/text';
 import { resolveActionTitle } from '@/text/actionTitles';
 import { joinList } from '@/utils/text/joinList';
+import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 
 function formatSetupSummary(setup: Extract<GovernanceApprovalSummary, { kind: 'teamSetup' }>['setup']): string {
     const checkoutLabels = {
@@ -49,7 +50,8 @@ export function formatPendingGovernanceSummary(summary: GovernanceApprovalSummar
             const { effect } = summary;
             if (effect.kind !== 'groupCreate') return t(`actionConfirmations.governance.homeLayout.${effect.kind}`);
             const widgets = homeLayoutWidgets ?? effect.widgetIds.map(() => t('common.unavailable'));
-            return t('actionConfirmations.governance.homeLayout.groupCreate', { widgets: joinList(widgets) });
+            const group = readWidgetGroupTitle(effect) ?? t('common.unavailable');
+            return t('actionConfirmations.governance.homeLayout.groupCreate', { group, widgets: joinList(widgets) });
         }
         case 'nativeCredentialDelivery': return t('actionConfirmations.governance.nativeCredentialDelivery');
         case 'machinePresetPrepare': return t('actionConfirmations.governance.machinePresetPrepare');
