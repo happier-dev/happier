@@ -921,17 +921,15 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
  * opened once that leaf was already on screen.
  */
 function AppShellPluginSurfaceNavigationOwners(): null {
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiProjectionModel();
     const localize = useProjectedPluginLocalizedTextResolver();
     const binding = usePluginSurfaceDestinationNavigationBinding();
     const pages = usePluginPages({ target: { kind: 'app' },
-        placements: selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' }),
+        placements: selectPluginPagePlacements(projection, { container: 'appPage', targetKind: 'app' }),
         localize,
     });
     const openPage = usePluginPageDestinationHandler({ pages });
-    const openSettingsPage = usePluginSettingsPageDestinationHandler({
-        projection: projection.pluginUiProjection,
-    });
+    const openSettingsPage = usePluginSettingsPageDestinationHandler({ projection });
     const openRightSidebarTab = useAppScopeRightSidebarDestinationHandler();
     const openRightSidebarWindow = useAppScopeRightSidebarDestinationHandler(true);
     const pageOwner = React.useMemo(() => ({

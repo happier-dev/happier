@@ -490,7 +490,9 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             activeServerIdentity = resolvePortableServerIdentityForRoutingId(sources.activeServerId) ?? undefined;
             identityBasis = nextIdentityBasis;
         }
-        const materializations = availabilityInputs?.materializations ?? NO_MATERIALIZATIONS;
+        const reportedMaterializations = availabilityInputs?.materializations ?? NO_MATERIALIZATIONS;
+        const materializations = shallow(previous.executionOriginMaterializations, reportedMaterializations)
+            ? previous.executionOriginMaterializations : reportedMaterializations;
         const plugins = availabilityInputs?.installedPlugins;
         if (plugins !== installedInput) {
             const builds = new Map<string, {
@@ -755,7 +757,12 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         publishSources(next: AppShellPluginUiProjectionSources) {
             if (!isCurrent(next.accountLifetime)) return;
             if (sources && (Object.keys(next) as (keyof AppShellPluginUiProjectionSources)[]).every(key => next[key] === sources![key])) return;
-            if (sources?.accountLifetime !== next.accountLifetime || sources?.activeServerId !== next.activeServerId) {
+            const previous = unnotifiedPrevious ?? snapshot;
+            const previousSources = sources;
+            const sameScope = previousSources !== null
+                && previousSources.accountLifetime === next.accountLifetime && previousSources.activeServerId === next.activeServerId;
+            const batchHydration = sameScope && (previous.accountCensusPending || !previousSources.activeInventoryLoaded);
+            if (!sameScope) {
                 retirement?.dispose();
                 resetDerived();
                 retirement = next.accountLifetime?.onRetire(() => {
@@ -768,7 +775,13 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 });
             }
             sources = next;
-            publishDerived(false, true);
+            // Admit the source basis synchronously. During hydration, notify once
+            // with the rest of this turn's Machine reports.
+            publishDerived(batchHydration, true);
+            if (batchHydration && snapshot !== previous) {
+                unnotifiedPrevious = previous;
+                schedulePublication();
+            }
         },
         publishMachineCurrentness(machineId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness) {
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)

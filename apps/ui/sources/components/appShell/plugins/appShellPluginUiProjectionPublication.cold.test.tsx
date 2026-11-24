@@ -5,7 +5,7 @@ import { renderHook } from '@/dev/testkit';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import * as unions from '@/sync/domains/plugins/ui/projectionUnion';
-import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
+import { createAppShellPluginUiProjectionPublication, type AppShellPluginUiProjectionSources } from './appShellPluginUiProjectionPublication';
 
 it('does no catalog work for cold establishing reports and merges only the Machine whose facts change', async () => {
     // Cold Home census from the Providers QA Account.
@@ -96,5 +96,61 @@ it('does no catalog work for cold establishing reports and merges only the Machi
         await mounted.unmount(); stop(); owner.dispose();
         for (const merge of merges) merge.mockRestore();
         derivations.mockRestore(); unionFactory.mockRestore(); mergeFactory.mockRestore();
+    }
+});
+
+
+it('commits one catalog hydration publication and keeps equal replays silent', async () => {
+    const owner = createAppShellPluginUiProjectionPublication();
+    const sources: AppShellPluginUiProjectionSources = {
+        accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: true, activeServerId: null,
+        serverProfilesGeneration: 0, activeInventoryLoaded: false, onlineMachineIds: ['machine'],
+        selectableMachineIds: ['machine'],
+    };
+    owner.publishSources(sources);
+    const publishAccountCensus = () => owner.publishSources({
+        ...sources,
+        activeInventoryLoaded: true,
+        availabilityInputs: { materializations: [], installedPlugins: undefined, accountUiProjection: EMPTY_PLUGIN_UI_PROJECTION },
+    });
+    const report: PluginUiProjectionCurrentness = {
+        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current',
+        interactionEnabled: true, machineId: 'machine', serverId: null, platform: 'web', accountLifetime: null,
+    };
+    let commits = 0;
+    const mounted = await renderHook(() => {
+        const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot);
+        React.useLayoutEffect(() => { commits++; });
+        return snapshot;
+    });
+    const publications: ReturnType<typeof owner.getSnapshot>[] = [];
+    const stop = owner.subscribe(() => publications.push(owner.getSnapshot()));
+    try {
+        const beforeHydration = commits;
+        await act(async () => {
+            publishAccountCensus();
+            owner.publishMachineCurrentness('machine', null, report);
+            expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.get('machine')).toBe(report);
+        });
+        const hydrated = mounted.getCurrent();
+        expect(hydrated.accountCensusPending).toBe(false);
+        expect(hydrated.currentnessForActiveAccountByMachineId.get('machine')).toBe(report);
+        expect.soft(publications).toHaveLength(1);
+        expect.soft(publications[0]).toBe(hydrated);
+        expect.soft(commits - beforeHydration).toBe(1);
+
+        publications.length = 0;
+        const beforeReplay = commits;
+        await act(async () => {
+            publishAccountCensus();
+            owner.publishMachineCurrentness('machine', null, { ...report });
+        });
+        expect.soft(publications).toHaveLength(0);
+        expect.soft(commits - beforeReplay).toBe(0);
+        expect(mounted.getCurrent()).toBe(hydrated);
+    } finally {
+        stop();
+        await mounted.unmount();
+        owner.dispose();
     }
 });
