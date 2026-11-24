@@ -783,6 +783,14 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     return;
                 }
                 if (lifetime.aborted) return;
+                // Forget closes fresh admission, but the owning Account's admitted Session
+                // still needs its existing attachment to reach the holder during Stop.
+                if (session && current.workspaceAttachment && row?.id === request.managedId
+                    && row.archivedAt !== undefined && row.cleanup?.reason === 'manual_responsibility'
+                    && row.custodianAccountId === request.requesterAccountId
+                    && row.allocation === 'bound' && row.desired !== 'delete'
+                    && isDeepStrictEqual(row.controller, current.controller)
+                    && isDeepStrictEqual(row.resource, correlation.resource)) return;
                 try { current = await admit(decision); authority.assertManagedTargetCurrent(correlation.resource.value); }
                 catch { revoked.abort(); }
             }, () => undefined);

@@ -1383,6 +1383,39 @@ describe('Session placement on a managed target (driver)', () => {
         expect(reads).toBe(2);
     });
 
+    it('keeps an admitted owner Session transport available for Stop after Forget archives its attachment', async () => {
+        const h = harness({ holdStream: true, guest: true });
+        const session = new AbortController();
+        onTestFinished(() => session.abort());
+        let row = ManagedMachineV1Schema.parse({ ...machine,
+            workspaceAttachment: { os: 'linux', arch: process.arch, home: '/g' },
+        });
+        let notify: ((change?: ManagedMachinePolicyInvalidation) => void | Promise<void>) | undefined;
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            readTargetCurrent: async () => ({ machine: row, admitted: row.archivedAt === undefined }),
+            subscribeManagedMachineChanges: listener => { notify = listener; return () => { notify = undefined; }; },
+        });
+        const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 's1',
+            requesterAccountId: row.custodianAccountId, lifetime: session.signal, holder });
+        const active = target.openChannel(['holder', 'attach'], session.signal);
+        const closed = new Promise(resolve => active.once('close', resolve));
+        active.resume();
+        await expect.poll(() => h.calls.includes('stream')).toBe(true);
+
+        row = { ...row, archivedAt: 123, intentRevision: row.intentRevision + 1,
+            cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } };
+        await notify!({ kind: 'managed', managedIds: [row.id] });
+        expect(target.lifetime.aborted).toBe(false);
+        await expect(target.exec('true', session.signal)).resolves.toMatchObject({ status: 0 });
+        await expect(driver.openSessionTarget({ managedId: row.id, sessionId: 'new-session',
+            requesterAccountId: row.custodianAccountId, lifetime: session.signal, holder }))
+            .rejects.toMatchObject({ code: 'managed_target_access_unavailable' });
+
+        session.abort();
+        await closed;
+        expect(target.lifetime.aborted).toBe(true);
+    });
+
     it('settles only the placed Session on confirmed native absence, after delete intent has revoked its channel', async () => {
         const h = harness({ holdStream: true, guest: true });
         const session = new AbortController();
