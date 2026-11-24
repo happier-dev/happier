@@ -2,8 +2,7 @@ import { type Page } from '@playwright/test';
 
 type TerminalConnectApproveLocator = Readonly<{
   count: () => Promise<number>;
-  click: (options?: Readonly<{ timeout?: number; noWaitAfter?: boolean; force?: boolean }>) => Promise<void>;
-  evaluate?: <T>(callback: (element: HTMLElement) => T | Promise<T>) => Promise<T>;
+  click: (options?: Readonly<{ timeout?: number; noWaitAfter?: boolean }>) => Promise<void>;
 }>;
 
 export type TerminalConnectApprovePage = Readonly<{
@@ -77,15 +76,6 @@ async function isApprovalSurfaceVisible(page: TerminalConnectApprovePage): Promi
   return (await findVisibleApproveLocator(page)) !== null;
 }
 
-async function activateApproveLocator(locator: TerminalConnectApproveLocator): Promise<void> {
-  await locator.click({ timeout: 15_000, noWaitAfter: true, force: true });
-  if (typeof locator.evaluate !== 'function') return;
-
-  await locator.evaluate((element) => {
-    element.click();
-  });
-}
-
 async function didLeaveTerminalConnect(page: TerminalConnectApprovePage, timeoutMs: number): Promise<boolean> {
   if (typeof page.waitForURL !== 'function') {
     return true;
@@ -109,7 +99,7 @@ export async function approveTerminalConnect(params: Readonly<{ page: Page | Ter
     const approve = await findVisibleApproveLocator(params.page);
     if (approve) {
       clicked = true;
-      await activateApproveLocator(approve);
+      await approve.click({ timeout: 15_000, noWaitAfter: true });
       await params.page.waitForTimeout(intervalMs);
       if (await maybeAcknowledgeTerminalConnect({ page: params.page, timeoutMs: 1_000 })) {
         if (await didLeaveTerminalConnect(params.page, 5_000)) {

@@ -7,18 +7,21 @@ type FakeLocator = ReturnType<TerminalConnectApprovePage['locator']>;
 function createLocator(params: Readonly<{
   count: () => number;
   onClick?: (options?: Parameters<FakeLocator['click']>[0]) => void;
-  onEvaluateClick?: () => void;
 }>): FakeLocator {
-  const evaluate: NonNullable<FakeLocator['evaluate']> = async <T,>(callback: (element: HTMLElement) => T | Promise<T>): Promise<T> =>
-    await callback({ click: () => params.onEvaluateClick?.() } as HTMLElement);
+  // Like a real Locator, this re-resolves the selector after the UI changes.
+  const evaluate = async <T,>(callback: (element: HTMLElement) => T | Promise<T>): Promise<T> => {
+    if (params.count() === 0) throw new Error('locator.evaluate timed out waiting for the removed button');
+    return await callback({ click: () => params.onClick?.() } as HTMLElement);
+  };
 
-  return {
+  const locator = {
     count: async () => params.count(),
     click: vi.fn(async (options?: Parameters<FakeLocator['click']>[0]) => {
       params.onClick?.(options);
     }),
     evaluate,
   };
+  return locator;
 }
 
 function createPage(params: Readonly<{
@@ -26,11 +29,11 @@ function createPage(params: Readonly<{
   hiddenTestIdCount?: () => number;
   roleCount?: () => number;
   confirmCount?: () => number;
+  continueCount?: () => number;
+  onContinueClick?: (options?: Parameters<FakeLocator['click']>[0]) => void;
   onConfirmClick?: (options?: Parameters<FakeLocator['click']>[0]) => void;
   onVisibleClick?: () => void;
-  onVisibleEvaluateClick?: () => void;
   onRoleClick?: () => void;
-  onRoleEvaluateClick?: () => void;
   waitForURL?: TerminalConnectApprovePage['waitForURL'];
 }>): TerminalConnectApprovePage {
   return {
@@ -39,7 +42,12 @@ function createPage(params: Readonly<{
         return createLocator({
           count: params.visibleTestIdCount ?? (() => 0),
           onClick: params.onVisibleClick,
-          onEvaluateClick: params.onVisibleEvaluateClick,
+        });
+      }
+      if (selector === '[data-testid="terminal-connect-continue"]:visible') {
+        return createLocator({
+          count: params.continueCount ?? (() => 0),
+          onClick: params.onContinueClick,
         });
       }
       if (selector === '[data-testid="web-modal-confirm"]:visible') {
@@ -59,7 +67,6 @@ function createPage(params: Readonly<{
     getByRole: (role: 'button', options: Readonly<{ name: string; exact?: boolean }>) => createLocator({
       count: () => role === 'button' && options.name === 'Accept Connection' ? params.roleCount?.() ?? 0 : 0,
       onClick: params.onRoleClick,
-      onEvaluateClick: params.onRoleEvaluateClick,
     }),
     waitForTimeout: vi.fn(async () => {}),
     waitForURL: params.waitForURL,
@@ -71,20 +78,20 @@ afterEach(() => {
 });
 
 describe('approveTerminalConnect', () => {
-  it('dismisses the success modal without waiting for destination load and verifies navigation', async () => {
+  it('continues after a browser click replaces the approval button', async () => {
     let approved = false;
-    let modalVisible = true;
+    let acknowledged = false;
     let routeVerified = false;
     const page = createPage({
       visibleTestIdCount: () => approved ? 0 : 1,
       onVisibleClick: () => { approved = true; },
-      confirmCount: () => modalVisible ? 1 : 0,
-      onConfirmClick: (options) => {
-        modalVisible = false;
+      continueCount: () => approved && !acknowledged ? 1 : 0,
+      onContinueClick: (options) => {
+        acknowledged = true;
         if (options?.noWaitAfter !== true) throw new Error('scheduled navigation is still loading');
       },
       waitForURL: async () => {
-        expect(modalVisible).toBe(false);
+        expect(acknowledged).toBe(true);
         routeVerified = true;
       },
     });
@@ -147,24 +154,6 @@ describe('approveTerminalConnect', () => {
 
     expect(roleClicks).toBe(2);
     expect(waitForURL).toHaveBeenCalled();
-  });
-
-  it('falls back to DOM activation when locator click does not trigger the approval action', async () => {
-    let approvalVisible = true;
-    let evaluateClicks = 0;
-    const page = createPage({
-      visibleTestIdCount: () => approvalVisible ? 1 : 0,
-      roleCount: () => 0,
-      onVisibleClick: () => {},
-      onVisibleEvaluateClick: () => {
-        evaluateClicks += 1;
-        approvalVisible = false;
-      },
-    });
-
-    await approveTerminalConnect({ page, timeoutMs: 1_000 });
-
-    expect(evaluateClicks).toBe(1);
   });
 
   it('dismisses the success modal before waiting for terminal-connect navigation', async () => {
