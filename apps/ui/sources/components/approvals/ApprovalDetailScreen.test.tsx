@@ -1851,12 +1851,76 @@ describe('ApprovalDetailScreen', () => {
     expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
   });
 
+  it.each([
+    ['held', 'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+    ['rejected', 'session.askRecord.notSent', undefined],
+    ['outcomeUnknown', 'session.askRecord.unsure', 'session.askRecord.unsureHint'],
+    ['accepted', undefined, undefined],
+  ] as const)('reads persisted %s delivery on a fresh review without a button response', async (status, detail, subtitle) => {
+    await prepareApprovalFixture();
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    const { materializeActionRequestAttributionV1 } = await import('@happier-dev/protocol/actions/actionRequestAttributionV1');
+    const { isApprovalExecutionOriginCurrentForAccountContext } = await import('@/sync/ops/actions/defaultActionExecutor');
+    let stored: ApprovalRequestV2 | null = null;
+    // Persistence and Session IO are boundaries. The real executor creates,
+    // decides, executes and persists the delivery; no terminal record is fabricated.
+    const executor = createActionExecutor({
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'artifact-1' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async ({ origin, reportStale }) => isApprovalExecutionOriginCurrentForAccountContext({
+        origin, accountServerId: account.serverId, accountId: 'account-1', reportStale }),
+      sessionStateFieldSet: async () => ({ ok: true }),
+      sessionSendMessage: async ({ localId }) => status === 'held'
+        ? { status, localId: localId!, code: 'session_input_target_unavailable', failureCause: {
+          phase: 'session.input.admission', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } }
+        : status === 'rejected' ? { status, code: 'session_input_target_unavailable', effectAttempted: false }
+          : status === 'outcomeUnknown' ? { status, localId: localId!, code: 'session_input_settlement_outcome_unknown' }
+            : { status, localId: localId! },
+    });
+    const context = { serverId: account.serverId, runtimeAccountId: 'account-1' };
+    expect(await executor.execute('session.title.set', { title: 'Review the API' }, {
+      ...context, surface: 'agent', authority: 'account_automation', actionRequestId: 'persisted-delivery',
+      defaultSessionId: 'session-1', defaultSessionMachineId: 'machine-target',
+      actionCaller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+      actionRequestAttributionV1: materializeActionRequestAttributionV1({ requestRef: 'person-input',
+        requester: { serverId: account.serverId, accountId: 'account-1' },
+        persona: { serverId: account.serverId, sessionId: 'session-1' }, origin: null }),
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'session.title.set': { approvalRequiredSurfaces: ['agent'] } } }),
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, {
+      ...context, surface: 'ui', authority: 'present_user',
+    })).toMatchObject({ ok: true, result: { status: 'executed', delivery: { status } } });
+    const request = ApprovalRequestV2Schema.parse(stored);
+    expect(request.delivery?.status).toBe(status);
+    currentArtifact = { id: 'artifact-1', header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+    expect(approvalStatus(screen)).toBe('approvals.status.executed');
+    const row = approvalItem(screen, 'approvals.result-delivery');
+    if (detail === undefined) expect(row).toBeUndefined();
+    else {
+      expect(row?.props.detail).toBe(detail);
+      if (subtitle) expect(row?.props.subtitle).toBe(subtitle);
+    }
+    await screen.unmount();
+  });
+
   it.each(['rejected', 'accepted'] as const)('retains the ORIGINAL %s result delivery beside successful execution', async deliveryStatus => {
     const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
     const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
     const execution = { executedAtMs: 3, ok: true, result: {} } as const;
     const settled = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: undefined, status: 'executed', updatedAtMs: 3,
-      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution,
+      delivery: { status: 'accepted', localId: 'approval-result:later-delivery' } });
     const cause = { phase: 'session.message.input_schema', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } as const;
     const delivery = deliveryStatus === 'rejected' ? { status: 'rejected', code: 'session_input_target_unavailable', failureCause: cause }
       : { status: 'accepted', localId: 'approval-result:original' };

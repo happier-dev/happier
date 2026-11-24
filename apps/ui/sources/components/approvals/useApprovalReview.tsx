@@ -574,7 +574,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         : parsed.kind === 'built_in' ? resolveApprovalDisplayStatus(parsed.request, builtInExecutionFailure)
           : parsed.request.status;
   const statusLabel = formatApprovalStatusLabel(displayStatus);
-  const originalDelivery = recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined;
+  const originalDelivery = (recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined)
+    ?? (parsed.kind === 'built_in' && parsed.request.v === 2 ? parsed.request.delivery : undefined);
   const deliveryFailure = originalDelivery?.status === 'rejected'
     ? presentActionFailureOutcome({ errorCode: originalDelivery.code, error: originalDelivery.code, failureCause: originalDelivery.failureCause }) : null;
   // The result's delivery is the receipt's own fact, said in the Session ask-record words; a delivered result stays quiet.
