@@ -954,7 +954,12 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
     hostAction: PluginUiSelectActionInputSessionAddressHostActionV1Schema,
     /** Domain-owner eligible addresses; the picker projects these without deciding eligibility. */
     sessionCandidates: z.optional(z.array(ActionSessionAddressV1Schema)),
-  }),
+    /** A submit-input picker reads Home pages under this workspace constraint. */
+    sessionCandidateQuery: z.optional(z.discriminatedUnion('workspace', [
+      z.strictObject({ workspace: z.literal('any') }),
+      z.strictObject({ workspace: z.literal('accepted'), repository: SessionAcceptedWorkspaceV1Schema.shape.repository }),
+    ])),
+  }).check(z.refine(value => value.sessionCandidates === undefined || value.sessionCandidateQuery === undefined)),
   z.strictObject({
     hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('serverStartDraft') }),
     draft: zMini.optional(PluginUiJsonObjectV1Schema),

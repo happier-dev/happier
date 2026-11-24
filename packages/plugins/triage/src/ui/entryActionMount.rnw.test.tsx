@@ -295,6 +295,7 @@ function createHarness(options: Readonly<{
     /** The durable detail read answers `unavailable`, so the detail never becomes ready. */
     detailUnavailable?: boolean;
     readCatalogFailure?: () => PluginError | undefined;
+    beforeReadCatalog?: () => Promise<void> | undefined;
     comparisonRead?: () => Promise<unknown>;
     comparisonOpen?: () => Promise<unknown>;
     sendResult?: Extract<TriageSessionHandoffAuthoredResultV1, { kind: 'sendResult' }>['result'];
@@ -437,6 +438,7 @@ function createHarness(options: Readonly<{
         // the shipped seed. A seed is never exposed merely because this read
         // failed; `null` remains available to tests that need that outage.
         if (action === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 && actions !== null) {
+            await options.beforeReadCatalog?.();
             const failure = options.readCatalogFailure?.();
             if (failure !== undefined) throw failure;
             return { v: 1, availability: 'parsed', actions, revision: 'revision-1' };
@@ -672,7 +674,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                         } as never;
                     }
                     if ('hostAction' in request && request.hostAction.action === 'session.transcript.get') {
-                        expect(request.sessionCandidates).toEqual([{ serverId: 'server-a', sessionId: 'session-picked' }]);
+                        expect(request).toHaveProperty('sessionCandidateQuery');
                         sessionPicks += 1;
                         return pickedSession === null
                             ? { kind: 'cancelled' } as never
@@ -1620,7 +1622,7 @@ describe('the entry action controls on the mounted detail header', () => {
         await openTheRow(shell);
 
         await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Find a Session…');
+        await pressMenuItem(shell, 'Send to a Session…');
 
         expect(sessionPicks).toBe(1);
         expect(draftsOpened).toBe(0);
@@ -1647,38 +1649,25 @@ describe('the entry action controls on the mounted detail header', () => {
         }
     }, 60_000);
 
-    it.each([
-        ['empty', 'No eligible Sessions are available for this action.'],
-        ['unavailable', 'Could not read Sessions for this action.'],
-    ] as const)('shows a notice when Fix options has %s Session candidates', async (outcome, notice) => {
-        const harness = oneClickHarness();
-        const shell = await mountShell({
-            ...harness,
-            async executeAction(request) {
-                if (request.action !== 'session.list') return harness.executeAction(request);
-                if (outcome === 'unavailable') throw new Error('Home unavailable');
-                return { sessions: [], hasNext: false };
-            },
-        });
-        await openTheRow(shell);
-        await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Send to a Session…');
-
-        await expect(shell.getByText(notice)).resolves.toBeDefined();
-        expect(sessionPicks).toBe(0);
-        expect(harness.configuredRequests).toHaveLength(0);
-    }, 60_000);
-
-    it('starts nothing when the reader closes the Session picker', async () => {
-        const harness = oneClickHarness();
+    it('opens Send while the configured action read is held, without executing after the chooser closes', async () => {
+        let holdCatalog = false;
+        let releaseCatalog!: () => void;
+        const heldCatalog = new Promise<void>(resolve => { releaseCatalog = resolve; });
+        const harness = oneClickHarness({ beforeReadCatalog: () => holdCatalog ? heldCatalog : undefined });
         const shell = await mountShell(harness);
         await openTheRow(shell);
-
         await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Find a Session…');
 
-        expect(sessionPicks).toBe(1);
+        holdCatalog = true;
+        const pressed = pressMenuItem(shell, 'Send to a Session…');
+        try {
+            await vi.waitFor(() => expect(sessionPicks).toBe(1));
+        } finally {
+            releaseCatalog();
+            await pressed;
+        }
         expect(harness.startRequests).toHaveLength(0);
+        expect(harness.configuredRequests).toHaveLength(0);
     }, 60_000);
 
     /**

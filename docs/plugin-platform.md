@@ -3036,6 +3036,14 @@ receives its own admission. Plugins cannot supply that snapshot or an unrelated
 tuple. Account retirement and cancellation close the picker. These are development
 source contracts, pending package and loaded-runtime validation.
 
+Triage uses the optional `sessionCandidateQuery` to open this picker before the
+first Session page arrives. The host uses the captured Home's Session list and
+filters each requested page for writable Sessions with an accepted workspace,
+matching the repository when supplied. Scroll requests the next page. The
+picker's search narrows the rows as they arrive, including encrypted titles
+that are only readable on the client. The returned address still needs the
+host's separate Send confirmation.
+
 A host-attested person press on an Action with one admitted Session gives its
 first built-in `session.message.send` person authority for that exact Session
 and Home. The Send retains the plugin caller and input constraints. The press

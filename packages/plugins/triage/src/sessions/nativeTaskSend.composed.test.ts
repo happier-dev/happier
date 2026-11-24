@@ -14,7 +14,6 @@ import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testki
 import type { TriageActionV1 } from '../settings/actions.js';
 import { createTriageEntrySessionStartController, type TriageStartHostV1 } from './entrySessionStartController.js';
 import { testkitConfiguredInstance, testkitTriageActionId } from './testkit/entrySessionTestkit.test-support.js';
-import { readTriageRecentSessionsV1 } from './entryStartChoices.js';
 
 it('native Send delivers an unbound Task into the chosen workspace while preserving repository and workspace refusals', async () => {
     const entryRef = { source: INTERNAL_TASK_SOURCE_V1,
@@ -36,26 +35,6 @@ it('native Send delivers an unbound Task into the chosen workspace while preserv
     const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
     const handler = createTriageRunConfiguredActionHandler();
 
-    // Candidate reads and delivery must agree on the same workspace admission.
-    const pickerHost = {
-        executeAction: async (_ref: unknown, input: { cursor?: string }) => input.cursor === 'next' ? ({ sessions: [
-            { id: 'eligible', serverId: session.serverId, updatedAt: 1 },
-        ], hasNext: false }) : ({ sessions: [
-            { id: 'wrong-repository', serverId: session.serverId, updatedAt: 2 },
-            { id: 'workspace-less', serverId: session.serverId, updatedAt: 3 },
-        ], hasNext: true, nextCursor: 'next' }),
-        readSession: async (id: string) => ({ sessionId: id, serverId: session.serverId,
-            ...(id === 'workspace-less' ? {} : { acceptedWorkspace: id === 'eligible' ? acceptedWorkspace
-                : { ...acceptedWorkspace, repository: { ...repository, repository: 'another/repository' } } }) }),
-    };
-    for (const bound of [false, true]) {
-        const recipients = await readTriageRecentSessionsV1(pickerHost as unknown as TriageStartHostV1, true,
-            { eligibility: { action, ...(bound ? { repository } : {}) }, allPages: true });
-        expect(recipients).toMatchObject({ status: 'ready', items: bound
-            ? [{ id: 'eligible' }] : [{ id: 'wrong-repository' }, { id: 'eligible' }] });
-        if (recipients.status === 'ready') expect(recipients.items).toHaveLength(bound ? 1 : 2);
-    }
-
     // Only host RPC transports are substituted. Native operand construction,
     // registered handler, workspace admission, orchestration and delivery are real.
     for (const scenario of ['unbound', 'matching', 'mismatch', 'workspaceMissing', 'noInstruction'] as const) {
@@ -74,12 +53,11 @@ it('native Send delivers an unbound Task into the chosen workspace while preserv
                 ...(scenario === 'workspaceMissing' ? {} : { acceptedWorkspace }) }),
             selectActionInput: async (payload: unknown) => {
                 const parsed = PluginUiSelectActionInputRequestV1Schema.parse(payload);
-                expect(parsed).toMatchObject({ sessionCandidates: [session] });
+                expect(parsed).toMatchObject({ sessionCandidateQuery: { workspace: 'accepted' } });
                 return { kind: 'sessionAddress', session };
             },
             executeAction: async (ref: unknown, input: JsonValue) => {
                 const id = testkitTriageActionId(ref);
-                if (id === 'session.list') return { sessions: [{ id: session.sessionId, serverId: session.serverId, updatedAt: 1 }], hasNext: false };
                 if (id === 'actions/read-v1') {
                     const { seededFallbackInstruction: _instruction, ...instructionless } = action.target;
                     return { v: 1, availability: 'parsed', revision: '1', actions: [scenario === 'noInstruction'

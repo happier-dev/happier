@@ -87,8 +87,8 @@ export type SessionListOrdinaryPageAdapter = Readonly<{
 export type SessionListQueryPageRequest = Readonly<{
     source: SessionListPageSource;
     membership: SessionListPageMembership;
-    /** Predicate consumers need settled summaries, not just structural membership. */
-    hydration?: 'required';
+    /** Settle summaries from the page alone, or allow exact reads when the predicate requires them. */
+    hydration?: 'inline' | 'required';
     /** Client-only selection: null is unreadable; metadata_required demands the existing full owner loader. */
     selectSession?: SessionListPageSelection;
     candidateStartedBy?: Parameters<typeof fetchAndApplySessions>[0]['candidateStartedBy'];

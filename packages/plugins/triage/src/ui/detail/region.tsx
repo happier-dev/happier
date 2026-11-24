@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ActionFailureDetails } from '../ActionFailureDetails.js';
-import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
@@ -43,6 +43,7 @@ import type {
   TriageSourceEntrySnapshotV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { selectTriageSendRecipientV1 } from '../../sessions/entryStartChoices.js';
 import { readTriageComparisonSource } from './readComparison.js';
 import type { PluginUiActionControlController, PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } from '../../actions/configuredActionRunProtocol.js';
@@ -489,8 +490,15 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     controller.start(resolved.request);
     return null;
   }, [controller, resolveStartRequest]);
-  const prepareSend: NonNullable<TriageEntryActionControlsPropsV1['sendControl']>['prepare'] = async (request, options, session) => {
+  const prepareSend: NonNullable<TriageEntryActionControlsPropsV1['sendControl']>['prepare'] = async (request, options) => {
+    // The displayed action narrows the chooser. Resolve the executable action only once a person picks.
+    const selected = await selectTriageSendRecipientV1(host, { action: request.action, repository: props.repository }, options)
+      .catch((error: unknown) => ({ kind: 'unavailable' as const, ...(isPluginError(error) ? { failure: error } : {}) }));
+    if (options.signal.aborted || !mounted.current || selected.kind === 'cancelled') return null;
+    if (selected.kind === 'unavailable') return selected;
+    if (selected.kind !== 'sessionAddress') return { kind: 'unavailable' };
     const resolved = await resolveStartRequest(request);
+    if (options.signal.aborted || !mounted.current) return null;
     if (resolved?.kind !== 'ready') return resolved;
     const action = resolved.request.action;
     const titleKey = readTriageActionTitleKeyV1(action);
@@ -498,7 +506,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       sendPresentation: {
         actionLabel: titleKey === null ? action.label : text(titleKey, action.label),
         untitledSession: text('plugins.triage.surface.actions.untitledSession', 'Untitled Session'),
-      } }, options, session);
+      } }, options, selected.session);
   };
   const walk = React.useCallback(() => {
     if (reading.current || props.target.kind !== 'entry') return;

@@ -13,6 +13,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
 import { t } from '@/text';
+import { PagedSessionSelectionList } from './PagedSessionSelectionList';
+import type { SessionSelectionPageReader } from './readSessionSelectionPage';
 import { SessionSelectionList, type SessionSelectionListMode } from './SessionSelectionList';
 import { projectSessionSelectionRows, type SessionSelectionCandidate } from './projectSessionSelectionRows';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
@@ -46,6 +48,7 @@ export type SessionChooserMultipleSelect = Readonly<{
     onSubmit: (targets: readonly SessionAddress[]) => void;
 }>;
 export type SessionChooserModalProps = CustomModalInjectedProps & Readonly<{
+    readPage?: SessionSelectionPageReader;
     serverIds?: ReadonlyArray<string>;
     selectSessions?: (sessions: ReadonlyArray<SessionSelectionCandidate>) => ReadonlyArray<SessionSelectionCandidate>;
     title: string;
@@ -81,6 +84,32 @@ const styles = StyleSheet.create((theme) => ({
 export const SessionChooserModal = React.memo(function SessionChooserModal(
     props: SessionChooserModalProps,
 ) {
+    return props.readPage
+        ? <PagedChooserModal {...props} readPage={props.readPage} />
+        : <SnapshotChooserModal {...props} />;
+});
+
+function PagedChooserModal(props: SessionChooserModalProps & Readonly<{ readPage: SessionSelectionPageReader }>) {
+    const { width, height } = useWindowDimensions();
+    const keyboardHeight = useKeyboardHeight();
+    const layout = resolveSessionSelectionModalLayout({ windowWidth: width, windowHeight: height, keyboardHeight });
+    return (
+        <View testID={`${props.testID}-modal-body`} style={styles.body}>
+            <PagedSessionSelectionList
+                readPage={props.readPage}
+                testID={props.testID}
+                title={props.title}
+                searchPlaceholder={props.searchPlaceholder}
+                emptyStateLabel={props.emptyStateLabel}
+                maxHeight={layout.listMaxHeight}
+                onSelectSession={address => { void props.onSelectSession(address); props.onClose(); }}
+                onRequestClose={() => { props.onDismiss(); props.onClose(); }}
+            />
+        </View>
+    );
+}
+
+function SnapshotChooserModal(props: SessionChooserModalProps) {
     const { theme } = useUnistyles();
     const [selectedKeys, setSelectedKeys] = React.useState<ReadonlySet<string> | null>(null);
     const selecting = selectedKeys !== null && props.multipleSelect !== undefined;
@@ -207,4 +236,4 @@ export const SessionChooserModal = React.memo(function SessionChooserModal(
             />
         </View>
     );
-});
+}

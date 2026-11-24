@@ -4,12 +4,27 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
 import { readCurrentProjectAccountRows, readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { readSessionListRenderableOwnerMetadataView } from './listing/sessionListRenderableSessionProjection';
+import type { SessionListRenderableSession } from './listing/sessionListRenderable';
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
 
 /** Reuses the opened Account's admitted, indexed census; never inventories or guesses from paths. */
 export function readSessionAcceptedWorkspaceRef(session: Pick<Session, 'ownerAccountId' | 'access' | 'accessLevel'
     | 'metadataLayoutVersion' | 'metadata' | 'ownerMetadataView'>, scope: ServerAccountScope | null,
     state: Parameters<typeof readCurrentProjectAccountRows>[0]): WorkspaceRefV1 | null {
+    return resolveAcceptedWorkspaceRef(session, scope, state, readSessionOwnerMetadataView(session));
+}
+
+/** The picker borrows the same Account checkout resolution using the admitted list projection. */
+export function readSessionListAcceptedWorkspaceRef(session: SessionListRenderableSession, scope: ServerAccountScope,
+    state: Parameters<typeof readCurrentProjectAccountRows>[0]): WorkspaceRefV1 | null {
+    const metadata = session.metadataUnavailable ? null : readSessionListRenderableOwnerMetadataView(session);
+    return resolveAcceptedWorkspaceRef(session, scope, state, metadata);
+}
+
+function resolveAcceptedWorkspaceRef(session: Pick<Session, 'ownerAccountId' | 'access' | 'accessLevel'>,
+    scope: ServerAccountScope | null, state: Parameters<typeof readCurrentProjectAccountRows>[0],
+    metadata: ReturnType<typeof readSessionOwnerMetadataView>): WorkspaceRefV1 | null {
     if (!scope) return null;
     const currentRows = readCurrentProjectAccountRows(state);
     const rows = areServerAccountScopesEqual(scope, currentRows?.scope) ? currentRows : null;
@@ -18,7 +33,6 @@ export function readSessionAcceptedWorkspaceRef(session: Pick<Session, 'ownerAcc
         rowServerId: scope.serverId, censusServerId: rows?.scope.serverId, viewerAccountId: scope.accountId,
         workspaceRefs: rows ? readProjectAccountWorkspaceRefs(state) : undefined, sessionProjectKeyResolver: rows?.sessionProjectKeyResolver,
     });
-    const metadata = readSessionOwnerMetadataView(session);
     const resolved = metadata && census.workspaceRefs ? census.sessionProjectKeyResolver?.(metadata, scope.serverId) : null;
     return resolved?.kind === 'resolved' ? resolved.ref ?? null : null;
 }

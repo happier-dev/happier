@@ -75,7 +75,7 @@ import {
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
-import { selectTriageSendRecipientV1, type TriageSendRecipientUnavailableReasonV1 } from './entryStartChoices.js';
+import { selectTriageSendRecipientV1 } from './entryStartChoices.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
     submitTriageEntrySessionStart,
@@ -233,7 +233,6 @@ export type TriageEntrySessionStartUnavailableReasonV1 =
     | 'promptUnavailable'
     /** Nothing left this surface: the press failed before the start Action. */
     | 'dispatch'
-    | TriageSendRecipientUnavailableReasonV1
     /**
      * The start Action left, and what became of it is unknown.
      *
@@ -1175,7 +1174,7 @@ export function createTriageEntrySessionStartController(
                 if (choice.kind === 'cancelled') { cancel(); return null; }
                 if (choice.kind !== 'sessionAddress') {
                     inFlight.current = false;
-                    setPhase(choice.kind === 'unavailable' ? unavailable(choice.reason, choice.failure) : unavailable('dispatch'));
+                    setPhase(unavailable('dispatch'));
                     return null;
                 }
                 session = choice.session;

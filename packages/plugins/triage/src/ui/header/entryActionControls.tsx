@@ -2,7 +2,6 @@ import * as React from 'react';
 import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginUiActionBinding, PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-sources/runtime';
-import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
   AgentActionButton,
   Button,
@@ -156,8 +155,7 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   onAction: (request: TriageEntryActionRequestV1) => void | Promise<TriageEntryActionRefusalV1 | null | void>;
   /** Prepares the exact Send operand for a host press and receives its settlement. */
   sendControl?: Readonly<{
-    prepare(request: TriageEntryActionRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0],
-      session?: ActionSessionAddressV1): Promise<Awaited<ReturnType<PluginUiActionControlController['prepare']>> | TriageEntryActionRefusalV1>;
+    prepare(request: TriageEntryActionRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0]): Promise<Awaited<ReturnType<PluginUiActionControlController['prepare']>> | TriageEntryActionRefusalV1>;
     onSettled: PluginUiActionControlController['onSettled'];
   }>;
   /** Opens the one actions editor on this action (the chevron's "Edit action…"); absent where no editor is mounted. */
@@ -237,7 +235,6 @@ function isTriageActionBlockedV1(action: TriageActionV1, reviewPreparation: Tria
 
 const NO_SELECTION_COPY = 'Select an entry to start a session from it.';
 const ACTION_ITEM_PREFIX = 'triage-action:';
-const RECENT_SESSION_ITEM_PREFIX = 'triage-start:recent:';
 const EXISTING_SESSION_ITEM_ID = 'triage-start:existing-session';
 const EXTRA_ITEM_PREFIX = 'triage-more:';
 const NO_PREPARATION_COPY =
@@ -314,7 +311,6 @@ export function TriageEntryActionControls(
   const { target, actions, workflowSubject, reviewPreparation, viewerIsAuthor, onAction, sendControl } = props;
   const text = usePluginTranslation();
   const [moreOpen, setMoreOpen] = React.useState(false);
-  const [startOpen, setStartOpen] = React.useState(false);
   const compact = props.compact === true;
   // The pinned band's room, and the width its controls needed when Ask last had to yield (null: it never did).
   const [bandRoom, setBandRoom] = React.useState<number | null>(null);
@@ -348,20 +344,19 @@ export function TriageEntryActionControls(
   const agentRequest = target.kind === 'refused' || agentPrimary === null || agentPrimary.target.kind !== 'agent'
     || isTriageActionBlockedV1(agentPrimary, reviewPreparation) ? null
     : { action: agentPrimary, entryRef: target.entryRef, sourceInstanceId: target.sourceInstanceId };
-  // Who the split's press starts with, and the recent Sessions its caret lists while open (the choices' read owner).
+  // Who the split's press starts with (the choices' read owner).
   // Read from the primary agent action itself, not from whether it can be pressed yet: who it starts with depends on
   // the action alone, so a row-opened pull request whose workspace still reads names its agent from first paint
   // instead of drawing "Review" and growing once the workspace is ready (F10).
   const startChoices = useTriageEntrySessionStartChoices({
     action: agentPrimary?.target.kind === 'agent' ? agentPrimary : null,
     ...(props.repository === undefined ? {} : { repository: props.repository }),
-    menuOpen: startOpen,
   });
   const prepareSend = React.useCallback(async (request: TriageEntryActionRequestV1,
-    options: Parameters<PluginUiActionControlController['prepare']>[0], session?: ActionSessionAddressV1) => {
+    options: Parameters<PluginUiActionControlController['prepare']>[0]) => {
     if (sendControl === undefined) return null;
     setRefusal(null);
-    const outcome = await sendControl.prepare(request, options, session);
+    const outcome = await sendControl.prepare(request, options);
     if (outcome !== null && 'kind' in outcome) {
       if (!options.signal.aborted) setRefusal(outcome);
       return null;
@@ -517,43 +512,17 @@ export function TriageEntryActionControls(
   const agentLabel = startTarget === null ? startChoices.settlingAgentLabel : startTarget.agent?.label;
   const startWithLabel = agentLabel === undefined ? undefined
     : text('plugins.triage.surface.actions.withAgent', '{action} with {agent}', { action: primaryWords, agent: agentLabel });
-  const recentRows = startChoices.recentSessions.status !== 'ready' ? []
-    : startChoices.recentSessions.items.flatMap(row => row.serverId === undefined ? [] : [{ ...row, serverId: row.serverId }]).slice(0, START_MENU_RECENT_ROWS);
-  // Lab t1: recent Sessions under their own label, then the way to every Session; with none, only that way.
-  const sendMenuAction = (session?: ActionSessionAddressV1): PluginUiActionBinding<string> | undefined =>
+  const sendMenuAction: PluginUiActionBinding<string> | undefined =
     primary === null || sendControl === undefined ? undefined : {
       action: TRIAGE_SESSION_HANDOFF_ACTION_REF_V1,
-      prepare: (_id, options) => prepareSend({ action: primary, entryRef, sourceInstanceId }, options, session),
+      prepare: (_id, options) => prepareSend({ action: primary, entryRef, sourceInstanceId }, options),
       onSettled: sendControl.onSettled,
     };
   const startGroups = sendControl === undefined ? [] : [{
-    id: 'triage-start:recent',
+    id: 'triage-start:send',
     accessibilityLabel: text('plugins.triage.surface.actions.sendToSessionGroup', 'Send to a Session'),
-    // A few recent rows, then the way to every Session (lab t1 start): the menu never runs past the screen.
-    items: [
-      ...recentRows.map((row) => {
-        // What it is doing only when the host says it is working, then where it runs: its workspace (unless the title
-        // already names it), its machine, and its Home.
-        // A managed workspace's folder is a content hash, not a name; the host shows its machine instead, and so does this.
-        const tail = row.path?.split(/[\\/]/u).filter((part) => part !== '').at(-1);
-        const workspace = tail === undefined || /^[0-9a-f]{24,}$/iu.test(tail) ? undefined : tail;
-        const where = [
-          row.runtimeActivityState === 'active' ? text('plugins.triage.surface.actions.sessionWorking', 'Working') : undefined,
-          workspace !== undefined && workspace.toLowerCase() !== row.title?.trim().toLowerCase() ? workspace : undefined,
-          row.host ?? row.locationLabel,
-          row.serverName,
-        ].filter((part) => part !== undefined && part !== '').join(' · ');
-        return {
-          id: `${RECENT_SESSION_ITEM_PREFIX}${String(row.serverId)}\u001f${row.id}`,
-          label: row.title ?? text('plugins.triage.surface.actions.untitledSession', 'Untitled Session'),
-          ...(where === '' ? {} : { subtitle: where }),
-          action: sendMenuAction({ serverId: row.serverId, sessionId: row.id }),
-        };
-      }),
-      { id: EXISTING_SESSION_ITEM_ID, action: sendMenuAction(), label: recentRows.length === 0
-        ? text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…')
-        : text('plugins.triage.surface.actions.findSession', 'Find a Session…') },
-    ],
+    items: [{ id: EXISTING_SESSION_ITEM_ID, action: sendMenuAction,
+      label: text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…') }],
   }];
   const launchPrimary = (launchMode: TriageActionLaunchModeV1) => {
     if (primary !== null) press({ action: primary, entryRef, sourceInstanceId, launchMode });
@@ -650,8 +619,6 @@ export function TriageEntryActionControls(
           compact={compact}
           pending={startPending}
           groups={startGroups}
-          showGroupLabels={recentRows.length > 0}
-          onMenuOpenChange={setStartOpen}
           onLaunch={launchPrimary}
           {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}
         />
@@ -757,8 +724,6 @@ export function TriageEntryActionControls(
   );
 }
 
-/** The Start menu shows the lab's few recent Sessions; Find a Session… reaches every other one. */
-const START_MENU_RECENT_ROWS = 3;
 
 const COMPACT_PRIMARY_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
 /**

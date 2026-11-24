@@ -22,6 +22,8 @@ import {
     type PluginContributedActionConnectedAccountOptionsTransport,
     type PluginContributedActionSelectionOutcome,
 } from '@/components/plugins/actions/pluginContributedActionController';
+import type { SessionSelectionPageReader } from '@/components/sessions/selection/readSessionSelectionPage';
+import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { NOTIFICATION_NOTIFY_ME_ACTION_ID } from '@happier-dev/protocol/actions/notificationConfigurationActionIds';
@@ -221,10 +223,15 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                             || resolveServerProfileScopeIdForIdentifier(input.host.serverId) !== serverId) {
                             return errorPayload('unavailable', 'host_unavailable');
                         }
-                        const { presentSessionAddressSelection } = await import(
-                            '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection'
-                        );
-                        const presentation = presentSessionAddressSelection(serverId, input.anchor, undefined, parsed.data.sessionCandidates);
+                        const query = parsed.data.sessionCandidateQuery;
+                        const readPage: SessionSelectionPageReader | undefined = query === undefined ? undefined
+                            : async (cursor, pageSignal) => {
+                                const { createSessionSelectionPageReader } = await import(
+                                    '@/components/sessions/selection/readSessionSelectionPage'
+                                );
+                                return createSessionSelectionPageReader({ ...lifetime.scope, serverId }, query)(cursor, pageSignal);
+                            };
+                        const presentation = presentSessionAddressSelection(serverId, input.anchor, undefined, parsed.data.sessionCandidates, readPage);
                         const cancel = () => presentation.close();
                         signal?.addEventListener('abort', cancel, { once: true });
                         if (signal?.aborted) cancel();

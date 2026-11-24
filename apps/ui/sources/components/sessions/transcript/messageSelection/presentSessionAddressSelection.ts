@@ -1,3 +1,4 @@
+import type { SessionSelectionPageReader } from '@/components/sessions/selection/readSessionSelectionPage';
 import { Modal } from '@/modal';
 import { createAnchoredPickerChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -15,7 +16,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
  */
 export function presentSessionAddressSelection(serverId: string, anchor?: PopoverAnchor,
     destination?: Extract<TranscriptSendToSessionModalProps, { selectionOnly: true }>['destination'],
-    sessionCandidates?: readonly ActionSessionAddressV1[]) {
+    sessionCandidates?: readonly ActionSessionAddressV1[], readPage?: SessionSelectionPageReader) {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
     let modalId = '';
     let closed = false;
@@ -29,7 +30,7 @@ export function presentSessionAddressSelection(serverId: string, anchor?: Popove
     modalId = Modal.show({
         component: TranscriptSendToSessionModal,
         props: { selectionOnly: true, sourceServerId: serverId, onResolve: settle, ...(destination ? { destination } : {}),
-            ...(sessionCandidates === undefined ? {} : { sessionCandidates }) },
+            ...(sessionCandidates === undefined ? {} : { sessionCandidates }), readPage },
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,

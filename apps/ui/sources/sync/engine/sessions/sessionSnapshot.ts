@@ -1559,8 +1559,8 @@ function awaitUnlessAborted<T>(read: Promise<T>, signal: AbortSignal | undefined
 export async function fetchAndApplySessions(params: {
     serverId?: string | null;
     source?: SessionListPageSource;
-    /** Explicit inventory readers need settled summaries, not opened Session entities. */
-    contentDemand?: 'session' | 'list-projection';
+    /** Inline display opens list-page data without acquiring more Session documents. */
+    contentDemand?: 'session' | 'list-projection' | 'list-display';
     /** Query-only predicate demand: proven public provenance misses need no private summary. */
     candidateStartedBy?: Readonly<{ selection: SessionListFilterV1['startedBy']; viewerAccountId: string }>;
     sessionListPath?: string;
@@ -1615,7 +1615,8 @@ export async function fetchAndApplySessions(params: {
 }): Promise<SessionListFetchResult> {
     const { credentials, encryption, sessionDataKeys } = params;
     const isQuerySource = params.source?.kind === 'query';
-    const isListProjectionDemand = isQuerySource || params.contentDemand === 'list-projection';
+    const inlineDisplayOnly = params.contentDemand === 'list-display';
+    const isListProjectionDemand = isQuerySource || inlineDisplayOnly || params.contentDemand === 'list-projection';
     // Query pages and explicit metadata inventories own list rows, not opened Sessions. Their
     // decryption still has to publish the readable summary through the same tuple-aware
     // patcher used when a heartbeat overtakes hydration; discarding it leaves cold reports
@@ -2137,7 +2138,7 @@ export async function fetchAndApplySessions(params: {
         openedDisplayRows.set(row.id, buildSessionListRenderableFromSession(source, previous ?? undefined, undefined, undefined,
             { shared: shared.display, ...(owner?.ok ? { owner: owner.display } : {}) }));
     }
-    const displayDemand = sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
+    const displayDemand = inlineDisplayOnly ? [] : sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
         // A missing sidecar is not demand for a Session body. The viewport,
         // route or explicit query owns the first read; its tuple writer persists
         // the display so later list reads can use the sidecar directly.
@@ -2147,7 +2148,7 @@ export async function fetchAndApplySessions(params: {
             currentRenderable: readCurrentDisplay(row.id),
             admissionScope }));
     const displayDemandIds = new Set(displayDemand.map(row => row.id));
-    const compactDemand = sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
+    const compactDemand = inlineDisplayOnly ? [] : sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
         && (!shouldApplyRenderables || displayDemandIds.has(row.id)
             || (demandedSessionIds.has(row.id) && needsWarmHydration({ row,
                 cachedEntry: cachedSessionListEntries[row.id], existingSession: params.getExistingSession?.(row.id),
@@ -2387,7 +2388,7 @@ export async function fetchAndApplySessions(params: {
 
     if (shouldApplyRenderables) {
         const rowsNeedingHydration = hydrationPriority.rows.filter((row) =>
-                isSessionCurrent(row.id) && needsWarmHydration({
+                isSessionCurrent(row.id) && (!inlineDisplayOnly || fullRows.has(row.id)) && needsWarmHydration({
                     row,
                     cachedEntry: cachedSessionListEntries[row.id],
                     existingSession: params.getExistingSession?.(row.id),

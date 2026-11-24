@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import type { SessionSelectionPageReader } from '@/components/sessions/selection/readSessionSelectionPage';
 import { SessionChooserModal, type SessionSelectionCandidate } from '@/components/sessions/selection/SessionChooserModal';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { SelectionListOption } from '@/components/ui/selectionList';
@@ -14,6 +15,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
 
 export type TranscriptSendToSessionModalProps = CustomModalInjectedProps & Readonly<{
     sourceServerId: string;
+    readPage?: SessionSelectionPageReader;
     sessionCandidates?: readonly ActionSessionAddressV1[];
     onResolve: (destination: SendTranscriptSelectionDestination | null) => void;
 }> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never; selectedCount?: never;

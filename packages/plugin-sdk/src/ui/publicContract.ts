@@ -265,6 +265,8 @@ export type PluginUiHostApiSurfaceContextV1 = {
     machineExecutionReady?: boolean;
     /** The mounted requester's origin is admitted. Observation only; invocations still revalidate authority. */
     requesterExecutionReady?: boolean;
+    /** Host-selected default Agent for presentation, scoped to this Account. */
+    readonly preferredAgent?: ProtocolPluginUiHostApiSurfaceContextV1['preferredAgent'];
     accountEncryptionMode: 'plain' | 'e2ee';
     platform: PluginUiPlatform;
     locale: string;

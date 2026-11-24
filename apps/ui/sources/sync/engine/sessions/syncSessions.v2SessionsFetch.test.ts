@@ -79,6 +79,45 @@ function fetchWithoutDefaultCurrentness(params: Parameters<typeof fetchAndApplyS
     });
 }
 
+it('reads inline Session display without opening compact Sessions that lack a display projection', async () => {
+    const displayRow = buildSessionRow({
+        id: 'shown',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: {} })),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({
+            v: 1, workspace: { path: '/checkout', machineId: 'machine', name: 'Shown Session' },
+        })),
+    });
+    const applySessionListRenderables = vi.fn();
+    const request = vi.fn(async (path: string) => path.startsWith('/v2/sessions?')
+        ? jsonResponse({
+            sessions: [displayRow, buildSessionRow({ id: 'legacy', metadataLayoutVersion: 0 })],
+            nextCursor: null,
+            hasNext: false,
+        })
+        : undefined);
+    const result = await fetchAndApplySessionsSource({
+        credentials: { token: 't', secret: 's' },
+        encryption: null,
+        log: { log: () => {} },
+        accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+        request: createCompactSessionListFetchBoundary(request),
+        applySessions: vi.fn(),
+        applySessionListRenderables,
+        contentDemand: 'list-display',
+        requiredHydrationSessionIds: 'all',
+        awaitSessionListHydration: true,
+        sessionDataKeys: new Map(),
+    });
+    expect(result.sessionIds).toEqual(['shown', 'legacy']);
+    expect(applySessionListRenderables).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ id: 'shown',
+            metadata: expect.objectContaining({ name: 'Shown Session', path: '/checkout', machineId: 'machine' }) }),
+    ]), expect.anything());
+    expect(request.mock.calls.map(([path]) => new URL(path, 'https://home.test').pathname)).toEqual(['/v2/sessions']);
+});
+
 const onAgentRequest = vi.fn();
 const OWNER_METADATA_CIPHERTEXT =
     'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';

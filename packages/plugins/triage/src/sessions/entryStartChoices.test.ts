@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TriageActionV1 } from '../settings/actions.js';
 import {
     readTriageEntrySessionStartTargetV1,
-    readTriageRecentSessionsV1,
-    selectTriageSendRecipientV1,
     type TriageEntrySessionStartChoicesHostV1,
 } from './entryStartChoices.js';
 
@@ -26,12 +24,6 @@ function fixture(options: { preferred?: string; machineAvailable?: boolean } = {
             { targetKey: 'backend:codex', label: 'Codex', enabled: true,
                 identity: { pluginId: 'happier.codex', localId: 'codex' } },
         ] };
-        if (action === 'session.list') return { sessions: [
-            { id: 'same-id', serverId: 'home-b', title: 'Investigate sign in', active: false,
-                presence: null, updatedAt: 20, locationLabel: 'Work laptop' },
-            { id: 'same-id', serverId: 'home-a', title: 'Review parser', active: true,
-                presence: null, updatedAt: 10 },
-        ], nextCursor: 'more' as string | undefined, hasNext: true };
         throw new Error(`Unexpected host Action ${action}`);
     });
     const readMachineDisplayName = vi.fn(async () => options.machineAvailable === false
@@ -41,7 +33,7 @@ function fixture(options: { preferred?: string; machineAvailable?: boolean } = {
     return { host, executeAction, readMachineDisplayName };
 }
 
-describe('the Start split consumes the existing Agent, placement and Session owners', () => {
+describe('the Start split consumes the existing Agent and placement owners', () => {
     it('shows the actual default Agent and names only the Machine the placement owner resolved', async () => {
         const { host, executeAction, readMachineDisplayName } = fixture();
         const defaults = await readTriageEntrySessionStartTargetV1(host, { action: ACTION });
@@ -61,38 +53,4 @@ describe('the Start split consumes the existing Agent, placement and Session own
             .toMatchObject({ status: 'ready', agent: { label: 'Codex' }, machine: null });
     });
 
-    it('does no Session read while closed, and preserves resumable summary addresses and continuation when opened', async () => {
-        const { host, executeAction } = fixture();
-        expect(await readTriageRecentSessionsV1(host, false)).toEqual({ status: 'idle' });
-        expect(executeAction).not.toHaveBeenCalled();
-        const result = await readTriageRecentSessionsV1(host, true);
-        expect(executeAction).toHaveBeenCalledExactlyOnceWith('session.list', { view: 'summary', resumableOnly: true }, undefined);
-        expect(result).toMatchObject({ status: 'ready', hasMore: true, items: [
-            { id: 'same-id', serverId: 'home-b', title: 'Investigate sign in' },
-            { id: 'same-id', serverId: 'home-a', title: 'Review parser' },
-        ] });
-    });
-
-    it('settles a failed Session read without retrying or presenting an empty successful list', async () => {
-        const { host, executeAction } = fixture();
-        executeAction.mockRejectedValueOnce(new Error('Home unavailable'));
-        expect(await readTriageRecentSessionsV1(host, true)).toEqual({ status: 'unavailable' });
-        expect(executeAction).toHaveBeenCalledTimes(1);
-    });
-
-    it.each([
-        ['unavailable', new Error('Home unavailable'), 'sessionCandidatesUnavailable'],
-        ['empty', { sessions: [], nextCursor: undefined, hasNext: false }, 'sessionCandidatesEmpty'],
-    ] as const)('reports %s Send candidates without opening a picker', async (_label, result, reason) => {
-        const { host, executeAction } = fixture();
-        if (result instanceof Error) executeAction.mockRejectedValueOnce(result);
-        else executeAction.mockImplementationOnce(async () => result);
-        const readSession = vi.fn(async () => null);
-        const selectActionInput = vi.fn(async () => ({ kind: 'cancelled' as const }));
-
-        expect(await selectTriageSendRecipientV1(
-            { ...host, readSession, selectActionInput }, { action: ACTION },
-        )).toEqual({ kind: 'unavailable', reason });
-        expect(selectActionInput).not.toHaveBeenCalled();
-    });
 });

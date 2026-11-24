@@ -4,12 +4,12 @@ import { isPluginActionConfirmationDeclined, projectPluginActionControlExecution
 import { usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
 import {
-    readTriageEntrySessionStartTargetV1, readTriageRecentSessionsV1,
+    readTriageEntrySessionStartTargetV1,
     type TriageEntrySessionStartChoiceInputV1, type TriageEntrySessionStartChoicesHostV1,
-    type TriageEntrySessionStartTargetV1, type TriageRecentSessionsV1,
+    type TriageEntrySessionStartTargetV1,
 } from '../../sessions/entryStartChoices.js';
 export * from '../../sessions/entrySessionStartController.js';
-export type { TriageRecentSessionV1, TriageEntrySessionStartTargetV1, TriageRecentSessionsV1 } from '../../sessions/entryStartChoices.js';
+export type { TriageEntrySessionStartTargetV1 } from '../../sessions/entryStartChoices.js';
 
 export type TriageEntrySessionStartUiControllerV1 = Omit<TriageEntrySessionStartControllerV1, 'settleAction'> & Readonly<{ settleAction: PluginUiActionControlController['onSettled'] }>;
 
@@ -34,8 +34,8 @@ export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOpti
 }
 
 export function useTriageEntrySessionStartChoices(
-    input: TriageEntrySessionStartChoiceInputV1 & Readonly<{ menuOpen: boolean }>,
-): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; recentSessions: TriageRecentSessionsV1; settlingAgentLabel?: string }> {
+    input: TriageEntrySessionStartChoiceInputV1,
+): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; settlingAgentLabel?: string }> {
     const host = usePluginHostApi() as unknown as TriageEntrySessionStartChoicesHostV1;
     const scope = usePluginUiEphemeralSharedScope();
     const profileId = input.action?.profileId;
@@ -53,7 +53,6 @@ export function useTriageEntrySessionStartChoices(
     const current = settled?.host === host && settled.scope === scope && settled.key === targetKey ? settled : null;
     const defaultTarget: TriageEntrySessionStartTargetV1 = hasAccountPreferredAgent ? { status: 'idle' }
         : current?.target ?? { status: 'idle' };
-    const [recentSessions, setRecentSessions] = React.useState<TriageRecentSessionsV1>({ status: 'idle' });
     React.useLayoutEffect(() => {
         if (profileId === undefined || workspaceMode === undefined || hasAccountPreferredAgent) return;
         const lifetime = new AbortController();
@@ -78,19 +77,9 @@ export function useTriageEntrySessionStartChoices(
         });
         return () => { lifetime.abort(); profileLabels?.release(); };
     }, [host, scope, profileId, workspaceMode, kind, deployment, repository, targetKey, hasAccountPreferredAgent]);
-    React.useEffect(() => {
-        if (!input.menuOpen) { setRecentSessions({ status: 'idle' }); return; }
-        const lifetime = new AbortController();
-        setRecentSessions({ status: 'loading' });
-        void readTriageRecentSessionsV1(host, true, { signal: lifetime.signal, eligibility: {
-            action: input.action, ...(input.repository === undefined ? {} : { repository: input.repository }),
-        } })
-            .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
-        return () => lifetime.abort();
-    }, [host, scope, input.menuOpen, profileId, workspaceMode, kind, deployment, repository]);
     // The host's Account choice already names the default. Placement is resolved when someone actually presses.
     const settlingAgentLabel = defaultTarget.status === 'loading' || defaultTarget.status === 'idle'
         ? profileId === null ? preferredAgentLabel : current?.profileLabel
         : undefined;
-    return { defaultTarget, recentSessions, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
+    return { defaultTarget, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
 }
