@@ -163,6 +163,10 @@ async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
   await page.waitForTimeout(35);
   await page.mouse.move(activationPoint.x, activationPoint.y);
   await page.waitForTimeout(35);
+  // Pan activation starts the gesture; the next move publishes the drag
+  // pointer. Establish it before holding at an autoscroll edge.
+  await page.mouse.move(activationPoint.x, activationPoint.y + (activationPoint.y - sourcePoint.y));
+  await page.waitForTimeout(35);
 
   // Revealing/hovering the source can scroll a previously visible target out
   // of the list. Reveal it with the pointer held before sampling drop geometry.
