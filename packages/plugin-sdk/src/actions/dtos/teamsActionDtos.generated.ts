@@ -653,6 +653,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -713,6 +727,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -878,6 +906,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -938,6 +980,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -1106,6 +1162,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -1166,6 +1236,20 @@ export type TeamsActionInputById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -3837,6 +3921,20 @@ export type TeamsActionResultById = {
                                 };
                             };
                             projectFilesSource?: undefined | {
+                                kind: 'managed';
+                                workspace: {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                };
+                            } | {
                                 target: {
                                     serverId: string;
                                     machineId: string;
@@ -3897,6 +3995,20 @@ export type TeamsActionResultById = {
                                 };
                             };
                             projectFilesSource?: undefined | {
+                                kind: 'managed';
+                                workspace: {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                };
+                            } | {
                                 target: {
                                     serverId: string;
                                     machineId: string;
@@ -4062,6 +4174,20 @@ export type TeamsActionResultById = {
                                 };
                             };
                             projectFilesSource?: undefined | {
+                                kind: 'managed';
+                                workspace: {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                };
+                            } | {
                                 target: {
                                     serverId: string;
                                     machineId: string;
@@ -4122,6 +4248,20 @@ export type TeamsActionResultById = {
                                 };
                             };
                             projectFilesSource?: undefined | {
+                                kind: 'managed';
+                                workspace: {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                };
+                            } | {
                                 target: {
                                     serverId: string;
                                     machineId: string;
@@ -4289,6 +4429,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -4349,6 +4503,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -4590,6 +4758,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -4650,6 +4832,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -4815,6 +5011,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -4875,6 +5085,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -5042,6 +5266,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -5102,6 +5340,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -5371,6 +5623,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -5431,6 +5697,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -5596,6 +5876,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -5656,6 +5950,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -5823,6 +6131,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -5883,6 +6205,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -6122,6 +6458,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -6182,6 +6532,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -6347,6 +6711,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -6407,6 +6785,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -6574,6 +6966,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -6634,6 +7040,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -6873,6 +7293,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -6933,6 +7367,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7098,6 +7546,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7158,6 +7620,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7325,6 +7801,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -7385,6 +7875,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -7624,6 +8128,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7684,6 +8202,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7849,6 +8381,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -7909,6 +8455,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -8076,6 +8636,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -8136,6 +8710,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -8375,6 +8963,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -8435,6 +9037,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -8600,6 +9216,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -8660,6 +9290,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -8827,6 +9471,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -8887,6 +9545,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -9126,6 +9798,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -9186,6 +9872,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -9351,6 +10051,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -9411,6 +10125,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -9578,6 +10306,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -9638,6 +10380,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -9877,6 +10633,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -9937,6 +10707,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -10102,6 +10886,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -10162,6 +10960,20 @@ export type TeamsActionResultById = {
                             };
                         };
                         projectFilesSource?: undefined | {
+                            kind: 'managed';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             target: {
                                 serverId: string;
                                 machineId: string;
@@ -10329,6 +11141,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
@@ -10389,6 +11215,20 @@ export type TeamsActionResultById = {
                         };
                     };
                     projectFilesSource?: undefined | {
+                        kind: 'managed';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         target: {
                             serverId: string;
                             machineId: string;
