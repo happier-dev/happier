@@ -8,6 +8,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -90,22 +91,44 @@ describe('registered UI Pending recovery Action delivery', () => {
     });
 
     it.each(['steer_now', 'interrupt_and_send'] as const)('sends the retained identity with %s through the Pending owner', async deliveryIntent => {
-        const { serverId, context } = await targetFixture('session.pending.action.set');
+        const serverIdentityId = 'srv_pending_recovery';
+        const serverId = await homes.addHome({ name: 'Pending Home', serverUrl: 'https://pending-recovery.test',
+            serverIdentityId, accountId: 'pending-owner', currentAccount: true, active: false });
+        await homes.addHome({ name: 'Focused Home', serverUrl: 'https://pending-focused.test', accountId: 'focused-owner' });
+        const baseline = createRootLayoutFeaturesResponse();
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId },
+            session: { ...baseline.capabilities.session, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
+        } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            actionId: 'session.open', machineId: 'pending-machine', tokenEpoch: 0,
+            custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
+            requesterInvocation: 'credentials',
+            execute(input, { requestId }) {
+                expect(input).toMatchObject({ sessionId: 'session', intent: 'resume' });
+                expect(requestId).toBe('input');
+                return { status: 'opened', sessionId: 'session', serverId: serverIdentityId };
+            },
+        });
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: 'pending-owner' };
         const { storage } = await import('@/sync/domains/state/storage');
         const session = createSessionFixture({ id: 'session', serverId, encryptionMode: 'plain', active: true,
             metadata: { path: '/repo', host: 'machine', machineId: 'pending-machine', flavor: 'claude', version: '999.0.0' } });
         storage.setState({ sessions: { session } });
         homes.answer(serverId, 'GET /v2/sessions/session', { body: createPlainSessionByIdResponseFixture(session) });
         storage.getState().upsertPendingMessage('session', { id: 'input', localId: 'input', text: 'Retain this input',
-            source: 'server_pending', deliveryStatus: 'accepted', pendingOutboxScope: { serverId, accountId: 'pending-owner' },
+            source: 'server_pending', deliveryStatus: 'accepted', pendingOutboxScope: { serverId: serverIdentityId, accountId: 'pending-owner' },
             createdAt: 1, updatedAt: 1, rawRecord: { role: 'user', content: { type: 'text', text: 'Retain this input' }, meta: {} } });
         const path = '/v2/sessions/session/pending/input/action';
         const requestedAction = { v: 1, kind: deliveryIntent === 'steer_now' ? 'steer_now' : 'send_now' };
         homes.answer(serverId, `PATCH ${path}`, { body: { ok: true, didUpdate: true, requestedAction } });
         const result = await createDefaultActionExecutor().execute(ActionIdSchema.parse('session.pending.sendNow'),
             { sessionId: 'session', localId: 'input', serverId, deliveryIntent }, context);
-        expect(result).toEqual({ ok: true, result: { type: 'retry_scheduled' } });
+        expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true, result: { type: 'retry_scheduled' } });
         expect(homes.requestsFor(path)).toMatchObject([{ serverId }]);
+        expect(homes.requestsFor('/v1/actions/session.open')).toMatchObject([{ serverId }]);
         expect(homes.requests.filter(request => request.method === 'DELETE')).toEqual([]);
     });
     it.each(actionIds)('executes %s at the captured background Home with its declared UI confirmation policy', async actionId => {

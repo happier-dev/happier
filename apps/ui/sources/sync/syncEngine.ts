@@ -5271,6 +5271,7 @@ class Sync {
             const result = await submitSessionUserMessage(this.createSessionSubmitPort(), {
                 sessionId,
                 ...(requestedAddress ? { serverId: requestedAddress.serverId } : {}),
+                ...(options?.accountLifetime ? { accountLifetime: options.accountLifetime } : {}),
                 recipient,
                 session,
                 text: pending.text,
