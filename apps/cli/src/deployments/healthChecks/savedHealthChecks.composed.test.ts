@@ -1,3 +1,12 @@
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { readSavedBuiltinHealthCheckAction } from '../../../../../packages/plugins/machine-services/src/actionIds';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
@@ -8,6 +17,7 @@ import { createServer } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import type { HealthCheckSourceConfigV1, JsonValue } from '@happier-dev/plugin-sdk';
 import type { AccountKvEntry, AccountKvService } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -81,6 +91,103 @@ const definition = (kind: string, config: HealthCheckSourceConfigV1['checks'][nu
 });
 
 describe('saved source finite native producer binding', () => {
+    it('runs the signed-in saved Check on the admitted Machine without re-entering service RPC admission', async () => {
+        const machineId = 'subject';
+        const serviceId = 'service';
+        const serverId = 'server';
+        const serverHttpBaseUrl = 'https://home.example.test';
+        const accountId = 'owner';
+        const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+        const check = definition('http', { endpoint: 'https://example.test/health', expectStatus: 503 });
+        const f = await adopted({ v: 1, subject: { kind: 'machineService', machineId, serviceId }, checks: [check] });
+        const action = readSavedBuiltinHealthCheckAction(check.kind);
+        if (!action) throw new Error('Expected the declared HTTP health Action');
+        const rootInput = { action, input: { sourceInstanceId: 'health:subject', checkId: check.checkId } };
+        const target = { kind: 'machine' as const, machineId };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission',
+            binding: { accountId, custodianAccountId: accountId, actionId: ACTION_INVOKE_ACTION_ID_V1,
+                accountEncryptionMode: 'plain', authentication: { kind: 'account', tokenEpoch: 1 },
+                machineId, installationId: f.observer.installationId, serverIdentityId: serverId, target,
+                requestId: 'saved-check-request', requestEnvelopeDigest: 'a'.repeat(43) } });
+        const isCurrent = async () => true;
+        // Home fixture supplies the already-opened private Account projections.
+        // The receiving Machine's signed-effect admission below remains real.
+        const admitted = { ...authorization, requesterAccountProjection: {
+            serverId, accountId, accountEncryptionMode: 'plain' as const, isCurrent, readArtifact: async () => null,
+            projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: size => new Uint8Array(size) }),
+        }, requesterHttpProjection: { serverId, serverIdentityId: serverId, accountId, serverHttpBaseUrl,
+            isCurrent, createRequestHeaders: async () => null } };
+        const detail = MachineServicesDetailResultV1Schema.parse({ kind: 'service', service: {
+            serviceId, name: 'Watched service', authority: 'machine', lifecyclePurpose: 'deployment',
+            generation: 'generation', state: 'running', watchId: serviceId, watchRevision: '1',
+            native: { phase: 'running', readiness: 'not_reported' },
+            nativeInstance: { adapter: { pluginId: f.seed.plugin.id, localId: 'systemd' }, nativeResourceId: 'example.service' },
+            capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false },
+        } });
+        const readNativeService = vi.fn(async () => detail);
+        const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId,
+            encryptionMode: 'plain', logger: () => {}, authorizeRequest: async () => ({ ok: true }) });
+        rpc.registerHandler(RPC_METHODS.MACHINES_SERVICE_DETAIL, readNativeService);
+        let signedServiceRelays = 0;
+        const registryExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            machineServiceAction: async ({ input, context }) => {
+                if (!context.externalActionExecutionAuthorization) return readNativeService();
+                signedServiceRelays++;
+                // The fake Home just conveys the exact outer proof as the live relay did.
+                return readMachineActionRpcResult(await rpc.handleRequest({
+                    method: `${machineId}:${RPC_METHODS.MACHINES_SERVICE_DETAIL}`, params: input, requestId: 'detail-relay',
+                    callerAuthority: 'present_user', callerInputAuthorization: authorization,
+                    machineAdmission: { machineId, installationId: f.observer.installationId,
+                        actorAccountId: accountId, custodianAccountId: accountId, role: 'manage', encryptionMode: 'plain' },
+                }, undefined, 'authenticated_home_socket'));
+            } });
+        const request = vi.fn<HttpService['requestStream']>(async ({ url }) => ({
+            status: 200, finalUrl: url, headers: {}, chunks: (async function* () {})(), dispose: async () => {},
+        }));
+        const http = createPluginHttpFixture({
+            requestStream: request, request: async () => { throw new Error('Unexpected buffered probe'); },
+        });
+        const report = vi.fn();
+        const healthHost = createSavedHealthChecksHost({ serverId, homeServerIdentityId: serverId,
+            resolveAdoptedDefinitionSet: () => f.owner, readObserver: () => f.observer,
+            openDomainArtifact: async () => null, onServiceResult: report });
+        const executor = createActionExecutor({
+            ...createCliActionDeps({ token: credentials.token, credentials, serverId, serverIdentityId: serverId, serverHttpBaseUrl,
+                sessionId: 'global',
+                machineActionDirectTargetTransport: { machineId, machineServiceAction: readNativeService,
+                    invoke: async () => { throw new Error('Unexpected general Machine RPC'); } } }),
+            async invokeContributedAction({ context }) {
+                const seed = { ...f.seed, approvalContext: context, reviewedParentByPress: true,
+                    reviewedParent: createHostReviewedChildPortV1({ actionId: ACTION_INVOKE_ACTION_ID_V1,
+                        input: rootInput, context, reviewAdmitted: true }).parent };
+                const actions = createPluginInvocationActionsService({ seed, actionExecutor: registryExecutor,
+                    invokeContributedAction: async () => { throw new Error('Unexpected contributed child'); } });
+                const service = healthHost.bind(seed, { actions, http });
+                if (!service) throw new Error('Expected the saved health host');
+                const [result] = await service.read({ sourceInstanceId: 'health:subject', checkIds: [check.checkId] });
+                return { ok: true, result };
+            },
+        });
+        const context = { serverId, runtimeAccountId: accountId, externalActionTarget: target, actionCaller: { kind: 'host' as const },
+            authority: 'present_user' as const };
+        const expected = { ok: true, result: { checkId: 'http', result: { status: 'down', cause: { httpStatus: 200 } } } };
+        expect(await executor.execute(ACTION_INVOKE_ACTION_ID_V1, rootInput, { ...context, surface: 'cli' })).toMatchObject(expected);
+        expect(request).toHaveBeenCalledTimes(1);
+        const signed = await executor.execute(ACTION_INVOKE_ACTION_ID_V1, rootInput,
+            { ...context, surface: 'ui', externalActionExecutionAuthorization: admitted });
+        expect({ outcome: signed.ok ? 'observed' : signed.errorCode,
+            phase: signed.ok ? undefined : signed.failureCause?.phase, requests: request.mock.calls.length,
+            published: report.mock.calls.length, signedServiceRelays })
+            .toEqual({ outcome: 'observed', phase: undefined, requests: 2, published: 2, signedServiceRelays: 0 });
+        expect(signed).toMatchObject(expected);
+        const differentAccount = await executor.execute(ACTION_INVOKE_ACTION_ID_V1, rootInput, {
+            ...context, surface: 'ui', runtimeAccountId: 'another-account', externalActionExecutionAuthorization: admitted,
+        });
+        expect(differentAccount).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(request).toHaveBeenCalledTimes(2);
+        expect(report).toHaveBeenCalledTimes(2);
+    });
+
     it('enrolls a selected monitor handler and stores only its endpoint identity on the admitted mapping', async () => {
         const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
             subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },

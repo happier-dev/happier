@@ -13,6 +13,7 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createConfirmedSessionSendClaimV1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type {
     AdmittedTargetedOperationExecutionOptions,
     AdmittedTargetedOperationExecutionWithOriginOptions,
@@ -895,6 +896,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
             && sameStrictJsonValue(input, { repository: parentOperands.repository, credentialRef: selected.data });
         const issueReviewedChild = params.seed.reviewedParent
             && (!(params.seed.reviewedParentByPress && actionId === ACTION_INVOKE_ACTION_ID_V1) || isDeploymentRepositoryLookup);
+        // An exact service read on the Action's installed Machine uses its captured
+        // service owner. Relaying it would spend the root proof on a different RPC effect.
+        const executeLocalServiceDetail = executionMachineId && spec.bindings?.rpcMethod === RPC_METHODS.MACHINES_SERVICE_DETAIL
+            && isJsonObject(parsedPluginInput.data) && parsedPluginInput.data.machineId === executionMachineId
+            ? source?.executeHostReviewedChildAction : undefined;
         const execute = () => params.seed.reviewedParent && issueReviewedChild ? invokeHostReviewedChildV1({
             parent: params.seed.reviewedParent,
             context: executionContext,
@@ -902,7 +908,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
             // envelope. The shared issuer owns target preparation, not this adapter.
             child: { action: actionId, role: 'actions.execute', input: parsedPluginInput.data as JsonValue },
             admittedReview: { action: actionId, role: 'actions.execute', surface: executionSurface },
-            execute: (input, childContext, childActionId) => invocationExecutor.execute(childActionId, input,
+            execute: (input, childContext, childActionId) => executeLocalServiceDetail
+                ? executeLocalServiceDetail(childActionId, input, childContext)
+                : invocationExecutor.execute(childActionId, input,
                 // The issuer preserves this ordinary plugin provenance and
                 // augments it with host-private review; it does not replace the caller.
                 childContext as typeof executionContext),

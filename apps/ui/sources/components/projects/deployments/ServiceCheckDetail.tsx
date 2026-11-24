@@ -35,7 +35,8 @@ import { Typography } from '@/constants/Typography';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { HappyError } from '@/utils/errors/errors';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -785,11 +786,25 @@ function CheckNowStatus(props: Readonly<{ checkNow: CheckNowControl }>) {
         action={{ label: t('common.cancel'), onPress: cancel, testID: 'services.check.checkNow.cancel' }} />
     );
   }
-  return state.kind === 'failed' ? (
+  if (state.kind !== 'failed') return null;
+  const error = state.error;
+  if (error instanceof HappyError && error.code && error.failureCause) {
+    const presentation = presentActionExecutionFailure({
+      ok: false, errorCode: error.code, error: error.message, details: error.details,
+      failureCause: error.failureCause, requestId: error.requestId, effectAttempted: error.effectAttempted,
+    });
+    return (
+      <SurfaceStateCard testID="services.check.checkNow.failed" kind="error" size="line" title={presentation.reason}
+        diagnosticCode={error.code}
+        diagnosticDetail={presentation.technicalDetails.filter(line => line.key !== 'code')
+          .map(line => `${line.label} ${line.value}`).join('\n')} />
+    );
+  }
+  return (
     <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
-      {resolveActionExecutionErrorMessage(state.error, t('common.requestFailed'))}
+      {resolveActionExecutionErrorMessage(error, t('common.requestFailed'))}
     </Text>
-  ) : null;
+  );
 }
 
 /** The Check page's ⋯ (lab A3): the check's own editor, where its target, cadence and alerts change. */

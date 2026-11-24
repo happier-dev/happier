@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
 import { plugin as healthPlugin } from '../../../../../../packages/plugins/machine-services/src/manifest';
@@ -391,6 +392,17 @@ it('settles one exact saved HTTP Action and displays the newer result from its r
       expect(screen.findByTestId('services.check.checkNow.failed')).toBeNull();
       expect([transport.mock.calls.length, Boolean(screen.findByTestId(`services.check.result.${NOW}`))]).toEqual([1, true]);
     });
+    const phase = 'rpc.admission.caller_input_authorization';
+    transport.mockResolvedValueOnce({ supported: true, result: {
+      ok: false, code: RPC_ERROR_CODES.FORBIDDEN, message: 'Invalid RPC caller input authorization',
+      effectAttempted: false,
+      failureCause: { phase, errorClass: 'Error', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null },
+    } });
+    await screen.pressByTestIdAsync('services.check.checkNow');
+    await vi.waitFor(() => expect(screen.findByTestId('services.check.checkNow.failed-details-toggle')).not.toBeNull());
+    await screen.pressByTestIdAsync('services.check.checkNow.failed-details-toggle');
+    expect(screen.getTextContent()).toContain(phase);
+    expect(requests).toHaveBeenCalledTimes(1);
   } finally {
     await screen.unmount();
     transport.mockRestore();
