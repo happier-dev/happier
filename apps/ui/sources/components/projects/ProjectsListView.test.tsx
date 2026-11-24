@@ -11,21 +11,35 @@ import { createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema, ProjectAccountRowReadRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { Socket } from 'socket.io-client';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ProjectOrganizationRow } from '@/sync/store/domains/projectAccountRows';
 import type { ProjectMobileSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
 
+const projectsHomeUrl = 'https://projects-list.test';
+const projectsAccountId = 'account-1';
 const homes = createHomeGovernanceHarness();
+let accountSocket: Socket | undefined;
+const homeProjectRows = new Map<string, ProjectAccountRowV1>();
+const homeProjectChanges: ChangeEntry[] = [];
+
 installHomeGovernanceBoundaries(homes);
-installDisconnectedServerSocketBoundary();
+installDisconnectedServerSocketBoundary((socket, serverUrl) => {
+    if (serverUrl !== projectsHomeUrl) return;
+    accountSocket = socket;
+    configureConnectedServerSocketBoundary(socket);
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,16 +151,41 @@ function findRowMenu(screen: Awaited<ReturnType<typeof renderProjects>>) {
 beforeEach(async () => {
     await homes.reset();
     await loadSyncSingletonForTests();
-    serverId = await homes.addHome({ name: 'Projects Home', serverUrl: 'https://projects-list.test',
-        accountId: 'account-1' });
-    homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: { status: 'listed', coverage: 'complete', rows: [] } });
+    accountSocket = undefined;
+    homeProjectRows.clear();
+    homeProjectChanges.length = 0;
+    serverId = await homes.addHome({ name: 'Projects Home', serverUrl: projectsHomeUrl, accountId: projectsAccountId });
+    homes.answer(serverId, 'POST /v1/account/project-rows/list', { select: () => ({
+        body: { status: 'listed', coverage: 'complete', rows: [...homeProjectRows.values()] },
+    }) });
+    homes.answer(serverId, 'POST /v1/account/project-rows/read', { select: input => {
+        const { key } = ProjectAccountRowReadRequestV1Schema.parse(input);
+        const row = homeProjectRows.get(buildProjectAccountRowPhysicalKeyV1(key));
+        return { body: row ? { status: 'present', row } : { status: 'absent' } };
+    } });
     homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
-    homes.answer(serverId, '/v2/cursor', { body: { cursor: '0' } });
+    homes.answer(serverId, '/v2/cursor', { select: () => ({
+        body: CurrentCursorResponseSchema.parse({ cursor: homeProjectChanges.length, changesFloor: 0 }),
+    }) });
+    homes.answer(serverId, '/v2/changes', { select: (_input, { url, init }) => {
+        const query = new URL(url).searchParams;
+        const afterHeader = new Headers(init?.headers).get(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+        const after = Number(afterHeader ?? query.get('after') ?? 0);
+        const limit = Number(query.get('limit') ?? homeProjectChanges.length);
+        const changes = homeProjectChanges.slice(after, after + limit);
+        const nextCursor = changes.at(-1)?.cursor ?? after;
+        return {
+            body: ChangesResponseSchema.parse({ changes, nextCursor, full: nextCursor < homeProjectChanges.length }),
+            ...(afterHeader === null ? {} : { headers: { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: afterHeader } }),
+        };
+    } });
+    // The returning device has already observed this Home at cursor zero.
+    const { saveChangesCursor } = await import('@/sync/domains/state/persistence');
+    saveChangesCursor('0', { serverScope: serverId, accountId: projectsAccountId });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
-    await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://projects-list.test')!.token! });
+    await restoreConnectionToActiveServer({ token: homes.findByServerUrl(projectsHomeUrl)!.token! });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     await createDefaultActionExecutor().execute('projects.list', { serverId });
-    storage.getState().clearProjectAccountRowsScope();
     draftRecords.clear();
 });
 afterEach(async () => {
@@ -161,6 +200,39 @@ function mobileSurfaces() {
         buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId, accountId: 'account-1' }, id)!, surface,
     ]));
 }
+async function publishHomeProjectRows() {
+    const socket = accountSocket;
+    if (!socket) throw new Error('Project fixture has no connected Account socket');
+
+    const { rows } = createPlainProjectAccountRowListFixture({
+        workspaceRefs: workspaceRefsV1Mock, relationships, organizations: organizationsMock,
+    });
+    const changed = rows.map(row => {
+        const entityId = buildProjectAccountRowPhysicalKeyV1(row.key);
+        const previous = homeProjectRows.get(entityId);
+        const next = { ...row, revision: previous ? previous.revision + 1 : row.revision };
+        homeProjectRows.set(entityId, next);
+        const change: ChangeEntry = {
+            cursor: homeProjectChanges.length + 1, changedAt: 1, kind: 'account', entityId,
+            hint: ProjectAccountRowChangeHintV1Schema.parse({ projectAccountRow: true, key: next.key, revision: next.revision }),
+        };
+        homeProjectChanges.push(change);
+        return { entityId, revision: next.revision };
+    });
+    // The socket announces the changed keys. Their hints and contents are read from the Home.
+    const update = UpdateContainerSchema.parse({
+        id: `project-rows-${homeProjectChanges.length}`, seq: homeProjectChanges.length, createdAt: 1,
+        body: { t: 'account-change', changeKinds: ['account'], entityIds: changed.map(row => row.entityId) },
+    });
+    await act(async () => {
+        for (const listener of socket.listenersAny()) listener('update', update);
+        await vi.waitFor(() => {
+            const applied = storage.getState().projectAccountRows?.revisionsByPhysicalKey;
+            expect(changed.filter(row => applied?.[row.entityId] !== row.revision)).toEqual([]);
+        });
+    });
+}
+
 async function renderProjects(element: React.ReactElement) {
     let panes = createAppPaneState({ maxScopesInMemory: 12 });
     for (const [scopeId, scope] of Object.entries(paneScopesMock)) {
@@ -177,10 +249,7 @@ async function renderProjects(element: React.ReactElement) {
     storage.getState().applyReady();
     const accountScope = storage.getState().profileScope;
     if (!accountScope) throw new Error('Project fixture has no connected Account');
-    storage.getState().activateProjectAccountRowsScope(accountScope);
-    homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
-        workspaceRefs: workspaceRefsV1Mock, relationships, organizations: organizationsMock,
-    }) });
+    await publishHomeProjectRows();
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const result = await createDefaultActionExecutor().execute('projects.list', { serverId });
     expect(result.ok).toBe(true);
@@ -284,7 +353,7 @@ describe('ProjectsListView', () => {
         workspaceRefsV1Mock = Array.from({ length: 150 }, (_, index) => ({
             id: `ref-${index}`, serverId, machineId: 'machine', rootPath: `/repo-${index}`,
             projectKey: `project-${index}`, createdAtMs: 1,
-        }));
+        })).sort((left, right) => left.id.localeCompare(right.id));
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderProjects(<ProjectsListView />);
         expect(screen.findByTestId('projects-list-item-ref-149')).not.toBeNull();
@@ -650,8 +719,8 @@ describe('ProjectsListView', () => {
 
         it('reports unavailable sync status without inventing a conflict in a closed project row', async () => {
             machinesMock = [createMachine({ id: 'm1', host: 'leeroy-mbp' })];
-            workspaceRefsV1Mock = [targetWorkspaceRef(), { id: 'wr_source', serverId,
-                machineId: 'm2', rootPath: '/source', createdAtMs: 1 }];
+            workspaceRefsV1Mock = [{ id: 'wr_source', serverId,
+                machineId: 'm2', rootPath: '/source', createdAtMs: 1 }, targetWorkspaceRef()];
             // The accepted source checkout has no reachable Machine; structural refs remain valid.
             relationships = [relationship];
             const { ProjectsListView } = await import('./ProjectsListView');

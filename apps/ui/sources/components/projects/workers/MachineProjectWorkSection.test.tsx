@@ -14,7 +14,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
@@ -111,22 +111,24 @@ async function setup(
     machineHttp.gate = new Promise<void>((resolve) => {
       releasePolicyRead = resolve;
     });
-  const sharedRow = options.role ? createPlainSharedMachineRowFixture({
-    id: 'm1', custodianAccountId: 'owner', role: options.role,
-    machine: createMachineFixture({ id: 'm1', metadataVersion: 4 }),
-  }) : null;
-  const machine = createMachineFixture({
+  const accountId = 'artifact-account';
+  const ownerMachine = createHydratedPlainMachineFixture({
     id: 'm1',
+    accountId,
     // A Machine that is answering; an offline one is covered by its own case.
-    active: true,
-    activeAt: Date.now(),
-    storageMode: 'plain',
-    metadataVersion: 4,
-    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-    isShared: options.role !== undefined,
-    ...(sharedRow ? { access: sharedRow.access, keyBasis: sharedRow.keyBasis,
-      dataEncryptionKey: sharedRow.dataEncryptionKey, installationId: sharedRow.installationId } : {}),
+    machine: { active: true, activeAt: Date.now(), metadataVersion: 4 },
   });
+  const sharedRow = options.role ? createPlainSharedMachineRowFixture({
+    id: ownerMachine.id, custodianAccountId: 'owner', role: options.role, machine: ownerMachine,
+  }) : null;
+  const machine = sharedRow ? {
+    ...ownerMachine,
+    isShared: true,
+    access: sharedRow.access,
+    keyBasis: sharedRow.keyBasis,
+    dataEncryptionKey: sharedRow.dataEncryptionKey,
+    installationId: sharedRow.installationId,
+  } : ownerMachine;
   let metadata: Record<string, unknown> = { ...machine.metadata };
   let version = 4;
   let policyReads = 0;
@@ -134,7 +136,7 @@ async function setup(
   const { loadSyncSingletonForTests } =
     await import('@/dev/testkit/harness/syncSingletonLoader');
   await loadSyncSingletonForTests();
-  fixture = await createPlainArtifactHomeFixture('https://machine-work.test', { currentAccount: true,
+  fixture = await createPlainArtifactHomeFixture('https://machine-work.test', { accountId, currentAccount: true,
     handleRequest: async (path, init) => {
       if (path === '/v1/account/project-rows/list' && projectRowsRead) return projectRowsRead();
       const batch = path === '/v1/machines/read-batch' && init?.method === 'POST';
@@ -152,7 +154,7 @@ async function setup(
     new Response(
       JSON.stringify({
         machine: {
-          ...(sharedRow ?? createPlainMachineRowFixture({ id: 'm1', accountId: 'artifact-account' })),
+          ...(sharedRow ?? createPlainMachineRowFixture({ id: 'm1', accountId, machine })),
           metadata: encodePlainMachineStoredContent(metadata),
           metadataVersion: version,
         },
