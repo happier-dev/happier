@@ -14,6 +14,11 @@ import {
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createWidgetAreaLayoutArtifactPortV1 } from './widgetSurfaceArtifactV1.js';
 import * as areaOwner from './widgetSurfaceArtifactV1.js';
+import {
+  createUsageSessionWidgetPresets,
+  createUsageWidgetPresets,
+  USAGE_SESSION_WIDGET_AREA,
+} from './usageWidgetPresetsV1.js';
 
 const surface: WidgetSurfaceRefV1 = {
   serverId: 'home',
@@ -264,6 +269,42 @@ describe('personal widget areas at the Account Artifact owner', () => {
         .instance.displayName,
     ).toBe('Mine');
   });
+  it.each([
+    ...createUsageWidgetPresets(undefined, { initialMetric: 'tokens' })
+      .map(preset => ({ area: 'main', preset })),
+    ...createUsageSessionWidgetPresets()
+      .map(preset => ({ area: USAGE_SESSION_WIDGET_AREA, preset })),
+  ])('recognizes a persisted Reset of the stock $preset.id Usage view', async ({ area, preset }) => {
+    const b = boundary();
+    const scope: WidgetSurfaceRefV1 = {
+      ...surface,
+      owner: { kind: 'corePage', pageId: 'usage', area, layoutId: preset.id },
+    };
+    const open = (presets: Parameters<typeof createWidgetSurfaceArtifactPortV1>[1]['presets']) =>
+      createWidgetSurfaceArtifactPortV1(b.transport, {
+        surface: scope, presets, isCurrent: () => true,
+      });
+
+    // The previous Usage host seeded Tokens on a bare Account route.
+    const old = open([preset]);
+    const first = flattenWidgetLayoutWidgetsV1((await old.readState()).layout.items)[0]!;
+    await old.apply({ kind: 'rename', instanceId: first.instance.id, displayName: 'My widget' });
+    await old.resetPreset();
+    const oldReset = await old.readState();
+    expect(oldReset).toMatchObject({ kind: 'present', preset: { isEdited: false } });
+
+    const current = open(area === 'main' ? createUsageWidgetPresets() : createUsageSessionWidgetPresets());
+    expect.soft(await current.readState()).toMatchObject({
+      kind: 'present', preset: { isEdited: false },
+    });
+    await current.apply({ kind: 'rename', instanceId: first.instance.id, displayName: 'Changed again' });
+    expect(await current.readState()).toMatchObject({ preset: { isEdited: true } });
+    await current.resetPreset();
+    const newReset = await current.readState();
+    expect(newReset).toMatchObject({ kind: 'present', preset: { isEdited: false } });
+    expect(newReset.layout.items).toEqual(oldReset.layout.items);
+  });
+
   it('lists one layout per preset when a layoutless core-page record also exists', async () => {
     const b = boundary();
     const core: WidgetSurfaceRefV1 = {

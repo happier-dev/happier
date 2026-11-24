@@ -51,7 +51,9 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
     // from sessions), so on a first run both partners are empty together.
     overview: [{ width: 'full', widgets: [w('usage_daily', 'tall'), w('usage_period_summary', 'medium'),
         w('usage_capacity', 'medium'), w('usage_projections', 'full'), w('usage_coach', 'full'),
-        w('usage_efficiency', 'medium'), w('usage_rhythm', 'medium')] }],
+        w('usage_efficiency', 'medium'),
+        // Preserve the persisted Reset layout from when stock Overview was seeded with Tokens.
+        w('usage_rhythm', 'medium', { metric: 'tokens' })] }],
     // Cost facts holds the money facts and the prices line behind them, so it takes the full band. The daily
     // cost bars sit beside the agents' costs (lab d2views-COST 2-up), two lists of the same height; Efficiency is
     // one compact band, as on Usage, so no column runs past the chart beside it. Plan fit and Outcomes follow.
