@@ -7,6 +7,8 @@ import { CODERABBIT_CLI_AUTH } from './agent/authStatus.js';
 import { createCodeRabbitExecutionRunFactory } from './agent/reviews/nativeRun.js';
 import { createCodeRabbitReviewExecutionProfile } from './agent/reviews/profile.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
+import { CODERABBIT_ACCOUNT_RUNTIME } from './connectedAccount.js';
+import { CODERABBIT_ACCOUNT_PURPOSE, CODERABBIT_ACCOUNT_SERVICE_ID, CODERABBIT_STATE_SHARING } from './connectedAccountDeclarations.js';
 
 const createCodeRabbitRuntime: AgentRuntimeFactory = () => Object.freeze({
   executionRuns: createCodeRabbitExecutionRunFactory(),
@@ -33,16 +35,35 @@ export const CODERABBIT_PLUGIN = definePlugin({
       reason: 'Launch the user-installed CodeRabbit review CLI for an admitted review run.',
       scope: {
         executables: [{ kind: 'systemTool', id: CODERABBIT_SYSTEM_TOOL_ID }],
-        envKeys: ['CODERABBIT_API_KEY'],
+        envKeys: ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODERABBIT_API_KEY'],
       },
     }],
     optional: [],
+  },
+  connectedAccountDescriptors: {
+    [CODERABBIT_ACCOUNT_SERVICE_ID]: {
+      declaration: {
+        title: 'CodeRabbit', capabilities: [],
+        authentication: { defaultModeId: 'native-login', modes: [{
+          id: 'native-login', kind: 'manual', title: 'Browser sign-in on this Machine',
+          outcomeReconciliation: 'none',
+          setup: { url: 'https://docs.coderabbit.ai/cli',
+            checklist: ['CodeRabbit opens a browser on the selected Machine. Complete sign-in there; Happier keeps the login in a private managed home.'] },
+          fields: [{ id: 'region', title: 'Region', schema: { type: 'string', enum: ['us', 'eu'] },
+            default: 'us', secret: false, presentation: { control: 'select', options: [
+              { value: 'us', title: 'US' }, { value: 'eu', title: 'EU' },
+            ] } }],
+        }] },
+      },
+      runtime: CODERABBIT_ACCOUNT_RUNTIME,
+    },
   },
   agents: {
     coderabbit: {
       declaration: {
         title: 'CodeRabbit',
-        connectedAccounts: [],
+        connectedAccounts: [{ purpose: CODERABBIT_ACCOUNT_PURPOSE, service: CODERABBIT_ACCOUNT_SERVICE_ID,
+          required: false, materializationKinds: ['files'], credentialKinds: ['oauth'] }],
         runtime: { kind: 'custom' },
         cli: {
           executable: {
@@ -66,7 +87,6 @@ export const CODERABBIT_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            environmentVariables: ['CODERABBIT_API_KEY'],
             missingCredentialState: 'unknown',
             loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },
@@ -80,6 +100,11 @@ export const CODERABBIT_PLUGIN = definePlugin({
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' } }),
       },
       cliAuth: CODERABBIT_CLI_AUTH,
+      connectedAccountLaunch: {
+        stateSharingDescriptor: CODERABBIT_STATE_SHARING,
+        switchContinuity: { continuityMode: 'restart_same_home', supportedTransitions: ['connected_to_connected'] },
+        continuity: {},
+      },
       factory: createCodeRabbitRuntime,
     },
   },

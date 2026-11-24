@@ -12,6 +12,7 @@ import { createCodeRabbitAgentOutput } from './agentOutput.js';
 import { preflightCodeRabbitReviewScope, readCodeRabbitReviewScopeFacts } from './scopePreflight.js';
 import { normalizeCodeRabbitReviewStartInput } from './startInput.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './systemTool.js';
+import { codeRabbitHomeEnvironment } from '../../connectedAccount.js';
 
 function createRuntime(
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
@@ -56,6 +57,11 @@ function createRuntime(
       const child = await context.services.exec.spawn({
         executable: { kind: 'systemTool', id: CODERABBIT_SYSTEM_TOOL_ID }, args,
         cwd: { root: 'workspace', relativePath: '' },
+        ...(request.launchEnvironment ? { env: {
+          ...request.launchEnvironment.values,
+          ...(request.launchEnvironment.values.HOME ? codeRabbitHomeEnvironment(request.launchEnvironment.values.HOME) : {}),
+          ...Object.fromEntries(request.launchEnvironment.unset.map(key => [key, ''])),
+        } } : {}),
       }, { signal });
       const subscription = child.onOutput(chunk => {
         if (chunk.stream === 'stdout') output.write(chunk.data);

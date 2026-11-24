@@ -14734,6 +14734,16 @@ existing New round confirmation presents the selected profile's cost option.
 
 ### Native review scope preflight (0.3 development)
 
+CodeRabbit declares its own connected-account purpose, separate from model
+Providers. Its manual authentication mode runs vendor-owned `auth login --agent`
+in a private acquisition home, verifies native auth status, and imports the
+opaque `.coderabbit/auth.json` file into existing connected-account custody.
+The existing purpose materializer and SDK native-home descriptor deliver that
+file into the selected review home. The native adapter consumes the admitted
+launch environment; it does not select credentials or retry with Machine auth.
+This is vendor-run browser authorization, not host-managed OAuth. Environment
+API-key review transport was not established with CLI 0.9.6 and is not offered.
+
 CodeRabbit's adapter preflight consumes the host SCM Action's checkout facts
 once when admitting a captured comparison. A whole working-tree comparison must
 use the current HEAD; committed comparisons must end at current HEAD and pass

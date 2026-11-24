@@ -40,7 +40,7 @@ function request(options: Record<string, unknown> = {}, scope: Record<string, un
   };
 }
 
-async function runFixture(params: { records: readonly unknown[]; engineId?: string; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
+async function runFixture(params: { launchEnvironment?: AgentExecutionRunOpenRequest['launchEnvironment']; records: readonly unknown[]; engineId?: string; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'coderabbit')?.factory;
   if (!factory) throw new Error('Expected CodeRabbit factory');
@@ -89,7 +89,7 @@ async function runFixture(params: { records: readonly unknown[]; engineId?: stri
         stdout: bytes, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }),
     } },
   } as unknown as AgentRuntimeContext;
-  const openRequest = request(params.options, params.scope, params.engineId);
+  const openRequest = { ...request(params.options, params.scope, params.engineId), ...(params.launchEnvironment ? { launchEnvironment: params.launchEnvironment } : {}) };
   const opened = await agent.executionRuns?.open({ ...openRequest, input: { ...openRequest.input,
     ...(params.changeType ? { structuredInput: { ...openRequest.input.structuredInput, changeType: params.changeType } } : {}),
   } }, context);
@@ -106,6 +106,18 @@ async function runFixture(params: { records: readonly unknown[]; engineId?: stri
 }
 
 describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)', () => {
+  it('launches review in the selected host-materialized account home without credentials on argv', async () => {
+    const selectedHome = '/fixture/selected-account-home';
+    const result = await runFixture({ records: [complete], launchEnvironment: {
+      values: { HOME: selectedHome, CODERABBIT_API_KEY: '' }, unset: [],
+    } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-complete' });
+    expect(result.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({ HOME: selectedHome, CODERABBIT_API_KEY: '' }),
+    }), expect.anything());
+    expect(vi.mocked(result.spawn).mock.calls[0]?.[0].args).not.toContain('--api-key');
+  });
+
   it.each(['reject', 'result'] as const)('cancels a stopped live SCM preflight before vendor launch (%s)', async cancelPreflight => {
     const result = await runFixture({ records: [complete], cancelPreflight, scope: {
       comparison: { id: 'captured-current', source: { kind: 'workingTree', area: 'both' },

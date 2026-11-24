@@ -10,7 +10,7 @@ export const coderabbitReviewDescriptor = Object.freeze({
         modes: ['change_scoped_review'],
         taxonomyFamilies: ['style', 'correctness', 'maintainability'],
         requiresSystemCli: 'coderabbit',
-        requiredSecrets: ['CODERABBIT_API_KEY'],
+        requiredSecrets: [],
         costClass: 'metered',
         cancellation: { supportsAbort: true, processTree: true },
         directCommentWrite: false,

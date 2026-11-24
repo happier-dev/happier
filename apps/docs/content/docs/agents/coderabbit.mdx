@@ -15,7 +15,7 @@ development. It requires a CodeRabbit CLI with the current
 
 - CodeRabbit CLI installed locally
 - `coderabbit` available on `PATH`, or `HAPPIER_CODERABBIT_PATH` set to its absolute path
-- CodeRabbit authentication configured on the machine running the review
+- A CodeRabbit account connected to Happier, or an explicitly selected native login on the machine running the review
 
 ## Install CodeRabbit
 
@@ -35,12 +35,23 @@ coderabbit --version
 
 ## Authentication
 
-CodeRabbit supports native login and API-key authentication. Follow the vendor's
-[authentication instructions](https://docs.coderabbit.ai/cli/reference#auth)
-on the machine running the review. A native login does not require
-`CODERABBIT_API_KEY`.
+In 0.3 development, connect a CodeRabbit account with **Browser sign-in on this
+Machine**. CodeRabbit opens its own browser login on the selected machine.
+Complete that login there; Happier keeps its authentication file in a private
+managed home and uses that home for reviews with the selected account.
 
-Check the CLI's status directly when troubleshooting:
+This flow uses CodeRabbit's native browser authorization. A remote machine needs
+a usable browser login there. If login expires, reconnect the account before
+starting another review. Happier does not substitute the machine's login when
+a selected account fails.
+
+CodeRabbit also documents Agentic API keys, but Happier's connected-account
+integration currently supports browser login only. Setting
+`CODERABBIT_API_KEY` has not been established as a supported review transport.
+
+For an explicitly selected machine login, follow the vendor's
+[authentication instructions](https://docs.coderabbit.ai/cli/reference#auth)
+and check its status directly when troubleshooting:
 
 ```bash
 coderabbit auth status
@@ -83,11 +94,11 @@ Wait for the time CodeRabbit reports, then retry the review. Happier does not
 automatically retry or split the selected scope. If CodeRabbit rejects a scope
 with too many files, choose a narrower scope using its reported guidance.
 
-### Status shows signed out with a key set
+### Browser login cannot open on the selected machine
 
-Happier reads the environment of the process the agent runs in. If the key is
-exported in your shell but the daemon was started at login, the daemon does not
-see it. Set it where the service runs, then use **Check now**.
+Complete sign-in with a browser available on that machine, then reconnect the
+CodeRabbit account. A browser signed in on a different device does not complete
+the native machine's callback automatically.
 
 ## Related
 

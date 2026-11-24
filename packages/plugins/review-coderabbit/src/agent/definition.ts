@@ -1,3 +1,5 @@
+import { CODERABBIT_ACCOUNT_SERVICE_ID } from '../connectedAccountDeclarations.js';
+
 const CODERABBIT_AGENT_ID = 'coderabbit';
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
@@ -9,7 +11,7 @@ export const AGENT_DEFINITION = Object.freeze({
     detectKey: 'coderabbit',
     flavorAliases: [],
     cloudConnect: null,
-    connectedServices: null,
+    connectedServices: { supportedServiceIds: [CODERABBIT_ACCOUNT_SERVICE_ID] },
     resume: { vendorResume: 'unsupported' as const },
     sessionStorage: { direct: false, persisted: false },
     sessionCapabilities: {

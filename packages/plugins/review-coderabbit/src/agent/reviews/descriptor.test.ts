@@ -38,6 +38,6 @@ describe('CodeRabbit review descriptor', () => {
   it('discloses only launch-environment keys consumed by the native review path', () => {
     const processAccess = PLUGIN_MANIFEST.hostAccess.required.find((request) => request.id === 'coderabbit-process');
 
-    expect(processAccess?.scope.envKeys).toEqual(['CODERABBIT_API_KEY']);
+    expect(processAccess?.scope.envKeys).toEqual(['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODERABBIT_API_KEY']);
   });
 });
