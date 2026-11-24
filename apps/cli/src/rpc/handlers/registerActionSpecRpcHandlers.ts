@@ -457,6 +457,9 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     actionId: typedActionId,
                     input: semanticInput,
                     ...buildActionExecutorContextHints(semanticInput),
+                    // The finite archive copy carries the reviewed Home without the requester’s local profile.
+                    ...(deploymentArchiveAdmission && typedActionId === 'daemon.filesystem.copy'
+                        ? { serverId: deploymentArchiveAdmission.proof.externalActionExecution.authorization.binding.serverIdentityId } : {}),
                     // The caller's invoking Session travels as transport context, never as Action input.
                     ...(envelopeDefaultSessionId ? { defaultSessionId: envelopeDefaultSessionId } : {}),
                     ...(externalActionTarget ? { externalActionTarget } : {}),

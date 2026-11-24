@@ -7,6 +7,14 @@ import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/executio
 import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import { SETUP_RPC_REGISTRATION_ACTION_IDS, withSetupRpcRegistrations } from '@/testkit/setupRpcRegistrations';
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
+import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
+import { createPreparedFilesystemTransferActionExecutor, projectPreparedFilesystemActionResult } from '@/machines/transfer/createPreparedFilesystemTransferActionExecutor';
+import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
+
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import {
     REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
@@ -50,6 +58,54 @@ function createRpcHarness() {
 
 describe('ActionSpec-derived RPC registrar', () => {
     const module = registrarModule;
+
+    it('accepts archive copy custody using the reviewed Home with no device-local profile in the effect context', async () => {
+        const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain' });
+        const homeId = h.root.binding.serverIdentityId;
+        const machineId = h.job.machineId;
+        const rootPath = await mkdtemp(join(tmpdir(), 'archive-copy-rpc-home-'));
+        const controller = new AbortController();
+        const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+        try {
+            const actionId = 'daemon.filesystem.copy';
+            const method = `${machineId}:${RPC_METHODS.DAEMON_FILESYSTEM_COPY}`;
+            const requestId = 'archive-copy';
+            const input = { kind: 'prepared_transfer', source: { kind: 'entry_tree', serverId: homeId, machineId: 'holder', rootPath,
+                path: 'archive.tar', sourceId: 'archive-entry', sizeBytes: 1, sha256: '0'.repeat(64),
+                entryTree: { operationId: 'export', expectation: { kind: 'file', digest: '0'.repeat(40), executable: false, size: 1 }, blobs: [] } },
+                destination: { serverId: homeId, machineId, rootPath, path: 'archive.tar' }, overwrite: false, recursive: false };
+            const params = { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId } };
+            const proof = createExternalActionMachineRpcExecution({ context: {
+                externalActionExecutionAuthorization: h.sealed, externalActionTarget: h.root.binding.target },
+                effectActionId: actionId, installationId: h.installed.installationId, method, requestId, params,
+                deploymentChildExecution: h.packet, deploymentArchiveOrigin: { environmentId: h.job.input.environmentId,
+                    deploymentId: 'deployment', holderMachineId: 'holder', holderInstallationId: 'holder-install' }, privateKey: h.receiver.secretKey });
+            if (!proof) throw new Error('Missing reviewed archive fixture proof');
+            const ingress = { signal: controller.signal, callerInputAuthorization: h.sealed,
+                workspaceSyncSourceExecution: { method, requestId, params, externalActionExecution: proof },
+                machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'ann', machineId,
+                    installationId: h.installed.installationId, role: 'use' as const, encryptionMode: 'plain' as const },
+                verifyMachineAdmissionCurrent: async () => true };
+            const transfer = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: rootPath,
+                accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+            const accept = vi.fn(() => controller.abort());
+            const { handlers, rpcHandlerManager } = createRpcHarness();
+            module.registerActionSpecRpcHandlers({ rpcHandlerManager, targetMachineId: machineId, actionIds: [actionId],
+                actionExecutor: { execute: async (_actionId, input, context) => projectPreparedFilesystemActionResult(await transfer({
+                    actionId, input, context: { ...context,
+                        operationAcceptance: { operationId: 'copy-operation', actionId, accept } },
+                })) } });
+            const result = await handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_COPY)?.(params, ingress);
+            expect(accept, JSON.stringify(result)).toHaveBeenCalledWith(expect.objectContaining({
+                status: 'accepted', operationId: 'copy-operation', sourceId: 'archive-entry',
+            }));
+        } finally {
+            controller.abort();
+            await lifecycle.stop();
+            await rm(rootPath, { recursive: true, force: true });
+            vi.restoreAllMocks();
+        }
+    });
 
     it('publishes the setup families through their production Machine registrars', async () => {
         // Account-only preset CRUD and Project/Team rows have no daemon binding.
