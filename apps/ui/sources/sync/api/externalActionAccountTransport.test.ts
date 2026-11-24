@@ -160,6 +160,57 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each(['caller retirement', 'Account retirement', 'lost acknowledgement'] as const)(
+        'settles a non-custodian Resume through Home HTTP after %s', async phase => {
+            const caller = new AbortController();
+            const signal = caller.signal;
+            const captured = await captureLazyActionAccountContext(serverId, signal);
+            const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+            const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
+                installationId: 'installation-1', installationPublicKey: encodeBase64(installation.publicKey),
+                access: { custodian: { accountId: 'custodian', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
+            homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+                body: await createMachineReadBatchResponseFixture(body, id => id === row.id ? row : null).json(),
+            }) });
+            const actionId = 'session.open';
+            const requestId = 'guest-resume';
+            const actionPath = `/v1/actions/${actionId}`;
+            homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'resume-proof', binding: {
+                    ...binding, actionId, requestId, target: envelope.target, machineId: row.id,
+                    installationId: row.installationId, custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+                    admittedMachineRole: 'use', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                } }) };
+            } });
+            let release!: () => void;
+            const held = new Promise<void>(resolve => { release = resolve; });
+            let reached!: () => void;
+            const entered = new Promise<void>(resolve => { reached = resolve; });
+            const resumed = { status: 'opened', sessionId: 'retained-session' };
+            homes.answer(serverId, actionPath, { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(request.envelope).toMatchObject({ input: { sessionId: 'retained-session', intent: 'resume' } });
+                expect(request.executionAuthorization?.requesterAccountContext).toBeDefined();
+                reached();
+                return { respondAfter: held, ...(phase === 'lost acknowledgement' ? { status: 502 }
+                    : { body: { v: 1, actionId, requestId, execution: { ok: true, result: resumed } } }) };
+            } });
+            const pending = executeOriginalAccountMachineAction({ account: captured, actionId, requestId,
+                machineId: row.id, foreignTargetOnly: true,
+                input: { sessionId: 'retained-session', intent: 'resume' }, signal });
+            try {
+                await entered;
+                caller.abort();
+                if (phase === 'Account retirement') await TokenStorage.removeCredentialsForServerUrl(captured.endpointUrl, { serverId });
+                release();
+                expect(await pending).toMatchObject(phase === 'caller retirement'
+                    ? { ok: true, result: resumed } : { ok: false, errorCode: 'outcome_unknown' });
+                expect(homes.requestsFor(actionPath)).toHaveLength(1);
+            } finally { release(); await pending; captured.dispose(); }
+        },
+    );
+
     it.each(['effect-issued', 'effect-before-issuance', 'read-issued'] as const)(
         'keeps the catalog lifetime at the HTTP issuance boundary (%s)', async phase => {
             const caller = new AbortController();

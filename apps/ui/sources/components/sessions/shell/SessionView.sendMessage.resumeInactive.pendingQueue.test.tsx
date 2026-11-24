@@ -234,6 +234,9 @@ const httpWrites: HttpWrite[] = [];
 const rpcCalls: RpcCall[] = [];
 let enqueueResponse: (write: HttpWrite) => Promise<Response>;
 let resumeResponse: (call: RpcCall) => Promise<ResumeSessionResult>;
+let guestResumeHttp: Readonly<{ machine: ReturnType<typeof createPlainMachineRowFixture>;
+    request: (input: Parameters<import('@/utils/system/runtimeFetch').RuntimeFetch>[0],
+        init: Parameters<import('@/utils/system/runtimeFetch').RuntimeFetch>[1]) => Promise<Response | null> }> | null = null;
 let sessionOpenDisabled = false;
 let sessionOpenAskFirst = false;
 let resetStartAskFirst = false;
@@ -313,9 +316,11 @@ const runtime = installSessionPaneRuntimeTestHarness({
     request: async (input, init) => {
         const url = new URL(String(input));
         const method = init?.method ?? 'GET';
+        const guestResponse = await guestResumeHttp?.request(input, init);
+        if (guestResponse) return guestResponse;
         if (url.pathname === '/v1/machines/read-batch' && method === 'POST') {
             return createMachineReadBatchResponseFixture(init?.body, id => id === 'm-target'
-                ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
+                ? guestResumeHttp?.machine ?? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
         }
         if (method === 'GET' && url.pathname === '/v2/sessions/s1/pending' && pendingReadOverride) return pendingReadOverride();
         if (method === 'GET' && url.pathname === '/v1/machines') {
@@ -363,7 +368,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         const artifactResponse = approvalArtifacts.handle(url.pathname, init);
         if (artifactResponse) return artifactResponse;
         if (url.pathname === '/v1/machines/m-target') return Response.json({
-            machine: createPlainMachineRowFixture({ id: 'm-target', accountId: 'account-a' }),
+            machine: guestResumeHttp?.machine ?? createPlainMachineRowFixture({ id: 'm-target', accountId: 'account-a' }),
         });
         if (method === 'POST' || method === 'PATCH') {
             const body: unknown = JSON.parse(String(init?.body ?? '{}'));
@@ -599,6 +604,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         clearDaemonMergedProjectionCacheForTests();
         enqueueResponse = async write => acceptedEnqueue(write);
         resumeResponse = async () => ({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'Daemon RPC is not available' });
+        guestResumeHttp = null;
         storage.setState({ settings: { ...storage.getState().settings,
             actionsSettingsV1: { v: 1, actions: {} },
             experiments: true, featureToggles: {}, sessionMessageSendMode: 'server_pending',
@@ -618,6 +624,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         modalMockState.current?.spies.confirm.mockResolvedValue(true);
     });
     afterEach(async () => {
+        guestResumeHttp = null;
         sessionOpenDisabled = false;
         sessionOpenAskFirst = false;
         resetStartAskFirst = false;
@@ -1318,6 +1325,80 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 });
         updateSession({ metadataLayoutVersion: 1, ownerMetadataView, active: false, presence: 0 });
     }
+
+    it.each(['admission', 'issued'] as const)(
+        'keeps a guest Resume in flight when its mounted Session becomes active (%s)', async stage => {
+        await stoppedSession();
+        await sodium.ready;
+        const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema }
+            = await import('@happier-dev/protocol/actions/externalActionApi');
+        const key = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(23));
+        const machine = createMachineFixture({ id: 'm-target', storageMode: 'plain', active: true, activeAt: Date.now(),
+            installationId: 'guest-resume-installation', installationPublicKey: sodium.to_base64(key.publicKey, sodium.base64_variants.ORIGINAL),
+            access: { custodian: { accountId: 'custodian', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+        storage.getState().applyMachines([machine], true, { sourceServerId: runtime.serverId });
+        const reached = deferred<void>();
+        const response = deferred<void>();
+        let requestSignal: AbortSignal | null | undefined;
+        let issued = 0;
+        guestResumeHttp = { machine: createPlainMachineRowFixture({ id: machine.id, accountId: 'custodian', machine }),
+            request: async (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/actions/session.open/execution-authorization') {
+                    const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    if (stage === 'admission') {
+                        requestSignal = init?.signal;
+                        reached.resolve();
+                        await response.promise;
+                    }
+                    return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'guest-resume-proof', binding: {
+                        serverIdentityId: runtime.serverIdentityId, accountId: 'account-a', authentication: { kind: 'account', tokenEpoch: 0 },
+                        machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'custodian',
+                        accountEncryptionMode: 'plain', admittedMachineRole: 'use', actionId: 'session.open',
+                        requestId: envelope.requestId, target: envelope.target,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    } }));
+                }
+                if (path !== '/v1/actions/session.open') return null;
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                expect(request.envelope).toMatchObject({ input: { sessionId: 's1', intent: 'resume' } });
+                expect(request.executionAuthorization?.requesterAccountContext).toBeDefined();
+                issued += 1;
+                if (stage === 'issued') {
+                    requestSignal = init?.signal;
+                    reached.resolve();
+                    await response.promise;
+                }
+                return Response.json({ v: 1, actionId: 'session.open', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { status: 'opened', sessionId: 's1' } } });
+            } };
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        let press: Promise<unknown> | undefined;
+        try {
+            const initiatingComposer = findAgentInput(screen);
+            const action = queueLine(screen)?.action;
+            expect(action?.label).toBe('session.pendingActivation.actions.resume');
+            await act(async () => { press = Promise.resolve(action!.onPress()); });
+            await reached.promise;
+            expect(requestSignal).toBeDefined();
+            expect(requestSignal?.aborted).toBe(false);
+            await act(async () => { updateSession({ active: true, activeAt: Date.now(), presence: 'online' }); });
+            await flushHookEffects();
+            expect(currentSession().active).toBe(true);
+            expect(screen.tree.findAllByType('AgentInput' as never)).toHaveLength(1);
+            expect(findAgentInput(screen)).toBe(initiatingComposer);
+            expect(requestSignal?.aborted).toBe(false);
+            await act(async () => { response.resolve(); await press; });
+            await flushHookEffects();
+            await vi.waitFor(() => expect(issued).toBe(1));
+            expect(resumeCalls()).toHaveLength(0);
+            expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+        } finally {
+            response.resolve();
+            await press;
+            await screen.unmount();
+        }
+    });
 
     it('resumes a stopped session when the person presses Send', async () => {
         await stoppedSession();
