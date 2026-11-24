@@ -1,15 +1,19 @@
 import type { MachineDeploymentDomainReferenceV1 } from '@happier-dev/protocol/machines/machineDeploymentDomainReferenceV1';
+import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainHeaderV1,
     DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1,
-    DeploymentDomainMachineTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    DeploymentDomainMachineTopologyV1, DeploymentDomainGetInputV1, DeploymentDomainMutationResultV1,
+    DeploymentActionFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT, DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
+import { cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
 import type { Machine } from '@/api/types';
 
 type ResolvedDomainIngress = Readonly<{ status: 'ready'; ingress?: DeploymentIngressV1;
@@ -208,10 +212,13 @@ function createDomainContentReader(input: DomainInventoryInput) {
 }
 
 export type TelemetryCollectorDomainEndpoint = Readonly<{ kind: 'ready'; endpoint: string }>
-    | Readonly<{ kind: 'unavailable'; reason: string }>;
+    | Readonly<{ kind: 'unavailable'; reason: string;
+        state?: DeploymentDomainHeaderV1['state'] | 'unbound' | 'private_only';
+        failure?: DeploymentActionFailureV1 | ActionExecuteFailure;
+        failureCause?: ActionFailureCauseV1 }>;
 
 export type TelemetryCollectorPlacement = Readonly<{ kind: 'ready'; machineId: string; installationId: string;
-    app?: NonNullable<DeploymentDomainMachineTopologyV1['telemetryApp']> }>
+    deploymentId?: string; app?: NonNullable<DeploymentDomainMachineTopologyV1['telemetryApp']> }>
     | Readonly<{ kind: 'unavailable'; reason: string }>;
 
 /** Machine's receipt association owns placement; its opened metadata supplies
@@ -223,18 +230,62 @@ export function readTelemetryCollectorPlacementForHost(machine: Pick<Machine, 'i
     const binding = machine.metadata?.deploymentApp;
     if (!binding) return { kind: 'unavailable', reason: machine.metadata === null
         ? 'machine_content_key_unavailable' : 'collector_route_unavailable' };
-    return { kind: 'ready', ...machine.deploymentApp.controller,
+    return { kind: 'ready', ...machine.deploymentApp.controller, deploymentId: machine.deploymentApp.deploymentId,
         app: { environmentId: machine.deploymentApp.environmentId, ...binding } };
 }
 
-/** The Domain owner selects the admitted collector route and observes its actual
- * native privateOrigin. A public hostname is never a substitute for shared scope. */
-export async function readTelemetryCollectorDomainForHost(input: DomainInventoryInput & Readonly<{
+type PrivateCollectorDomainInput = DomainInventoryInput & Readonly<{
+    kind?: 'privateOrigin';
     collectorMachineId: string;
     observerNetworks: readonly MachinePrivateNetworkObservationV1[];
     observe(domain: DeploymentDomainHeaderV1, capture: NonNullable<DeploymentDomainHeaderV1['placements']>[number]):
         Promise<DeploymentDomainMachineTopologyV1 | null>;
-}>): Promise<TelemetryCollectorDomainEndpoint> {
+}>;
+
+export type PublicCollectorDomainInput = Pick<DomainInventoryInput, 'serverId' | 'environmentId' | 'targetLinkId' | 'open' | 'signal'>
+    & Readonly<{
+        kind: 'publicHttps';
+        domainId: string;
+        /** The selected Machine's admitted App receipt association and its controller. */
+        collector: Pick<NonNullable<Machine['deploymentApp']>, 'deploymentId' | 'controller'> & Readonly<{ machineId: string }>;
+        get(request: DeploymentDomainGetInputV1, signal?: AbortSignal): Promise<DeploymentDomainMutationResultV1 | ActionExecuteFailure>;
+    }>;
+
+/** Native callers observe their private origin. Platforms consume an exact settled public Domain capture. */
+export async function readTelemetryCollectorDomainForHost(input: PrivateCollectorDomainInput | PublicCollectorDomainInput):
+    Promise<TelemetryCollectorDomainEndpoint> {
+    if (input.kind === 'publicHttps') {
+        const { serverId, environmentId, domainId, targetLinkId, collector, signal } = input;
+        signal?.throwIfAborted();
+        const result = await input.get({ serverId, environmentId, domainId }, signal);
+        if (!result.ok) return { kind: 'unavailable', reason: 'errorCode' in result ? result.errorCode : result.error, failure: result };
+        const { domain } = result;
+        if (domain.id !== domainId || domain.environmentId !== environmentId || domain.targetLinkId !== targetLinkId)
+            return { kind: 'unavailable', reason: 'target_mismatch' };
+        if (domain.deletedAtMs !== undefined) return { kind: 'unavailable', reason: 'deployment_unavailable' };
+        if (domain.state !== 'active') return { kind: 'unavailable', reason: 'collector_route_unavailable', state: domain.state };
+        const placements = domain.placements?.filter(({ desired, placement }) => desired && placement.serverId === serverId
+            && placement.environmentId === environmentId && placement.domainId === domainId && placement.targetLinkId === targetLinkId) ?? [];
+        const origin = placements.find(({ listener, placement }) => listener === 'privateOrigin'
+            && placement.machineId === collector.controller.machineId && placement.installationId === collector.controller.installationId);
+        if (!origin) return { kind: 'unavailable', reason: 'target_mismatch' };
+        if (!origin.telemetryCollector) return { kind: 'unavailable', reason: 'collector_route_unavailable', state: 'unbound' };
+        if (origin.telemetryCollector.machineId !== collector.machineId || origin.telemetryCollector.deploymentId !== collector.deploymentId)
+            return { kind: 'unavailable', reason: 'target_mismatch' };
+        signal?.throwIfAborted();
+        const opened = readDeploymentDomainArtifactV1(origin.content, await input.open(origin.content.contentArtifactId, signal));
+        if (!opened.ok) return { kind: 'unavailable', reason: opened.error, failureCause: opened.failureCause };
+        const content = opened.content;
+        if (content.target.kind !== 'telemetry') return { kind: 'unavailable', reason: 'target_mismatch' };
+        // The native listener and the prepared tunnel are produced by Domain Add.
+        // A tunnel serves public HTTPS even though its Caddy listener is private.
+        const publicListener = placements.some(({ listener }) => listener === 'public');
+        const tunnel = cloudflareDomainConnectorForTarget(content, origin.placement)
+            && content.cloudflarePreparation?.owned.some(route => route.hostname === content.hostname);
+        if (!publicListener && !tunnel) return { kind: 'unavailable', reason: 'collector_route_unavailable', state: 'private_only' };
+        const endpoint = readDeploymentDomainServingUrlV1(content);
+        return endpoint ? { kind: 'ready', endpoint } : { kind: 'unavailable', reason: 'deployment_content_unavailable' };
+    }
     const inventory = await readDeploymentDomainInventoryForHost(input);
     if (inventory.kind !== 'ready') return { kind: 'unavailable', reason: inventory.reason };
     const readContent = createDomainContentReader(input);

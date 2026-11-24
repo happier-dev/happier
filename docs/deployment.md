@@ -3236,8 +3236,15 @@ and `none` otherwise. A same-Machine container reaches the
 loopback receiver through `privateServiceContainerBridge`. Sampling variables
 remain absent unless a person selects a ratio; explicit sampling uses the
 standard `parentbased_traceidratio` sampler and argument through ordinary
-Environment bindings. Public collector exposure for platform deployments still
-requires the deployment ingress owner's in-process target integration.
+Environment bindings.
+
+The in-development platform integration resolves an explicitly selected
+telemetry Domain through the same owner. The Domain must be active and its
+admitted collector origin must match the enrolled collector App deployment and
+controller installation. The owner returns HTTPS for a direct public Caddy
+listener or a prepared Cloudflare Tunnel. An older Domain without the collector
+reference needs a fresh Add review. Platform configuration consumes this lookup
+separately.
 
 The cross-Machine source path uses an ordinary Domain with
 `target: { kind: 'telemetry' }`. The Domain owner captures the selected collector's

@@ -45,7 +45,8 @@ export async function readDeploymentDomainCollectorPlacementInTx(tx: Tx, machine
     if (!selected?.installationId) return null;
     const app = (await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [selected] })).get(machineId);
     if (selected.deploymentAppDeploymentId && !app) return null;
-    return app?.controller ?? { machineId: selected.id, installationId: selected.installationId };
+    return app ? { ...app.controller, deploymentId: app.deploymentId }
+        : { machineId: selected.id, installationId: selected.installationId, deploymentId: undefined };
 }
 function readCaptures(row: Readonly<{ capturedPlacements: unknown }>): Captures | null {
     const parsed = DeploymentDomainCapturedPlacementsV1Schema.safeParse(row.capturedPlacements);
@@ -441,7 +442,10 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         ? collector ? [collector] : []
         : membership?.members ?? link.machines;
     if (input.telemetryMachineId && !desiredMembers.length) return deploymentFailure('deployment_conflict');
-    if (input.placements.some(item => !desiredMembers.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
+    if (input.placements.some(item => item.telemetryCollectorDeploymentId !== undefined && (
+        item.listener !== 'privateOrigin' || item.machineId !== collector?.machineId
+        || item.installationId !== collector.installationId || item.telemetryCollectorDeploymentId !== collector.deploymentId)
+        || !desiredMembers.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
         && item.machineId !== loaded.row.edgeMachineId)
         || desiredMembers.some(member => !input.placements.some(item => item.machineId === member.machineId && item.installationId === member.installationId))
         || loaded.row.edgeMachineId && !input.placements.some(item => item.machineId === loaded.row.edgeMachineId)) {
@@ -472,6 +476,8 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         actionOperationId: input.actionOperationId, requestId: input.requestId }, listener: item.listener,
         content: deploymentContentReference(input), desired: true, installationPublicKey: keys.get(item.machineId)!,
         dockerEngineId: item.dockerEngineId, environmentContent: deploymentContentReference(loaded.row),
+        ...(input.telemetryMachineId && item.telemetryCollectorDeploymentId ? { telemetryCollector: {
+            machineId: input.telemetryMachineId, deploymentId: item.telemetryCollectorDeploymentId } } : {}),
         targetLinkContent: deploymentContentReference(link) }));
     const execution: Captures[number]['execution'] = executionBinding ? {
         controller: { machineId: executionBinding.machineId, installationId: executionBinding.installationId },
@@ -491,7 +497,9 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     const retained: Captures = oldCaptures.filter(old => !desired.some(item => sameResource(old, item))).map(old => ({ ...old, desired: false,
         ...(execution ? { execution } : {}),
         placement: { ...old.placement, accountId: actorAccountId, actionOperationId: input.actionOperationId, requestId: input.requestId } }));
-    if (!membership && previous?.state === 'active' && retained.length === 0 && desired.length === oldCaptures.length) {
+    if (!membership && previous?.state === 'active' && retained.length === 0 && desired.length === oldCaptures.length
+        && desired.every(item => oldCaptures.some(old => sameResource(item, old)
+            && isDeepStrictEqual(item.telemetryCollector, old.telemetryCollector)))) {
         await saveRepeatKey(tx, repeatKey, digest, defaultRepeatKeyExpiresAt(now));
         return domainResult(previous, loaded.row.revision);
     }

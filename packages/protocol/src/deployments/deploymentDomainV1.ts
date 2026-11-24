@@ -95,6 +95,8 @@ export function verifyNativeCaddyRemovalProofV1(result: NativeCaddyRemoval, expe
 export const DeploymentDomainPlacementV1Schema = lazyZodSchema(() => z.strictObject({
     placement: NativeCaddyRoutePlacementV1Schema, content: DeploymentArtifactContentReferenceV1Schema, desired: z.boolean(),
     listener: z.enum(['privateOrigin', 'public']), dockerEngineId: z.optional(id),
+    /** The selected App enrollment admitted for this collector origin. Earlier captures have no binding. */
+    telemetryCollector: z.optional(z.strictObject({ machineId: id, deploymentId: id })),
     /** Decided once by the Domain owner at removal admission for the Environment's shared tunnel. */
     retireSharedTunnel: z.optional(z.boolean()),
     environmentContent: z.optional(DeploymentArtifactContentReferenceV1Schema),
@@ -176,7 +178,7 @@ const addMetadata = () => ({
     membershipDeploymentId: z.optional(id),
     membershipMachines: z.optional(DeploymentOwnServerTargetMachinesV1Schema),
     placements: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id, dockerEngineId: id,
-        listener: z.enum(['privateOrigin', 'public']) })).check(
+        listener: z.enum(['privateOrigin', 'public']), telemetryCollectorDeploymentId: z.optional(id) })).check(
         z.refine(items => new Set(items.map(item => `${item.machineId}:${item.installationId}:${item.nativeServer}`)).size === items.length,
             { message: 'Native placements must be unique.' }))),
 });

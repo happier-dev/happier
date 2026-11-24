@@ -10460,6 +10460,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Domain admission accepts an optional collector deployment
+identity in the derived native placement. Home matches it against the selected
+collector Machine's App enrollment and stores that association in the
+existing captured placement. Use matching development CLI, Home and clients for
+the closed request and response shapes. Earlier captures still support the
+private origin. Review and apply the Domain again to bind a public lookup to
+the current collector deployment. Existing rows need no migration.
+
 In unreleased 0.3, the Database finding brief build Action accepts a
 selected finding with an optional baseline. Omitting it uses the completed
 selected observation as the baseline. Explicit baselines preserve the

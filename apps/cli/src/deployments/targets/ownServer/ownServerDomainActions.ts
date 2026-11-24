@@ -160,7 +160,8 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
         machineId: member.machineId, installationId: member.installationId })), machines,
         ...(selected.tunnelOrigin ? { tunnelOrigin: selected.tunnelOrigin } : {}) };
     return { ok: true as const, placements: selected.placements, topology,
-        ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
+        ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}),
+        ...(collector?.kind === 'ready' && collector.deploymentId ? { collector } : {}) };
 }
 
 async function reviewOwnServerDomainSetup(input: DeploymentDomainReviewChildRpcV1['input'],
@@ -500,7 +501,11 @@ export function createOwnServerDomainActions(host: Readonly<{
                         environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
                     if (!discovered.ok) return discovered;
                     if (original.placements && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
-                    input = { ...preparedInput, placements: [...discovered.placements],
+                    const collector = discovered.collector;
+                    input = { ...preparedInput, placements: discovered.placements.map(placement =>
+                        collector && placement.listener === 'privateOrigin' && placement.machineId === collector.machineId
+                            && placement.installationId === collector.installationId
+                            ? { ...placement, telemetryCollectorDeploymentId: collector.deploymentId } : placement),
                         ...(discovered.telemetryMachineId ? { telemetryMachineId: discovered.telemetryMachineId } : {}) };
                     topology = discovered.topology;
                 }

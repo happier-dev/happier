@@ -102,13 +102,15 @@ describe('public Domain storage and native custody', () => {
             targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
             actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), telemetryMachineId: selected.id,
             placements: [{ machineId: collector.id, installationId: collector.installationId!, dockerEngineId: 'native',
-                nativeServer: 'private', listener: 'privateOrigin' as const }], ...content };
+                nativeServer: 'private', listener: 'privateOrigin' as const,
+                ...(selected.deploymentAppDeploymentId ? { telemetryCollectorDeploymentId: selected.deploymentAppDeploymentId } : {}) }], ...content };
         const binding = { accountId: f.owner.id, custodianAccountId: f.owner.id,
             authentication: { kind: 'account' as const, tokenEpoch: 1 }, accountEncryptionMode: 'plain' as const,
             serverIdentityId: serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
             target: { kind: 'machine' as const, machineId: f.machine.id }, actionId: 'deployments.domains.add',
             requestId: input.requestId, environmentId: f.environment.id } satisfies ExternalActionExecutionAuthorizationBindingV1;
         const { placements: _placements, actionOperationId: _operation, requestId: _request, ...discoveryInput } = input;
+        const deploymentId = input.placements[0]!.telemetryCollectorDeploymentId;
         const routing = DeploymentChildRoutingV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.add',
             machineId: collector.id, installationId: collector.installationId!, input: discoveryInput });
         expect(await inTx(tx => readDeploymentChildAdmissionInTx(tx, binding, routing))).not.toBeNull();
@@ -119,7 +121,14 @@ describe('public Domain storage and native custody', () => {
             ...routing, machineId: f.machine.id, installationId: f.machine.installationId! })))).toBeNull();
         const result = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, input));
         expect(DeploymentDomainMutationResultV1Schema.parse(result)).toMatchObject({ ok: true,
-            domain: { placements: [{ placement: { machineId: collector.id } }] } });
+            domain: { placements: [{ placement: { machineId: collector.id },
+                ...(deploymentId ? { telemetryCollector: { machineId: selected.id, deploymentId } } : {}) }] } });
+        if (deploymentId) {
+            const stale = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, { ...input,
+                domainId: crypto.randomUUID(), requestKey: crypto.randomUUID(), expectedRevision: 2,
+                placements: [{ ...input.placements[0]!, telemetryCollectorDeploymentId: crypto.randomUUID() }] }));
+            expect(stale).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        }
         const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
             metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey) } });
         const rejected = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, { ...input,
