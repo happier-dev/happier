@@ -29,6 +29,7 @@ import type {
   RealtimeVoiceProviderProtocol,
   RealtimeVoiceProviderSettingsOperations,
   VoiceHostedConversationService,
+  VoiceRealtimeConnection,
   VoiceRuntimePlatform,
   VoiceRealtimeAttemptPolicy,
   VoiceClientToolDefinition,
@@ -354,6 +355,21 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
+function isVoiceRealtimeConnection(value: unknown): value is VoiceRealtimeConnection {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const connection = value as Readonly<Record<string, unknown>>;
+  return (connection.kind === 'websocket_pcm' || connection.kind === 'webrtc' || connection.kind === 'sdk_handle')
+    && typeof connection.connect === 'function'
+    && typeof connection.sendControl === 'function'
+    && typeof connection.controlEvents === 'function'
+    && typeof connection.transportEvents === 'function'
+    && typeof connection.close === 'function'
+    && typeof connection.state === 'function'
+    && typeof connection.currentProviderSessionId === 'function'
+    && typeof connection.playbackCursorMs === 'function'
+    && typeof connection.beginOutputInterruptionCandidate === 'function'
+    && typeof connection.resolveOutputInterruptionCandidate === 'function';
+}
 
 function activationError(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -884,6 +900,9 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
               attemptId: connectionInput.attemptId,
             }),
           }));
+          if (!isVoiceRealtimeConnection(connection)) {
+            throw activationError('invalid_external_voice_provider_connection');
+          }
           return connection;
         },
       });

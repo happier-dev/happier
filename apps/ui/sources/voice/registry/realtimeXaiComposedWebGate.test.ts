@@ -1,4 +1,4 @@
-import { waitForTestEvent } from '@/dev/testkit';
+import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createXaiVoiceRuntimeEnvironment, XaiVoiceWebSocket as FakeWebSocket, XAI_VOICE_HISTORY_SESSION_ID as XAI_HISTORY_SESSION_ID, type XaiVoiceRuntimeEnvironment } from '@/dev/testkit/harness/xaiVoiceRuntime';
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -145,9 +145,8 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
     },
   );
 
-  it.each([
-    [true, 'buffer_full'], [false, 'buffer_full'], [true, 'closed_after_send'],
-  ] as const)('keeps settled xAI tool custody only when actual preparation retains the provider conversation (%s/%s)', async (resumed, transportLoss) => {
+  it.each(['buffer_full', 'closed_after_send'] as const)(
+    'offers Retry after xAI transport failure without replaying the tool result (%s)', async transportLoss => {
     await environment.installSettings(true);
     storage.setState(current => {
       const voice = voiceSettingsParse(readVoiceSettingsInput(current.settings));
@@ -161,18 +160,15 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       if (transportLoss === 'buffer_full') FakeWebSocket.instances[0]!.bufferedAmount = 512 * 1024 + 1;
       return Response.json([]);
     });
-    const deliveryAttempts: string[] = [];
-    const send = FakeWebSocket.prototype.send;
-    vi.spyOn(FakeWebSocket.prototype, 'send').mockImplementation(function (this: FakeWebSocket, value) {
-      const event = JSON.parse(value);
-      if (this === FakeWebSocket.instances[0] && event.item?.type === 'function_call_output') {
-        deliveryAttempts.push(event.item.call_id);
+    if (transportLoss === 'closed_after_send') {
+      const send = FakeWebSocket.prototype.send;
+      vi.spyOn(FakeWebSocket.prototype, 'send').mockImplementation(function (this: FakeWebSocket, value) {
         send.call(this, value);
-        if (transportLoss === 'closed_after_send') this.emit('close', { code: 1006, reason: '' });
-        return;
-      }
-      send.call(this, value);
-    });
+        if (this === FakeWebSocket.instances[0] && JSON.parse(value).item?.type === 'function_call_output') {
+          this.emit('close', { code: 1006, reason: '' });
+        }
+      });
+    }
     try {
       await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
       expect(composed.runtime.adapter.getSnapshot()).toMatchObject({ status: 'connected' });
@@ -181,19 +177,6 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       await waitForTestEvent(storage.subscribe, () => expect(readVoiceProviderConversationMetadata(
         environment.readProviderConversationOwnerMetadata(XAI_HISTORY_SESSION_ID), environment.xaiEntry().providerId,
       )?.conversationId).toBe('conv-stable-tool'));
-      if (!resumed) {
-        // The declaration remains resumable, but the actual current saved
-        // settings tell the provider producer to create a fresh conversation.
-        storage.setState(current => {
-          const voice = voiceSettingsParse(readVoiceSettingsInput(current.settings));
-          const providerId = environment.xaiEntry().providerId;
-          const saved = voice.providers[providerId]!;
-          const next = { ...voice, providers: { ...voice.providers, [providerId]: { ...saved,
-            config: { ...saved.config as Readonly<Record<string, unknown>>, resumptionEnabled: false },
-          } } };
-          return { settings: { ...current.settings, ...normalizeVoiceSettingsLocalDelta({ voice: next }, current.settings) } };
-        });
-      }
       environment.machineInventoryRequest = inventoryRequest;
       first.emit('message', { data: JSON.stringify({
         type: 'response.function_call_arguments.done', event_id: 'stable-tool-arguments', response_id: 'stable-tool-response',
@@ -202,38 +185,33 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       first.emit('message', { data: JSON.stringify({
         type: 'response.done', event_id: 'stable-tool-done', response: { id: 'stable-tool-response', status: 'completed' },
       }) });
-      await waitForTestEvent(FakeWebSocket.subscribe, () => expect(FakeWebSocket.instances).toHaveLength(2));
-      const second = FakeWebSocket.instances[1]!;
-      const delivered = () => second.sent.map(value => JSON.parse(value)).filter(event => (
-        event.item?.type === 'function_call_output'
-      ));
-      if (transportLoss === 'closed_after_send') {
-        // Browser send accepts synchronously. A later close task must not turn
-        // an already-submitted result into a detached delivery or repeat it.
-        expect(delivered()).toEqual([]);
-        expect(new URL(second.url).searchParams.get('conversation_id')).toBe('conv-stable-tool');
-        await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot().status).toBe('connected'));
-      } else if (resumed) {
-        await waitForTestEvent(FakeWebSocket.subscribe, () => expect(delivered()).toEqual([expect.objectContaining({ item: expect.objectContaining({
-          call_id: 'stable-tool-call', output: expect.stringContaining('items'),
-        }) })]));
-        expect(new URL(second.url).searchParams.get('conversation_id')).toBe('conv-stable-tool');
-        await waitForTestEvent(FakeWebSocket.subscribe, () => expect(second.sent.map(value => JSON.parse(value)).filter(event => event.type === 'response.create')).toHaveLength(1));
-        expect(second.sent.map(value => JSON.parse(value)).filter(event => event.type === 'response.create')).toHaveLength(1);
-        expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+      const failure = await waitForTestEvent(composed.runtime.adapter.subscribe!, composed.runtime.adapter.getSnapshot,
+        snapshot => !snapshot.canStop && snapshot.errorCode !== undefined);
+      expect(failure.errorRecoveryAction).toBe('retry');
+      if (transportLoss === 'buffer_full') {
+        expect(failure).toMatchObject({ status: 'error', errorCode: 'voice_tool_result_delivery_unrecoverable' });
       } else {
-        await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
-          status: 'error', errorCode: 'voice_tool_result_delivery_unrecoverable',
-        }));
-        expect(new URL(second.url).searchParams.get('conversation_id')).toBeNull();
-        expect(delivered()).toEqual([]);
-        expect(second.sent.map(value => JSON.parse(value)).filter(event => event.type === 'response.create')).toEqual([]);
-        await waitForTestEvent(FakeWebSocket.subscribe, () => expect(second.readyState).toBe(3));
+        expect(failure).toMatchObject({
+          status: 'disconnected',
+          errorCode: 'provider_error',
+          errorMessage: 'provider_response_invalid',
+          errorFailureCause: { phase: 'xai.websocket.close', nativeErrorCode: '1006' },
+        });
       }
-      expect(deliveryAttempts).toEqual(transportLoss === 'closed_after_send' ? ['stable-tool-call'] : []);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      const second = FakeWebSocket.instances[1]!;
+      expect(new URL(second.url).searchParams.get('conversation_id')).toBe('conv-stable-tool');
+      expect(second.sent.map(value => JSON.parse(value)).filter(event => (
+        event.item?.type === 'function_call_output' || event.type === 'response.create'
+      ))).toEqual([]);
       expect(first.sent.map(value => JSON.parse(value)).filter(event => (
         event.item?.type === 'function_call_output'
-      ))).toHaveLength(transportLoss === 'closed_after_send' ? 1 : 0);
+      ))).toEqual(transportLoss === 'closed_after_send' ? [expect.objectContaining({ item: expect.objectContaining({
+        call_id: 'stable-tool-call', output: expect.stringContaining('items'),
+      }) })] : []);
       expect(inventoryRequest).toHaveBeenCalledOnce();
     } finally {
       await composed.runtime.dispose();
@@ -241,16 +219,19 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
     }
   });
 
-  it('delivers the exact pending Home read result once on the surviving xAI carrier after reconnect', async () => {
+  it('settles a dropped pending Home read without replay and allows explicit Start recovery', async () => {
     await environment.installSettings(true);
     storage.setState(current => {
       const voice = voiceSettingsParse(readVoiceSettingsInput(current.settings));
       const next = { ...voice, privacy: { ...voice.privacy, shareDeviceInventory: true } };
       return { settings: { ...current.settings, ...normalizeVoiceSettingsLocalDelta({ voice: next }, current.settings) } };
     });
-    let resolveInventory!: (response: Response) => void;
-    const pendingInventory = new Promise<Response>(resolve => { resolveInventory = resolve; });
-    const inventoryRequest = vi.fn(async () => await pendingInventory);
+    const inventoryRequested = createDeferred<void>();
+    const inventoryResponse = createDeferred<Response>();
+    const inventoryRequest = vi.fn(() => {
+      inventoryRequested.resolve();
+      return inventoryResponse.promise;
+    });
     const machineRow = createPlainMachineRowFixture({ id: 'pending-read-machine', accountId: 'xai-composed-account' });
     const composed = await environment.createRuntime();
     try {
@@ -268,36 +249,28 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       first.emit('message', { data: JSON.stringify({
         type: 'response.done', event_id: 'pending-read-done', response: { id: 'pending-read-response', status: 'completed' },
       }) });
-      await waitForTestEvent(environment.subscribeNetwork, () => expect(inventoryRequest).toHaveBeenCalledOnce());
-      first.emit('close', { code: 1006, reason: '' });
-      await waitForTestEvent(FakeWebSocket.subscribe, () => expect(FakeWebSocket.instances).toHaveLength(2));
-      const second = FakeWebSocket.instances[1]!;
-      await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot().status).toBe('connected'));
-      expect(new URL(second.url).searchParams.get('conversation_id')).toBe('conv-pending-read');
-      resolveInventory(Response.json([machineRow]));
-      const deliveredResults = () => FakeWebSocket.instances.flatMap(socket => socket.sent.map(value => ({
-        socket, event: JSON.parse(value),
-      }))).filter(({ event }) => event.item?.type === 'function_call_output');
-      await waitForTestEvent(FakeWebSocket.subscribe, () => {
-        expect(deliveredResults()).toHaveLength(1);
-        const delivery = deliveredResults()[0]!;
-        expect(delivery.event.item.call_id).toBe('pending-read-call');
-        expect(JSON.parse(delivery.event.item.output)).toMatchObject({ items: [expect.objectContaining({
-          machineId: machineRow.id, host: 'tester.local',
-        })] });
-        expect(delivery.socket.readyState).toBe(FakeWebSocket.OPEN);
-        expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+      await inventoryRequested.promise;
+      // The browser error event reports transport loss without a provider close cause.
+      first.emit('error');
+      const failure = await waitForTestEvent(composed.runtime.adapter.subscribe!, composed.runtime.adapter.getSnapshot,
+        snapshot => !snapshot.canStop && snapshot.errorCode !== undefined);
+      expect(failure).toMatchObject({
+        status: 'error', errorCode: 'voice_tool_result_delivery_unrecoverable', errorRecoveryAction: 'retry',
       });
-      expect(inventoryRequest).toHaveBeenCalledOnce();
-      const surviving = deliveredResults()[0]!.socket;
-      expect(surviving).toBe(FakeWebSocket.instances.at(-1));
-      expect(new URL(surviving.url).searchParams.get('conversation_id')).toBe('conv-pending-read');
-      await waitForTestEvent(FakeWebSocket.subscribe, () => expect(surviving.sent.map(value => JSON.parse(value)).filter(event => event.type === 'response.create')).toHaveLength(1));
-      expect(surviving.sent.map(value => JSON.parse(value)).filter(event => event.type === 'response.create')).toHaveLength(1);
-      expect(first.sent.map(value => JSON.parse(value)).filter(event => event.item?.type === 'function_call_output')).toEqual([]);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
       expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      const second = FakeWebSocket.instances[1]!;
+      expect(new URL(second.url).searchParams.get('conversation_id')).toBe('conv-pending-read');
+      inventoryResponse.resolve(Response.json([machineRow]));
+      await waitForTestEvent(storage.subscribe, () => expect(storage.getState().machines[machineRow.id]).toBeDefined());
+      expect(FakeWebSocket.instances.flatMap(socket => socket.sent.map(value => JSON.parse(value))).filter(event => (
+        event.item?.type === 'function_call_output' || event.type === 'response.create'
+      ))).toEqual([]);
+      expect(inventoryRequest).toHaveBeenCalledOnce();
     } finally {
-      resolveInventory(Response.json([]));
+      inventoryResponse.resolve(Response.json([]));
       await composed.runtime.dispose();
       composed.hostLease.revoke();
     }
