@@ -16815,7 +16815,7 @@ const french: TeamsTranslationRoot = {
             policySaveFailed: 'Ce réglage de l’équipe n’a pas pu être enregistré. Vérifie les valeurs actuelles et réessaie.',
             signInOutdated: 'Les équipes ne sont pas disponibles avec cette connexion. Déconnecte-toi de ce Home sur cet appareil, puis reconnecte-toi pour les utiliser.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} demande une connexion avec ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Cette équipe demande une connexion avec ${methods}.`,
             signInRequiredAction: 'Se connecter',
             signInMethodEmailPassword: 'e-mail et mot de passe',
             signInMethodCertificate: 'un certificat d’appareil',

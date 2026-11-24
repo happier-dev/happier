@@ -16758,7 +16758,7 @@ const italian: TeamsTranslationRoot = {
             policySaveFailed: 'Non è stato possibile salvare questa impostazione del team. Controlla i valori attuali e riprova.',
             signInOutdated: 'I team non sono disponibili con questo accesso. Esci da questo Home su questo dispositivo, poi accedi di nuovo per usarli.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} richiede l’accesso con ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Questo team richiede l’accesso con ${methods}.`,
             signInRequiredAction: 'Accedi',
             signInMethodEmailPassword: 'email e password',
             signInMethodCertificate: 'un certificato del dispositivo',

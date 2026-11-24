@@ -195,7 +195,7 @@ export const english = {
             // A released 0.2 sign-in still works at the Home, but Team routes refuse it.
             signInOutdated: 'Teams aren’t available with this sign-in. Sign out of this Home on this device, then sign in again to use them.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} needs you signed in with ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `This Team needs you signed in with ${methods}.`,
             signInRequiredAction: 'Sign in',
             signInMethodEmailPassword: 'email and password',
             signInMethodCertificate: 'a device certificate',

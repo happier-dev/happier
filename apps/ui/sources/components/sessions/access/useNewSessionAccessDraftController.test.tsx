@@ -933,7 +933,7 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         let latest: Controller | null = null;
         await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available"
             scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
-        const expected = t('teams.errors.signInRequired', { team: 'Willow Design Studio', methods: t('settingsAccount.secretKey') });
+        const expected = t('teams.errors.signInRequired', { methods: t('settingsAccount.secretKey') });
         await vi.waitFor(() => expect(latest!.model.context?.unavailableReason?.message).toBe(expected));
         const context = latest!.model.context!;
         expect(context.unavailableReason?.action?.label).toBe(t('teams.errors.signInRequiredAction'));

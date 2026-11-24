@@ -34,7 +34,6 @@ export function presentTeamSignInRequired(
   input: Readonly<{
     code: string;
     teamId: string;
-    teamName: string;
     serverId: string;
     /** The Team's accepted sign-ins as this member reads them; empty when not known here. */
     accepted: readonly TeamAcceptedAuthenticationV1[];
@@ -50,7 +49,7 @@ export function presentTeamSignInRequired(
   return {
     code: input.code,
     message: methods
-      ? t('teams.errors.signInRequired', { team: input.teamName, methods })
+      ? t('teams.errors.signInRequired', { methods })
       : t('session.access.authenticationRequired'),
     retryable: false,
     action: {

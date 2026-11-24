@@ -393,7 +393,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         const teamId=subject.kind==='account'?null:subject.teamId;
         const team=teamId?directoryTeamsRef.current.find((candidate)=>candidate.teamId===teamId):undefined;
         const issue:SessionAccessUiError=teamId&&(failure.code==='session_access_authentication_required'||failure.code==='session_access_authentication_unavailable')
-            ? presentTeamSignInRequired({code:failure.code,teamId,teamName:team?.name??t('session.access.team'),serverId:input.scope.serverId,
+            ? presentTeamSignInRequired({code:failure.code,teamId,serverId:input.scope.serverId,
                 accepted:team?.authenticationPolicy?.accepted??[],navigate:(href)=>routerRef.current.push(href as Href)})
             : failure;
         dispatch({type:'operation',scopeKey,key,operation:issue.retryable

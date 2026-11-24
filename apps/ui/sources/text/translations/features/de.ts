@@ -16573,7 +16573,7 @@ const german: TeamsTranslationRoot = {
             policySaveFailed: 'Diese Team-Einstellung konnte nicht gespeichert werden. Prüfe die aktuellen Werte und versuche es erneut.',
             signInOutdated: 'Teams sind mit dieser Anmeldung nicht verfügbar. Melde dich auf diesem Gerät von diesem Home ab und dann wieder an, um sie zu nutzen.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} braucht eine Anmeldung mit ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Dieses Team braucht eine Anmeldung mit ${methods}.`,
             signInRequiredAction: 'Anmelden',
             signInMethodEmailPassword: 'E-Mail und Passwort',
             signInMethodCertificate: 'einem Gerätezertifikat',

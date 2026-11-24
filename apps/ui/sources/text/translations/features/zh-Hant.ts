@@ -16634,7 +16634,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             policySaveFailed: '無法儲存此團隊設定。請檢查目前值後重試。',
             signInOutdated: '此登入無法使用團隊。請在此裝置上登出此 Home，然後重新登入。',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team}需要你使用以下方式登入：${methods}`,
+            signInRequired: ({ methods }: { methods: string }) => `此團隊需要你使用以下方式登入：${methods}`,
             signInRequiredAction: '登入',
             signInMethodEmailPassword: '電子郵件和密碼',
             signInMethodCertificate: '裝置憑證',

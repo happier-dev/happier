@@ -16783,7 +16783,7 @@ const russian: TeamsTranslationRoot = {
             policySaveFailed: 'Не удалось сохранить эту настройку команды. Проверьте текущие значения и повторите попытку.',
             signInOutdated: 'Команды недоступны с этим входом. Выйдите из этого Home на этом устройстве и войдите снова, чтобы пользоваться ими.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} требует входа через ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Эта команда требует входа через ${methods}.`,
             signInRequiredAction: 'Войти',
             signInMethodEmailPassword: 'электронную почту и пароль',
             signInMethodCertificate: 'сертификат устройства',

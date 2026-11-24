@@ -16772,7 +16772,7 @@ const catalan: TeamsTranslationRoot = {
             policySaveFailed: 'No s’ha pogut desar aquesta configuració del Team. Revisa els valors actuals i torna-ho a provar.',
             signInOutdated: 'Els Teams no estan disponibles amb aquest inici de sessió. Tanca la sessió d’aquest Home en aquest dispositiu i torna a iniciar-la per fer-los servir.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} necessita que iniciïs la sessió amb ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Aquest Team necessita que iniciïs la sessió amb ${methods}.`,
             signInRequiredAction: 'Inicia la sessió',
             signInMethodEmailPassword: 'correu i contrasenya',
             signInMethodCertificate: 'un certificat del dispositiu',

@@ -16694,7 +16694,7 @@ const japanese: TeamsTranslationRoot = {
             policySaveFailed: 'このチーム設定を保存できませんでした。現在の値を確認して、もう一度お試しください。',
             signInOutdated: 'このサインインではチームを使えません。このデバイスでこの Home からサインアウトし、もう一度サインインしてください。',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team}に参加するには次の方法でサインインする必要があります: ${methods}`,
+            signInRequired: ({ methods }: { methods: string }) => `このチームでは次の方法でサインインする必要があります: ${methods}`,
             signInRequiredAction: 'サインイン',
             signInMethodEmailPassword: 'メールとパスワード',
             signInMethodCertificate: 'デバイス証明書',

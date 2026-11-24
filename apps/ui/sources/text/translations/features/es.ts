@@ -16694,7 +16694,7 @@ const spanish: TeamsTranslationRoot = {
             policySaveFailed: 'No se pudo guardar esta configuración del equipo. Revisa los valores actuales e inténtalo de nuevo.',
             signInOutdated: 'Los equipos no están disponibles con este inicio de sesión. Cierra la sesión de este Home en este dispositivo y vuelve a iniciarla para usarlos.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} necesita que inicies sesión con ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Este equipo necesita que inicies sesión con ${methods}.`,
             signInRequiredAction: 'Iniciar sesión',
             signInMethodEmailPassword: 'correo y contraseña',
             signInMethodCertificate: 'un certificado del dispositivo',

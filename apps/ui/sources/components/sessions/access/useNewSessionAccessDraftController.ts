@@ -239,7 +239,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const primaryTeamPolicyUnavailable = primaryTeamId !== null && creationDecision !== undefined && creationDecision === null
         && creationRefusal === null && primaryTeamPolicy === null;
     const signInReason = React.useMemo(() => signInRefusal ? presentTeamSignInRequired({
-        code: signInRefusal.code, teamId: signInRefusal.teamId, teamName: signInRefusal.teamName, serverId: scope.serverId,
+        code: signInRefusal.code, teamId: signInRefusal.teamId, serverId: scope.serverId,
         accepted: signInRefusal.accepted, navigate: (href) => routerRef.current.push(href as Href),
     }) : null, [scope.serverId, signInRefusal]);
     // Signing in again on this Home is the natural boundary: the decision is read again then, not polled.

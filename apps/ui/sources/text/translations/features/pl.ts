@@ -16782,7 +16782,7 @@ const polish: TeamsTranslationRoot = {
             policySaveFailed: 'Nie udało się zapisać tego ustawienia zespołu. Sprawdź bieżące wartości i spróbuj ponownie.',
             signInOutdated: 'Zespoły nie są dostępne przy tym logowaniu. Wyloguj się z tego Home na tym urządzeniu, a potem zaloguj ponownie, aby z nich korzystać.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} wymaga logowania przez ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Ten zespół wymaga logowania przez ${methods}.`,
             signInRequiredAction: 'Zaloguj się',
             signInMethodEmailPassword: 'e-mail i hasło',
             signInMethodCertificate: 'certyfikat urządzenia',
