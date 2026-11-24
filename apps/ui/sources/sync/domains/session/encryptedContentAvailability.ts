@@ -1,5 +1,6 @@
 import type { SessionDataKeyHydrationState } from '@/sync/encryption/sessionDataKeyHydration';
 import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
+import { resolveUnavailableSessionEnvelopeCause } from '@happier-dev/protocol/sessions/awareness/availability';
 
 export const SESSION_CONTENT_AVAILABILITIES = [
     'ready',
@@ -40,17 +41,8 @@ export function deriveSessionContentAvailability(params: Readonly<{
                 ? 'encrypted_content_unavailable'
                 : 'ready';
         case 'unopenable_envelope':
-            return 'encrypted_access_needs_repair';
         case 'missing_envelope':
-            switch (params.recipientReadiness?.status === 'unavailable' ? params.recipientReadiness.reason : undefined) {
-                case 'plain_account':
-                case 'encryption_setup_required':
-                    return 'recipient_encryption_setup_required';
-                case 'encryption_inconsistent':
-                    return 'encrypted_access_needs_repair';
-                default:
-                    return 'encrypted_access_pending';
-            }
+            return resolveUnavailableSessionEnvelopeCause(params.hydrationState, params.recipientReadiness);
     }
 }
 

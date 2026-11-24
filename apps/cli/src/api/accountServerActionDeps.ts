@@ -817,6 +817,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         accounting.push(...appAccounting);
         const detail = await readCliUsageDetail({ queries: request.queries.filter(query => !appEnvironments(query) && query.includeAccounting && (query.includeSessionEvidence || query.includeWorkEvidence)),
           accounting, credentials, serverId, serverHttpBaseUrl, accountEncryptionMode,
+          recipientEnvelopeReadiness: accountStorage?.recipientEnvelopeReadiness,
           allowPrivateRead: !context.externalActionCredential && !context.externalActionExecutionAuthorization,
           nowMs: accountingNowMs, signal: context.signal, assertCurrent: check,
           resolveHeaders: request => {
@@ -833,7 +834,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         }
         const { bundledUsageModelPriceCatalog } = await import('@happier-dev/protocol/usage/usageModelPriceCatalog');
         const result = resolveUsagePageAggregation({ queries: request.queries, accountSettings, quota, quotaByQuery, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
-          accounting, work: detail.work, howYouWork: detail.howYouWork,
+          accounting, work: detail.work, howYouWork: detail.howYouWork, howYouWorkProgress: detail.howYouWorkProgress,
           sources: [{ source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
             { source: 'pricing_overrides', status: pricingOverrides === undefined ? 'unknown' : 'available' }],
         }, bundledUsageModelPriceCatalog);

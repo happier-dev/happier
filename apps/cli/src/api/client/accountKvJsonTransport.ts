@@ -35,7 +35,9 @@ export async function resolveCliAccountStorageContext(params: Readonly<{
     ...(params.authorizationHeaders ? { authorizationHeaders: params.authorizationHeaders } : {}),
     ...(params.signal ? { signal: params.signal } : {}) });
   if (params.signal?.aborted || params.shouldContinue?.() === false) throw new AccountKvJsonTransportError('account_kv_scope_retired', 'The captured Account storage scope retired');
-  if (currentness.mode === 'plain') return { mode: 'plain' as const, material: null };
+  const recipientReadiness = currentness.recipientEnvelopeReadiness === undefined
+    ? {} : { recipientEnvelopeReadiness: currentness.recipientEnvelopeReadiness };
+  if (currentness.mode === 'plain') return { mode: 'plain' as const, material: null, ...recipientReadiness };
   const encryption = params.credentials.encryption;
   if (!encryption) throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account encryption material is unavailable');
   const material = encryption.type === 'legacy' ? { type: 'legacy' as const, secret: encryption.secret }
@@ -51,7 +53,7 @@ export async function resolveCliAccountStorageContext(params: Readonly<{
   if (convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) !== currentness.contentKeyFingerprint) {
     throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account content-key fingerprint mismatch');
   }
-  return { mode: 'e2ee' as const, encryption, material };
+  return { mode: 'e2ee' as const, encryption, material, ...recipientReadiness };
 }
 const storedItem = z.strictObject({ key: z.string(), value: z.string(), version: z.number().check(z.int(), z.nonnegative()) });
 const mutationResponse = z.discriminatedUnion('success', [

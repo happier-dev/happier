@@ -6,6 +6,24 @@ import type {
   SessionAwarenessAvailabilityV1,
   SessionAwarenessEncryptionV1,
 } from './projectionV1.js';
+import type { AccountRecipientEnvelopeReadiness } from '../../account/encryptionMode.js';
+
+/** Classify the cause of a Session data-key envelope that the viewer could not open. */
+export function resolveUnavailableSessionEnvelopeCause(
+  state: 'missing_envelope' | 'unopenable_envelope',
+  readiness?: AccountRecipientEnvelopeReadiness,
+) {
+  if (state === 'unopenable_envelope') return 'encrypted_access_needs_repair';
+  switch (readiness?.status === 'unavailable' ? readiness.reason : undefined) {
+    case 'plain_account':
+    case 'encryption_setup_required':
+      return 'recipient_encryption_setup_required';
+    case 'encryption_inconsistent':
+      return 'encrypted_access_needs_repair';
+    default:
+      return 'encrypted_access_pending';
+  }
+}
 
 /**
  * Content availability and completeness — the internal inputs behind the two public honesty

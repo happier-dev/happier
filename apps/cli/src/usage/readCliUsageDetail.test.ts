@@ -3,6 +3,8 @@ import { Readable } from 'node:stream';
 import fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { SessionReadBatchResultV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
@@ -197,13 +199,13 @@ describe('CLI Usage Session evidence demand', () => {
     });
 
     it.each([
-        { part: 'detail', status: 404, retained: false },
-        { part: 'detail', status: 403, retained: false },
-        { part: 'turns', status: 404, retained: true },
-        { part: 'turns', status: 503, retained: false },
-        { part: 'messages', status: 503, retained: true },
-        { part: 'messages', status: 403, retained: false },
-    ] as const)('preserves $part $status admission while retaining other Sessions', async ({ part, status, retained }) => {
+        { part: 'detail', status: 404, retained: false, cause: 'not_found' },
+        { part: 'detail', status: 403, retained: false, cause: 'forbidden' },
+        { part: 'turns', status: 404, retained: true, cause: 'not_found' },
+        { part: 'turns', status: 503, retained: false, cause: 'server_error' },
+        { part: 'messages', status: 503, retained: true, cause: 'server_error' },
+        { part: 'messages', status: 403, retained: false, cause: 'forbidden' },
+    ] as const)('preserves $part $status admission while retaining other Sessions', async ({ part, status, retained, cause }) => {
         const sessions = ['failed', 'available'].map(id => createSessionRecordFixture({ id, encryptionMode: 'plain', share: null,
             metadata: JSON.stringify({ path: '/repo', machineId: 'machine', agent: 'claude' }) }));
         const parts: SessionReadBatchResultV1[] = sessions.map(session => ({ sessionId: session.id,
@@ -220,8 +222,9 @@ describe('CLI Usage Session evidence demand', () => {
             return String(url).endsWith('/turns') ? { status: selected.turns!.status, data: selected.turns!.body }
                 : { status: selected.detail!.status, data: selected.detail!.body };
         });
-        const result = await readCliUsageDetail({ queries: [normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
-            session: ['available', 'failed'], includeWorkEvidence: false })], accounting: [],
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
+            session: ['available', 'failed'], includeWorkEvidence: false });
+        const result = await readCliUsageDetail({ queries: [query], accounting: [],
             credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
             accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
             resolveHeaders: () => ({ Authorization: 'Bearer token' }),
@@ -229,6 +232,13 @@ describe('CLI Usage Session evidence demand', () => {
         expect(result.sessions.map(row => row.id).sort()).toEqual(retained ? ['available', 'failed'] : ['available']);
         expect(result.howYouWork[0]?.detail.facts?.some(fact => fact.workId === JSON.stringify(['available', 'turn']))).toBe(true);
         expect(result.howYouWork[0]).not.toHaveProperty('updateRequired');
+        const projected = resolveUsagePageAggregation({ queries: [query], nowMs: 200,
+            howYouWork: result.howYouWork, howYouWorkProgress: result.howYouWorkProgress }, bundledUsageModelPriceCatalog).results[0];
+        expect(projected?.howYouWork?.intervals?.agentTimeMs).toBe(part === 'messages' && retained ? 120 : 60);
+        expect(projected?.sources).toContainEqual(expect.objectContaining({
+            source: part === 'messages' && retained ? 'how_you_work:transcripts' : 'how_you_work:sessions',
+            status: 'partial', errorCode: cause,
+        }));
     });
 
     it.each(['detail', 'turns', 'messages'] as const)('preserves a current server %s update requirement without discarding a healthy sibling', async part => {
@@ -480,6 +490,41 @@ describe('CLI Usage Session evidence demand', () => {
         expect(result.howYouWork[0]!.detail.phaseEvents).toContainEqual(expect.objectContaining({ evidenceId: 'transcript-phase' }));
         expect(result.howYouWork[1]!.detail.phaseEvents).toBeUndefined();
         expect(result.howYouWork[1]!.detail.facts).toEqual(result.howYouWork[0]!.detail.facts);
+    });
+
+    it.each([
+        { name: 'missing recipient envelope', key: null, cause: 'encrypted_access_pending' },
+        { name: 'unopenable recipient envelope', key: 'AA==', cause: 'encrypted_access_needs_repair' },
+        { name: 'recipient setup required', key: null, cause: 'recipient_encryption_setup_required',
+            readiness: { status: 'unavailable', reason: 'encryption_setup_required' } },
+    ] as const)('reports $name beside the readable sibling’s partial activity', async row => {
+        const { key, cause } = row;
+        const secret = new Uint8Array(32).fill(17);
+        const metadata = encodeBase64(encrypt(secret, 'legacy', { path: '/repo', agent: 'claude' }));
+        const sessions = [
+            createSessionRecordFixture({ id: 'locked', encryptionMode: 'e2ee', dataEncryptionKey: key, metadata,
+                share: { accessLevel: 'view', canApprovePermissions: false } }),
+            createSessionRecordFixture({ id: 'available', encryptionMode: 'e2ee', metadata, share: null }),
+        ];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: sessions.map(session => ({
+            sessionId: session.id, detail: { status: 200, body: { session } }, turns: { status: 200,
+                body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [{ turnId: 'turn', agentId: 'claude',
+                    status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] } },
+        })) }, 200, request));
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: sessions.map(row => row.id),
+            includeTranscriptEvidence: false, includeWorkEvidence: false });
+        const result = await readCliUsageDetail({ queries: [query], accounting: [],
+            credentials: { token: 'token', encryption: { type: 'legacy', secret } },
+            serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test', accountEncryptionMode: 'e2ee',
+            recipientEnvelopeReadiness: 'readiness' in row ? row.readiness : undefined,
+            allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {}, resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
+        expect(result.sessions.map(row => row.id)).toEqual(['available']);
+        const answer = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], nowMs: 200,
+            howYouWork: result.howYouWork, howYouWorkProgress: result.howYouWorkProgress }, bundledUsageModelPriceCatalog));
+        expect(answer.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial', intervals: { agentTimeMs: 60 } });
+        expect(answer.results[0]?.sources).toContainEqual(expect.objectContaining({
+            source: 'how_you_work:sessions', status: 'partial', errorCode: cause,
+        }));
     });
 
     it.each([true, false])('opens opaque E2EE evidence locally and refuses server-supplied plaintext facts (key available: %s)', async available => {

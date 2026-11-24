@@ -16,17 +16,26 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
-import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageAccountingSourceSnapshot, UsageQuerySourceState, UsageWorkSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import type { StoredCredentials } from '@/persistence';
+import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
 import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';
-import { resolveExactSessionOrCredentialCryptoContext, tryDecryptSessionOwnerMetadataView, openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveCredentialSessionContentCrypto, tryDecryptSessionOwnerMetadataView, openSessionMessageContent, SessionStoredContentError } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readSessionAgentState } from '@/session/actions/cliActionDeps/sessionStateReaders';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
+
+function classifySessionEvidencePartRead(status: number, body: object) {
+    const error = createHttpStatusError(status, 'Usage Session evidence unavailable');
+    const classification = classifyServerEndpointError(error);
+    const errorCode = 'code' in body && typeof body.code === 'string' ? body.code
+        : status === 404 ? 'not_found' : status === 403 ? 'forbidden' : classification.kind;
+    return { errorCode, retryable: ['network', 'timeout', 'server_error', 'dependency_unavailable', 'rate_limited'].includes(classification.kind) };
+}
 
 /** Protected transport adapter; deterministic membership, phases and SCM joins are shared. */
 export async function readCliUsageDetail(input: Readonly<{
@@ -36,6 +45,7 @@ export async function readCliUsageDetail(input: Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
     accountEncryptionMode: 'plain' | 'e2ee' | null;
+    recipientEnvelopeReadiness?: AccountRecipientEnvelopeReadiness;
     allowPrivateRead: boolean;
     nowMs: number;
     signal?: AbortSignal;
@@ -75,11 +85,14 @@ export async function readCliUsageDetail(input: Readonly<{
         evidence: UsageHowYouWorkDetailInput;
         machineId: string | null; cwd: string | null; canReadWork: boolean }>;
     const sessions = new Map<string, Detail>();
-    type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1 }>;
+    type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1; transcriptOnly?: boolean }>;
     const readFailures = new Map<string, ReadFailure>();
     let requestFailure: ReadFailure | undefined;
-    const selectReadFailure = (sessionIds: readonly string[]) => {
-        const failures = sessionIds.flatMap(id => readFailures.has(id) ? [readFailures.get(id)!] : []);
+    const selectReadFailure = (sessionIds: readonly string[], includeTranscript = false) => {
+        const failures = sessionIds.flatMap(id => {
+            const failure = readFailures.get(id);
+            return failure && (includeTranscript || !failure.transcriptOnly) ? [failure] : [];
+        });
         return failures.find(failure => failure.updateRequired !== undefined) ?? failures[0];
     };
     if (admitted && plans.length) {
@@ -176,38 +189,52 @@ export async function readCliUsageDetail(input: Readonly<{
                 readFailures.set(sessionId, { errorCode: 'update_required', updateRequired: requirement });
                 continue;
             }
-            const failed = sessionParts.find(read => read && read.status !== 200 && read.status !== 404);
-            if (failed) {
-                const { kind } = classifyServerEndpointError(createHttpStatusError(failed.status, 'Usage Session evidence unavailable'));
-                readFailures.set(sessionId, { errorCode: kind });
+            const detail = part.detail;
+            if (!detail || detail.status !== 200) {
+                const errorCode = detail ? classifySessionEvidencePartRead(detail.status, detail.body).errorCode : 'session_read_batch_invalid_response';
+                readFailures.set(sessionId, { errorCode });
                 continue;
             }
-            const rawSession = part?.detail?.status === 200 ? part.detail.body.session : null;
-            if (!rawSession || rawSession.id !== sessionId) continue;
+            const turns = part.turns;
+            if (includeTurns && turns?.status !== 200) {
+                const errorCode = turns ? classifySessionEvidencePartRead(turns.status, turns.body).errorCode : 'session_read_batch_invalid_response';
+                readFailures.set(sessionId, { errorCode });
+                // A missing turns part supplies no interval facts. The detail
+                // previously admitted for this Session can still be used.
+                if (turns?.status !== 404) continue;
+            }
+            const rawSession = detail.body.session;
             const role = readSessionAccessProjectionRoleV1(rawSession);
-            if (role === 'unavailable' || rawSession.effectiveAccess?.capabilities.readTranscript === false) continue;
-            const crypto = resolveExactSessionOrCredentialCryptoContext({ credentials: input.credentials }, sessionId, rawSession);
-            if (!crypto) continue;
+            if (role === 'unavailable' || rawSession.effectiveAccess?.capabilities.readTranscript === false) {
+                readFailures.set(sessionId, { errorCode: role === 'unavailable' ? 'invalid_response' : 'forbidden' });
+                continue;
+            }
+            const resolvedCrypto = resolveCredentialSessionContentCrypto(input.credentials, rawSession, input.recipientEnvelopeReadiness);
+            if (resolvedCrypto.crypto === null) {
+                readFailures.set(sessionId, { errorCode: resolvedCrypto.errorCode });
+                continue;
+            }
+            const crypto = resolvedCrypto.crypto;
             const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
                 accountEncryptionMode: input.accountEncryptionMode!, rawSession });
             // Owner metadata cannot be substituted with a raw public projection.
             const parsedMetadata = MetadataSchema.safeParse(ownerMetadata);
             const metadata = parsedMetadata.success ? parsedMetadata.data : null;
-            if (role === 'owner' && !metadata) continue;
+            if (role === 'owner' && !metadata) {
+                readFailures.set(sessionId, { errorCode: 'metadata_unavailable' });
+                continue;
+            }
             const agentState = AgentStateSchema.safeParse(intervalSessionIds.has(sessionId)
                 ? readSessionAgentState({ rawSession, ...crypto }) : null);
-            const turns = part?.turns;
-            if (includeTurns && (!turns || turns.status !== 200 && turns.status !== 404)) continue;
-            if (turns?.status === 200 && turns.body.sessionId !== sessionId) continue;
-            const sessionTurns = turns?.status === 200 && turns.body.sessionId === sessionId ? turns.body : null;
+            const sessionTurns = turns?.status === 200 ? turns.body : null;
             await input.assertCurrent();
             let messages: OpenedUsageMessage[] | undefined;
             let messagesComplete = false;
             const messageEvidence = crypto.mode === 'plain' ? part.messageEvidence : undefined;
-            if (transcriptSessionIds.has(sessionId)) try {
+            const messagePart = part.messages;
+            if (includeMessages) try {
                 if (messageEvidence !== undefined) messagesComplete = part.messagesComplete === true;
                 else {
-                    const messagePart = part?.messages;
                     if (!messagePart) throw Object.assign(new Error('Session messages unavailable'), { code: 'session_read_batch_invalid_response' });
                     if (messagePart.status !== 200) throw createHttpStatusError(messagePart.status, 'Session messages unavailable');
                     const page = messagePart.body;
@@ -226,8 +253,12 @@ export async function readCliUsageDetail(input: Readonly<{
             } catch (error) {
                 await input.assertCurrent();
                 // Failed access/format admission cannot revive any Session private facts.
-                const { kind } = classifyServerEndpointError(error);
-                if (!['network', 'timeout', 'server_error', 'dependency_unavailable', 'rate_limited'].includes(kind)) continue;
+                const failed = messagePart && messagePart.status !== 200 ? classifySessionEvidencePartRead(messagePart.status, messagePart.body)
+                    : { errorCode: error instanceof SessionStoredContentError ? error.code : 'session_read_batch_invalid_response', retryable: false };
+                if (!failed.retryable || !readFailures.has(sessionId)) {
+                    readFailures.set(sessionId, { errorCode: failed.errorCode, transcriptOnly: failed.retryable });
+                }
+                if (!failed.retryable) continue;
             }
             const access = rawSession.effectiveAccess ?? (role === 'owner' ? { capabilities: { submitAgentInput: true } } : undefined);
             const machineId = typeof ownerMetadata?.machineId === 'string' ? ownerMetadata.machineId : null;
@@ -241,7 +272,11 @@ export async function readCliUsageDetail(input: Readonly<{
                         : resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata) },
                 evidence: projectSessionUsageWorkEvidence(session, messages, { messagesComplete, messageEvidence }), machineId, cwd,
                 canReadWork: role === 'owner' || rawSession.effectiveAccess?.capabilities.submitAgentInput === true });
-        } catch { await input.assertCurrent(); }
+        } catch (error) {
+            await input.assertCurrent();
+            const { kind } = classifyServerEndpointError(error);
+            readFailures.set(sessionId, { errorCode: kind });
+        }
     }
     await input.assertCurrent();
     const eligibleIds = new Set<string>();
@@ -262,7 +297,8 @@ export async function readCliUsageDetail(input: Readonly<{
             if (!session) {
                 const failure = requestFailure ?? readFailures.get(sessionId);
                 if (!failure) return null;
-                return { errorCode: failure.errorCode === 'auth_failed' ? RPC_ERROR_CODES.FORBIDDEN : failure.errorCode };
+                return { errorCode: failure.errorCode === 'auth_failed' || failure.errorCode === 'forbidden'
+                    ? RPC_ERROR_CODES.FORBIDDEN : failure.errorCode };
             }
             if (!session.canReadWork) return { errorCode: RPC_ERROR_CODES.FORBIDDEN };
             if (!session.machineId || !session.cwd) return { errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE };
@@ -278,7 +314,31 @@ export async function readCliUsageDetail(input: Readonly<{
         },
     });
     await input.assertCurrent();
-    return { work: work.map((source): UsageWorkSourceSnapshot => {
+    const howYouWorkProgress = new Map<string, { pending: boolean; sources: readonly UsageQuerySourceState[] }>();
+    const howYouWork = evidenceQueries.map(query => {
+        const key = getUsageQueryKey(query);
+        const ids = idsByQuery.get(key) ?? [];
+        const detail = projectUsageQueryWorkEvidence({ query,
+            sessions: ids.flatMap(id => sessions.has(id) ? [sessions.get(id)!.session] : []),
+            sessionEvidence: new Map(ids.flatMap(id => {
+                const row = sessions.get(id);
+                return row ? [[id, query.includeTranscriptEvidence ? row.evidence : projectSessionUsageWorkEvidence(row.session)]] : [];
+            })),
+            contributions: accounting.get(key), sessionMembership: membership.get(key),
+        });
+        const failure = selectReadFailure(ids, query.includeTranscriptEvidence);
+        if (failure && !failure.updateRequired) {
+            // A Session failure cannot turn admitted evidence from other
+            // Sessions into a whole-query refusal.
+            howYouWorkProgress.set(key, { pending: false, sources: [{
+                source: failure.transcriptOnly ? 'how_you_work:transcripts' : 'how_you_work:sessions',
+                status: detail.status === 'unknown' ? 'error' : 'partial', errorCode: failure.errorCode,
+            }] });
+        }
+        return { query, asOfMs: input.nowMs, detail,
+            ...(requestFailure ?? (detail.status === 'unknown' || failure?.updateRequired ? failure : undefined)) };
+    });
+    return { howYouWork, howYouWorkProgress, work: work.map((source): UsageWorkSourceSnapshot => {
             const ids = membership.get(getUsageQueryKey(source.query))?.turns?.map(row => row.sessionId) ?? accounting.get(getUsageQueryKey(source.query))
                 ?.flatMap(row => row.sessionId !== null && row.turnId !== null ? [row.sessionId] : []) ?? [];
             const failure = requestFailure ?? selectReadFailure(ids);
@@ -288,20 +348,5 @@ export async function readCliUsageDetail(input: Readonly<{
             }
             return failure && source.status === 'error' ? { ...source, ...failure } : source;
         }), sessions: [...sessions.values()].map(row => row.remedySession),
-        howYouWork: evidenceQueries.map(query => {
-            const ids = idsByQuery.get(getUsageQueryKey(query)) ?? [];
-            return { query, asOfMs: input.nowMs,
-                ...(requestFailure ?? selectReadFailure(ids)),
-                detail: projectUsageQueryWorkEvidence({ query,
-                    sessions: ids.flatMap(id => sessions.has(id) ? [sessions.get(id)!.session] : []),
-                    sessionEvidence: new Map(ids.flatMap(id => {
-                        const row = sessions.get(id);
-                        return row ? [[id, query.includeTranscriptEvidence ? row.evidence : projectSessionUsageWorkEvidence(row.session)]] : [];
-                    })),
-                    contributions: accounting.get(getUsageQueryKey(query)),
-                    sessionMembership: membership.get(getUsageQueryKey(query)),
-                }),
-            };
-        }),
     };
 }

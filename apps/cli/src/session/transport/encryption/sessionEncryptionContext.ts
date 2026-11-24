@@ -4,6 +4,7 @@ import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryp
 import { openAdmittedSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { resolveUnavailableSessionEnvelopeCause } from '@happier-dev/protocol/sessions/awareness/availability';
 import { serializeSessionInputRequestEqualityIntentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { PendingRequestedActionV1, AccountRecipientEnvelopeReadiness, SessionContentAvailabilityInputV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import type { Credentials, StoredCredentials } from '../../../persistence';
@@ -167,16 +168,27 @@ export function resolveExactSessionOrCredentialCryptoContext(
     if (!resolved.ok) return null;
     return resolved.mode === 'e2ee' ? { mode: 'e2ee', ctx: resolved.ctx } : { mode: 'plain', ctx: null };
   }
+  return resolveCredentialSessionContentCrypto(options.credentials, rawSession).crypto;
+}
+
+export function resolveCredentialSessionContentCrypto(
+  credentials: StoredCredentials,
+  rawSession?: SessionEncryptionContextSource,
+  recipientReadiness?: AccountRecipientEnvelopeReadiness,
+): Readonly<{ crypto: SessionStoredContentCryptoContext }> | Readonly<{ crypto: null; errorCode: string }> {
   let mode: SessionStoredContentEncryptionMode;
   try {
     mode = resolveSessionStoredContentEncryptionMode(rawSession ?? {});
   } catch (error) {
-    if (error instanceof SessionStoredContentError) return null;
+    if (error instanceof SessionStoredContentError) return { crypto: null, errorCode: error.code };
     throw error;
   }
-  const ctx = mode === 'e2ee' ? resolveSessionEncryptionContextFromCredentials(options.credentials, rawSession) : null;
-  if (mode === 'e2ee' && !ctx) return null;
-  return ctx ? { mode: 'e2ee', ctx } : { mode: 'plain', ctx: null };
+  if (mode === 'plain') return { crypto: { mode: 'plain', ctx: null } };
+  const resolved = resolveSessionEncryptionContext(credentials, rawSession);
+  if (resolved.ctx) return { crypto: { mode: 'e2ee', ctx: resolved.ctx } };
+  const errorCode = resolved.failure === 'unknown' ? 'encryption_material_unavailable'
+    : resolveUnavailableSessionEnvelopeCause(resolved.failure, recipientReadiness);
+  return { crypto: null, errorCode };
 }
 
 export function resolveSessionEncryptionContextFromCredentials(
