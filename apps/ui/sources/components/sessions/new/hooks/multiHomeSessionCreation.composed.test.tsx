@@ -607,7 +607,7 @@ describe('multi-Home Session creation composition', () => {
         homeBScopeId = profiles.resolveServerProfileScopeId(homeB);
     }
 
-    it('holds the cold /new launch curtain until the standalone draft composer is drawn', async () => {
+    it('reveals the cold /new loading rows when its exact draft read is pending and Home becomes unavailable', async () => {
         const draftId = '00000000-0000-4000-8000-000000000920';
         const heldRead = createDeferred<void>();
         const heldList = createDeferred<void>();
@@ -633,6 +633,11 @@ describe('multi-Home Session creation composition', () => {
         const { default: NewSessionRoute } = await import('@/app/(app)/new/index');
         const { AgentInput } = await import('@/components/sessions/agentInput');
         const { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } = await import('@/boot/launchCurtain');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { readHomeShownUnavailable } = await import('@/components/navigation/connectionStatus/HomeReachabilityGate');
+        const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        publishAppliedActiveServerRuntimeAvailability(true);
+        storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
 
         // The HTML poster initializes the real curtain in this otherwise DOM-free fixture.
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -652,15 +657,31 @@ describe('multi-Home Session creation composition', () => {
         try {
             expect(curtain()).toBe('up');
             await expect(requestedDraft.promise).resolves.toEqual({ kind: 'newSession', draftId });
+            expect(readHomeShownUnavailable(homeAScopeId)).toBe(false);
+            expect(screen.findHostByTestId('workspace-destination-body-loading')).not.toBeNull();
             expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
             releaseShell();
             await flushHookEffects({ frames: 2, cycles: 1 });
             expect(curtain()).toBe('up');
 
-            await act(async () => { heldRead.resolve(); });
-            await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+            await act(async () => {
+                storage.setState({ endpointStatus: 'offline', endpointReason: null, socketStatus: 'disconnected' });
+            });
+            expect(readHomeShownUnavailable(homeAScopeId)).toBe(true);
             await flushHookEffects({ frames: 2, cycles: 1 });
             expect(curtain()).toBe('leaving');
+            await act(async () => { finishLaunchCurtain(); });
+            expect(curtain()).toBe('gone');
+            expect(screen.findHostByTestId('workspace-destination-body-loading')).not.toBeNull();
+            expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+
+            await act(async () => {
+                storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
+                heldRead.resolve();
+            });
+            await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+            expect(screen.findHostByTestId('workspace-destination-body-loading')).toBeNull();
+            expect(curtain()).toBe('gone');
         } finally {
             releaseShell();
             heldRead.resolve();

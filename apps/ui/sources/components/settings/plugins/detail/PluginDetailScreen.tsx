@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 import { Redirect } from '@/components/appShell/workspace/destinationRoute';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
@@ -276,8 +276,8 @@ function PluginDetailCurrentContent(props: Readonly<{
     );
 }
 
-function PluginDetailPageLoading() {
-    useLaunchCurtainHold(useIsFocused());
+function PluginDetailPageLoading({ serverId }: Readonly<{ serverId: string | null }>) {
+    useRouteLaunchCurtainHold(true, serverId);
     return <PaneLoadingFallback />;
 }
 
@@ -350,7 +350,9 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
             </ItemList>
         );
         if (!state.pluginTruthSettled) {
-            return props.presentation === 'page' ? <PluginDetailPageLoading /> : <PaneLoadingFallback />;
+            return props.presentation === 'page'
+                ? <PluginDetailPageLoading serverId={state.executionServerId ?? state.selectedServerIdentityId} />
+                : <PaneLoadingFallback />;
         }
     }
 

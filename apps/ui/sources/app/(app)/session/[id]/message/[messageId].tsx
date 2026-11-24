@@ -1,7 +1,7 @@
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 import { DetailsStartSheetHost } from '@/components/appShell/panes/panePresentation';
 import * as React from 'react';
-import { useIsFocused, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import type { ViewStyle } from 'react-native';
 import { storage, useMessage, useTranscriptApprovalArtifactsForSession, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptLoaded } from "@/sync/domains/state/storage";
@@ -25,7 +25,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
-import { useSessionRouteLaunchCurtainHold } from '@/components/sessions/shell/useSessionRouteLaunchCurtainHold';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
@@ -45,8 +45,7 @@ const SessionDestinationBody = retryableLazy<NonNullable<React.ComponentProps<ty
 );
 
 function LinkedSessionRouteLoading({ serverId }: Readonly<{ serverId: string | null }>) {
-    const focused = useIsFocused();
-    useSessionRouteLaunchCurtainHold(focused, serverId);
+    useRouteLaunchCurtainHold(true, serverId);
     return <PaneLoadingFallback />;
 }
 

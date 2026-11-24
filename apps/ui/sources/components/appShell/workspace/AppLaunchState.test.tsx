@@ -9,6 +9,7 @@ import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 
 import { AppLaunchState, LaunchCurtain } from './AppLaunchState';
+import { DestinationInstanceHost } from './DestinationInstanceHost';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -47,6 +48,18 @@ function App({ stage, paneLoading = false }: Readonly<{ stage: Stage; paneLoadin
       {stage === 'home-loading' ? (
         <HomeHubLoading testID="home-hub.loading" />
       ) : null}
+      {stage === 'home' ? (
+        <>
+          <DestinationInstanceHost tabId="ready" ref={{ kind: 'boards', params: {} }}
+            pathname="/boards" focused visible>
+            {React.createElement('DrawnDestination')}
+          </DestinationInstanceHost>
+          <DestinationInstanceHost tabId="secondary-home" ref={{ kind: 'home', params: {} }}
+            pathname="/" focused={false} visible>
+            <HomeHubLoading testID="secondary-home-loading" />
+          </DestinationInstanceHost>
+        </>
+      ) : null}
       <CurtainProbe />
       <LaunchCurtain />
     </>
@@ -73,7 +86,7 @@ describe('launch curtain', () => {
     standardCleanup();
   });
 
-  it('hands the curtain from boot through restore to Home, then releases it while a lazy pane is still loading', async () => {
+  it('hands launch to focused Home and releases it over a drawn body while a secondary Home and a pane are pending', async () => {
     const screen = await renderScreen(<App stage="boot" />);
     const curtain = () => screen.findAllHostsByTestId('launch-curtain');
     expect(curtain()).toHaveLength(1);
@@ -100,6 +113,8 @@ describe('launch curtain', () => {
     // The DOM has no Web Animations, so LaunchCurtain completes its fade at once.
     expect(readCurtain()).toBe('gone');
     expect(curtain()).toHaveLength(0);
+    expect(screen.root.findAllByType('DrawnDestination')).toHaveLength(1);
+    expect(screen.findHostByTestId('secondary-home-loading')).not.toBeNull();
     expect(pendingPane()).not.toBeNull();
     expect(document.documentElement.classList.contains('launch-planet')).toBe(
       false,

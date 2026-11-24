@@ -8,7 +8,7 @@ import { PageHeaderPlaceholder } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 
@@ -18,16 +18,15 @@ const LOADING_STATE = { kind: 'loading' } as const;
 
 /**
  * Home while its page or its model is still coming: Home's own shape in place (the greeting, the composer and the
- * rows of the section under it), never a generic page. It reads nothing, so the shell can draw it while Home's
- * chunk loads, and Home draws the same thing until its model answers: the two waits read as one.
+ * rows of the section under it), never a generic page. The shell can draw it while Home's chunk loads, and
+ * Home draws the same thing until its model answers: the two waits read as one.
  */
 export const HomeHubLoading = React.memo(function HomeHubLoading(
   props: Readonly<{ testID: string }>,
 ) {
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
-  // At launch, the Loading planet stays over Home until Home has drawn.
-  useLaunchCurtainHold(true);
+  useRouteLaunchCurtainHold(true);
   return (
     <ItemList testID={props.testID} pageColumn="dashboard">
       <View

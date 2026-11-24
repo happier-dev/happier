@@ -327,7 +327,7 @@ export function NewSessionScreen(props: NewSessionScreenProps) {
             <GlassSurface testID="new-session-draft-loading" finishRole="composer">
                 <ItemLoadStateRows state={{ kind: 'loading' }} rows={2} lines={1} accessibilityLabel={t('common.loading')} />
             </GlassSurface>
-        ) : <DestinationBodyLoading />}>
+        ) : <DestinationBodyLoading routeServerId={draftScope?.serverId ?? draftServerId ?? null} />}>
         <NewSessionScreenReady {...props} draftScope={draftScope} onDraftIdentityResolved={onDraftIdentityResolved} />
     </SessionDraftHydrationBoundary>;
 }
