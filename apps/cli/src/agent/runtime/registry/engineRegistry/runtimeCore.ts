@@ -1050,6 +1050,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 async abortPendingPermissionRequests(reason: string) {
                                     await runPermissionScope.dispose(reason);
                                 },
+                                onTurnTerminal: runPermissionScope.settleTurnPermissions,
                             });
                         }
                         const detachedContextLeaseFactory = hasDetachedInteractionIdentity

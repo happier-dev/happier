@@ -63,6 +63,7 @@ import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executio
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { AgentExecutionRunConversationEventV1, AgentSessionExecutionRunRuntimeFactoryV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/sessions';
 
 const AGENT_ID = 'acme.session-agent';
 
@@ -255,6 +256,113 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       expect(state.requests).toEqual({});
     } finally { await runtime.dispose(); await permissions.abortPendingRequestsAndFlush('test cleanup'); }
   });
+
+  it.each(['approved', 'denied', 'canceled'] as const)(
+    'settles a retained child Run approval as %s through the parent request store',
+    async (decision) => {
+      const { backend, agent } = createContributions();
+      let state: AgentState = { requests: {}, completedRequests: {} };
+      const parent = { sessionId: 'approval-parent',
+        rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'approval-parent', encryptionMode: 'plain', logger: () => {} }),
+        getMetadataSnapshot: () => createTestMetadata({ path: '/parent', machineId: 'machine-a' }),
+        getAgentStateSnapshot: () => state, updateMetadata: async () => undefined,
+        updateAgentState: async (update: (previous: AgentState) => AgentState) => { state = update(state); },
+        updateAgentStateRequestSettlement: async (update: (previous: AgentState) => AgentState) => { state = update(state); },
+        enqueueAgentMessageCommitted: async () => undefined,
+      };
+      const permissionHandler = new ProviderEnforcedPermissionHandler(parent as unknown as ApiSessionClient, {
+        logPrefix: '[ChildApproval]', getWorkspaceWrites: () => 'allow',
+      });
+      const offer = { requirementId: 'muse-requirement', source: 'muse', choices: [
+        { id: 'allow_once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true } },
+        { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false } },
+      ] } as const;
+      let finishTurn: (() => void) | undefined;
+      let settleFromProvider: (() => Promise<boolean>) | undefined;
+      let requestFromProvider: (() => void) | undefined;
+      let permissionResult: unknown;
+      const adapter = await resolveBackendRuntimeCore({
+        backend, agent, runtimeRegistry: null, executionSurfaces: createEmptyBackendExecutionSurfaces(),
+        runtimeOwner: { backendId: AGENT_ID,
+          selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] },
+        nativeAgentRuntime: { sessions: { open: async (request, context) => {
+          let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+          const permissions = context.services.sessions.current!.permissions;
+          return {
+            watch(listener) { publish = listener; return { dispose() {} }; },
+            async send(input) {
+              publish?.({ kind: 'input-accepted', sessionId: request.sessionId, sequence: 1, emittedAtMs: 1,
+                inputIds: input.inputIds, delivery: input.delivery });
+              publish?.({ kind: 'turn-start', sessionId: request.sessionId, sequence: 2, emittedAtMs: 2,
+                turnId: input.delivery.turnId, startedBy: 'host' });
+              requestFromProvider = () => {
+                void permissions.requestDecision({ requestId: 'muse:approval', toolName: 'Bash', source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE,
+                  input: { command: 'printf child' }, nativeChoices: offer }).then(
+                  result => { permissionResult = result; },
+                  error => { permissionResult = String(error); },
+                );
+              };
+              if (decision !== 'canceled') {
+                settleFromProvider = () => permissions.settleObservedDecision!({
+                  requestId: 'muse:approval', source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE, decision,
+                });
+              }
+              finishTurn = () => publish?.({ ...(decision === 'canceled'
+                ? { kind: 'turn-cancelled' as const, cause: 'user' as const } : { kind: 'turn-complete' as const }),
+                sessionId: request.sessionId, sequence: 3, emittedAtMs: 3, turnId: input.delivery.turnId });
+              return { status: 'admitted' };
+            },
+            async cancel({ turnId }) { finishTurn?.(); return { status: 'requested', turnId }; },
+            async dispose() {},
+          };
+        } } },
+        nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId: AGENT_ID,
+          localAgentId: 'default', occurrenceId: 'approval-agent-occurrence', isCurrent: () => true,
+          sourceCustody: { kind: 'managed', immutableGenerationId: 'child-approval-generation', installSource: 'npm' } },
+      });
+      const runtime = adapter!.runtimeCore.createExecutionRunBackend({
+        scope: 'session_owned', cwd: '/parent', runId: 'approval-child', controllerOccurrenceId: 'approval-occurrence',
+        backendId: AGENT_ID, permissionMode: 'default',
+        start: { intent: 'delegate', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
+        sessionInteractionHost: { session: parent as unknown as ApiSessionClient, machineId: 'machine-a', permissionHandler,
+          readOwnerAccountCredentials: async () => ({ token: 'fixture-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } }),
+        },
+      });
+      if (!runtime) throw new Error('Expected a retained child Run');
+      try {
+        const { runtimeId } = await runtime.provisionRuntime();
+        await runtime.deliverInput(runtimeId, { text: 'Request child consent' }, {
+          localId: 'approval-child-input',
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+          effectiveCallerPermissionMode: 'default',
+        });
+        requestFromProvider!();
+        const requestId = 'execution-run:approval-child:approval-occurrence:muse%3Aapproval';
+        await vi.waitFor(() => expect(state.requests?.[requestId],
+          JSON.stringify({ published: Object.keys(state.requests ?? {}), permissionResult })).toMatchObject({ nativeChoices: offer }));
+        const pendingAtTerminal: boolean[] = [];
+        runtime.subscribeRuntimeEvents?.(event => {
+          if (event.kind === 'turn-complete' || event.kind === 'turn-cancelled') {
+            pendingAtTerminal.push(state.requests?.[requestId] !== undefined);
+          }
+        });
+        if (decision === 'canceled') {
+          await runtime.cancel(runtimeId);
+          await runtime.waitForTurnCompletion?.();
+        } else {
+          await expect(settleFromProvider!()).resolves.toBe(true);
+          finishTurn!();
+          await runtime.waitForTurnCompletion?.();
+        }
+        expect(pendingAtTerminal).toEqual([false]);
+        expect(state.requests?.[requestId]).toBeUndefined();
+        expect(state.completedRequests?.[requestId]).toMatchObject({ status: decision });
+      } finally {
+        await runtime.dispose();
+        await permissionHandler.abortPendingRequestsAndFlush('test cleanup');
+      }
+    },
+  );
 
   it('binds native consent to the configured backend of a detached Run', async () => {
     const { backend, agent } = createContributions(['newTurn', 'steer', 'followUp']);

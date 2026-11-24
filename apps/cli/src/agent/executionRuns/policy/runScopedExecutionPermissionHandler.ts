@@ -35,9 +35,9 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
   }>) => void | Promise<void>;
   readInteractionMode?: (requestKind: 'question' | 'permission') => ExecutionRunPermissionInteractionMode;
 }>): Readonly<{
-  handler: Omit<AcpPermissionHandler, 'handleToolCall'> & Pick<ExecutionRunPermissionHandler, 'handleToolCall'>;
+  handler: Omit<AcpPermissionHandler, 'handleToolCall'> & Pick<ExecutionRunPermissionHandler, 'handleToolCall' | 'settleObservedDecision'>;
   respondToPermissionRequest: ExecutionRunPermissionResponder;
-  settleObservedDecision: ExecutionRunPermissionHandler['settleObservedDecision'];
+  settleTurnPermissions: () => Promise<void>;
   dispose: (reason: string) => Promise<void>;
 }> {
   const runId = String(params.runId ?? '').trim();
@@ -82,6 +82,11 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
     } finally {
       abortingRequestIds.delete(requestId);
     }
+  };
+  const abortPendingRequestsAndFlush: NonNullable<AcpPermissionHandler['abortPendingRequestsAndFlush']> = async (reason, options) => {
+    await Promise.all([...new Set([...pendingRequestIds, ...cleanupRequestIds])].map(async (requestId) => {
+      await abortExact(requestId, reason, options);
+    }));
   };
 
   return {
@@ -129,10 +134,11 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
       async abortPendingRequestAndFlush(toolCallId, reason, options) {
         await abortExact(scopedRequestId(toolCallId), reason, options);
       },
-      async abortPendingRequestsAndFlush(reason, options) {
-        await Promise.all([...new Set([...pendingRequestIds, ...cleanupRequestIds])].map(async (requestId) => {
-          await abortExact(requestId, reason, options);
-        }));
+      abortPendingRequestsAndFlush,
+      async settleObservedDecision(observed) {
+        const requestId = scopedRequestId(observed.requestId);
+        if (!pendingRequestIds.has(requestId) || !params.handler.settleObservedDecision) return false;
+        return await params.handler.settleObservedDecision({ ...observed, requestId });
       },
     },
     respondToPermissionRequest(providerRequestId, response) {
@@ -142,15 +148,7 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
       if (!responder) return false;
       return responder(requestId, response);
     },
-    async settleObservedDecision(observed) {
-      const requestId = scopedRequestId(observed.requestId);
-      if (!pendingRequestIds.has(requestId) || !params.handler.settleObservedDecision) return false;
-      return await params.handler.settleObservedDecision({ ...observed, requestId });
-    },
-    async dispose(reason) {
-      await Promise.all([...new Set([...pendingRequestIds, ...cleanupRequestIds])].map(async (requestId) => {
-        await abortExact(requestId, reason);
-      }));
-    },
+    settleTurnPermissions: () => abortPendingRequestsAndFlush('Execution run turn ended', { preserveQuestions: true }),
+    dispose: abortPendingRequestsAndFlush,
   };
 }

@@ -427,10 +427,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         const disposeAttachments = async () => { await Promise.all(pluginAttachments.splice(0).map(attachment => attachment.dispose())); };
         const executionRunServices = createNativeAgentExecutionRunHostServices({
             permissions: createNativeAgentExecutionRunPermissions({
-                permissionHandler: {
-                    handleToolCall: runPermissionScope.handler.handleToolCall,
-                    settleObservedDecision: runPermissionScope.settleObservedDecision,
-                },
+                permissionHandler: runPermissionScope.handler,
                 pluginId: params.lease.pluginId,
                 runtimeId: `native-agent-run:${runId}`,
                 isCurrent: params.lease.isCurrent,
@@ -666,6 +663,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             await runPermissionScope.dispose(reason);
         },
         async onTurnTerminal(turnId: string) {
+            await runPermissionScope.settleTurnPermissions();
             await params.getPermissionRequestStore?.()?.retireCompletedRequestsForTurn?.(turnId);
         },
     });
@@ -2300,29 +2298,33 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                     }
                     for (const listener of inputOutcomeListeners) listener(outcome);
                 });
+                const publish = (event: AgentSessionRuntimeEvent) => {
+                    for (const listener of runtimeEventListeners) listener(event);
+                    const message = sessionEventToHostMessage(event, sanitize);
+                    if (message) emit(message);
+                };
+                const onTurnTerminal = params.createSessionContext.onTurnTerminal;
                 unsubscribeEvents = operations.subscribeRuntimeEvents((event) => {
                     if ('type' in event) return;
                     if (event.kind === 'skill-usage' && !disposed && !signal.aborted && params.lease.isCurrent()
                         && sourceSession?.skillsDelivered !== false) {
                         void sessionContext.observeSkillUse?.(event).catch(() => undefined);
                     }
-                    for (const listener of runtimeEventListeners) listener(event);
                     if (
-                        event.kind === 'turn-complete'
-                        || event.kind === 'turn-failed'
-                        || event.kind === 'turn-cancelled'
+                        onTurnTerminal &&
+                        (event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled')
                     ) {
-                        const settlement = Promise.resolve(
-                            params.createSessionContext.onTurnTerminal?.(event.turnId),
+                        const settlement = onTurnTerminal(event.turnId).then(
+                            () => publish(event),
+                            error => { publish(event); throw error; },
                         );
                         pendingTurnTerminalSettlement = settlement;
-                        // The turn-completion waiter below owns propagation. Attach
-                        // an observer immediately so a synchronous persistence
-                        // rejection cannot become an unhandled promise first.
+                        // Publish after the owner settles interactions. The
+                        // turn-completion waiter still propagates errors.
                         void settlement.catch(() => undefined);
+                    } else {
+                        publish(event);
                     }
-                    const message = sessionEventToHostMessage(event, sanitize);
-                    if (message) emit(message);
                 });
             } catch (error) {
                 try {
