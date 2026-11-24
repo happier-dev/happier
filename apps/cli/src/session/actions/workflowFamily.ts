@@ -218,7 +218,7 @@ export function createCliWorkflowFamily(
     ? createCliWorkflowTriggerActions({ credentials: params.credentials,
       ...(host.listContributedActionDefinitions ? { listContributedActionDefinitions: host.listContributedActionDefinitions } : {}),
       ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
-      requesterCustody: { serverId: params.serverId ?? projectHomeId,
+      requesterCustody: { serverId: params.serverId ?? projectHomeId, serverIdentityId: params.serverIdentityId,
         isCredentialCurrent: params.isCredentialCurrent },
       ...(host.nativeAccount ? { nativeAccount: host.nativeAccount } : {}),
       deploymentAction: host.deploymentAction,

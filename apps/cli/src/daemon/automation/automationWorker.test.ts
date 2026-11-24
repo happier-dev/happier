@@ -378,6 +378,44 @@ describe('automationWorker', () => {
     } finally { worker.stop(); }
   });
 
+  it('keeps an admitted guest Run pending when the daemon stops during custody lookup', async () => {
+    const now = Date.now();
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-lookup-stop-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const machineId = 'machine-1';
+    const homeId = 'srv_guest_home';
+    const runId = 'pending-guest-run';
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId, installationId: 'installation' };
+    const profileRequested = createDeferred<void>();
+    const releaseProfile = createDeferred<void>();
+    mockGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/profile')) {
+        profileRequested.resolve();
+        await releaseProfile.promise;
+        return { status: 200, data: { id: attribution.accountId } };
+      }
+      return { data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } };
+    });
+    mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      machineId, requesterHomeServerIdentityId: homeId, requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' } });
+    try {
+      await worker.refreshAssignments();
+      await retainWorkflowRequesterCredentials({ scopeId: runId, happyHomeDir: configuration.happyHomeDir,
+        attribution, credentials: { token: 'guest-token', encryption: null }, homeServerIdentityId: homeId });
+      worker.handleServerUpdate({ id: runId, seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId, automationId: null, requesterScope: { kind: 'workflow_trigger', id: runId },
+        state: 'queued', scheduledAt: now, startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId,
+      } } satisfies Update);
+      await profileRequested.promise;
+      worker.stop();
+      releaseProfile.resolve();
+      await worker.liveWorkProducer.read();
+      expect(mockPost.mock.calls.some(([url]) => String(url).endsWith(`/runs/${runId}/requester-custody-unavailable`))).toBe(false);
+    } finally { releaseProfile.resolve(); worker.stop(); }
+  });
+
   it('observes newly retained guest trigger custody and retires an offline-deleted schedule at Account reconnect', async () => {
     const now = Date.now();
     process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-observation-${now}-${Math.random()}`);
@@ -466,6 +504,97 @@ describe('automationWorker', () => {
           .every(([, , options]) => options.headers.Authorization === 'Bearer guest-token')).toBe(true);
       }
     } finally { worker.stop(); vi.unstubAllGlobals(); vi.useRealTimers(); }
+  });
+
+  it('claims the next guest occurrence when its wake arrives during an older empty claim', async () => {
+    const now = Date.now();
+    const machineId = 'machine-1';
+    const triggerId = 'guest-trigger';
+    const runId = '00000000-0000-4000-8000-000000000061';
+    const automationId = 'automation';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-next-occurrence-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId, installationId: 'installation' };
+    const guestCredentials = { token: 'guest-token', encryption: null };
+    const homeId = 'srv_guest_home';
+    const origin = { kind: 'automation' as const, automationId };
+    const materialized = await materializeWorkflowAcceptedSnapshotV1({
+      definition: { version: 1, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] },
+      context: { source: origin, inputs: {}, machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+        authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
+    });
+    if (!materialized.ok) throw new Error(materialized.error.code);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: attribution.accountId, runId },
+      acceptedSnapshot: materialized.snapshot,
+    }));
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId, origin, acceptedEnvelope, state: 'claimed',
+      keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId, accountId: attribution.accountId }),
+        ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
+      : url.endsWith('/currentness') ? createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now)
+      : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
+    const emptyClaim = { run: null, automation: null, accountCurrentness: null };
+    const olderClaimStarted = createDeferred<void>();
+    const releaseOlderClaim = createDeferred<void>();
+    let guestClaimCount = 0;
+    mockPost.mockImplementation(async (url: string, body: { scope?: string }, options: { headers: { Authorization: string } }) => {
+      if (url.endsWith('/workflow-storage')) return { data: { runs: [] } };
+      if (!url.endsWith('/runs/claim') || body.scope !== 'workflow' || options.headers.Authorization !== 'Bearer guest-token') {
+        return { data: emptyClaim };
+      }
+      ++guestClaimCount;
+      if (guestClaimCount === 1) {
+        olderClaimStarted.resolve();
+        await releaseOlderClaim.promise;
+        return { data: emptyClaim };
+      }
+      if (guestClaimCount !== 2) return { data: emptyClaim };
+      return { data: AutomationV3WorkerClaimResponseSchema.parse({ run: { id: runId, automationId, triggerId,
+        triggerRetired: false, cause: { kind: 'trigger', triggerId, triggerRevision: 0,
+          triggerKind: 'schedule', occurrenceKey: Buffer.alloc(32, 7).toString('base64url'), occurredAt: now,
+          evidence: { scheduledFor: now } }, recipeKind: 'workflow-v2', leaseExpiresAt: Date.now() + 30_000,
+        attempt: 1, revision: 1, executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope },
+        automation: { id: automationId, name: 'Guest schedule', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS }) };
+    });
+    const worker = startCapacityAutomationWorker({ machineId, token: 'custodian-token',
+      credentials: { token: 'custodian-token', encryption: null }, requesterHomeServerIdentityId: homeId,
+      requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' },
+      coordinateWorkflowRun: async (claim, requester) => {
+        if (!requester) throw new Error('Expected guest requester custody');
+        const { credentials, attribution: requesterAttribution } = requester;
+        return await createProductionWorkflowRunCoordinator({ token: credentials.token, accountId: requesterAttribution.accountId,
+          machineId, storage, requesterWorkAttributionV1: requesterAttribution,
+          resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+          resolveAccountEncryption: async () => ({ kind: 'available', witness: V3_CLAIM_CURRENTNESS }),
+          isAcceptedAuthorizationCurrent: async () => true,
+          workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
+            inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+          execution: { credentials, serverId: requesterAttribution.serverId,
+            machineAdmissionTransport: async () => { throw new Error('unexpected_message'); },
+            resolveExistingSessionConversation: async () => null,
+            detachedRun: { actionExecutor: { execute: async () => { throw new Error('unexpected_execution'); } },
+              buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) } },
+        })(claim);
+      },
+    });
+    const wake = (id: string, seq: number) => worker.handleServerUpdate({ id, seq, createdAt: now, body: {
+      t: 'automation-run-updated', runId: id, automationId, requesterScope: { kind: 'workflow_trigger', id: triggerId },
+      state: 'queued', scheduledAt: now, startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId,
+    } } satisfies Update);
+    try {
+      await worker.refreshAssignments();
+      await retainWorkflowRequesterCredentials({ scopeId: triggerId, happyHomeDir: configuration.happyHomeDir,
+        attribution, credentials: guestCredentials, homeServerIdentityId: homeId });
+      wake('older-run', 1);
+      await olderClaimStarted.promise;
+      wake(runId, 2);
+      releaseOlderClaim.resolve();
+      await expect.poll(() => storage.run().state).toBe('waiting_for_review');
+    } finally { releaseOlderClaim.resolve(); worker.stop(); }
   });
 
   it('refuses a different claimed trigger without its custody before executing with the wake requester', async () => {

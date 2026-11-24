@@ -162,7 +162,7 @@ describe('CLI workflow trigger Account codec', () => {
       expect(network.create).toHaveBeenCalledOnce();
     }
   });
-  it('arms a guest\'s recurring trigger on a Machine shared for Use, sealing only their sign-in there', async () => {
+  it.each(['saved profile', 'verified invocation'] as const)('arms a guest\'s recurring trigger on a Machine shared for Use (%s)', async homeSource => {
     // The requester's and the receiver's saved profile ids differ; only the Home identity is shared.
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     const [{ default: fastify }, { installAxiosFastifyAdapter }, { RpcHandlerManager }, { authorizeMachineRpcRequest },
@@ -173,7 +173,7 @@ describe('CLI workflow trigger Account codec', () => {
       import('@/configuration'), import('node:fs/promises'), import('node:os'), import('node:path')]);
     const origin = 'http://shared-home.test';
     const homeId = 'srv_shared_home';
-    await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: configuration.activeServerId, createIfMissing: true,
+    if (homeSource === 'saved profile') await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: configuration.activeServerId, createIfMissing: true,
       observation: 'exact', descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://shared-home.example.test',
         revision: 1, endpoints: [{ kind: 'https', url: 'https://shared-home.example.test' }] } });
     // Home HTTP is the authentication boundary for the receiver's requester admission.
@@ -212,9 +212,11 @@ describe('CLI workflow trigger Account codec', () => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.fixture`;
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
+    const requesterCustody = homeSource === 'saved profile' ? { serverId: configuration.activeServerId }
+      : { serverId: 'requester-url-only-profile', serverIdentityId: homeId };
     const actions = createCliWorkflowTriggerActions({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
       serverHttpBaseUrl: origin, resolveWorkflow: async () => ({ definition }),
-      requesterCustody: { serverId: configuration.activeServerId } });
+      requesterCustody });
     const add = () => actions.add({ target: { kind: 'inline', definition },
       project: { machineId: 'shared-machine', directory: '/work' }, trigger }, { surface: 'cli', authority: 'present_user' });
     const retained = (scopeId: string) => acquireWorkflowRequesterCredentials({ scopeId, happyHomeDir, serverId: 'owner-profile',

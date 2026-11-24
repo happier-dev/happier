@@ -28,6 +28,7 @@ import { sealSessionRequesterBootstrapRpcRequestV1 } from
 
 type CliTriggerRequesterCustodyOptions = Readonly<{
   serverId: string;
+  serverIdentityId?: string;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
 }>;
 
@@ -59,7 +60,7 @@ function createCliTriggerRequesterCustody(params: Readonly<{
       const publicKey = decodeBase64(installationPublicKey, 'base64');
       if (encodeBase64(publicKey, 'base64') !== installationPublicKey) return unavailable('admission_unavailable');
       // The receiving Machine has its own saved profile id for this Home; only the Home identity is shared.
-      const serverId = await resolveServerProfileHomeIdentityId(options.serverId) ?? options.serverId;
+      const serverId = options.serverIdentityId ?? await resolveServerProfileHomeIdentityId(options.serverId) ?? options.serverId;
       const deliver = async (operation: 'retain' | 'retire', requestSignal?: AbortSignal) => {
         const request = sealSessionRequesterBootstrapRpcRequestV1({ installationId, installationPublicKey: publicKey,
           randomBytes: getRandomBytes, request: { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',

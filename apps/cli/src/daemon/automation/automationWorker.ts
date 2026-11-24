@@ -119,6 +119,10 @@ export function startAutomationWorker(params: {
         logAutomationWarn('Workflow requester custody observation failed', error, { machineId: params.machineId }) });
   };
   const workerCancellation = new AbortController();
+  const reportMissingRequesterCustody = async (runId: string) => {
+    // An interrupted read supplies no evidence that the requester custody is missing.
+    if (!workerCancellation.signal.aborted) await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId });
+  };
   const managedTargetBackfillCancellation = new AbortController();
   let paused = false;
   // These values govern only the one claim request loop. A per-Run executor
@@ -416,7 +420,7 @@ export function startAutomationWorker(params: {
         installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
         ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) }) : null;
       if (scopeId && !requester) {
-        await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId });
+        await reportMissingRequesterCustody(runId);
         return;
       }
       try { await params.recoverWorkflowRuns?.(runId, requester ?? undefined, workerCancellation.signal); }
@@ -509,6 +513,11 @@ export function startAutomationWorker(params: {
     let requester: Awaited<ReturnType<typeof acquireWorkflowRequesterCredentials>> = null;
     let executionOwnsRequester = false;
     const requesterWake = [...requesterWakes.values()].find(wake => wake.nextClaimAt <= Date.now());
+    const consumeRequesterWake = (wake: NonNullable<typeof requesterWake>) => {
+      // The async claim can only consume the wake it read. A later occurrence
+      // on this scope starts from the new wake, even after an empty claim.
+      if (requesterWakes.get(wake.scopeId) === wake) requesterWakes.delete(wake.scopeId);
+    };
     let releaseClaim = () => {};
     // Preparation belongs to the same single-flight operation as dispatch.
     claimInFlight = new Promise<void>(resolve => { releaseClaim = resolve; });
@@ -544,8 +553,8 @@ export function startAutomationWorker(params: {
         return;
       }
       if (requesterWake && (!params.requesterWorkAttributionV1 || !params.requesterHomeServerIdentityId)) {
-        requesterWakes.delete(requesterWake.scopeId);
-        if (requesterWake.runId) await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: requesterWake.runId });
+        consumeRequesterWake(requesterWake);
+        if (requesterWake.runId) await reportMissingRequesterCustody(requesterWake.runId);
         return;
       }
       if (requesterWake && params.requesterWorkAttributionV1) {
@@ -555,8 +564,8 @@ export function startAutomationWorker(params: {
           installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
         if (!requester) {
-          requesterWakes.delete(requesterWake.scopeId);
-          if (requesterWake.runId) await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: requesterWake.runId });
+          consumeRequesterWake(requesterWake);
+          if (requesterWake.runId) await reportMissingRequesterCustody(requesterWake.runId);
           return;
         }
       }
@@ -577,7 +586,7 @@ export function startAutomationWorker(params: {
       if (!claimed) {
         emptyClaim = !requesterWake;
         if (requesterWake) {
-          requesterWakes.delete(requesterWake.scopeId);
+          consumeRequesterWake(requesterWake);
           return;
         }
         // The request consumed its due wake. Refresh the server's next fact
@@ -601,7 +610,7 @@ export function startAutomationWorker(params: {
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
         if (!claimedRequester) {
-          await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: claimed.run.id });
+          await reportMissingRequesterCustody(claimed.run.id);
           return;
         }
         const previousRequester = requester;
