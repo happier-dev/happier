@@ -35,6 +35,7 @@ import type { DeploymentUiBindingsInput, DeploymentUiTelemetryInput, DeploymentU
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
 
 export type DeploymentTelemetrySheetInput = Readonly<{
   detail: DeploymentEnvironmentDetailV1;
@@ -275,7 +276,7 @@ export function DeploymentTelemetrySheet(
             onSelectMachine={(machine) => change(setCollectorId)(machine.id)}
           />
           {roleOffMachine ? (
-            <CollectorRoleRecovery key={roleOffMachine.id} machine={roleOffMachine}
+            <CollectorRoleRecovery key={roleOffMachine.id} machine={roleOffMachine} environment={environment} onDraftOpened={props.onClose}
               machineName={getMachineDisplayName(roleOffMachine, allMachines)} lifetime={lifetime}
               disabled={saving} onEnabled={() => setRefusal(null)} />
           ) : null}
@@ -415,18 +416,35 @@ export function DeploymentTelemetrySheet(
   );
 }
 
-function CollectorRoleRecovery({ machine, machineName, lifetime, disabled, onEnabled }: Readonly<{
+function CollectorRoleRecovery({ machine, machineName, lifetime, environment, disabled, onEnabled, onDraftOpened }: Readonly<{
   machine: Machine;
   machineName: string;
   lifetime: ServerAccountScopeLifetime;
   disabled: boolean;
+  environment: DeploymentEnvironmentDetailV1['environment'];
   onEnabled: () => void;
+  onDraftOpened: () => void;
 }>) {
   const now = useMachinePresenceNowMs(React.useMemo(() => [machine], [machine]));
   const roles = useMachineRolesEditor({ scope: lifetime.scope, machine, machineName, online: isMachineOnline(machine, now) });
+  const { openBrief, openingBrief } = useDeploymentTelemetryBrief(lifetime, environment);
   if (roles.list.status !== 'ready' || !roles.list.roles.some(role => role.id === DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) return null;
   if (roles.shownActive.has(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) return null;
-  if (!roles.canManage) return <Item mode="info" title={t('deploymentTelemetry.sheet.askRoleOwner')} />;
+  if (!roles.canManage) return <Item
+    testID="project-deployments.telemetry.ask-role-owner"
+    title={t('deploymentTelemetry.sheet.askRoleOwner')}
+    disabled={disabled || openingBrief}
+    onPress={async () => {
+      const { serverId } = lifetime.scope;
+      const opened = await openBrief(() => ({
+        kind: 'collector_role_recovery',
+        environment: { serverId, projectSourceId: environment.projectSourceId, environmentId: environment.id },
+        sourceScope: { serverId, machineId: machine.id },
+        roleId: DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1,
+      }));
+      if (opened) onDraftOpened();
+    }}
+  />;
   return <Item
     testID="project-deployments.telemetry.enable-role"
     title={t('deploymentTelemetry.sheet.enableRole')}

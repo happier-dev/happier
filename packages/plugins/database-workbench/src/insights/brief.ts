@@ -78,6 +78,10 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
             'Use the exact structural target and typed statistics diagnosis in the evidence. Determine whether the installed extension, shared_preload_libraries, or an engine restart is required; distinguish database-local extension setup from server configuration and explain its impact before proposing SQL or configuration.',
             'Resolve the existing target and administrative credential references through their canonical owners. Prepare an editable plan and obtain the required review before applying setup. Use the existing setup executor when supported; otherwise provide explicit local or vendor instructions. Do not acquire elevated credentials or restart the server as a fallback.',
             `Verify by repeating ${DATABASE_STATS_READ_ACTION_ID_V1} with the evidence target and statistics request. Report the resulting typed capability and coverage; never reset statistics as part of setup or verification.`,
+        ] : finding.kind === 'collector_role_recovery' ? [
+            'Ask the collector Machine’s owner to enable its Telemetry role through Machine Roles.',
+            'Use the exact Environment, collector Machine, and role in the evidence. Confirm the intended collector before reviewing any access change.',
+            'After the owner reviews and enables the role, return to the Environment’s Telemetry setup and retry the collector configuration.',
         ] : finding.kind === 'migration' ? [
             'Prepare a reviewable repository migration for the selected database.',
             'Inspect the project’s existing schema and migration files, ORM or migration tool, and documented commands. Reuse that owner and its conventions; do not introduce a second schema-diff or migration executor.',

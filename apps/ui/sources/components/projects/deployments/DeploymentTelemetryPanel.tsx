@@ -6,11 +6,9 @@ import type {
   DatabaseCaptureCursorV1,
   DatabaseCaptureEndpointCursorV1,
   DatabaseCaptureEndpointV1,
-  DatabaseCaptureEndpointsListResultV1,
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
-import { SESSION_INPUT_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import {
   CaptureEndpoints,
@@ -24,8 +22,6 @@ import {
   requestLabelOf,
   type CaptureEndpointAction,
 } from '@happier-dev/plugins-telemetry/capture-views';
-import { buildDatabaseFindingBriefV1, createDatabaseBriefHandoffControl } from '@happier-dev/plugins-database-workbench/finding-brief';
-import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -40,13 +36,12 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { AddCheckSetup } from './AddCheckSetup';
+import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
 import { Typography } from '@/constants/Typography';
-import { randomUUID } from '@/platform/randomUUID';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
-import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { createDeploymentActions } from './deploymentActions';
@@ -300,7 +295,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   // Checks are set up by the Environment's managers, in the same editor Settings → Checks and alerts opens.
   const canAddCheck = environment.capabilities.role === 'manager' && lifetime !== null;
   const endpointDemand = active && tab === 'endpoints' ? reads : null;
-  const { openBrief } = useCaptureFindingHandoff(lifetime, endpointDemand);
+  const { openBrief } = useDeploymentTelemetryBrief(lifetime, endpointDemand);
   const readAt = state.readAt;
   const windowMs = WINDOW_MS[windowId];
   const endpointActions = React.useMemo<readonly CaptureEndpointAction[]>(() => [
@@ -482,57 +477,6 @@ type RequestRead =
   | Readonly<{ kind: 'ready'; trace: Awaited<ReturnType<TelemetryCaptureReads['trace']>> }>
   | Readonly<{ kind: 'unavailable'; code: string }>;
 
-type SelectedCaptureFinding = NonNullable<Extract<DatabaseCaptureEndpointsListResultV1, { ok: true }>['finding']>;
-
-function useCaptureFindingHandoff(lifetime: ServerAccountScopeLifetime | null, demand: TelemetryCaptureReads | null) {
-  const [openingBrief, setOpeningBrief] = React.useState(false);
-  const inFlight = React.useRef<AbortController | null>(null);
-  React.useEffect(() => () => inFlight.current?.abort(), [lifetime, demand]);
-  const openBrief = React.useCallback(async (load: (signal: AbortSignal) => SelectedCaptureFinding | undefined | Promise<SelectedCaptureFinding | undefined>) => {
-    if (!demand || !lifetime?.isCurrent() || inFlight.current) return;
-    const abort = new AbortController();
-    inFlight.current = abort;
-    const retirement = lifetime.onRetire(() => abort.abort());
-    const { signal } = abort;
-    setOpeningBrief(true);
-    try {
-      const finding = await load(signal);
-      if (signal.aborted) return;
-      if (!finding) {
-        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: 'telemetry_unavailable' });
-        return;
-      }
-      const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(finding), {
-        handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession: { kind: 'new', seed: {} } },
-        idempotencyKey: randomUUID,
-      });
-      const prepared = await control.controller.prepare({ signal });
-      if (prepared && !signal.aborted) {
-        const { serverId, accountId } = lifetime.scope;
-        const outcome = await createFrontDoorUiActionExecutor(undefined, { serverId, expectedAccountId: accountId })(
-          SESSION_INPUT_HANDOFF_ACTION_ID_V1, prepared.input, { signal },
-        );
-        const result = SessionInputHandoffResultV1Schema.parse(outcome);
-        if (signal.aborted) return;
-        const code = result.kind === 'unavailable' ? result.reason
-          : result.kind === 'failed' ? result.failure.errorCode
-          : result.kind === 'authoringResult' && result.result.kind !== 'opened' ? result.result.reason
-          : null;
-        if (code) alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code });
-      }
-    } catch (error) {
-      if (!signal.aborted) {
-        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
-      }
-    } finally {
-      retirement.dispose();
-      inFlight.current = null;
-      setOpeningBrief(false);
-    }
-  }, [demand, lifetime]);
-  return { openingBrief, openBrief };
-}
-
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 export function TelemetryRequestDetail(props: Readonly<{
   reads: TelemetryCaptureReads;
@@ -569,7 +513,7 @@ export function TelemetryRequestDetail(props: Readonly<{
   const finding = active && read.kind === 'ready'
     ? read.trace.findings?.find(candidate => candidate.verification.observationKey === request.id)
     : undefined;
-  const { openingBrief, openBrief } = useCaptureFindingHandoff(lifetime, active ? reads : null);
+  const { openingBrief, openBrief } = useDeploymentTelemetryBrief(lifetime, active ? reads : null);
   const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [
     request.serviceName ?? null,

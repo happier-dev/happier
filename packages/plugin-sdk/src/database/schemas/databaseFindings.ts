@@ -1,4 +1,6 @@
 import { z } from 'zod/mini';
+import { DeploymentEnvironmentRefV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { MachineTargetV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { AutomationOccurredAtV1Schema } from '@happier-dev/protocol/automations/automationOccurredAtV1';
 import { AutomationEventSourceOrOccurrenceIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
@@ -126,6 +128,12 @@ const databaseGuidedTask = z.strictObject({
 });
 export const DatabaseTaskEvidenceV1Schema = z.union([
     databaseGuidedTask,
+    z.strictObject({
+        kind: z.literal('collector_role_recovery'),
+        environment: DeploymentEnvironmentRefV1Schema,
+        sourceScope: MachineTargetV1Schema,
+        roleId: z.literal(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1),
+    }),
     z.strictObject({
         kind: z.literal('add_telemetry'),
         scope: z.omit(DatabaseWorktreeTargetV1Schema, { source: true }),

@@ -472,6 +472,63 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it('opens an editable owner recovery draft for a role-off collector the person can use', async () => {
+    const { showDeploymentTelemetrySheet } = await import('./DeploymentTelemetrySheet');
+    const { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } = await import('@happier-dev/protocol/machines/roles/machineRolesV1');
+    const { createHydratedPlainMachineFixture, createPlainSharedMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    await prepareSessionDraftPersistenceStorage();
+    const homes = createHomeGovernanceHarness();
+    installHomeGovernanceBoundaries(homes);
+    const serverUrl = 'https://collector-role.test';
+    const accountId = lifetime.scope.accountId;
+    const serverId = await homes.addHome({ name: 'Telemetry', serverUrl, accountId, currentAccount: true });
+    const scope = { serverId, accountId };
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl, generation: 1 });
+    storage.getState().activateProfileScope(scope);
+    const [pluginId, roleId] = DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1.split('/');
+    const machine = createHydratedPlainMachineFixture({ id: 'collector', accountId, machine: {
+      activeAt: Date.now(), daemonState: { machineRoles: { plugins: [{ pluginId: pluginId!, declaration: {
+        id: roleId!, title: 'Telemetry', description: 'Collect telemetry',
+      } }] } },
+    } });
+    const share = createPlainSharedMachineRowFixture({ id: machine.id, custodianAccountId: 'machine-owner', machine });
+    await publishMachineInventoryForTest(scope, [{ ...machine, access: share.access }]);
+    router.spies.push.mockClear();
+    const screen = await renderScreen(<ModalProvider />);
+    const setTelemetry = vi.fn();
+    try {
+      await act(async () => {
+        showDeploymentTelemetrySheet({ detail: setUpDetail(), lifetime: { ...lifetime, scope }, environmentName: 'Production',
+          setTelemetry, setBindings: vi.fn(), onSaved: vi.fn() });
+      });
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.enable-role')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.ask-role-owner');
+      const draftId = await waitForHomeGovernance(() => {
+        const route = router.spies.push.mock.calls.at(-1)?.[0];
+        if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('No recovery draft');
+        const params = route.params;
+        if (typeof params !== 'object' || params === null || !('draftId' in params) || typeof params.draftId !== 'string') throw new Error('No recovery draft ID');
+        return params.draftId;
+      });
+      const draft = readNewSessionDraftFromRepository({ scope, draftId });
+      expect(draft?.input).toContain('collector');
+      const evidence = JSON.stringify(draft?.composerAttachmentSeeds);
+      for (const value of ['collector_role_recovery', 'production', machine.id, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1]) {
+        expect(evidence).toContain(value);
+      }
+      expect(setTelemetry).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => { modal.module.Modal.hideAll(); });
+      await screen.unmount();
+      await discardSessionDraftPersistenceWrites();
+      resetSessionDraftRepositoryForTests();
+      await clearBrowserRecords();
+      publishAppliedActiveServerRuntimeAvailability(false);
+      await homes.reset();
+    }
+  });
+
   it('offers investigation only when the collector returned a finding for the selected request', async () => {
     const { invoke } = collector(call => {
       const reply = answers(call);

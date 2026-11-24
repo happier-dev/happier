@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { SessionInputHandoffInputV1Schema, runSessionInputHandoffV1 } from '@happier-dev/plugin-sdk/sessions';
 import { DatabaseTaskEvidenceV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseBriefHandoffControl, createDatabaseMigrationHandoffControl } from './migration.js';
@@ -63,4 +64,30 @@ it('preserves the production observation and exact scoped capture read in the ed
 
     expect(result.kind).toBe('composed');
     expect(evidence).toEqual({ currentDetail: finding, verification: finding.verification });
+});
+
+it('opens an editable collector-role recovery brief with the exact Environment and Machine evidence', async () => {
+    const task = DatabaseTaskEvidenceV1Schema.parse({
+        kind: 'collector_role_recovery',
+        environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'prod' },
+        sourceScope: { serverId: 'home', machineId: 'collector' },
+        roleId: DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1,
+    });
+    const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(task), {
+        handoff: { v: 1, sessionChoice: { kind: 'existing', session: 'existing' }, delivery: 'compose' },
+        idempotencyKey: () => 'collector-role-recovery',
+    });
+    const signal = new AbortController().signal;
+    const handoff = SessionInputHandoffInputV1Schema.parse((await control.controller.prepare({ signal }))?.input);
+    let evidence: unknown;
+    const result = await runSessionInputHandoffV1(handoff, {
+        async compose(_session, input) {
+            expect(input.text).toContain('Machine Roles');
+            evidence = JSON.parse(input.forgeEvidence!.items[0]!.text);
+            return { ok: true, result: 'composed' };
+        },
+        async send() { throw new Error('Role recovery starts in a reviewable draft'); },
+    }, { resolvedSession: { sessionId: 'existing', serverId: 'home' }, signal });
+    expect(result.kind).toBe('composed');
+    expect(evidence).toEqual({ task });
 });
