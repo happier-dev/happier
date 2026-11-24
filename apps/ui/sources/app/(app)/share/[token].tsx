@@ -42,6 +42,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Icon } from '@/components/ui/icons/Icon';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { readSessionTitleInMetadata } from '@happier-dev/protocol/sessions/metadata/sessionTitle';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
@@ -662,7 +663,7 @@ export default memo(function PublicShareViewerScreen() {
 
     const { share, decryptedMetadata } = dataset;
     const ownerName = formatAccountDisplayName(share.owner) ?? t('status.unknown');
-    const sessionName = decryptedMetadata?.name || decryptedMetadata?.path || t('session.sharing.session');
+    const sessionName = readSessionTitleInMetadata(decryptedMetadata) || decryptedMetadata?.path || t('session.sharing.session');
 
     return (
         <>

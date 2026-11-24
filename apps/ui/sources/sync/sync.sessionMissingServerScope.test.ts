@@ -5404,14 +5404,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
 
-    it('migrates a dormant predecessor-shaped owner Session on the owner\'s explicit request without a content edit', async () => {
+    it('migrates a dormant 0.2 named owner Session without disclosing its private path or host', async () => {
         const sessionId = 'dormant_layout0_owner_share';
-        // A predecessor row as the Home stores it: no layout marker at all, one
-        // bag mixing recipient-safe presentation with owner-private facts.
+        // Released 0.2 shape: create-old.mjs:54 and the predecessor MetadataObjectSchema.
+        // No layout marker or summary; the title is stored only in name.
         const predecessorMetadata = {
             path: '/Users/owner/private-repo',
             host: 'owner-laptop',
-            summary: { text: 'Historical shared work', updatedAt: 42 },
+            name: 'Historical shared work',
         };
         const predecessorMetadataBytes = JSON.stringify(predecessorMetadata);
         const predecessorAgentStateBytes = JSON.stringify({ controlledByUser: false });

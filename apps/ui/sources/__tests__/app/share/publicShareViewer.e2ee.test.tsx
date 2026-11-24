@@ -5,6 +5,9 @@ import { installPublicShareViewerCommonModuleMocks } from './publicShareViewerTe
 
 import { encodeBase64 } from '@/encryption/base64';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
+import { updateSessionMetadataTupleWithRetry } from '@happier-dev/cli-common/sessionMetadata';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
+import { randomBytes } from 'node:crypto';
 import {
     ExternalSessionOperationSharedPresentationV1Schema} from '@happier-dev/protocol/sessions/external/operationV1';
 import {
@@ -60,6 +63,7 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
+    SafeAreaInsetsContext: undefined,
     useSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -100,6 +104,63 @@ function createPublicExternalSessionOperationPresentation() {
 }
 
 describe('PublicShareViewerScreen (e2ee)', () => {
+    it('shows the released 0.2 title after the real owner migration without private path or host', async () => {
+        serverFetchSpy.mockReset();
+        decryptDataKeyFromPublicShareSpy.mockReset();
+        const dataKey = new Uint8Array(32).fill(5);
+        decryptDataKeyFromPublicShareSpy.mockResolvedValue(dataKey);
+        const encryptor = new AES256Encryption(dataKey);
+        const encryptPayload = async (payload: unknown) => {
+            const [bytes] = await encryptor.encrypt([payload]);
+            return encodeBase64(bytes, 'base64');
+        };
+        // create-old.mjs:54 writes exactly this shape through released 0.2 crypto/routes.
+        const metadata = { path: '/synthetic/C85/private', host: 'synthetic-C85-host', name: 'C85 active' };
+        const migrated = await updateSessionMetadataTupleWithRetry({
+            initialSnapshot: {
+                mode: 'legacy_owner', metadataLayoutVersion: 0, metadataVersion: 1,
+                metadataCiphertext: await encryptPayload(metadata), ownerMetadata: null,
+                agentStateVersion: 0, agentStateCiphertext: null,
+                value: { metadata, agentState: null },
+            },
+            mutation: { kind: 'ownerMigration' },
+            crypto: {
+                encryptPayload,
+                encodeOwnerMetadata: async ownerMetadata => sealSessionOwnerMetadataEnvelopeV1({
+                    material: { type: 'legacy', secret: new Uint8Array(32).fill(9) }, ownerMetadata, randomBytes,
+                }),
+            },
+            commit: async () => ({ result: 'success', metadataVersion: 2, agentStateVersion: 0 }),
+            ownerMigrationCurrentness: { expectedAccountEncryptionMode: 'e2ee',
+                expectedAccountContentPublicKeyFingerprint: `content-public-key-sha256:${'a'.repeat(64)}` },
+        });
+        if (migrated.mode !== 'owner') throw new Error('Expected migrated owner tuple');
+        expect(migrated.value.sharedMetadata.summary?.text).toBe(metadata.name);
+        const recipientContent = JSON.stringify(migrated.value.sharedMetadata);
+        expect(recipientContent).not.toContain(metadata.path);
+        expect(recipientContent).not.toContain(metadata.host);
+        serverFetchSpy
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                session: { id: 's1', seq: 0, encryptionMode: 'e2ee', createdAt: 1, updatedAt: 2,
+                    active: false, activeAt: 2, metadataVersion: migrated.metadataVersion,
+                    metadataLayoutVersion: 1, metadata: migrated.sharedMetadataCiphertext },
+                owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                accessLevel: 'view', encryptedDataKey: 'encrypted-data-key-placeholder', isConsentRequired: false,
+            }) })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                messages: [], hasMore: false, nextBeforeSeq: null,
+            }) });
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        try {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(screen.getTextContent()).toContain(metadata.name);
+            expect(screen.getTextContent()).not.toContain(metadata.path);
+            expect(screen.getTextContent()).not.toContain(metadata.host);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('retains completed shared questions in an encrypted complete empty history', async () => {
         transcriptListSpy.mockClear();
         serverFetchSpy.mockReset();
