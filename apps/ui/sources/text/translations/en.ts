@@ -11219,6 +11219,7 @@ const enVoiceSurface = {
   approvalTapRequired: 'This request needs a tap in Happier. Open it to approve or reject.',
   actionCanceled: 'The operation was canceled.',
   approvalResultHeld: 'The approved action ran. The person who approved it has the result.',
+  sessionMemoryOff: 'Memory is off for this session. You can turn it on in the session’s Memory settings.',
   reviewCredentials: 'Review credentials',
   connectAgent: 'Connect',
   setUpAgent: ({ agent }: { agent: string }) => `Set up ${agent}`,

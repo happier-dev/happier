@@ -5,6 +5,7 @@ import { buildToolResultsFollowUpPrompt } from './buildVoiceToolResultsFollowUp'
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { projectVoiceActionExecutionResult, serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
+import { redactVoiceActionExecutionResultForProvider } from './redactVoiceToolResult';
 
 describe('spoken Action owner outcomes', () => {
   it('directs a pending settings change to the approval card when the owner requires a tap', () => {
@@ -17,9 +18,15 @@ describe('spoken Action owner outcomes', () => {
   });
   it('speaks the disabled Memory write separately from a pending approval', () => {
     const entry = { t: 'action_execute', args: { actionId: 'memory.remember', input: {} } };
-    expect(resolveSpokenActionOutcome({ ...entry,
-      result: { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
-        details: { reason: 'session_memory_off' } } })).toBe(t('memoryContext.session.memoryOff'));
+    const refusal = { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
+      details: { reason: 'session_memory_off' } } as const;
+    const canonical = JSON.parse(serializeVoiceActionExecuteResult('memory.remember', refusal, { canonicalResult: true }));
+    const projected = UiActionDispatchResultV1Schema.parse({ v: 1, execution: redactVoiceActionExecutionResultForProvider(
+      'memoryRemember', canonical, { shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false },
+    ) }).execution;
+    const spoken = resolveSpokenActionOutcome({ ...entry, result: refusal });
+    expect(spoken).toMatch(/memory is off for this session.*turn it on/i);
+    expect(projected).toEqual({ ...refusal, error: spoken });
     expect(resolveSpokenActionOutcome({ ...entry,
       result: { ok: true, result: { kind: 'approval_request_created', actionId: 'memory.remember',
         artifactId: 'request-1', voiceApprovalGuidance: 'tap_required' } } })).toBeNull();

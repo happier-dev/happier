@@ -9,6 +9,7 @@ import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessio
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { VoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
+import { resolveSessionMemoryOffSpokenOutcome } from '@/voice/context/spokenActionOutcome';
 import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 
 export type VoiceSpawnObservedSession = Readonly<{
@@ -105,11 +106,14 @@ export function serializeVoiceActionExecuteResult(
     errorMessage: `${options?.agentTarget ? `${options.agentTarget.identity.localId}: ` : ''}${resolveSessionSpawnNewResultFailureMessage(spawnFailure)}${
       alternative ? ` ${alternative.label} is ready on this Machine. Would you like to use ${alternative.label} instead?` : ''}`,
   } : undefined;
-  if (options?.canonicalResult && !result.ok) return JSON.stringify({ ...result, ...spawnContext });
   if (!result.ok) {
+    const memoryOff = resolveSessionMemoryOffSpokenOutcome(result);
+    if (options?.canonicalResult) {
+      return JSON.stringify({ ...result, ...(memoryOff ? { error: memoryOff } : {}), ...spawnContext });
+    }
     const details = isRecord(result.details) ? result.details : {};
     const errorDetail = normalizeSpawnSessionErrorDetail(details.errorDetail);
-    return jsonError(result.errorCode, spawnContext?.errorMessage ?? (options?.agentTarget
+    return jsonError(result.errorCode, memoryOff ?? spawnContext?.errorMessage ?? (options?.agentTarget
       ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode), {
       actionId,
       ...(result.failureCause ? { failureCause: result.failureCause } : {}),

@@ -82,10 +82,12 @@ describe('Voice Action reference catalog', () => {
     const projected = redactVoiceActionExecutionResultForProvider('memoryRemember', refusal, {
       shareFilePaths: false, sharePermissionRequests: false, shareSessionSummary: false,
     });
-    expect(projected).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'session_memory_off' } });
+    expect(projected).toMatchObject({ ok: false, errorCode: 'action_disabled',
+      error: expect.stringMatching(/memory is off for this session.*turn it on/i),
+      details: { reason: 'session_memory_off' } });
     const { resolveSpokenActionOutcome } = await import('@/voice/context/spokenActionOutcome');
     expect(resolveSpokenActionOutcome({ t: 'action_execute', args: { actionId: 'memory.remember' }, result: projected }))
-      .toBe(t('memoryContext.session.memoryOff'));
+      .toBe(t('voiceSurface.sessionMemoryOff'));
     expect(writeDiscovery).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'session_memory_off' } });
     expect(await discover('memory.read')).toMatchObject({ ok: true });
     expect(home.artifacts(serverId).list()).toEqual([]);
