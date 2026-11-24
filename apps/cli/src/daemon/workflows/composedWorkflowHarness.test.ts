@@ -69,6 +69,7 @@ import type { AvailableAutomationAccountEncryptionV1 } from '@/plugins/runtime/a
 import { writeDaemonState, type StoredCredentials } from '@/persistence';
 import type { AutomationDefinitionDetail, AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { projectWorkflowPermissionRequests } from '../../../../../apps/ui/sources/components/workflows/run/workflowPermissionRequests';
@@ -176,6 +177,7 @@ import { createWorkflowActionExecutor } from '@/session/actions/workflowActionEx
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { createWorkflowDefinitionActions as createCliWorkflowDefinitionActions } from '@/session/actions/workflowDefinitions';
 import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
+import { projectWorkflowConversationRoleSelection } from '@/session/actions/workflowMaterializationHost';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
@@ -533,6 +535,7 @@ function workflowDaemonProcess(input: Readonly<{
   encryption?: AvailableAutomationAccountEncryptionV1;
   credentials?: StoredCredentials;
   conversationSessionId?: string;
+  originAgentTarget?: NonNullable<WorkflowDefinitionV1['defaults']['agentTarget']>;
   readActualConversation?: boolean;
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void>;
   sessionStartup?: WorkflowSessionStartup;
@@ -562,6 +565,9 @@ function workflowDaemonProcess(input: Readonly<{
     // Opened Account policy and exact-Machine availability are host boundaries;
     // the canonical materializer and ORC admission decision remain real.
     resolveMaterializationHost: async ({ runId, workDepth, directory, originSessionId }) => ({
+      ...(originSessionId && input.originAgentTarget ? { roleSelection: projectWorkflowConversationRoleSelection({
+        sessionId: originSessionId, machineId: workflowMachineId, directory, agentTarget: input.originAgentTarget,
+      }, workflowMachineId) } : {}),
       effects: { resolveTargetAvailability: async () => true,
         readActionContract: async actionId => {
           const parsed = ActionIdSchema.safeParse(actionId);
@@ -3205,6 +3211,134 @@ describe('composed Workflow front door and claimed execution', () => {
 });
 
 describe('composed Automation workflow claim and optional receipt', () => {
+  it('arms Keep going on an undecidable answer and refuses its Judge at real Run start', async () => {
+    const native = await installedNativeWorkflowFixture();
+    const { directory, machineId, accountId, credentials, executor } = native;
+    const sessionId = 'c123456789012345678901234';
+    const runId = randomUUID();
+    const pluginId = 'acme.keep-going-role';
+    const target = { kind: 'agent' as const, identity: { pluginId, localId: 'default' } };
+    const open = vi.fn(async (): Promise<never> => { throw new Error('Agent opened without its required write limit'); });
+    const agentRuntime: import('@happier-dev/plugin-sdk/agents/runtime').AgentRuntime = {
+      sessions: { open, executionRunContextV1: { open } },
+    };
+    const plugin = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+      agents: {
+        default: { declaration: { title: 'Keep going Role fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, executionRunContext: { versions: [1] } } } },
+          factory: async () => agentRuntime,
+          sessionRunnerFactory: { module: './agent.mjs', export: 'createRuntime', runtimeApiVersion: 1 } },
+      },
+    });
+    const { readCurrentContributionRegistry } = await import('@/agent/catalog/snapshot');
+    const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+    const { createActionSettingsProvider } = await import('@/settings/actionsSettingsProvider');
+    const baseline = readCurrentContributionRegistry();
+    const admitted = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: directory, controller: pluginReloadController,
+      runtimeOptions: { scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } },
+      plugins: [{ manifest: plugin.manifest, files: {
+        'agent.mjs': 'let create; export function configure(callback) { create = callback; } export function createRuntime() { return create(); }',
+        'daemon.mjs': `import * as leaf from './agent.mjs';
+          export function configure(callback) { leaf.configure(callback); return { activate }; }
+          export function activate(api) { api.agents.register('default', leaf.createRuntime, {
+            sessionRunnerFactory: { module: './agent.mjs', export: 'createRuntime', runtimeApiVersion: 1 } }); }`,
+      }, instantiateCommittedModule(module) {
+        if (typeof module.configure !== 'function') throw new Error('Missing native fixture factory');
+        const configured: unknown = module.configure(() => agentRuntime);
+        if (!configured || typeof configured !== 'object' || !('activate' in configured) || typeof configured.activate !== 'function') {
+          throw new Error('Missing native fixture activation');
+        }
+        return configured as import('@/plugins/runtime/types').PluginDaemonModuleNamespace;
+      } }] });
+    onTestFinished(async () => {
+      await admitted.dispose();
+      await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: await resolveExecutablePluginRuntimeRegistry({ contributes: baseline, pluginIds: [] }),
+        changedPluginIds: [pluginId], runningSessionDisposition: 'retainRunningSessions',
+      });
+      vi.unstubAllEnvs(); reloadConfiguration();
+    });
+
+    const builtin = resolveBuiltinWorkflowDefinitionV1('keep-going');
+    if (!builtin) throw new Error('Missing Keep going built-in');
+    const rows: AutomationDefinitionDetail[] = [];
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected Automation operation'); };
+    const triggers = createAccountWorkflowTriggerActions({
+      automations: {
+        list: async () => ({ automations: rows, nextCursor: null }),
+        listDetails: async () => ({ automations: rows, nextCursor: null }),
+        get: async id => rows.find(row => row.id === id) ?? null,
+        create: async input => {
+          const { automationId, ...created } = input;
+          const row = AutomationDefinitionDetailSchema.parse({ ...created, id: automationId, description: created.description ?? null,
+            targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+            assignments: input.assignments?.map(assignment => ({ ...assignment, priority: 0, updatedAt: 1 })),
+            triggers: input.triggers.map(({ triggerId, trigger }) => {
+              if (trigger.kind !== 'sessionLifecycle' || !('triggerDefinitionEnvelope' in trigger)) {
+                throw new Error('Expected sealed lifecycle trigger');
+              }
+              return { ...trigger, id: triggerId, revision: 0, createdAt: 1, updatedAt: 1, remainingOccurrences: null,
+                status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) };
+            }),
+          });
+          rows.push(row);
+          return row;
+        },
+        reconcile: unexpected, delete: unexpected,
+      },
+      resolveEncryption: async () => ({ kind: 'available', witness: currentness }),
+      resolveSession: async (_sessionId, _caller, options) => ({ project: { machineId, directory },
+        executionSelection: { agentTarget: target }, nativeGoalOwner: false,
+        ...(options?.rolePolicy ? { rolePolicy: { status: 'undecidable' as const } } : {}) }),
+      resolveWorkflow: async () => ({ definition: builtin.definition }),
+      randomBytes: length => new Uint8Array(length).fill(9), newId: randomUUID,
+    });
+    const action = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true,
+      definitions: unexpectedWorkflowDefinitions(), triggers, runs: { execute: unexpected } });
+    const event = 'parentTurnCompleted';
+    const admission = await action({ actionId: 'workflow.trigger.add',
+      input: { lifetimeSession: { sessionId }, target: { kind: 'workflow', ref: 'builtin:keep-going' },
+        trigger: { kind: 'sessionLifecycle', enabled: true, subject: { kind: 'session', serverId: 'server-1', sessionId },
+          events: [event], policy: { kind: 'everyMatch' } } },
+      context: { surface: 'ui', authority: 'present_user' },
+    });
+    expect(admission, JSON.stringify(admission)).toHaveProperty('set');
+    const added = WorkflowTriggerWriteResultV1Schema.parse(admission);
+    expect(added.set).toMatchObject({ scopeSessionId: sessionId, triggers: [{ enabled: true }] });
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    const triggerId = added.triggerId;
+    if (row.executionRecipe?.v !== 2 || !triggerId) throw new Error('Missing armed Keep going recipe');
+    const occurrence = { v: 1 as const, kind: 'sessionLifecycle' as const, event,
+      sourceSessionId: sessionId, sourceTurnId: 'triggering-turn', occurredAt: 1 };
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'sessionLifecycle', triggerId,
+      triggerRevision: 0, occurredAt: 1, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrence }),
+      evidence: { event, sourceSessionId: sessionId, sourceTurnId: occurrence.sourceTurnId, policy: { kind: 'everyMatch' } } });
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId, accountId, state: 'claimed',
+      origin: { kind: 'automation', automationId: row.id } });
+    freshSessionRecords.set(sessionId, createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+      machineId, metadata: JSON.stringify({ machineId, path: directory }) }));
+    vi.mocked(axios.get).mockImplementation(async url =>
+      new URL(url, 'http://workflow-home.test').pathname.endsWith(`/v1/sessions/${sessionId}/turns`)
+        ? { status: 200, data: buildSessionTurnsProjectionV1({ sessionId, updatedAt: 1, turns: [] }) }
+        : await readSessionReadiness(url));
+    const coordinate = workflowDaemonProcess({ directory, machineId, accountId, credentials, storage,
+      conversationSessionId: sessionId, originAgentTarget: target,
+      detachedRun: { actionExecutor: executor, buildActionContext: () => ({
+        surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: native.localRootCustody,
+      }) },
+    });
+    const result = await coordinate({ runId, automationId: row.id, workflowDefinitionId: row.workflowDefinitionId, scopeSessionId: sessionId,
+      attempt: 1, expectedRevision: 0, accountCurrentness: currentness, definitionEnvelope: JSON.stringify(row.executionRecipe.workflow),
+      automationCause: cause, causeWorkDepth: 0 });
+
+    const check = rowFor(storage, 'check');
+    const requestPaths = vi.mocked(axios.get).mock.calls.map(([url]) => new URL(url, 'http://workflow-home.test').pathname);
+    expect(check, JSON.stringify({ result, requestPaths })).toMatchObject({ lifecycle: 'failed' });
+    expect(openRowProgress(storage, check!)).toMatchObject({ reason: { code: 'role_policy_unenforceable' } });
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('adds and claims a scheduled Agent workflow with its connected profile intact at native launch', async () => {
     const runId = '34343434-3434-4434-8434-343434343434';
     const directory = await projectDirectory();
