@@ -25,6 +25,7 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
     inputBasis: OwnServerDeploymentInputBasisV1;
     servingReceipt: import('./ownServerDeploymentTarget').OwnServerDeploymentReceipt | null;
     nativeReview: NativeComposeRuntimeReview;
+    deferredTelemetryCollectorMachineId?: DeploymentMachineReviewV1['deferredTelemetryCollectorMachineId'];
     referenceAddresses?: readonly DeploymentReferenceAddressV1[];
     storage?: Readonly<{ warnings: readonly Readonly<NonNullable<DeploymentMachineReviewV1['storage']>['warnings'][number]>[] }>;
     target: DeploymentMachineReviewV1['target'];
@@ -54,6 +55,7 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
     ];
     return { ...nativeReview, machineId: input.machineId,
         ...(variableUseWarnings?.length ? { variableUseWarnings } : {}),
+        ...(input.deferredTelemetryCollectorMachineId ? { deferredTelemetryCollectorMachineId: input.deferredTelemetryCollectorMachineId } : {}),
         ...(inputBasis.health ? { health: inputBasis.health } : {}),
         environment: { id: environment.environment.id, name: environment.content.name,
             ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}) },

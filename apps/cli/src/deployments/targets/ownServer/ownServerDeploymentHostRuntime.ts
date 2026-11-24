@@ -325,6 +325,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         readDomain: input => snapshot.readPreviewDomain!({ ...input, context: request.context }),
                     }) ?? refuse('reference_unavailable');
                 })();
+                const collectorMachineId = environment.environment.telemetryMachineId;
+                const deferredTelemetryCollectorMachineId = materialization.kind === 'review' && collectorMachineId
+                    && collectorMachineId !== host.machineId && environment.content.bindings.some(binding =>
+                        binding.purpose === 'variable' && binding.source.kind === 'deploymentFact' && binding.source.fact === 'telemetryEndpoint')
+                    ? collectorMachineId : undefined;
                 const secrets: OwnServerDeploymentRuntimeAcquisition['secrets'] = {
                     installationPrivateSeed: privateSeed, grants: admission.grants,
                     registryConfigBaseDir: registryConfigDirectory,
@@ -332,12 +337,15 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         // These primitives belong to the already admitted acquisition.
                         if (source.kind === 'deploymentFact') {
                             if (source.fact === 'telemetryEndpoint') {
-                                if (environment.environment.telemetryMachineId !== host.machineId) {
-                                    if (!environment.environment.telemetryMachineId || !snapshot.readTelemetryCollectorDomain || !snapshot.deployment)
+                                // Compose review needs a value for interpolation. The private route
+                                // itself can only be read by launch with an accepted Receipt.
+                                if (deferredTelemetryCollectorMachineId) return 'http://collector-at-launch.invalid';
+                                if (collectorMachineId !== host.machineId) {
+                                    if (!collectorMachineId || !snapshot.readTelemetryCollectorDomain || !snapshot.deployment)
                                         return refuse('collector_unreachable', { reason: 'collector_route_unavailable' });
                                     const route = await snapshot.readTelemetryCollectorDomain({ environmentId: environment.environment.id,
                                         targetLinkId: request.input.targetLinkId ?? environment.environment.runtimeTargetLinkId!,
-                                        collectorMachineId: environment.environment.telemetryMachineId, deployment: snapshot.deployment,
+                                        collectorMachineId, deployment: snapshot.deployment,
                                         context: request.context });
                                     if (route.kind !== 'ready') return refuse('collector_unreachable', { reason: route.reason });
                                     return route.endpoint;
@@ -419,6 +427,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         ...selectDeploymentSourceMaterializationForHost(capturedSource), deploymentRoot,
                         artifactDirectory: join(configuration.happyHomeDir, 'tmp', 'deployment-source') },
                     secrets,
+                    ...(deferredTelemetryCollectorMachineId ? { deferredTelemetryCollectorMachineId } : {}),
                     async acquireCopySourceSecrets(source) {
                         await assertCurrent();
                         return readSecretAdmission({ credentials: host.credentials, serverId: host.serverId,

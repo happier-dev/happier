@@ -245,6 +245,26 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(screen.getTextContent()).not.toContain('projects.deployments.receipt.policy');
   });
 
+  it('shows the collector and when its private route resolves for a multi-Machine deploy', async () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const collector = createMachineFixture({ id: 'collector-id', metadata: { displayName: 'Staging collector', host: 'collector.local',
+      platform: 'linux', happyCliVersion: '0.0.0-test', happyHomeDir: '/h', homeDir: '/h' } });
+    storage.setState({ machines: { [collector.id]: collector },
+      machineListByServerId: { [serverId]: [collector] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const deploymentReview = { ...machineReview, runtimeMachines: [
+      { machineId: collector.id, review: machineReview },
+      { machineId: 'app-machine', review: { ...machineReview, deferredTelemetryCollectorMachineId: collector.id } },
+    ] };
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview } });
+    if (!approval) throw new Error('Expected a typed deploy review');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={serverId} testID="facts" />);
+    const contents = screen.getTextContent();
+    expect(contents).toContain('projects.deployments.review.telemetryCollector');
+    expect(contents).toContain('Staging collector');
+    expect(contents).toContain('projects.deployments.review.telemetryCollectorAtLaunch');
+    expect(contents).not.toContain('collector-id');
+  });
+
   it('does not redraw the approval page when only the Machine presence changes', async () => {
     const serverId = getActiveServerSnapshot().serverId;
     const machine = createMachineFixture({ id: 'machine-target', metadata: { displayName: 'Rebound workstation', host: 'w.local',

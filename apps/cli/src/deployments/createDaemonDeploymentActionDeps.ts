@@ -61,7 +61,7 @@ import {
     type DeploymentEnvironmentCreateIntentInputV1,
     type DeploymentTransitionInputV1, type DeploymentTeardownInputV1,
     DeploymentChildRpcV1Schema, type DeploymentChildRpcV1,
-    DeploymentDomainMutationResultV1Schema, DeploymentDomainMachineTopologyV1Schema, isDeploymentDomainChildActionIdV1,
+    DeploymentDomainMutationResultV1Schema, isDeploymentDomainChildActionIdV1,
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -558,16 +558,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 open: id => open(id, request.context),
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
                     await storage('deployments.domains.list', query, { ...request.context, signal })),
-                async observe(domain, capture) {
-                    const response = readChildResult(await sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain',
-                        actionId: 'deployments.domains.verify', machineId: capture.placement.machineId,
-                        installationId: capture.placement.installationId, input: { serverId: host.serverId,
-                            environmentId: domain.environmentId, domainId: domain.id }, expectedDomainRevision: domain.revision,
-                        capture, observeTopology: { environmentId: request.environmentId, deploymentId: request.deployment.id,
-                            actionOperationId: request.deployment.actionOperationId } }), request.context));
-                    const parsed = DeploymentDomainMachineTopologyV1Schema.safeParse(response);
-                    return parsed.success ? parsed.data : null;
-                } });
+                deployment: request.deployment,
+                sendChild: job => sendChild(job, request.context) });
         },
         readPreviewDomain(request) {
             return readPreviewDomainForHost(request, {

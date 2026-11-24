@@ -3302,6 +3302,12 @@ listener or a prepared Cloudflare Tunnel. An older Domain without the collector
 reference needs a fresh Add review. Platform configuration consumes this lookup
 separately.
 
+Own-server Deploy review shows the selected remote telemetry collector Machine
+and when its private route resolves. When the deploy starts, the executor reads
+the collector Domain topology under the accepted Receipt and uses the shared
+private origin. A missing route fails launch with `collector_route_unavailable`.
+The review carries the Machine identity without the route address or bearer.
+
 The Own-server launch settles per-service telemetry facts in the serving
 Receipt's private `machineResults[].telemetrySampling`. Select the exact Machine
 installation and service. The optional `provenance` is `authored` when an

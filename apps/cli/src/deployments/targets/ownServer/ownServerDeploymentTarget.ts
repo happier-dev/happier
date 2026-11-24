@@ -180,6 +180,8 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         source: DeploymentSourceAdmissionForHost;
         secrets: Omit<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0],
             'environmentId' | 'machineId' | 'installationId' | 'phase' | 'bindings' | 'assertCurrent'>;
+        /** Review-only fact. Launch opens the route under the accepted Receipt. */
+        deferredTelemetryCollectorMachineId?: string;
         /** Source backup credentials retain their original Environment/installation subjects. */
         acquireCopySourceSecrets?(input: Readonly<{ environmentId: string; targetLinkId: string;
             deploymentId: string; actionOperationId: string }>): Promise<import('./ownServerDeploymentHostRuntime').OwnServerSecretLaunchAdmission>;

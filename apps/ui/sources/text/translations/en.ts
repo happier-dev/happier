@@ -23589,6 +23589,8 @@ const enProjects = {
         engineNative: "Docker",
         engineDockerDesktop: "Docker Desktop",
         awakeNote: "Runs only while this Machine is awake and Docker Desktop is open.",
+        telemetryCollector: "Telemetry collector",
+        telemetryCollectorAtLaunch: "The private route is resolved when the deploy starts.",
         domainsUnavailable: "Custom domains aren’t available with Docker Desktop.",
         servicesTitle: "What starts",
         servicesOn: ({ machine }: { machine: string }) => `What starts on ${machine}`,

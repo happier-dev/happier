@@ -72,6 +72,8 @@ const machineReview = {
   /** Null means the selected link has no serving receipt; absent means an older review did not report it. */
   replaces: z.optional(replacedDeployment),
   secretBindingNames: z.optional(z.array(z.string())),
+  /** Selected remote collector whose private route is resolved by the accepted deployment. */
+  deferredTelemetryCollectorMachineId: z.optional(id),
   buildSupport: z.optional(DeploymentBuildSupportV1Schema),
   /** Syntactic use in the native Compose source; no inferred effective values or secret contents. Nonblocking. */
   variableUseWarnings: z.optional(z.array(z.strictObject({ kind: z.enum(['unusedBinding', 'unboundVariable']), name: z.string() }))),

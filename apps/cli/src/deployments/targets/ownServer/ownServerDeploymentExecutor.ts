@@ -902,6 +902,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             const inputBasis = basis(request, snapshot, native);
             return { inputBasis, runtimePlatform: native.platform, reviewedEffect: projectNativeJsonValueForTransport(projectOwnServerDeploymentReview({
                 machineId: host.machineId, environment: snapshot.environment, inputBasis, servingReceipt,
+                ...(prepared.runtime.deferredTelemetryCollectorMachineId
+                    ? { deferredTelemetryCollectorMachineId: prepared.runtime.deferredTelemetryCollectorMachineId } : {}),
                 ...(native.referenceAddresses ? { referenceAddresses: native.referenceAddresses } : {}),
                 onFailure: content.onFailure,
                 ...(commitSubject === undefined ? {} : { commitSubject }),

@@ -247,6 +247,7 @@ function describeReviewFields(
   approval: DeploymentReviewApproval,
   machines: readonly ReviewMachine[],
   names: MachineNames,
+  collectorMachineId: string | null,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
   if (isPlatformCreate(review)) return describeCreateFields(review);
@@ -300,6 +301,8 @@ function describeReviewFields(
           : t('projects.deployments.review.servicesTitle'),
         machine.review.services.map((service) => joinHappierFacts(service.name, describeService(service) || null)).join('\n')),
     ]),
+    ...field('telemetryCollector', t('projects.deployments.review.telemetryCollector'), valueNameOf(collectorMachineId),
+      { note: t('projects.deployments.review.telemetryCollectorAtLaunch') }),
     ...(rollbackData ? field('rollbackData', t('projects.deployments.review.rollbackData'),
       rollbackData === 'restoreBackup' ? t('projects.deployments.review.rollbackDataRestored')
         : t('projects.deployments.review.rollbackDataKept')) : []),
@@ -458,18 +461,21 @@ export const DeploymentReviewApprovalFacts = React.memo(
     }>,
   ) {
     const machines = React.useMemo(() => readMachines(props.approval.review), [props.approval.review]);
+    const collectorMachineId = machines.find(({ review }) => review.deferredTelemetryCollectorMachineId)
+      ?.review.deferredTelemetryCollectorMachineId ?? null;
     const environment = 'environment' in props.approval.review ? props.approval.review.environment : undefined;
     const ids = React.useMemo(() => {
       const ingress = environment?.ingress;
       return [...new Set([
         ...machines.flatMap((machine) => (machine.id ? [machine.id] : [])),
         ...(ingress?.kind === 'edgeCaddy' ? [ingress.edgeMachineId] : []),
+        ...(collectorMachineId ? [collectorMachineId] : []),
       ])];
-    }, [machines, environment?.ingress]);
+    }, [machines, environment?.ingress, collectorMachineId]);
     return (
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
-          <ReviewFields approval={props.approval} machines={machines} names={names}
+          <ReviewFields approval={props.approval} machines={machines} names={names} collectorMachineId={collectorMachineId}
             serverId={props.serverId} testID={props.testID} decided={props.decided === true} />
         )}
       </NamedMachines>
@@ -481,13 +487,14 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   approval: DeploymentReviewApproval;
   machines: readonly ReviewMachine[];
   names: MachineNames;
+  collectorMachineId: string | null;
   serverId: string | null;
   testID: string;
   decided: boolean;
 }>) {
   const presentation = React.useMemo(
-    () => describeReviewFields(props.approval, props.machines, props.names),
-    [props.approval, props.machines, props.names],
+    () => describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId),
+    [props.approval, props.machines, props.names, props.collectorMachineId],
   );
   const multiple = props.machines.length > 1;
   return (

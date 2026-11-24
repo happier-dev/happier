@@ -1,5 +1,5 @@
 import type { MachineDeploymentDomainReferenceV1 } from '@happier-dev/protocol/machines/machineDeploymentDomainReferenceV1';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { selectPublicTelemetryCollectorDomainV1, type PublicTelemetryCollectorDomainInputV1,
     type PublicTelemetryCollectorDomainResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
@@ -7,9 +7,10 @@ import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainHeaderV1,
     DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1,
-    DeploymentDomainMachineTopologyV1, DeploymentDomainGetInputV1, DeploymentDomainMutationResultV1,
+    DeploymentDomainGetInputV1, DeploymentDomainMutationResultV1,
     DeploymentActionFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainMachineTopologyV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainChildRpcV1Schema, type DeploymentDomainChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT, DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
@@ -236,8 +237,8 @@ type PrivateCollectorDomainInput = DomainInventoryInput & Readonly<{
     kind?: 'privateOrigin';
     collectorMachineId: string;
     observerNetworks: readonly MachinePrivateNetworkObservationV1[];
-    observe(domain: DeploymentDomainHeaderV1, capture: NonNullable<DeploymentDomainHeaderV1['placements']>[number]):
-        Promise<DeploymentDomainMachineTopologyV1 | null>;
+    deployment: Readonly<{ id: string; actionOperationId: string }>;
+    sendChild(job: DeploymentDomainChildRpcV1): Promise<unknown>;
 }>;
 
 export type PublicCollectorDomainInput = Omit<PublicTelemetryCollectorDomainInputV1, 'domain'> & Readonly<{
@@ -267,8 +268,17 @@ export async function readTelemetryCollectorDomainForHost(input: PrivateCollecto
             const opened = await readContent(capture.content);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error };
             if (opened.content.target.kind !== 'telemetry') continue;
-            const topology = await input.observe(domain, capture);
-            if (!topology) return { kind: 'unavailable', reason: 'collector_route_unavailable' };
+            const response = await input.sendChild(DeploymentDomainChildRpcV1Schema.parse({ v: 1, kind: 'domain',
+                actionId: 'deployments.domains.verify', machineId: placement.machineId, installationId: placement.installationId,
+                input: { serverId: input.serverId, environmentId: domain.environmentId, domainId: domain.id },
+                expectedDomainRevision: domain.revision, capture, observeTopology: { environmentId: input.environmentId,
+                    deploymentId: input.deployment.id, actionOperationId: input.deployment.actionOperationId } }));
+            const observed = DeploymentDomainMachineTopologyV1Schema.safeParse(response);
+            if (!observed.success) {
+                const refusal = ActionExecuteFailureSchema.safeParse(response);
+                return { kind: 'unavailable', reason: refusal.success ? refusal.data.errorCode : 'collector_route_unavailable' };
+            }
+            const topology = observed.data;
             if (topology.machineId !== placement.machineId || topology.installationId !== placement.installationId
                 || topology.dockerEngineId !== capture.dockerEngineId) return { kind: 'unavailable', reason: 'target_mismatch' };
             const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: input.observerNetworks,

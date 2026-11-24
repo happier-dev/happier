@@ -333,6 +333,8 @@ describe('own-server target at the Action host boundary', () => {
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
         const telemetry = scenario.startsWith('telemetry_');
+        const remoteCollector = scenario === 'telemetry_delivery';
+        const collectorReadReceiptIds: string[] = [];
         const deliveredTelemetryHash = createHash('sha256').update('review-secret-value-sentinel').digest('hex');
         const telemetrySettlements: Readonly<{ telemetryMachineId?: string | null; telemetryTokenHash?: string | null }>[] = [];
         // Native pushes and their HTTP work share the composed scenario's
@@ -537,6 +539,18 @@ describe('own-server target at the Action host boundary', () => {
                     machineId: 'machine-a', installationId: 'installation-a', environmentId: environment.environment.id, binding },
                     installationPublicKey, content: { kind: 'environmentValues', definition, binding: { ...binding, name } } }));
             }
+        }
+        if (remoteCollector) {
+            const definition = { kind: 'deploymentFact' as const, fact: 'telemetryEndpoint' as const };
+            const grantRef = randomUUID();
+            const binding = { purpose: 'variable' as const, phase: 'runtime' as const, grantRef };
+            const name = 'OTEL_EXPORTER_OTLP_ENDPOINT';
+            environment.content.bindings.push({ ...createDeploymentVariableBindingV1({
+                name, phase: 'runtime', source: definition, grantRef,
+            }), managedBy: 'telemetry' });
+            runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
+                machineId: 'machine-a', installationId: 'installation-a', environmentId: environment.environment.id, binding },
+                installationPublicKey, content: { kind: 'environmentValues', definition, binding: { ...binding, name } } }));
         }
         const previewNativeStates = new Map<string, Readonly<{ receipt: typeof receipt; serving: typeof serving;
             grants: typeof runtimeGrants }>>();
@@ -990,6 +1004,14 @@ describe('own-server target at the Action host boundary', () => {
                 return { ok: true, environmentId: input.environmentId,
                 revision: environment.environment.revision, deploymentId: input.deploymentId,
                 deploymentRevision: receipt.deployment.revision, state: input.state }; },
+            ...(remoteCollector ? {
+                async readTelemetryCollectorDomain(input) {
+                    expect(input).toMatchObject({ collectorMachineId: 'collector-machine', targetLinkId: receipt.deployment.targetLinkId,
+                        deployment: { id: receipt.deployment.id, actionOperationId: receipt.deployment.actionOperationId } });
+                    collectorReadReceiptIds.push(input.deployment.id);
+                    return { kind: 'ready' as const, endpoint: 'http://100.70.0.2:8080' };
+                },
+            } : {}),
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl, machineId: 'machine-a',
                 resolveRequesterIdentity,
                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
@@ -4304,6 +4326,10 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 rollbackStorage: { keepPreviousDeployments: environment.content.retainPreviousDeployments },
             });
             expect(DeploymentApprovalReviewV1Schema.parse(review.reviewedEffect)).toEqual(review.reviewedEffect);
+            if (remoteCollector) {
+                expect(collectorReadReceiptIds).toEqual([]);
+                expect(review.reviewedEffect).toMatchObject({ deferredTelemetryCollectorMachineId: 'collector-machine' });
+            }
             delete environment.targetLinks[0].targetLink.activeDeploymentId;
             expect(review.inputBasis).toMatchObject({ ownServer: environment.content.ownServer });
             expect(review.reviewedEffect).toMatchObject({ ownServer: environment.content.ownServer });
@@ -4369,6 +4395,10 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
             if (telemetry) {
                 const delivered = scenario === 'telemetry_delivery';
                 const nativeEnvironment = await docker.readRuntimeEnvironment('app');
+                if (remoteCollector) {
+                    expect(collectorReadReceiptIds).toContain(receipt.deployment.id);
+                    expect(nativeEnvironment.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://100.70.0.2:8080');
+                }
                 if (scenario === 'telemetry_own_collector') {
                     expect(nativeEnvironment).not.toHaveProperty('OTEL_TRACES_SAMPLER');
                     expect(receipt.content.machineResults[0]).toMatchObject({ currentDeploymentId: receipt.deployment.id });

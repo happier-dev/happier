@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import * as deploymentProtocol from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
@@ -39,6 +39,7 @@ it('resolves only the selected collector Domain over its actual shared privateOr
             servers: [{ serverId: 'private', listen: [':8080'], tls: false, automaticHttpsDisabled: true,
                 endpoints: [{ hostAddress: network.addresses[0], hostPort: 8080, containerPort: 8080 }] }],
             privateOrigins: [{ serverId: 'private', endpoint: '100.70.0.2:8080', network }] } });
+    const sendChild = vi.fn(async () => topology);
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', collectorMachineId: 'collector',
         observerNetworks: [{ ...network, addresses: ['100.70.0.3'] }],
         async list() { return { ok: true as const, environmentId: 'environment', revision: 1, domains: [header()], nextCursor: null }; },
@@ -47,17 +48,30 @@ it('resolves only the selected collector Domain over its actual shared privateOr
             revision: { headerVersion: 1, bodyVersion: 1 } }; },
         // The signed native RPC is the network boundary; Domain selection and
         // private-network matching beneath it use their real owners.
-        async observe() { return topology; },
+        deployment: { id: 'accepted-deploy', actionOperationId: 'accepted-operation' }, sendChild,
     };
     expect(await readTelemetryCollectorDomainForHost(input)).toEqual({ kind: 'ready', endpoint: 'http://100.70.0.2:8080' });
+    expect(sendChild).toHaveBeenCalledExactlyOnceWith({
+        v: 1, kind: 'domain', actionId: 'deployments.domains.verify', machineId: 'collector', installationId: 'installed',
+        input: { serverId: 'home', environmentId: 'environment', domainId: 'domain' },
+        expectedDomainRevision: 1, capture: header().placements![0],
+        observeTopology: { environmentId: 'environment', deploymentId: 'accepted-deploy', actionOperationId: 'accepted-operation' },
+    });
+    sendChild.mockClear();
     target = { service: 'web', containerPort: 80 };
     expect(await readTelemetryCollectorDomainForHost(input)).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
     target = { kind: 'telemetry' }; selectedMachine = 'another-machine';
     expect(await readTelemetryCollectorDomainForHost(input)).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
+    expect(sendChild).not.toHaveBeenCalled();
     selectedMachine = 'collector';
+    expect(await readTelemetryCollectorDomainForHost({ ...input, sendChild: async () => ({ ok: true }) }))
+        .toEqual({ kind: 'unavailable', reason: 'collector_route_unavailable' });
+    expect(await readTelemetryCollectorDomainForHost({ ...input, sendChild: async () => ({
+        ok: false, errorCode: 'target_mismatch', error: 'target_mismatch',
+    }) })).toEqual({ kind: 'unavailable', reason: 'target_mismatch' });
     expect(await readTelemetryCollectorDomainForHost({ ...input, observerNetworks: [{ ...network, networkIdentity: 'unrelated' }] }))
         .toMatchObject({ kind: 'unavailable', reason: 'private_scope_unenforceable' });
-    expect(await readTelemetryCollectorDomainForHost({ ...input, observe: async () => ({ ...topology, machineId: 'substituted' }) }))
+    expect(await readTelemetryCollectorDomainForHost({ ...input, sendChild: async () => ({ ...topology, machineId: 'substituted' }) }))
         .toMatchObject({ kind: 'unavailable', reason: 'target_mismatch' });
 });
 
