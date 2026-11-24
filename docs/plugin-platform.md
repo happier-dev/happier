@@ -8355,6 +8355,15 @@ and fails closed. The finite reference selects the initial page after its existi
 cursor, when present. Finite pages delivered by the native watch continue the
 admitted view; they do not create or advance a provider history cursor.
 
+In 0.3 development, the Environment and Worktree Telemetry lists follow the
+existing `happier.telemetry/capture-view` Resource through the signed native
+`telemetry.capture` reference. The reference carries the selected list Action,
+its exact capture source and the rolling window. The daemon binds admission and
+the database lease to the original Account for the lifetime of the watch. It
+sends one baseline and recomputes the selected page on committed changes in that
+partition. An idle watch and changes in another capture partition trigger zero
+reads. Selected detail and older pages still use the finite capture Actions.
+
 The unreleased Machine Services list uses the same host Resource transport with
 `{ hostRead: 'machines.services.list', input: { serverId, machineId } }`.
 The input may narrow demand with `environmentId`, or with `environmentId` and
