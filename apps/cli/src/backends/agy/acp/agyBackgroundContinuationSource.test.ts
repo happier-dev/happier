@@ -49,12 +49,12 @@ function agyAgent(directory: string, version?: string): string {
       };
       const say = text => notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
       const usage = () => notify({ sessionUpdate: 'usage_update', used: 100, size: 1000 });
-      const runCommand = (toolCallId, onAllowed, onRefused, statusOnly = false) => {
+      const runCommand = (toolCallId, onAllowed, onRefused, statusOnly = false, kindlessLaunchInput = false) => {
         const patchStatus = status => {
           if (statusOnly) notify({ sessionUpdate: 'tool_call_update', toolCallId, status });
           else tool('tool_call_update', toolCallId, status);
         };
-        tool('tool_call', toolCallId, 'in_progress');
+        tool('tool_call', toolCallId, 'in_progress', kindlessLaunchInput ? { rawInput: undefined } : {});
         patchStatus('pending');
         const id = 'permission-' + permissionCount++;
         pendingPermissions.set(id, result => {
@@ -63,7 +63,8 @@ function agyAgent(directory: string, version?: string): string {
             onRefused(result);
             return;
           }
-          patchStatus('in_progress');
+          if (kindlessLaunchInput) tool('tool_call_update', toolCallId, 'in_progress', { kind: undefined });
+          else patchStatus('in_progress');
           running.add(toolCallId);
           onAllowed();
         });
@@ -118,7 +119,7 @@ function agyAgent(directory: string, version?: string): string {
               }, endTurn);
             }
           } else if (message.method === 'test/finish-build') {
-            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission, statusOnly, keepRunning } = message.params;
+            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission, statusOnly, keepRunning, kindlessLaunchInput } = message.params;
             const followUp = chain ? 'call_tests' : 'call_verify';
             const reportPlan = () => notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
             settle('call_build', 'build ok');
@@ -132,7 +133,7 @@ function agyAgent(directory: string, version?: string): string {
                 if (plan === 'last') reportPlan();
                 usage();
                 ok(message.id, { resumed: true });
-              }, permission => ok(message.id, { resumed: false, permission }), statusOnly);
+              }, permission => ok(message.id, { resumed: false, permission }), statusOnly, kindlessLaunchInput);
               if (usageWhileWaitingForPermission) usage();
             };
             if (pauseAfterUsage) setTimeout(runFollowUp, ${TEST_TIMING.generationSettleMs * 3});
@@ -229,7 +230,7 @@ describe('createAgyBackgroundContinuationSource', () => {
       await promptBuild(backend, permissionSession);
       events.length = 0;
 
-      const resumed = backend.requestExtension('test/finish-build', { keepRunning: true, statusOnly: true });
+      const resumed = backend.requestExtension('test/finish-build', { keepRunning: true, statusOnly: true, kindlessLaunchInput: true });
       await approvePendingPermission(permissionSession);
       expect(await resumed).toEqual({ resumed: true });
 

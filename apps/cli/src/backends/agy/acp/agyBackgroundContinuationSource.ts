@@ -19,6 +19,7 @@ const GENERATION_PROGRESS_UPDATES = new Set([
 
 type ToolCallState = Readonly<{
   status: SessionUpdate['status'];
+  kind: SessionUpdate['kind'];
   canDetach: boolean;
 }>;
 type ToolCalls = Map<string, ToolCallState>;
@@ -50,12 +51,13 @@ function recordToolCall(toolCalls: ToolCalls, toolCallId: string, update: Sessio
   const previous = toolCalls.get(toolCallId);
   if (isAcpToolCallTerminalStatus(previous?.status)) return;
 
-  const input = update.kind === 'execute' ? asRecord(extractToolInput(update)) : null;
+  const kind = update.kind ?? previous?.kind;
+  const input = kind === 'execute' ? asRecord(extractToolInput(update)) : null;
   const waitMs = input?.WaitMsBeforeAsync;
   // Approval updates can carry just the status. Keep the launch behavior recorded on the call.
   const canDetach = previous?.canDetach === true || input?.IsDaemon === true
     || (canDetachAfterWait && typeof waitMs === 'number' && Number.isFinite(waitMs) && waitMs >= 0);
-  toolCalls.set(toolCallId, { status: update.status ?? previous?.status, canDetach });
+  toolCalls.set(toolCallId, { status: update.status ?? previous?.status, kind, canDetach });
 }
 
 function hasBlockingToolCall(toolCalls: ToolCalls): boolean {
