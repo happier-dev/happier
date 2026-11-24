@@ -21,7 +21,7 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { UserMessageSchema, SessionMessageContentSchema } from '@/api/types';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from '@/session/services/sessionInputAdmissionIdentity';
-import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { handleSessionNewMessageUpdate } from '@/api/session/sessionNewMessageUpdate';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -37,6 +37,7 @@ import { executeExternalAction } from '@/daemon/externalActions/executeExternalA
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import tweetnacl from 'tweetnacl';
 
 const accountId = 'cli-sender';
@@ -131,6 +132,13 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
 describe('CLI input requester through protected custody and danger approval', () => {
   it.each(['plain', 'e2ee'] as const)('retains the requester when an approval result resumes the agent before Browser navigation (%s)', async mode => {
     const { credentials, accept, accepted, acceptedLocalIds, acceptedIssuers, reads } = installHomeBoundary(mode);
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const path = new URL(String(config.url)).pathname;
+      if (config.method === 'GET' && path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
+      throw new Error(`Unexpected Home request: ${config.method} ${path}`);
+    });
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(69));
     const cli = createCliActionDeps({ token, credentials, sessionId, mode: 'plain', ctx: null, serverId,
@@ -150,7 +158,8 @@ describe('CLI input requester through protected custody and danger approval', ()
       return { result: { v: 1, commandId: 'continued-navigation', status: 'dispatched',
         adapterKind: 'chromiumSidecar', events: [] } };
     });
-    const receiver = createActionExecutor({ sessionSendMessage: cli.sessionSendMessage });
+    const receiver = createActionExecutor({ actionAutomations: cli.actionAutomations, sessionSendMessage: cli.sessionSendMessage });
+    const resolveTarget = createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: resolveServerHttpBaseUrl() });
     const executor = createActionExecutor({ sessionSendMessage: async args => {
       // The UI projection is tested at its real Account transport. This closed
       // private wire and receiver preserve the same approved origin to Pending.
@@ -176,7 +185,7 @@ describe('CLI input requester through protected custody and danger approval', ()
           target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: mode,
         } }, externalActionMachineRequestPrivateKey: installation.secretKey,
         resolveEncryption: async () => ({ serverIdentityId: serverId, material }),
-        verifyExecutionAuthorization: async () => true, resolveTarget: async () => target, executor: receiver,
+        verifyExecutionAuthorization: async () => true, resolveTarget, executor: receiver,
       });
       if (result.kind !== 'response') throw new Error(`Missing private continuation receipt: ${result.kind}`);
       const execution = envelope.v === 2
@@ -286,7 +295,9 @@ describe('CLI input requester through protected custody and danger approval', ()
       result: { status: 'failed', execution: { ok: false, errorCode: 'discussion_post_denied' } } });
     expect(await invoke('discussion.invite', { discussionId: 'doc-thread', participant: { kind: 'session', sessionId } }))
       .toMatchObject({ ok: true, result: { artifactId: 'doc-review-2' } });
-    expect(await approve('doc-review-2')).toMatchObject({ ok: true });
+    expect(await approve('doc-review-2')).toMatchObject({ ok: true, result: {
+      delivery: { status: 'accepted', localId: 'approval-result:doc-review-2' },
+    } });
     expect(await invoke('approval.request.decide', { artifactId: 'doc-review-2', decision: 'approve' }))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     // Consume the actual host-authored receipt through the production attribution owner.
