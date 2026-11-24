@@ -4394,9 +4394,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "coderabbit": Object.freeze(({
   "cli": {
     "auth": {
-      "environmentVariables": [
-        "CODERABBIT_API_KEY"
-      ],
       "loginLaunches": [
         {
           "args": [
@@ -4467,7 +4464,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "core": {
     "cliSubcommand": "coderabbit",
     "cloudConnect": null,
-    "connectedServices": null,
+    "connectedServices": {
+      "supportedServiceIds": [
+        "coderabbit-account"
+      ]
+    },
     "detectKey": "coderabbit",
     "flavorAliases": [],
     "handoff": {
@@ -4536,8 +4537,12 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "install": {
       "docsUrl": null,
-      "guideUrl": null,
-      "managed": null,
+      "guideUrl": "https://github.com/vercel-labs/deepsec",
+      "managed": {
+        "binaryName": "deepsec",
+        "kind": "managed_package",
+        "packageName": "deepsec"
+      },
       "manual": {
         "kind": "command"
       }
