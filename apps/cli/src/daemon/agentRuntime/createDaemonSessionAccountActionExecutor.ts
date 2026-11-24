@@ -109,8 +109,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   initialStartDiagnostic?: ActionStartDiagnosticV1;
   createExecutor: (getCurrentTurnWorkDepth: (turnId?: string) => number | undefined,
     isCallerCurrent: () => Promise<boolean>, postAgentDiscussionMessage?: DiscussionAgentPublisher,
-    options?: Readonly<{ accountPluginActions: true }>) => Pick<ReturnType<typeof createActionExecutor>, 'execute'>
-    & Partial<Pick<ReturnType<typeof createActionExecutor>, 'prepare'>>;
+    options?: Readonly<{ accountPluginActions: true }>) => Pick<ReturnType<typeof createActionExecutor>, 'execute' | 'prepare'>;
   /** Existing Session RPC transport to the actual current client, with this operation's admitted witness. */
   postAgentDiscussionMessage?: (request: DiscussionAgentPublisherRequestV1, witness: SessionActionOperation['witness'],
     options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
@@ -379,9 +378,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     if (requiresMachineAuthorization && (operation.actionId === 'machines.managed.acquire' || presetSessionStart)
       && isAgentStartActionInvocationV1(operation.actionId, readRecord(operation.input))) {
       const reviewer = params.createExecutor(getCurrentTurnWorkDepth, isCallerCurrent);
-      if (!reviewer.prepare) return refuse('external_authorization_preparation_failed');
       const admitted = await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.agent_start_admission',
-        () => reviewer.prepare!(operation.actionId, operation.input, context, { reviewOnly: true }));
+        () => reviewer.prepare(operation.actionId, operation.input, context, { reviewOnly: true }));
       if (admitted.kind === 'settled') return admitted.result;
       const agentStartAdmission = admitted.operation?.agentStartAdmission;
       if (!agentStartAdmission) return refuse('external_authorization_preparation_failed');

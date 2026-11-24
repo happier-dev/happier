@@ -174,6 +174,7 @@ async function forwardMachinesList(
       });
       return {
         execute: (id, input, context) => executor.execute(id, input, context),
+        prepare: (id, input, context, options) => executor.prepare(id, input, context, options),
       };
     },
   });

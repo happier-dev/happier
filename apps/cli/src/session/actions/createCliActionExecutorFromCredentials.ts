@@ -2443,7 +2443,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             result: { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' },
           };
         }
-        const [actionId, input, rawContext] = args;
+        const [actionId, input, rawContext, options] = args;
         if (params.providerPreparedSavedSecret && shouldUsePatPublicActionTransport(credentials, rawContext)) {
           // The public relay admits serialized operands, not this invocation's
           // private prompted material. Never turn its reference into a detached write.
@@ -2498,7 +2498,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               () => ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl())));
         }
         const executor = await resolveExecutor(credentials, undefined, routing);
-        return await executor.prepare(actionId, prepared.preparedSessionInput ?? input, context);
+        return await executor.prepare(actionId, prepared.preparedSessionInput ?? input, context, options);
       },
       execute: async (...args) => withApprovalActionTrace(args[0], () => timeApprovalPhase<ActionExecuteResult>('approval.execute', async () => {
         const listAccessFailure = resolveActionSessionListAccessFailure(args[0], args[2]);
@@ -2914,7 +2914,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
           error, 'deployment.archive.copy');
         }
       },
-      prepare: async (actionId, input, context) => {
+      prepare: async (actionId, input, context, options) => {
         const custodyFailure = !params.filesystemActionExecute && resolveFilesystemTransferCustodyFailure(actionId, context ?? {});
         if (custodyFailure) return { kind: 'settled', result: custodyFailure };
         if (!params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
@@ -2924,7 +2924,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
           if (copy?.patRun) return { kind: 'ready', invocation: createOneShotPatInvocation(copy.patRun) };
           if (copy?.executor) return await copy.executor.prepare(actionId, input, copy.context);
         }
-        return await executor.prepare(actionId, input, context);
+        return await executor.prepare(actionId, input, context, options);
       },
     };
   };

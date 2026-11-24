@@ -1954,7 +1954,8 @@ describe('daemon managed Machine Action factory', () => {
                 return authorization ? { authorization, target } : null;
             },
             createExecutor: () => ({ execute: (actionId, actionInput, context) => operations.observeExecution({ actionId, input: actionInput,
-                actionRequestId: context?.actionRequestId, execute: operationContext => executor.execute(actionId, actionInput, { ...context, ...operationContext }) }) }),
+                actionRequestId: context?.actionRequestId, execute: operationContext => executor.execute(actionId, actionInput, { ...context, ...operationContext }) }),
+                prepare: (...args) => executor.prepare(...args) }),
         });
         const result = await execute({ kind: 'action.execute', actionId, requestId: 'session-acquire', input,
             witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 2,

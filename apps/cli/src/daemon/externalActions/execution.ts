@@ -68,7 +68,7 @@ import { dispatchManagedSessionStart, dispatchManagedWorkflowStart, dispatchMana
   dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedMachineRpcChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
-import type { ActionExecutorDeps, RuntimeActionExecute } from "@happier-dev/protocol/actions";
+import type { ActionExecutorDeps, ActionPrepareResult, RuntimeActionExecute } from "@happier-dev/protocol/actions";
 import { createDaemonExternalActionContributedApprovalReplay, createDaemonExternalActionContributedDefinitionLister, createDaemonExternalActionContributedInvoker } from "@/daemon/externalActions/createDaemonExternalActionContributedInvoker";
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from "@/daemon/externalActions/daemonExternalActionTargetResolver";
 import type { ExternalActionApprovalReplay, ExternalActionIngressOwner } from "@/rpc/handlers/externalAction";
@@ -92,7 +92,7 @@ import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCust
 import { deliverAdmittedExternalActionRoot } from '@/api/externalActionExecutionAuthorization';
 
 type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
-  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay;
+  'execute' | 'prepare' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay;
     observeSessionBirth: NonNullable<import('./executeExternalAction').ExternalActionExecutor['observeSessionBirth']> }>;
 
 /** HTTP ingress consumes the same Home-admitted facts as Socket RPC ingress. */
@@ -253,6 +253,10 @@ resolveServerFeaturesSnapshot?: () =>
       replay?: Parameters<ReturnType<typeof createCliActionExecutorFromCredentials>['replayApprovedApprovalRequest']>[0],
       confidential?: Readonly<{ input: unknown }>,
       replayIngress?: Parameters<ExternalActionApprovalReplay>[1],
+      preparation?: Readonly<{
+        options?: Parameters<ReturnType<typeof createCliActionExecutorFromCredentials>['prepare']>[3];
+        settle: (prepared: ActionPrepareResult) => void;
+      }>,
     ): Promise<ActionExecuteResult> => withApprovalActionTrace(actionId, () => timeApprovalPhase<ActionExecuteResult>('approval.daemon.invoke', async () => {
 
       context?.recordActionStartDiagnostic?.({ phase: 'credentialed_factory', requesterRuntimeBound: Boolean(requesterRuntime) });
@@ -1609,14 +1613,22 @@ resolveServerFeaturesSnapshot?: () =>
               externalActionExecutionAuthorization: decorateRequesterAuthorization(authorization),
             };
           }
-          if (!confidential && !replay
+          if (!confidential && !replay && !preparation
             && (actionId === REVIEW_START_ACTION_ID_V1 || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)) {
             await pluginRuntimeController.recoverFailedAccountCensus(acceptedContext?.signal);
           }
+          // Preparation admits on this same factory and custody; its result
+          // travels through settle, and a settled refusal is also returned here.
+          const prepareAccepted = async (settle: NonNullable<typeof preparation>['settle']): Promise<ActionExecuteResult> => {
+            const prepared = await executor.prepare(actionId, input, acceptedContext, preparation?.options);
+            settle(prepared);
+            return prepared.kind === 'settled' ? prepared.result : { ok: true, result: null };
+          };
           const execute = () => confidential
             ? executor.continueConfidentialApprovalRequest(confidential.input, acceptedContext)
             : replay ? executor.replayApprovedApprovalRequest(replay, replayIngress)
-              : executor.execute(actionId, input, acceptedContext);
+              : preparation ? prepareAccepted(preparation.settle)
+                : executor.execute(actionId, input, acceptedContext);
           return requesterAccountContext
             ? await runWithServerHttpBaseUrl(requesterAccountContext.serverHttpBaseUrl,
               execute)
@@ -1636,6 +1648,14 @@ resolveServerFeaturesSnapshot?: () =>
     }), replay?.artifactId, context?.actionRequestId);
     return {
       execute: (actionId, input, context) => invoke(actionId, input, context),
+      // A Session source admits an Agent start once, before Home signs its root,
+      // through the same requester custody and credentialed factory as execution.
+      prepare: async (actionId, input, context, options) => {
+        let prepared: ActionPrepareResult | undefined;
+        const result = await invoke(actionId, input, context, undefined, undefined, undefined,
+          { ...(options ? { options } : {}), settle: value => { prepared = value; } });
+        return prepared ?? { kind: 'settled', result };
+      },
       observeSessionBirth: async (actionInput, context) => {
         const { observeExternalSessionBirth } = await import('@/session/creation/observeExternalSessionBirth');
         return runWithServerHttpBaseUrl(requesterAccountContext?.serverHttpBaseUrl ?? params.serverBaseUrl,

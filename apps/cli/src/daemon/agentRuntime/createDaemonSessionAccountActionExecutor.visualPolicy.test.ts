@@ -72,12 +72,14 @@ describe('daemon Session visual Account-policy admission', () => {
           approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'visual-approval' }; },
           sessionBoardAction: async () => { writes++; throw new Error('Unexpected direct Board write'); },
         });
-        return { execute: (id, actionInput, context) => executor.execute(id, actionInput, {
+        const withOwner = (context: Parameters<typeof executor.execute>[2]) => ({
           ...context,
           runtimeAccountId: 'owner',
           serverIdentityId: 'srv_visual',
           signExternalActionApprovalInput: () => 'a'.repeat(86),
-        }) };
+        });
+        return { execute: (id, actionInput, context) => executor.execute(id, actionInput, withOwner(context)),
+          prepare: (id, actionInput, context, options) => executor.prepare(id, actionInput, withOwner(context), options) };
       },
     });
     const input = { itemId: 'qa-r67-r8-d2-exact', expectedItemRevision: null, destination: 'transcript', item: {

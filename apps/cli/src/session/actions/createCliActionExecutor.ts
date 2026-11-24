@@ -617,7 +617,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
         ...(boundComments ? { comments: boundComments } : {}),
       } satisfies CliReviewServices;
     },
-    prepare: async (actionId, input, context) => {
+    prepare: async (actionId, input, context, options) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
         ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return { kind: 'settled' as const, result: denied };
@@ -631,7 +631,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
         return { kind: 'ready' as const, invocation: { run: () =>
           result ??= awaitCliActionResult(() => pluginExecutor.execute(actionId, input, resolvedContext), context?.signal) } };
       }
-      const prepared = await base.prepare(actionId, input, resolvedContext);
+      const prepared = await base.prepare(actionId, input, resolvedContext, options);
       if (prepared.kind !== 'ready') return prepared;
       return { ...prepared, invocation: { ...prepared.invocation,
         run: () => awaitCliActionResult(() => prepared.invocation.run(), context?.signal),

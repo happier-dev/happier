@@ -747,7 +747,7 @@ function sessionCallerRegression() {
         readCurrentTurnWorkDepth = getCurrentTurnWorkDepth;
         if (!custody) throw new Error('Session origin must be admitted before Prepare execution');
         const executor = createActionExecutor(custody.receiver);
-        return { execute: (actionId, input, context) => executor.execute(actionId, input, {
+        const withIngress = (context: Parameters<typeof executor.execute>[2]) => ({
           ...context, ...custody!.ingress, runtimeAccountId: 'prepare-account', actionsSettings: custody!.accountSettings.actionsSettingsV1,
           // The authenticated Session ingress, rather than authored Prepare input, owns these facts.
           agentStartContext: { caller: { kind: 'session', sessionId: 'prepare-caller', starterDepth: 0, turnDepth: 1 },
@@ -756,7 +756,9 @@ function sessionCallerRegression() {
             allowLists: custody!.accountSettings.sessionAgentStartAllowListsV1 },
           sessionAgentSpawnPolicyV1: custody!.accountSettings.sessionAgentSpawnPolicyV1,
           originalActionEnvelope: custody!.envelope,
-        }) };
+        });
+        return { execute: (actionId, input, context) => executor.execute(actionId, input, withIngress(context)),
+          prepare: (actionId, input, context, options) => executor.prepare(actionId, input, withIngress(context), options) };
       },
     });
     const result = await runWithServerHttpBaseUrl('https://prepare-home.test', () => executeSession({ kind: 'action.execute', requestId: 'prepare-request',

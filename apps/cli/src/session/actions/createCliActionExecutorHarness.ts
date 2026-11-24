@@ -583,13 +583,13 @@ export function createCliActionExecutorHarness(
     executor: {
       admitContributedSessionReadSet: (declaration, input, context) => runOnCapturedHome(() =>
         executor.admitContributedSessionReadSet(declaration, input, resolveContext(context, 'action.invoke'))),
-      prepare: (actionId, input, context) => runOnCapturedHome(() => {
+      prepare: (actionId, input, context, options) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
         const dispatch = prepareControllerDeploymentDispatch(actionId, input, resolved);
         if (dispatch) return Promise.resolve({ kind: 'ready' as const,
           invocation: { run: async () => consumeDeferredApproval(await dispatch.run(), resolved) } });
         return liveOrigin.prepare(resolved, async () => {
-          const prepared = await executor.prepare(actionId, input, resolved);
+          const prepared = await executor.prepare(actionId, input, resolved, options);
           return prepared.kind === 'ready' ? { ...prepared,
             invocation: { run: async () => consumeDeferredApproval(await prepared.invocation.run(), resolved) } } : prepared;
         });

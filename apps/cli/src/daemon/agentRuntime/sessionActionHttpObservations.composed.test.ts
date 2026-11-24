@@ -679,11 +679,15 @@ it('stores a privately approved agent secret through the original Home authority
       requester = await f.prepare(operation, sessionActionOrigin);
       return requester;
     },
-    createExecutor: () => ({ execute: (id, args, context) => executor.execute(id, args, { ...context,
-      serverIdentityId: storage.state.homeId, runtimeAccountId: storage.account.id,
-      signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({ ...request,
-        authorizationToken: request.authorization.token, privateKey: installation.secretKey }),
-    }) }),
+    createExecutor: () => {
+      const withHost = (context: Parameters<typeof executor.execute>[2]) => ({ ...context,
+        serverIdentityId: storage.state.homeId, runtimeAccountId: storage.account.id,
+        signExternalActionApprovalInput: (request: Parameters<NonNullable<NonNullable<Parameters<typeof executor.execute>[2]>['signExternalActionApprovalInput']>>[0]) =>
+          signExternalActionApprovalInputV1({ ...request, authorizationToken: request.authorization.token, privateKey: installation.secretKey }),
+      });
+      return { execute: (id, args, context) => executor.execute(id, args, withHost(context)),
+        prepare: (id, args, context, options) => executor.prepare(id, args, withHost(context), options) };
+    },
   });
   try {
     const requested = await execute(f.operation('secrets.create', input), { sessionId, isCurrent: async () => true });
@@ -1536,6 +1540,8 @@ export function activate(api) {
     createExecutor: (_depth, _current, _post, options) => ({
       execute: (id, input, context) => createExecutor(options).execute(id, input,
         projectAdmittedExternalActionMachineContext(context, storage.state.machineId, 'plain')),
+      prepare: (id, input, context, prepareOptions) => createExecutor(options).prepare(id, input,
+        projectAdmittedExternalActionMachineContext(context, storage.state.machineId, 'plain'), prepareOptions),
     }),
   });
   const operation = f.operation('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'machine' } });
@@ -1790,9 +1796,11 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
     prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }) => f.prepare(operation, sessionActionOrigin),
     createExecutor: () => {
       const executor = createActionExecutor({ sessionSpawnNew: spawn, observeActionExecution: async () => {} } as unknown as ActionExecutorDeps);
-      return { execute: (actionId, input, context) => executor.execute(actionId, input, {
+      const withCaller = (context: Parameters<typeof executor.execute>[2]) => ({
         ...context, runtimeAccountId: storage.account.id, agentStartContext: startContext,
-      }) };
+      });
+      return { execute: (actionId, input, context) => executor.execute(actionId, input, withCaller(context)),
+        prepare: (actionId, input, context, options) => executor.prepare(actionId, input, withCaller(context), options) };
     },
   });
   vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {

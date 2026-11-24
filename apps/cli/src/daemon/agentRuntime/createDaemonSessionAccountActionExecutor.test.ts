@@ -1690,7 +1690,7 @@ describe('daemon Session Account authority', () => {
           installationId: source.installationId, privateKey: sourceKeys.secretKey, sessionActionOrigin: admission.sessionActionOrigin,
           isCurrent: admission.isCallerCurrent, signal: admission.authority.signal });
         return authorization ? { authorization, target } : null;
-      }, createExecutor: () => delivery === 'local' ? executor : { execute: async (_id, actionInput, context) => {
+      }, createExecutor: () => delivery === 'local' ? executor : { prepare: (...args) => executor.prepare(...args), execute: async (_id, actionInput, context) => {
         const rpc = new RpcHandlerManager({ scopePrefix: controller.machineId, localMachineId: controller.machineId,
           encryptionMode: 'plain', logger: () => {}, authorizeRequest: async () => ({ ok: true }) });
         registerActionSpecRpcHandlers({ rpcHandlerManager: rpc,
