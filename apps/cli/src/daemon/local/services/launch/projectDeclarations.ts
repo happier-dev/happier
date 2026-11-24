@@ -934,9 +934,10 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     unchanged(current);
                     if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                     if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
+                    const selection = current.declaration.selection;
                     const runtimeInputs = await prepareProjectWorktreeRuntime({ workspace: current.plan.workspace,
                         manifest: current.plan.manifest, signal,
-                        ...(current.declaration.selection.kind === 'manifest' ? { serviceName: current.declaration.selection.name } : {}) });
+                        ...(selection.kind === 'manifest' ? { serviceName: selection.name } : {}) });
                     if (runtimeInputs.kind !== 'ready') throw Object.assign(new Error(runtimeInputs.code), {
                         code: runtimeInputs.code, runtimeFailure: runtimeInputs });
                     const listenerRootPath = current.plan.workspace.rootPath;
@@ -947,6 +948,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         dotenvPreparation: current.plan.dotenvPreparation, platform: current.runtime.platform,
                         ...(registry.prepareServiceLaunchEnvironments ? { service: {
                             project: current.plan.project, serviceId: current.serviceId,
+                            serviceName: selection.kind === 'manifest' ? selection.name : selection.source.target,
                             requester: { accountId: ingress.machineAdmission!.actorAccountId,
                                 installationId: ingress.machineAdmission!.installationId },
                             executionPlacement: { mode: current.processMode.kind === 'native' ? 'native' as const : 'spawn' as const,

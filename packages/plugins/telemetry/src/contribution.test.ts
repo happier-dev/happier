@@ -87,16 +87,17 @@ describe('local capture SDK launch contribution', () => {
    f.close();
   }
  });
- it('uses the assigned OTLP listener only when no authored collector exists and supplies missing defaults', async () => {
+ it.each(['declared', 'authored'] as const)('opens the Worktree OTLP listener with a %s service name', async nameSource => {
   const f = createCaptureSqliteFixture();
   const runtime = createCaptureRuntime({ database: f.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish: () => {} });
   const slot = await listener(); await slot.close();
   const contribution = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true, acquireLocalCapture: options => bindLocalCapture({ ...options, runtime }) });
-  const result = await contribution.prepare({ ...input({ OTEL_SERVICE_NAME: 'authored', OTEL_RESOURCE_ATTRIBUTES: 'team=local' }),
+  const supplied = { ...input({ OTEL_RESOURCE_ATTRIBUTES: 'team=local', ...(nameSource === 'authored' ? { OTEL_SERVICE_NAME: 'custom' } : {}) }), serviceName: 'web' };
+  const result = await contribution.prepare({ ...supplied,
    async requestListenerPorts(keys) { expect(keys).toEqual(['otlp']); return { kind: 'ready', assignment: { ports: [], listenerPorts: { otlp: slot.port } } }; } });
   try {
    expect(result.kind).toBe('replace'); if (result.kind !== 'replace') throw new Error('Expected OTLP listener');
-   expect(result.defaults).toEqual({ OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${slot.port}`, OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' });
+   expect(result.defaults).toEqual({ OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${slot.port}`, OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', ...(nameSource === 'declared' ? { OTEL_SERVICE_NAME: 'web' } : {}) });
    expect((await fetch(`${result.defaults!.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
   } finally { if (result.kind === 'replace') await result.release(); f.close(); }
  });

@@ -113,7 +113,7 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
         try { contributions = await serviceInput.prepareServiceLaunchEnvironments({
             physicalRootIdentity: await resolvePhysicalWorktreeRootIdentity(input.workspace.rootPath), project: serviceInput.project,
             ...(serviceInput.requester ? { requester: serviceInput.requester } : {}),
-            serviceId: serviceInput.serviceId, executionPlacement: serviceInput.executionPlacement,
+            serviceId: serviceInput.serviceId, serviceName: serviceInput.serviceName, executionPlacement: serviceInput.executionPlacement,
             assignedPorts: serviceInput.assignedPorts, requestListenerPorts: serviceInput.requestListenerPorts,
             readEnvironment, readDeclaredEnvironment: () => readEnvironment(configNames) }); }
         catch { service = { kind: 'unavailable', code: 'service_launch_environment_failed' }; contributions = []; }

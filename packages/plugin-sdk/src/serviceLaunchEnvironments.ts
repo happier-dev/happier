@@ -19,6 +19,8 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     /** Captured from this launch's admitted requester, never from a service declaration. */
     requester?: Readonly<{ accountId: string; installationId: string }>;
     serviceId: string;
+    /** The admitted declaration name or native target label for display. */
+    serviceName?: string;
     executionPlacement: Readonly<{ mode: 'spawn' | 'native'; machineId: string }>;
     /** Admitted physical execution-root comparison identity, equal to removal.worktreePath.
      * Host-private; retain verbatim so cleanup needs no filesystem lookup after deletion. */

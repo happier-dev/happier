@@ -70,7 +70,7 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
   if (localOtlp && lease.endpoint) {
    defaults.OTEL_EXPORTER_OTLP_ENDPOINT = lease.endpoint;
    if (environment.OTEL_EXPORTER_OTLP_PROTOCOL === undefined) defaults.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf';
-   if (environment.OTEL_SERVICE_NAME === undefined) defaults.OTEL_SERVICE_NAME = `${scope.projectId}/${input.workspace.id}:${input.serviceId}`;
+   if (environment.OTEL_SERVICE_NAME === undefined && input.serviceName) defaults.OTEL_SERVICE_NAME = input.serviceName;
    if (environment.OTEL_RESOURCE_ATTRIBUTES === undefined) defaults.OTEL_RESOURCE_ATTRIBUTES = `happier.worktree.id=${input.workspace.id}`;
   }
   return { kind: 'replace', replacements: lease.replacements, defaults, async release() { controller.abort(); await lease.release(); } };

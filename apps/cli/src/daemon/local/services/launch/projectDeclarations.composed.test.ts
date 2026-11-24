@@ -3462,11 +3462,15 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let captureAvailable = false;
         // The plugin contribution is an external runtime boundary. Keep the
         // launch composition, process, feed and reviewed Restart path real.
-        if (surface === 'ui') h.setServiceLaunchEnvironmentContribution(async () => [{
-            contribution: { pluginId: 'fixture.capture', localId: 'capture' },
-            result: captureAvailable ? { kind: 'replace', defaults: { OTEL_SERVICE_NAME: 'fixture-service' }, release: async () => {} }
-                : { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' },
-        }]);
+        const capturedLaunches: unknown[] = [];
+        if (surface === 'ui') h.setServiceLaunchEnvironmentContribution(async launch => {
+            capturedLaunches.push(launch);
+            return [{
+                contribution: { pluginId: 'fixture.capture', localId: 'capture' },
+                result: captureAvailable ? { kind: 'replace', defaults: { OTEL_SERVICE_NAME: 'fixture-service' }, release: async () => {} }
+                    : { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' },
+            }];
+        });
         const channel = await createRequesterCurrentnessSocketHarness();
         cleanups.push(() => channel.close());
         const review = await h.selectStart();
@@ -3478,6 +3482,9 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             .targets.find(target => target.sourceClass?.kind === 'managed_service' && target.sourceClass.managedServiceId === old.instanceId);
         if (selectedRow?.sourceClass?.kind !== 'managed_service') throw new Error('Expected the selected running service row');
         if (surface === 'ui') {
+            const selection = h.request.declaration?.selection;
+            if (selection?.kind !== 'manifest') throw new Error('Expected a declared Project service');
+            expect(capturedLaunches).toEqual([expect.objectContaining({ serviceName: selection.name })]);
             expect(selectedRow).toMatchObject({ serviceState: 'running', actions: expect.arrayContaining(['manage']),
                 diagnostics: [expect.objectContaining({ code: 'service_launch_environment_unavailable', severity: 'warning' })] });
             captureAvailable = true;

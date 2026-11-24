@@ -83,6 +83,9 @@ settled removal fact's `worktreePath` uses that same identity, including for an
 unassociated worktree, so cleanup needs no filesystem lookup after deletion.
 
 The same private preparation carries the admitted requester and Project identity.
+Project passes the selected service's declaration name or native target label as
+the readable launch name. Telemetry uses it to supply a default
+`OTEL_SERVICE_NAME` when the workload has not provided one.
 Its optional `readDeclaredEnvironment()` reads the original declared config values
 and provenance through the existing dotenv preparation, excluding secret bindings.
 The database workbench observes that projection to discover launched-service
