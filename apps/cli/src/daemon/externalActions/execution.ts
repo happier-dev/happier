@@ -1124,7 +1124,7 @@ resolveServerFeaturesSnapshot?: () =>
           attribution: { serverId: params.serverId, accountId: requesterAccountContext.authorization.binding.accountId,
             machineId: params.machineId, installationId: requesterAccountContext.authorization.binding.installationId },
           serverHttpBaseUrl: requesterAccountContext.serverHttpBaseUrl,
-          machineAdmission: executionContext?.machineAdmission ?? requesterAccountContext.operationContext.machineAdmission,
+          machineAdmission: executionContext?.machineAdmission ?? requesterAccountContext.savedSecretOperationContext.machineAdmission,
           ...(observedServerIdentityId ? { homeServerIdentityId: observedServerIdentityId } : {}),
         }) } : {}),
         // Resolve only when Session input needs declarations, and keep the
