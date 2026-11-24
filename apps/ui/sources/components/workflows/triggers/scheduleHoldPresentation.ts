@@ -9,8 +9,7 @@ export type ScheduleHold = NonNullable<
 /**
  * Why a recurring schedule is not starting its next run, as every trigger surface says it. The
  * scheduler starts one run at a time, so a due schedule waits while an earlier run is still open.
- * `runId` is present only when the server included the holding Run for this reader; without it the
- * surface says it is waiting and offers no link.
+ * Detailed schedule rows name the Run holding the schedule.
  */
 export type ScheduleHoldPresentation = Readonly<{
   /** The sentence for a row's status line. */
@@ -19,7 +18,7 @@ export type ScheduleHoldPresentation = Readonly<{
   short: string;
   /** The holding Run stopped part way and waits for the person (Stop or Continue on its page). */
   interrupted: boolean;
-  runId: string | null;
+  runId: string;
 }>;
 
 export function readTriggerScheduleHold(
@@ -42,9 +41,8 @@ export function readSetScheduleHold(
 export function presentScheduleHold(
   hold: ScheduleHold | null | undefined,
 ): ScheduleHoldPresentation | null {
-  if (!hold) return null;
-  const run = 'runId' in hold ? hold : null;
-  const interrupted = run?.runState === 'interrupted';
+  if (!hold || !('runId' in hold)) return null;
+  const interrupted = hold.runState === 'interrupted';
   return {
     text: t(
       interrupted
@@ -57,6 +55,6 @@ export function presentScheduleHold(
         : 'workflows.triggers.row.heldShort',
     ),
     interrupted,
-    runId: run?.runId ?? null,
+    runId: hold.runId,
   };
 }

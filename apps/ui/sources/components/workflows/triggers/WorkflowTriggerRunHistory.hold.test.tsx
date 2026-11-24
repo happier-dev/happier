@@ -149,25 +149,7 @@ it('says a due schedule waits for its interrupted previous run and opens that ru
   );
 });
 
-it('waits without a link when the server withheld the run, and is unchanged without a hold', async () => {
-  const screen = await renderScreen(
-    <WorkflowTriggerRunHistory
-      automationId="hourly"
-      triggerId={triggerId}
-      nextRunAt={Date.now() - 60_000}
-      hold={{ triggerId, reason: 'open_occurrence' }}
-    />,
-  );
-  await waitForHomeGovernance(() =>
-    expect(screen.getTextContent()).toContain(
-      t('workflows.triggers.row.heldByRun'),
-    ),
-  );
-  expect(
-    screen.findByTestId('session-work-trigger-history:hourly-open-run'),
-  ).toBeNull();
-  await standardCleanup();
-
+it('shows a pending occurrence when no Run holds the schedule', async () => {
   const plain = await renderScreen(
     <WorkflowTriggerRunHistory
       automationId="hourly"

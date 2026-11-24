@@ -52,7 +52,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const empty = read.rows.length === 0 && read.status !== 'failed';
     // An empty History with a future occurrence says both in one sentence (07 S4), so the next run isn't said twice.
     const emptyWithNext = empty && read.status !== 'loading' && nextRunAt !== null && nextRunAt > nowMs;
-    // A due occurrence held by an earlier open run says why it waits, and opens that run where the server shared it.
+    // A due occurrence held by an earlier open run links to that run.
     const holdPresentation = presentScheduleHold(props.hold);
     const held = holdPresentation !== null && (nextRunAt === null || nextRunAt <= nowMs) ? holdPresentation : null;
     const router = useRouter();
@@ -67,8 +67,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
         {observationWarning ? <SurfaceFreshnessLine testID={`session-work-trigger-history:${props.automationId}-observation`}
             tone="warning" reason={observationWarning} /> : null}
         {held ? <Item testID={`session-work-trigger-history:${props.automationId}-held`} title={held.text} mode="info"
-            rightElement={held.runId !== null ? <ToolbarButton testID={`session-work-trigger-history:${props.automationId}-open-run`}
-                label={t('workflows.events.openRun')} onPress={openHoldingRun} /> : undefined} />
+            rightElement={<ToolbarButton testID={`session-work-trigger-history:${props.automationId}-open-run`}
+                label={t('workflows.events.openRun')} onPress={openHoldingRun} />} />
             : nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
                 accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
         {once === 'done' || once === 'missed' ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"

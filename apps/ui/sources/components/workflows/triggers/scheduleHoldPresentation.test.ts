@@ -39,15 +39,6 @@ describe('presentScheduleHold', () => {
     });
   });
 
-  it('still says it waits when the server withheld the run, without a link', () => {
-    expect(presentScheduleHold(reasonOnly)).toEqual({
-      text: 'workflows.triggers.row.heldByRun',
-      short: 'workflows.triggers.row.heldShort',
-      interrupted: false,
-      runId: null,
-    });
-  });
-
   it('presents nothing without a hold, and only reads the hold of the asked trigger', () => {
     expect(presentScheduleHold(undefined)).toBeNull();
     expect(
