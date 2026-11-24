@@ -3286,6 +3286,11 @@ the application received its managed collector bindings. Once the receipt
 confirms delivery, collector status distinguishes waiting for data from the
 timestamp of the latest retained observation. The tab reads status and the
 selected list while it is visible and focused.
+For a hosted Environment, collector status shows whether the assignment is
+stamped. If the binding is configured and no assignment is stamped, the tab
+shows that the change needs a deploy. Once the provider has acknowledged the
+binding, the tab waits for retained samples and offers redeploy guidance.
+Receiving shows the latest retained sample, which can predate a rotation.
 Settings uses the Environment binding owner. Clear capture deletes retained data
 for the selected Machine worktree or managed Environment after confirmation.
 Environment agents use the Environment's Database Agent Level and approval policy.

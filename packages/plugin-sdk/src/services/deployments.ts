@@ -63,6 +63,8 @@ export interface DeploymentDatabasesServiceV1 {
         environment: Readonly<{ serverId: string; environmentId: string; revision: number }>;
         collectorMachineId: string;
         capabilities: DeploymentTelemetryCapabilitiesV1;
+        /** For capture.status, whether Home has stamped the collector assignment. */
+        assignmentStamped?: boolean;
     }>>;
     /** Admits a destructive partition clear as the Environment manager; a read admission cannot authorize it. */
     admitTelemetryClear?(input: Readonly<{ serverId: string; environmentId: string }>): Promise<void>;

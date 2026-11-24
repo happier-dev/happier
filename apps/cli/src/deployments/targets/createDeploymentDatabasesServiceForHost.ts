@@ -339,7 +339,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 const selected = telemetryFacts?.get(request.environmentId);
                 if (!selected || request.serverId !== telemetryCollector.serverId) return refuse('target_mismatch');
                 return { environment: { ...request, revision: selected.revision }, collectorMachineId: binding.machineId,
-                    capabilities: resolveDeploymentTelemetryCapabilitiesV1(selected.capabilities) };
+                    capabilities: resolveDeploymentTelemetryCapabilitiesV1(selected.capabilities),
+                    ...(selected.assignmentStamped === undefined ? {} : { assignmentStamped: selected.assignmentStamped }) };
             }
             const admission = await readEnvironment({ kind: 'environment', environment: request }, undefined, { nativeMember: true });
             const environment = admission.detail.environment;

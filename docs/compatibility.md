@@ -10550,6 +10550,13 @@ In unreleased 0.3, the selected Worktree capture status reports
 holds its capture bindings. These optional fields describe independent launch
 facts. Load matching client and daemon sources for the closed result shape.
 
+In unreleased 0.3, Home's signed Environment capture-status input can include
+`assignmentStamped`, a boolean that does not expose the ingest token hash.
+The capture-status result can include `environmentReadiness` for the admitted
+Environment. Match Home, daemon and App development sources for the closed
+shapes. An unstamped assignment reports redeploy required. A stamped assignment
+uses the latest retained sample to distinguish waiting from receiving.
+
 Unreleased 0.3 Domain admission accepts an optional collector deployment
 identity in the derived native placement. Home matches it against the selected
 collector Machine's App enrollment and stores that association in the

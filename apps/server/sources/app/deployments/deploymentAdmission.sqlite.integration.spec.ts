@@ -59,7 +59,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-    TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+    DATABASE_CAPTURE_STATUS_ACTION_ID_V1, TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -120,14 +120,18 @@ describe('current Source deployment authority', () => {
             },
         }), async app => {
             const route = `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}`;
-            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'regression' | 'clear' = 'list',
+            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'status' | 'regression' | 'clear' = 'list',
                 environmentId = environment.id) => {
                 const target = { kind: 'machine' as const, machineId };
                 const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
                 const input = operation === 'regression'
                     ? { action: parseQualifiedPluginActionId(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1),
                         input: { serverId, environmentId: environment.id, serviceName: 'app', measure: 'http.error_rate', windowMs: 1000 } }
-                    : { action: parseQualifiedPluginActionId(operation === 'clear' ? DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 : DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
+                    : { action: parseQualifiedPluginActionId({
+                        clear: DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+                        list: DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+                        status: DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+                    }[operation]),
                         input: { source: { kind: 'environment', serverId, environmentId },
                             ...(operation === 'list' ? { page: { limit: 6 } } : {}) } };
                 const envelope = sealExternalActionRequestV2({ material, input, randomBytes: nacl.randomBytes,
@@ -151,6 +155,20 @@ describe('current Source deployment authority', () => {
                 accountId: teammate.id, custodianAccountId: owner.id, machineId: collector.id, installationId: collector.installationId,
                 deploymentTelemetryRead: [{ environmentId: environment.id, revision: environment.revision, capabilities: { metrics: true } }],
             });
+            const readAssignmentStamp = async () => {
+                const response = await admit(readerToken, makeRead(teammate.id, collector.id, 'status').body);
+                expect(response.statusCode).toBe(200);
+                return { facts: ExternalActionExecutionAuthorizationV1Schema.parse(response.json()).binding.deploymentTelemetryRead,
+                    response: response.body };
+            };
+            const unstamped = await readAssignmentStamp();
+            expect(unstamped.facts).toMatchObject([{ environmentId: environment.id, assignmentStamped: false }]);
+            const tokenHash = 'a'.repeat(64);
+            await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { telemetryTokenHash: tokenHash } });
+            const stamped = await readAssignmentStamp();
+            expect(stamped.facts).toMatchObject([{ environmentId: environment.id, assignmentStamped: true }]);
+            expect(stamped.response).not.toContain(tokenHash);
+            expect(signed.binding.deploymentTelemetryRead?.[0]).not.toHaveProperty('assignmentStamped');
             // The reader's Environment content pins the collector key; Home only delivers it.
             const collectorKeyPins = [{ environmentId: environment.id, collector: { machineId: collector.id,
                 installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(collectorKey) } }];

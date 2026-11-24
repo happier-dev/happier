@@ -78,6 +78,8 @@ export function DeploymentTelemetryPanel(
     active?: boolean;
     /** Whether the serving native deployment delivered this collector's bindings, when observed. */
     telemetryApplied?: boolean;
+    /** The hosted selection also demands status while a serving deployment is pending. */
+    hostedServingDeploymentId?: string | null;
     appAuthoredSampling?: boolean;
     appCollectorServices?: readonly string[];
     /** Re-read the Environment after a save, so the next save carries its new revision. */
@@ -135,6 +137,7 @@ export function DeploymentTelemetryPanel(
       collectorId={collectorId}
       active={props.active ?? true}
       telemetryApplied={props.telemetryApplied}
+      hostedServingDeploymentId={props.hostedServingDeploymentId}
       appCollectorLabel={appCollectorLabel}
       onOpenSettings={canManage && lifetime ? open : null}
     />
@@ -262,10 +265,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
   collectorId: string;
   active: boolean;
   telemetryApplied: boolean | undefined;
+  hostedServingDeploymentId: string | null | undefined;
   appCollectorLabel?: string;
   onOpenSettings: ((readStatus?: TelemetryCaptureReads['status']) => void) | null;
 }>) {
-  const { detail, lifetime, collectorId, active, telemetryApplied } = props;
+  const { detail, lifetime, collectorId, active, telemetryApplied, hostedServingDeploymentId } = props;
+  const hosted = hostedServingDeploymentId !== undefined;
+  const demandCollectorStatus = hosted || telemetryApplied === true;
   const environment = detail.environment;
   const serverId = lifetime?.scope.serverId ?? null;
   const locale = getPreferredLanguage();
@@ -287,12 +293,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const [collectorStatus, setCollectorStatus] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     lastReceivedAt?: number | null;
+    environmentReadiness?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['environmentReadiness'];
     coverage?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['coverage'];
     capabilityLastSampleAt?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['capabilityLastSampleAt'];
     failure?: string;
   }> | null>(null);
   React.useEffect(() => {
-    if (!active || !reads || telemetryApplied !== true) return;
+    if (!active || !reads || !demandCollectorStatus) return;
     const controller = new AbortController();
     reads.status(controller.signal).then(
       status => {
@@ -305,7 +312,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
       },
     );
     return () => controller.abort();
-  }, [active, reads, telemetryApplied, attempt]);
+  }, [active, reads, demandCollectorStatus, attempt, environment.revision, hostedServingDeploymentId]);
   const [openTrace, setOpenTrace] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     request: DatabaseCaptureSummaryV1;
@@ -378,16 +385,20 @@ function DeploymentTelemetryTabs(props: Readonly<{
   }), [openTraceId, reads, lifetime, active, locale, canAddCheck]);
   const data = captureTab ? state.data : null;
   const failed = captureTab !== null && state.failure !== null && !state.reading;
-  const status = telemetryApplied && collectorStatus?.reads === reads ? collectorStatus : null;
+  const status = demandCollectorStatus && collectorStatus?.reads === reads ? collectorStatus : null;
+  const readiness = status?.environmentReadiness;
   const keptOn = t('deploymentTelemetry.recording.keptOn', { machine });
   // On a capability's own view the bar says that capability's delivery; the capture lists say the collector's.
   const capabilitySample = tab === 'llmCalls' ? status?.capabilityLastSampleAt?.appLlmCost
     : tab === 'metrics' ? status?.capabilityLastSampleAt?.metrics : undefined;
-  const collectorLabelText = telemetryApplied === false ? `${keptOn} ${t('deploymentTelemetry.recording.nextDeploy')}`
+  const collectorLabelText = telemetryApplied === false || readiness === 'redeploy_required'
+    ? `${keptOn} ${t('deploymentTelemetry.recording.nextDeploy')}`
     : status?.coverage?.reason === 'daemon_database_quota_exceeded' ? t('deploymentTelemetry.recording.storageFull')
+    : hosted && readiness === 'waiting_for_first_data'
+      ? `${t('deploymentTelemetry.recording.waiting')} ${t('deploymentTelemetry.recording.nextDeploy')}`
     : capabilitySample !== undefined ? formatTelemetryCapabilityStatus(capabilitySample)
-    : status?.lastReceivedAt === null ? t('deploymentTelemetry.recording.waiting')
-    : typeof status?.lastReceivedAt === 'number' ? t('deploymentTelemetry.recording.receiving', {
+    : !hosted && status?.lastReceivedAt === null ? t('deploymentTelemetry.recording.waiting')
+    : (!hosted || readiness === 'receiving') && typeof status?.lastReceivedAt === 'number' ? t('deploymentTelemetry.recording.receiving', {
       time: new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(status.lastReceivedAt),
     }) : keptOn;
   const body = failed && data === null ? (

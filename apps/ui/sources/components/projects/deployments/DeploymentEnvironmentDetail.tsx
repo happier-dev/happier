@@ -1494,6 +1494,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               appAuthoredSampling={appAuthoredSampling}
               appCollectorServices={appCollectorServices}
               active={props.demand.mounted && props.demand.visible && props.demand.focused}
+              hostedServingDeploymentId={runtime?.source.kind === 'plugin' ? activeId : undefined}
               telemetryApplied={runtime?.source.kind === 'plugin' ? undefined : activeId === null ? false
                 : activeReceipt?.deployment.id === activeId ? activeReceipt.content.machineResults.some(member =>
                   member.activation === 'succeeded' && member.currentDeploymentId === activeId

@@ -205,6 +205,7 @@ export type AdmittedCaptureSource = Readonly<{
     partition: string;
     runtime: CaptureRuntime;
     collectorMachineId?: string;
+    assignmentStamped?: boolean;
 }>;
 export type AdmittedCaptureScope = Omit<AdmittedCaptureSource, 'runtime'>;
 export type CaptureSourceAdmission = (input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
@@ -224,11 +225,14 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 serviceVersion: input.serviceVersion, granularity: input.granularity,
             }) };
         },
-        async captureStatus(_input: database.DatabaseCaptureStatusInputV1) {
-            return { ok: true as const, source: selected.source, coverage: selected.runtime.ingest.coverage(selected.partition),
-                ...(selected.source.kind === 'environment'
-                    ? await selected.runtime.store.environmentStatus(selected.partition)
-                    : {}) };
+        async captureStatus(_input: database.DatabaseCaptureStatusInputV1): Promise<Extract<database.DatabaseCaptureStatusResultV1, { ok: true }>> {
+            const status = { ok: true as const, source: selected.source, coverage: selected.runtime.ingest.coverage(selected.partition) };
+            if (selected.source.kind !== 'environment') return status;
+            const observations = await selected.runtime.store.environmentStatus(selected.partition);
+            if (selected.assignmentStamped === undefined) return { ...status, ...observations };
+            const environmentReadiness = !selected.assignmentStamped ? 'redeploy_required'
+                : observations.lastReceivedAt === null ? 'waiting_for_first_data' : 'receiving';
+            return { ...status, ...observations, environmentReadiness };
         },
         async listCapturedQueries(input: database.DatabaseCaptureQueriesListInputV1) {
             return page(await selected.runtime.store.list({ ...input.page, since: input.since, until: input.until,

@@ -12,7 +12,7 @@ import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/p
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeploymentReadScopeV1 } from '@happier-dev/protocol/actions/specs/deploymentReadScope';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -109,7 +109,8 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         if ('telemetryCollector' in admission) {
             if (admission.telemetryCollector.serverId !== binding.serverIdentityId) return null;
             const { environmentIds } = admission.telemetryCollector;
-            if (formatQualifiedPluginActionId(admission.action) === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) {
+            const actionId = formatQualifiedPluginActionId(admission.action);
+            if (actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) {
                 const [environmentId] = environmentIds;
                 if (!environmentId || environmentIds.length !== 1) return null;
                 const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId, environmentId, authentication);
@@ -127,13 +128,14 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
                         ...(row.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: row.previewCompanionOfEnvironmentId } : {}) },
                 }] };
             }
+            const includeAssignment = actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1;
             const rows = new Map<string, { projectSourceId: string; revision: number; telemetryMetricsEnabled: boolean;
-                telemetryAppLlmCostEnabled: boolean; telemetryExceptionsEnabled: boolean }>();
+                telemetryAppLlmCostEnabled: boolean; telemetryExceptionsEnabled: boolean; telemetryTokenHash?: string | null }>();
             for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {
                 for (const row of await tx.deploymentEnvironment.findMany({
                     where: { id: { in: [...ids] }, telemetryMachineId: binding.machineId, deletedAt: null },
                     select: { id: true, projectSourceId: true, revision: true, telemetryMetricsEnabled: true,
-                        telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true },
+                        telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true, telemetryTokenHash: includeAssignment },
                 })) rows.set(row.id, row);
             }
             if (rows.size !== environmentIds.length) return null;
@@ -145,7 +147,8 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
                 const row = rows.get(environmentId);
                 if (!row || !sources.get(row.projectSourceId)?.ok) return null;
                 return { environmentId, revision: row.revision, capabilities: { metrics: row.telemetryMetricsEnabled,
-                    appLlmCost: row.telemetryAppLlmCostEnabled, exceptions: row.telemetryExceptionsEnabled } };
+                    appLlmCost: row.telemetryAppLlmCostEnabled, exceptions: row.telemetryExceptionsEnabled },
+                    ...(includeAssignment ? { assignmentStamped: typeof row.telemetryTokenHash === 'string' } : {}) };
             });
             return facts.every(fact => fact !== null) ? { ok: true, artifactIds: [], deploymentTelemetryRead: facts } : null;
         }

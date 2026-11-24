@@ -142,7 +142,7 @@ async function settle() {
 function panel(
   invoke: ReturnType<typeof collector>['invoke'],
   detail: ReturnType<typeof setUpDetail>,
-  demand?: { telemetryApplied?: boolean; active?: boolean; lifetime?: typeof lifetime },
+  demand?: { telemetryApplied?: boolean; hostedServingDeploymentId?: string | null; active?: boolean; lifetime?: typeof lifetime },
   transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>,
 ) {
   return (
@@ -313,6 +313,37 @@ describe('Environment Telemetry tabs', () => {
       expect(calls.slice(whileHidden).map(call => call.actionId).sort()).toEqual([
         'happier.telemetry/actions/capture/status',
       ]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('renders hosted capture readiness from the collector and refreshes when the serving deploy changes', async () => {
+    let environmentReadiness = 'redeploy_required';
+    const { invoke, calls } = collector(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
+      ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, environmentReadiness,
+          lastReceivedAt: environmentReadiness === 'receiving' ? request.at : null }
+      : answers(call));
+    const detail = setUpDetail();
+    const screen = await renderScreen(panel(invoke, detail, { active: false, hostedServingDeploymentId: null }));
+    const status = () => screen.findByTestId('project-deployments.telemetry.collector')?.props.children;
+    try {
+      await settle();
+      expect(calls).toHaveLength(0);
+      await screen.update(panel(invoke, detail, { hostedServingDeploymentId: null }));
+      await settle();
+      expect(status()).toContain('Changes apply at the next deploy.');
+      environmentReadiness = 'waiting_for_first_data';
+      await screen.update(panel(invoke, detail, { hostedServingDeploymentId: 'serving' }));
+      await settle();
+      expect(status()).toContain('Waiting for first data');
+      expect(status()).toContain('Changes apply at the next deploy.');
+      await screen.update(panel(invoke, detail, { active: false, hostedServingDeploymentId: 'serving' }));
+      environmentReadiness = 'receiving';
+      await screen.update(panel(invoke, detail, { hostedServingDeploymentId: 'serving' }));
+      await settle();
+      expect(status()).toContain('Receiving');
+      expect(calls.filter(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1)).toHaveLength(3);
     } finally {
       await screen.unmount();
     }

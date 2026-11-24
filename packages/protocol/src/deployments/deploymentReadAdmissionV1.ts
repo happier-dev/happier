@@ -39,6 +39,8 @@ export function readDeploymentTelemetryEnvironmentSourceV1(input: unknown) {
 /** Home's accepted metadata for the sealed collector Action. No Environment content crosses this carrier. */
 export const DeploymentTelemetryReadFactsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
   environmentId: id, revision, capabilities: DeploymentTelemetryCapabilitiesV1Schema,
+  /** Only capture.status receives the assignment marker. The digest stays with the assignment owner. */
+  assignmentStamped: z.optional(z.boolean()),
   clearApproval: z.optional(z.strictObject({
     purpose: z.enum(['standard', 'preview']), previewTemplateEnvironmentId: z.optional(id),
     previewCompanionOfEnvironmentId: z.optional(id), dataAgentAccess: DatabaseAgentLevelV1Schema,

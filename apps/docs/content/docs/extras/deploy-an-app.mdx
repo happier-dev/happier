@@ -253,6 +253,12 @@ Moving or turning off the collector requires confirmation and deletes that
 Environment's telemetry from the previous collector, without copying it to the
 new one. Redeploy afterward to start sending to the selected collector.
 
+In the hosted 0.3 development flow, Telemetry shows when the configured
+collector needs a deploy. After the provider acknowledges the exporter
+configuration, the tab shows **Waiting for first data** until the collector has
+retained a sample. Redeploy the app to apply the provider configuration.
+**Receiving** shows the latest retained sample time.
+
 In the 0.3 development flow, teammates who can view an Environment can read
 its capture from the selected collector without a Machine grant. Withdrawing
 Environment access takes effect on the next read request.

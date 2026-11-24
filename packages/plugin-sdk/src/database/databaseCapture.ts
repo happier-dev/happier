@@ -66,6 +66,8 @@ export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Sch
     restartRequired: z.optional(z.literal(true)),
     /** Environment status: the newest retained observation, null until the collector stores data. */
     lastReceivedAt: z.optional(z.nullable(time)),
+    /** Environment status from the admitted assignment and latest retained evidence. */
+    environmentReadiness: z.optional(z.enum(['redeploy_required', 'waiting_for_first_data', 'receiving'])),
     /** Environment status: latest retained evidence times, independent of the selected chart window. */
     capabilityLastSampleAt: z.optional(z.strictObject({
         metrics: z.nullable(time), appLlmCost: z.nullable(time), exceptions: z.nullable(time),

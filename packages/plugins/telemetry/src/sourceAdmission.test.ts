@@ -81,6 +81,7 @@ async function setup(canClear = false) {
     account: account.storage,
   } as unknown as PluginServices['storage'];
   let telemetryReads = 0;
+  let assignmentStamped: boolean | undefined;
   const deploymentDatabases = {
     async admitTelemetryClear() {
       if (!canClear) throw new PluginError({ code: 'source_access_denied' });
@@ -91,6 +92,7 @@ async function setup(canClear = false) {
         environment: { serverId: 'home', environmentId: 'app', revision: 1 },
         collectorMachineId: 'machine',
         capabilities: { queries: true, traces: true, appLlmCost: true },
+        assignmentStamped,
       };
     },
   } as unknown as PluginServices['deploymentDatabases'];
@@ -109,6 +111,7 @@ async function setup(canClear = false) {
     host,
     account,
     telemetryReads: () => telemetryReads,
+    setAssignmentStamped(value: boolean) { assignmentStamped = value; },
     async close() {
       lifetime.abort();
       await host.dispose();
@@ -215,6 +218,32 @@ describe('R2-A3 local capture Source/project admission through the real manifest
           limit: 10,
         }),
       ).toHaveLength(canClear ? 0 : 1);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('reports Environment readiness from the serving assignment and retained selected samples', async () => {
+    const f = await setup();
+    const action = local(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
+    const status = () => f.host.invokeAction(action, { source: environment }, owner);
+    const partition = captureSourcePartition(environment, undefined);
+    try {
+      f.setAssignmentStamped(false);
+      await expect(status()).resolves.toMatchObject({ environmentReadiness: 'redeploy_required', lastReceivedAt: null });
+      f.setAssignmentStamped(true);
+      await f.lease.runtime.ingest.write([
+        { id: 'neighbor', at: 2_000, worktree: 'environment:other', kind: 'span', source: 'otlp' },
+      ]);
+      await expect(status()).resolves.toMatchObject({ environmentReadiness: 'waiting_for_first_data', lastReceivedAt: null });
+      await f.lease.runtime.ingest.write([
+        { id: 'selected', at: 1_000, worktree: partition, kind: 'span', source: 'otlp' },
+      ]);
+      await expect(status()).resolves.toMatchObject({ environmentReadiness: 'receiving', lastReceivedAt: 1_000 });
+      f.setAssignmentStamped(false);
+      await expect(status()).resolves.toMatchObject({ environmentReadiness: 'redeploy_required', lastReceivedAt: 1_000 });
+      f.setAssignmentStamped(true);
+      await expect(status()).resolves.toMatchObject({ environmentReadiness: 'receiving', lastReceivedAt: 1_000 });
     } finally {
       await f.close();
     }

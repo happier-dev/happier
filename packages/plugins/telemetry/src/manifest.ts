@@ -41,8 +41,8 @@ async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: Capt
   return { source, partition };
  }
  if (!deployments?.admitTelemetryRead) throw new PluginError({ code: 'deployment_target_role_unavailable' });
- const { collectorMachineId } = await deployments.admitTelemetryRead(environment);
- return { source, partition, collectorMachineId };
+ const { collectorMachineId, assignmentStamped } = await deployments.admitTelemetryRead(environment);
+ return { source, partition, collectorMachineId, ...(assignmentStamped === undefined ? {} : { assignmentStamped }) };
 }
 
 const capture = createCapturePublicActionProducers({
