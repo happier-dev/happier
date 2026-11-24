@@ -212,7 +212,8 @@ describe('daemon STT capture pipeline through the default client', () => {
     expect(requests('finish')).toHaveLength(0);
     expect(requests('cancel')).toHaveLength(1);
     expect(sink.onFinal).not.toHaveBeenCalled();
-    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
+    expect(harness.capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+    expect(harness.coordinator.getSnapshot().leaseCount).toBe(0);
   });
 
   it.each([0, 50, 100, 150])('maintains 20ms capture admission with %ims recognition replies and drains finals', async latencyMs => {
