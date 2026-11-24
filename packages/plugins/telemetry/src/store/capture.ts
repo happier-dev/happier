@@ -78,13 +78,22 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
   ...metricStore,
   ...createCaptureWorktrees(db, queryPage),
   ...createCostStore(queryPage),
-  async lastReceivedAt(partition: string): Promise<number | null> {
-   // Skip the partition's loss marker. Exceptions accompany a retained span or log.
-   const [row] = await db.query<{ at: number | null }>(`SELECT MAX(at) AS at FROM (
-    SELECT MAX(at) AS at FROM captureSummaries WHERE worktree = ? AND kind != 'coverage'
-    UNION ALL SELECT MAX(at) AS at FROM metricPoints WHERE worktree = ?
-   )`, [partition, partition]);
-   return row?.at ?? null;
+  async environmentStatus(partition: string) {
+   // Keep only the newest stored time for each signal. The loss marker is not evidence.
+   const [row] = await db.query<{
+    summary: number | null; metrics: number | null; appLlmCost: number | null; exceptions: number | null;
+   }>(`SELECT
+    (SELECT at FROM captureSummaries WHERE worktree = ? AND kind != 'coverage' ORDER BY at DESC LIMIT 1) AS summary,
+    (SELECT CAST(at AS INTEGER) FROM metricPoints WHERE worktree = ? ORDER BY metricPoints.at DESC LIMIT 1) AS metrics,
+    (SELECT at FROM captureSummaries WHERE worktree = ? AND genAi IS NOT NULL ORDER BY at DESC LIMIT 1) AS appLlmCost,
+    (SELECT at FROM captureExceptions WHERE worktree = ? ORDER BY at DESC LIMIT 1) AS exceptions
+   `, [partition, partition, partition, partition]);
+   const metrics = row?.metrics ?? null;
+   const summary = row?.summary ?? null;
+   return {
+    lastReceivedAt: summary === null ? metrics : Math.max(summary, metrics ?? summary),
+    capabilityLastSampleAt: { metrics, appLlmCost: row?.appLlmCost ?? null, exceptions: row?.exceptions ?? null },
+   };
   },
   async listPartitions(): Promise<readonly string[]> {
    const partitions: string[] = [];

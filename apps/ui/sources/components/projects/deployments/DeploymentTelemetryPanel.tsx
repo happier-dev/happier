@@ -79,13 +79,14 @@ export function DeploymentTelemetryPanel(
   const environment = detail.environment;
   const collectorId = environment.telemetryMachineId ?? null;
   const canManage = environment.capabilities.manageBindings;
-  const open = React.useCallback(() => {
+  const open = React.useCallback((readCaptureStatus?: TelemetryCaptureReads['status']) => {
     if (!lifetime) return;
     showDeploymentTelemetrySheet({
       detail,
       lifetime,
       environmentName: props.environmentName,
       appAuthoredSampling: props.appAuthoredSampling,
+      readCaptureStatus,
       setTelemetry: input => createDeploymentActions(lifetime, environment.projectSourceId).setTelemetry(environment, input),
       setBindings: input => createDeploymentActions(lifetime, environment.projectSourceId).setBindings(input),
       onSaved: props.onChanged,
@@ -105,7 +106,7 @@ export function DeploymentTelemetryPanel(
           ? {
               primaryAction: {
                 label: t('deploymentTelemetry.empty.action'),
-                onPress: open,
+                onPress: () => open(),
                 testID: 'project-deployments.telemetry.setup',
               },
             }
@@ -242,7 +243,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   collectorId: string;
   active: boolean;
   telemetryApplied: boolean | undefined;
-  onOpenSettings: (() => void) | null;
+  onOpenSettings: ((readStatus?: TelemetryCaptureReads['status']) => void) | null;
 }>) {
   const { detail, lifetime, collectorId, active, telemetryApplied } = props;
   const environment = detail.environment;
@@ -425,7 +426,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
             onSelectTab={(id) => { setWindowId(id); setOpenTrace(null); }}
           />
           {props.onOpenSettings || addTelemetry || clear
-            ? <TelemetryMenu onOpenSettings={props.onOpenSettings} onAddTelemetry={addTelemetry}
+            ? <TelemetryMenu onOpenSettings={props.onOpenSettings ? () => props.onOpenSettings?.(reads?.status) : null}
+                onAddTelemetry={addTelemetry}
                 openingSetup={openingSetup} onClear={clear} /> : null}
         </View>
       </View>

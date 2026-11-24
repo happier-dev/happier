@@ -80,6 +80,8 @@ export type Copy = Readonly<{
     record: string;
     requests: string;
     requestsDescription: string;
+    notReceiving: string;
+    lastSample: (p: Readonly<{ time: string }>) => string;
     exceptions: string;
     exceptionsDescription: string;
     llm: string;
@@ -193,6 +195,8 @@ const en: Copy = {
     requests: 'Requests and queries',
     requestsDescription:
       'Endpoints, traces, logs and the queries each request runs.',
+    notReceiving: 'Not receiving yet',
+    lastSample: ({ time }) => `Receiving · Last sample ${time}`,
     exceptions: 'Exceptions',
     exceptionsDescription:
       'Server errors become issues in PRs & Issues. Browser errors need a small addition to your app.',

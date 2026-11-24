@@ -280,6 +280,11 @@ An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under
 development; this section does not certify the complete telemetry journey.
 
+Each enabled capability in **Telemetry settings** shows the time of its newest
+retained sample on the selected collector. After a rotation or capability
+change, that time may refer to a sample from before the change. Charts report
+retained coverage for their selected time window.
+
 ### Verify backend exception capture
 
 Select **Exceptions**, redeploy, and report a controlled server-side failure with

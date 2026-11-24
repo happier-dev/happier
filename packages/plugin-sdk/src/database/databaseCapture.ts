@@ -66,6 +66,10 @@ export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Sch
     restartRequired: z.optional(z.literal(true)),
     /** Environment status: the newest retained observation, null until the collector stores data. */
     lastReceivedAt: z.optional(z.nullable(time)),
+    /** Environment status: latest retained evidence times, independent of the selected chart window. */
+    capabilityLastSampleAt: z.optional(z.strictObject({
+        metrics: z.nullable(time), appLlmCost: z.nullable(time), exceptions: z.nullable(time),
+    })),
 })]);
 export const DatabaseCaptureQueriesListInputV1Schema = z.strictObject({ ...selectedPage, traceId: z.optional(id) });
 export const DatabaseCaptureQueriesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);

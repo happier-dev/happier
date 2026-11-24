@@ -28,6 +28,43 @@ function post(endpoint: string, index: number) {
 }
 
 describe('authenticated collector writer admission through HTTP and SQLite', () => {
+    it('reports the latest retained sample for each Environment capability independently', async () => {
+        const f = await fixture();
+        f.assignments.replace([{ environmentId: 'production', tokenHash: createHash('sha256').update(token).digest('hex'),
+            capabilities: { metrics: true, appLlmCost: true, exceptions: true } }]);
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });
+        const source = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
+        const status = createCaptureSelectedSourceReaders({ source, partition, runtime: f.runtime }).captureStatus;
+        const postSignal = (signal: 'metrics' | 'traces', payload: unknown) => fetch(receiver.endpoint + '/v1/' + signal, {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+            body: JSON.stringify(payload),
+        });
+        try {
+            expect((await post(receiver.endpoint, 1)).status).toBe(200);
+            expect(await status({ source })).toMatchObject({ ok: true, capabilityLastSampleAt: {
+                metrics: null, appLlmCost: null, exceptions: null,
+            } });
+            expect((await postSignal('metrics', { resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: 'runtime.heap',
+                gauge: { dataPoints: ['1700000020000000000', '1700000010000000000'].map(timeUnixNano => ({ timeUnixNano, asInt: '42' })) },
+            }] }] }] })).status).toBe(200);
+            expect((await postSignal('traces', { resourceSpans: [{ scopeSpans: [{ spans: [{
+                traceId: '1234567890abcdef1234567890abcdef', spanId: '0000000000000002',
+                kind: 3, name: 'chat', startTimeUnixNano: '1700000030000000000', endTimeUnixNano: '1700000030001000000',
+                attributes: [{ key: 'gen_ai.request.model', value: { stringValue: 'fixture-model' } },
+                    { key: 'gen_ai.operation.name', value: { stringValue: 'chat' } },
+                    { key: 'gen_ai.usage.input_tokens', value: { intValue: '8' } }],
+                events: [{ timeUnixNano: '1700000030000500000', name: 'exception',
+                    attributes: [{ key: 'exception.type', value: { stringValue: 'FixtureError' } }] }],
+            }] }] }] })).status).toBe(200);
+            expect(await status({ source })).toMatchObject({ ok: true, capabilityLastSampleAt: {
+                metrics: 1700000020000, appLlmCost: 1700000030000, exceptions: 1700000030000,
+            } });
+        } finally {
+            await receiver.release();
+            f.close();
+        }
+    });
+
     it('reports the selected Environment’s latest accepted observation through capture status', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });

@@ -36,12 +36,14 @@ import { readDeploymentActionError } from './deploymentActionOutcome';
 import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
+import type { TelemetryCaptureReads } from './telemetryCaptureReads';
 
 export type DeploymentTelemetrySheetInput = Readonly<{
   detail: DeploymentEnvironmentDetailV1;
   lifetime: ServerAccountScopeLifetime;
   environmentName: string;
   appAuthoredSampling?: boolean;
+  readCaptureStatus?: TelemetryCaptureReads['status'];
   /** The Environment's `setTelemetry` Action callback (deploymentActions), at the revision this sheet read. */
   setTelemetry: (input: DeploymentUiTelemetryInput) => Promise<DeploymentUiTelemetryResult>;
   setBindings: (input: DeploymentUiBindingsInput) => Promise<DeploymentBindingsSetResultV1>;
@@ -116,6 +118,34 @@ export function DeploymentTelemetrySheet(
   const [exceptions, setExceptions] = React.useState(initial.exceptions);
   const [appLlmCost, setAppLlmCost] = React.useState(initial.appLlmCost);
   const [metrics, setMetrics] = React.useState(initial.metrics);
+  const { readCaptureStatus } = props;
+  const [capabilityLastSampleAt, setCapabilityLastSampleAt] = React.useState<
+    Awaited<ReturnType<TelemetryCaptureReads['status']>>['capabilityLastSampleAt']
+  >();
+  React.useEffect(() => {
+    if (!readCaptureStatus) return;
+    const cancellation = new AbortController();
+    const retirement = lifetime.onRetire(() => cancellation.abort());
+    void readCaptureStatus(cancellation.signal).then(status => {
+      if (!cancellation.signal.aborted) setCapabilityLastSampleAt(status.capabilityLastSampleAt);
+    }, () => {
+      // Settings remain editable when collector status is unavailable.
+    });
+    return () => { cancellation.abort(); retirement.dispose(); };
+  }, [lifetime, readCaptureStatus]);
+
+  const capabilitySubtitle = (
+    description: string, capability: keyof NonNullable<typeof capabilityLastSampleAt>, enabled: boolean,
+  ) => {
+    const at = requests && enabled && collectorId === environment.telemetryMachineId
+      ? capabilityLastSampleAt?.[capability]
+      : undefined;
+    if (at === undefined) return description;
+    const status = at === null ? t('deploymentTelemetry.sheet.notReceiving') : t('deploymentTelemetry.sheet.lastSample', {
+      time: new Intl.DateTimeFormat(getPreferredLanguage(), { dateStyle: 'short', timeStyle: 'short' }).format(at),
+    });
+    return [description, status].join('\n');
+  };
   const [saving, setSaving] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
   // The previous collector deletes what it kept when it is replaced or turned off: one in-place confirmation.
@@ -323,7 +353,7 @@ export function DeploymentTelemetrySheet(
           <Item
             testID="project-deployments.telemetry.exceptions"
             title={t('deploymentTelemetry.sheet.exceptions')}
-            subtitle={t('deploymentTelemetry.sheet.exceptionsDescription')}
+            subtitle={capabilitySubtitle(t('deploymentTelemetry.sheet.exceptionsDescription'), 'exceptions', exceptions)}
             disabled={saving || !canManage || !requests}
             rightElement={
               <Switch
@@ -336,7 +366,7 @@ export function DeploymentTelemetrySheet(
           <Item
             testID="project-deployments.telemetry.llm"
             title={t('deploymentTelemetry.sheet.llm')}
-            subtitle={t('deploymentTelemetry.sheet.llmDescription')}
+            subtitle={capabilitySubtitle(t('deploymentTelemetry.sheet.llmDescription'), 'appLlmCost', appLlmCost)}
             disabled={saving || !canManage || !requests}
             rightElement={
               <Switch
@@ -349,7 +379,7 @@ export function DeploymentTelemetrySheet(
           <Item
             testID="project-deployments.telemetry.metrics"
             title={t('deploymentTelemetry.sheet.metrics')}
-            subtitle={t('deploymentTelemetry.sheet.metricsDescription')}
+            subtitle={capabilitySubtitle(t('deploymentTelemetry.sheet.metricsDescription'), 'metrics', metrics)}
             disabled={saving || !canManage || !requests}
             rightElement={
               <Switch

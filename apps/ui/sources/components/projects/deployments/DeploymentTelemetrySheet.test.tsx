@@ -70,6 +70,7 @@ async function open(
     typeof showDeploymentTelemetrySheet
   >[0]['setTelemetry'],
   onSaved = vi.fn(),
+  status: Pick<Parameters<typeof showDeploymentTelemetrySheet>[0], 'readCaptureStatus'> = {},
 ) {
   const screen = await renderScreen(
     <ModalProvider>
@@ -84,6 +85,7 @@ async function open(
       setTelemetry,
       setBindings: vi.fn(),
       onSaved,
+      ...status,
     });
   });
   await act(async () => {
@@ -100,6 +102,24 @@ async function open(
 }
 
 describe('Environment Telemetry tab', () => {
+  it('shows an enabled capability’s retained sample separately from one still waiting', async () => {
+    const screen = await open(vi.fn(), vi.fn(), {
+      readCaptureStatus: async () => ({
+        ok: true,
+        source: { kind: 'environment', serverId: 'home', environmentId: 'production' },
+        coverage: { lostObservations: 0, reason: null },
+        enabled: true,
+        capabilityLastSampleAt: { metrics: null, appLlmCost: 1700000030000, exceptions: null },
+      }),
+    });
+    try {
+      expect(screen.findByTestId('project-deployments.telemetry.llm')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Last sample'))).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.telemetry.exceptions')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Not receiving yet'))).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.telemetry.metrics')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Not receiving yet'))).toHaveLength(0);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.cancel');
+    } finally { await screen.unmount(); }
+  });
+
   it('opens the one setup sheet from the not-set-up scene, and names each recorded choice once set up', async () => {
     const { DeploymentTelemetryPanel } = await import('./DeploymentTelemetryPanel');
     const off = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id: 'production' }) });
