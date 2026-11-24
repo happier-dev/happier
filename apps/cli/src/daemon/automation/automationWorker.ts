@@ -46,8 +46,8 @@ export type AutomationWorkerHandle = Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
   stop: () => void;
   refreshAssignments: () => Promise<void>;
-  /** Rejoin durable queued work after connection or changes-feed recovery. */
-  catchUp: () => Promise<void>;
+  /** Rejoin queued work after connection, or for Runs named by the durable feed. */
+  catchUp: (changedRunIds?: readonly string[]) => Promise<void>;
   handleServerUpdate: (update: Update) => void;
   pause: () => void;
   resume: () => void;
@@ -783,8 +783,14 @@ export function startAutomationWorker(params: {
     else rescheduleClaim('admission-reopened', true);
   });
 
-  const catchUp = async (): Promise<void> => {
+  const catchUp = async (changedRunIds?: readonly string[]): Promise<void> => {
     if (stopped) return;
+    // Progress from work this worker still owns does not create a new claim.
+    // Unknown or released Runs still need the ordinary recovery path.
+    if (changedRunIds?.every(runId => {
+      const active = activeExecutions.get(runId);
+      return active && !active.materialWorkReleased && !active.controller.signal.aborted;
+    })) return;
     const host = params.requesterWorkAttributionV1;
     if (host) {
       const scopes = await listWorkflowRequesterCredentialScopes({ happyHomeDir: configuration.happyHomeDir,

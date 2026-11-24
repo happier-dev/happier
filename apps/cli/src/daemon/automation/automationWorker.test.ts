@@ -23,6 +23,7 @@ import { createWorkflowRunStorageTestkit, createPlainWorkflowRunKeyCensusFixture
 import type { Update } from '@/api/types';
 import { reloadConfiguration as reloadCapacityConfiguration } from '@/configuration';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createDeferred } from '@/testkit/async/deferred';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
   emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -556,7 +557,7 @@ describe('automationWorker', () => {
     } finally { inventory.dispose(); worker.stop(); releaseClaim?.(); }
   });
 
-  it('counts admitted Workflow coordinator work and releases parked custody before a pending assignment refresh finishes', async () => {
+  it('skips recovery reads for actively owned Workflow progress and releases parked custody before pending assignment refresh', async () => {
     const now = Date.now();
     const runId = '00000000-0000-4000-8000-000000000052';
     const machineId = 'machine-1';
@@ -587,12 +588,14 @@ describe('automationWorker', () => {
     const attribution = { ...target, accountId };
     let reviewInventory: LiveWorkInventoryV1 | undefined;
     let inventory: ReturnType<typeof createManagedActivityInventory> | undefined;
+    const releaseReview = createDeferred<void>();
+    let holdAssignmentRefresh = false;
     let refreshHeld = false;
     const releaseRefreshes: Array<() => void> = [];
     mockGet.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return {
         status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
-      if (storage.run().state === 'waiting_for_review') {
+      if (holdAssignmentRefresh) {
         refreshHeld = true;
         await new Promise<void>(resolve => releaseRefreshes.push(resolve));
       }
@@ -612,7 +615,11 @@ describe('automationWorker', () => {
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
       resolveAccountEncryption: async () => ({ kind: 'available', witness: V3_CLAIM_CURRENTNESS }),
       isAcceptedAuthorizationCurrent: async () => true,
-      onReviewEntered: async () => { reviewInventory = await inventory!.read(); admissionDrain.beginTemporaryDrain(); },
+      onReviewEntered: async () => {
+        reviewInventory = await inventory!.read();
+        admissionDrain.beginTemporaryDrain();
+        await releaseReview.promise;
+      },
       workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
         inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
@@ -636,6 +643,16 @@ describe('automationWorker', () => {
         t: 'automation-run-updated', runId, automationId: 'automation-park', state: 'queued', scheduledAt: now,
         startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId,
       } } satisfies Update);
+      await waitForCondition(() => reviewInventory !== undefined);
+      const assignmentReads = () => mockGet.mock.calls.filter(([url]) => String(url).endsWith('/worker/assignments')).length;
+      const priorReads = assignmentReads();
+      await worker.catchUp([runId]);
+      await worker.catchUp([runId]);
+      expect(assignmentReads() - priorReads).toBe(0);
+      await worker.catchUp([runId, 'new-unclaimed-run']);
+      expect(assignmentReads() - priorReads).toBe(1);
+      holdAssignmentRefresh = true;
+      releaseReview.resolve();
       await waitForCondition(() => refreshHeld);
       expect(storage.run().state).toBe('waiting_for_review');
       expect(observations.some(items => items.some(item => item.state === 'active'))).toBe(true);
@@ -649,7 +666,7 @@ describe('automationWorker', () => {
       expect(await worker.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
       expect(projectMachineWorkSummary({ inventory: await inventory.read(), target, custodianAccountId: 'alice',
         requesterIdentities: new Map([[accountId, { accountId, displayName: 'Bob' }]]) })).toEqual({ kind: 'current', requesters: [] });
-    } finally { unsubscribe(); inventory.dispose(); worker.stop(); for (const release of releaseRefreshes) release(); }
+    } finally { releaseReview.resolve(); unsubscribe(); inventory.dispose(); worker.stop(); for (const release of releaseRefreshes) release(); }
   });
 
   it.each(['ordinary', 'retained encrypted'] as const)('leaves the unread scheduled %s predecessor definition unchanged before the Workflow claim', async (kind) => {

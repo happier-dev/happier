@@ -2054,8 +2054,8 @@ export async function bootstrapMachineSyncRuntime(
         pendingSessionActivationRecovery.recoverAfterConnect;
     }
 
-    connectedApiMachine.onAutomationWorkInvalidated(async () => {
-      if (!params.isShuttingDown()) await activeAutomationWorker?.catchUp();
+    connectedApiMachine.onAutomationWorkInvalidated(async changedRunIds => {
+      if (!params.isShuttingDown()) await activeAutomationWorker?.catchUp(changedRunIds);
     });
     const cleanupHeartbeatReceipts = connectedApiMachine.onHealthCheckHeartbeatReceived(payload => {
       publishDaemonHostEvent({

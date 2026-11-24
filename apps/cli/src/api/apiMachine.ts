@@ -735,7 +735,7 @@ export class ApiMachineClient {
     private accountProjectRowsChangeListeners = new Set<(change: AccountProjectRowsChangeNotification) => void | Promise<void>>();
     private automationEventSourcesInvalidationListeners = new Set<(payload: AutomationEventSourcesInvalidatedHostEventV1) => void | Promise<void>>();
     private readonly healthCheckHeartbeatReceiptListeners = new Set<(receipt: PluginWebhookHeartbeatReceiptHintV1) => void>();
-    private automationWorkInvalidationListeners = new Set<() => void | Promise<void>>();
+    private automationWorkInvalidationListeners = new Set<(changedRunIds?: readonly string[]) => void | Promise<void>>();
     private pluginWebhookInvalidationListeners = new Set<() => void | Promise<void>>();
     private managedMachinePolicyInvalidationListeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
     private pendingSessionActivationHintListeners = new Set<(
@@ -3948,15 +3948,15 @@ export class ApiMachineClient {
     }
 
     /** Queued-work recovery, distinct from broad source/catalog invalidation. */
-    onAutomationWorkInvalidated(listener: () => void | Promise<void>): () => void {
+    onAutomationWorkInvalidated(listener: (changedRunIds?: readonly string[]) => void | Promise<void>): () => void {
         this.automationWorkInvalidationListeners.add(listener);
         return () => { this.automationWorkInvalidationListeners.delete(listener); };
     }
 
-    private async notifyAutomationWorkInvalidated(signal: AbortSignal): Promise<void> {
+    private async notifyAutomationWorkInvalidated(signal: AbortSignal, changedRunIds?: readonly string[]): Promise<void> {
         for (const listener of this.automationWorkInvalidationListeners) {
             signal.throwIfAborted();
-            await listener();
+            await listener(changedRunIds);
         }
     }
 
@@ -7140,7 +7140,8 @@ export class ApiMachineClient {
             && this.accountChangesObserverTransportGeneration === transportGeneration) return;
         const persistedCursor = after;
         let consumedPage = false;
-        let automationWorkInvalidated = false;
+        // Null requests full durable recovery. A Run-only live page carries its exact wake candidates.
+        let automationWorkRunIds: Set<string> | null = new Set();
         let reason = opts.reason;
         try {
             while (!this.projectionSchedulingClosed && this.isActiveTransportGeneration(transportGeneration)) {
@@ -7195,7 +7196,7 @@ export class ApiMachineClient {
                     signal.throwIfAborted();
                     after = result.currentCursor;
                     consumedPage = true;
-                    automationWorkInvalidated = true;
+                    automationWorkRunIds = null;
                     return;
                 }
                 if (result.status !== 'ok') {
@@ -7673,7 +7674,11 @@ export class ApiMachineClient {
                 this.accountEncryptionCurrentness?.consumeOwnedFeedPage({ after, changes, nextCursor });
                 after = nextCursor;
                 consumedPage = true;
-                automationWorkInvalidated ||= hasAutomationSourceChange || workflowRunIds.length > 0;
+                if (hasAutomationSourceChange || (opts.reason !== 'live' && workflowRunIds.length > 0)) {
+                    automationWorkRunIds = null;
+                } else if (automationWorkRunIds !== null) {
+                    for (const runId of workflowRunIds) automationWorkRunIds.add(runId);
+                }
                 if (connectedServicesPageDiagnostic) {
                     logger.debug('[API MACHINE] Connected service Account page', {
                         phase: 'settled', ...connectedServicesPageDiagnostic,
@@ -7687,9 +7692,9 @@ export class ApiMachineClient {
         } finally {
             // Retain work demand before acknowledging a consumed prefix, even
             // when a later page fails. The incumbent feed retry owns refusal.
-            if (automationWorkInvalidated && !signal.aborted && !this.projectionSchedulingClosed
+            if ((automationWorkRunIds === null || automationWorkRunIds.size > 0) && !signal.aborted && !this.projectionSchedulingClosed
                 && this.isActiveTransportGeneration(transportGeneration)) {
-                await this.notifyAutomationWorkInvalidated(signal);
+                await this.notifyAutomationWorkInvalidated(signal, automationWorkRunIds === null ? undefined : [...automationWorkRunIds]);
             }
             // Publish once at the operation boundary, including on failure or
             // cancellation, and never acknowledge a partially materialized page.
