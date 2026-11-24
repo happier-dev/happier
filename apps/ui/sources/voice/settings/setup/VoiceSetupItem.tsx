@@ -87,6 +87,7 @@ export function useVoiceSetupBlock(input: Readonly<{
         executionMachineSelectionKind: inputs.executionMachine.selectionKind,
         // The closed tile shows the selected service only; the open panel's gallery projects every service.
         rowScope: panelOpen ? 'all' : 'selected',
+        autoCheckReadiness: panelOpen ? 'localAgent' : undefined,
     });
     const readiness = readinessModel.selectedProviderReadiness ?? null;
     const microphone = useObservedMicrophonePermission(executeValue);
@@ -286,13 +287,15 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
     }, [messages, pending, props.voice.elapsedStartedAt, transcriptEntries]);
     const phrase = t('voiceMoments.setupTryPhrase');
     const heard = React.useMemo(() => resolveVoiceSetupHeardPhrase(phrase, turn.said), [phrase, turn.said]);
+    const replyVisibleWhileThinking = Boolean(turn.reply) && props.voice.surfaceState === 'thinking'
+        && !props.voice.muted && props.voice.statusCell !== 'working' && props.voice.statusCell !== 'needs_you';
     return (
         <VoiceSetupTryPhrase
             testID="voice-setup.try"
             heard={heard}
             microphone={{
                 label: props.voice.micStateLabel,
-                state: props.voice.statusWord,
+                state: replyVisibleWhileThinking ? t('voiceAssistant.connected') : props.voice.statusWord,
                 trailing: <VoiceTransport voice={props.voice} size="island" />,
             }}
             reply={turn.reply}

@@ -1,4 +1,4 @@
-import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { refreshMachineAgents, useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { getVoiceSessionActiveAgentRuntime, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
@@ -52,6 +52,7 @@ import {
   captureActiveServerAccountScopeLifetime,
   type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -257,6 +258,7 @@ function createVoiceProviderReadinessCheckKey(input: Readonly<{
   connectedServices: unknown;
   /** Local voice's Hear/Speak engines: a different engine is a different setup to check. */
   speechEngines: readonly string[] | null;
+  localAgent: unknown;
   accountScope: unknown;
   credentialAuthority: unknown;
 }>): string | null {
@@ -269,6 +271,7 @@ function createVoiceProviderReadinessCheckKey(input: Readonly<{
     daemonStateVersion: input.daemonStateVersion,
     connectedServices: input.connectedServices,
     speechEngines: input.speechEngines,
+    localAgent: input.localAgent,
     accountScope: input.accountScope,
     credentialAuthority: input.credentialAuthority,
   });
@@ -311,6 +314,7 @@ export function useVoiceConversationsReadinessModel(props: {
    * title); the gallery, its panel and Settings → Voice project every service (`all`, default).
    */
   rowScope?: 'all' | 'selected';
+  autoCheckReadiness?: 'provider' | 'localAgent';
 }): {
   serviceTiles: VoiceServiceTile[];
   isOff: boolean;
@@ -403,8 +407,10 @@ export function useVoiceConversationsReadinessModel(props: {
     ?? props.executionMachineId
     ?? null;
   const localAdapterSettings = resolveLocalVoiceAdapterSettingsFromVoice(voice);
-  const configuredAgent = localAdapterSettings.adapterId === 'local_conversation'
-    && localAdapterSettings.config.conversationMode === 'agent'
+  const usesLocalAgent = localAdapterSettings.adapterId === 'local_conversation'
+    && localAdapterSettings.config.conversationMode === 'agent';
+  const checksLocalAgent = voice.providerId === 'local_conversation' && usesLocalAgent && voiceAgentAvailability === 'available';
+  const configuredAgent = usesLocalAgent
     && localAdapterSettings.config.agent.agentSource === 'agent'
     ? localAdapterSettings.config.agent : null;
   const readAgentCatalog = React.useCallback(() => getAcpCatalogSnapshot(settingsScope), [settingsScope]);
@@ -412,8 +418,8 @@ export function useVoiceConversationsReadinessModel(props: {
   const agentProjection = useDaemonMergedProjectionInputs({
     machineId: props.executionMachineId,
     serverId: settingsScope?.serverId,
-    enabled: localAdapterSettings.adapterId === 'local_conversation' && localAdapterSettings.config.conversationMode === 'agent',
-    load: false,
+    enabled: usesLocalAgent,
+    load: checksLocalAgent && props.autoCheckReadiness !== undefined && executionMachineTarget.isOnline,
     sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
   const configuredAgentTarget = configuredAgent ? projectVoiceConfiguredAgentTarget({
@@ -440,6 +446,8 @@ export function useVoiceConversationsReadinessModel(props: {
       acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
       daemonMergedProjectionInputs: agentProjection.inputs,
     }).agentTarget;
+  const localAgentReadinessTarget = checksLocalAgent && areAccountSettingsScopesEqual(settingsScope, activeAccountScopeLifetime?.scope)
+    ? selectedAgent : null;
   const selectedAgentModel = localAdapterSettings.adapterId === 'local_conversation'
     && localAdapterSettings.config.conversationMode === 'agent' && localAdapterSettings.config.agent.chatModelSource === 'custom'
     ? localAdapterSettings.config.agent.chatModelSelection : null;
@@ -665,6 +673,7 @@ export function useVoiceConversationsReadinessModel(props: {
     daemonStateVersion: executionMachineTarget.daemonStateVersion,
     connectedServices: selectedPassiveConnectedServicesBinding,
     speechEngines: selectedProviderRow?.providerId === 'local_conversation' ? selectedSpeechProviderIds : null,
+    localAgent: localAgentReadinessTarget,
     accountScope: activeAccountScopeLifetime?.scope ?? null,
     // A provider-declared passive probe consumes its Connected Service binding
     // above. Saved Secret/purpose catalogs govern Local raw-credential checks,
@@ -925,7 +934,7 @@ export function useVoiceConversationsReadinessModel(props: {
     }));
   };
 
-  const checkProviderReadiness = (): void => {
+  const checkProviderReadiness = (agentOnly = false): void => {
     if (isCheckingPassiveSetup || !voice.providerId || !selectedReadinessCheckKey) return;
     const revision = ++checkedReadinessRevision.current;
     const accountScopeLifetime = activeAccountScopeLifetime;
@@ -934,12 +943,17 @@ export function useVoiceConversationsReadinessModel(props: {
       ? props.executionMachineId.trim()
       : null;
     const canInspectPassiveSetup = Boolean(
-      selectedPassiveSetup
+      !agentOnly
+      && selectedPassiveSetup
       && selectedPassiveConnectedServicesBinding
       && machineId
       && executionMachineTarget.isOnline,
     );
-    const canInspectRawSpeech = voice.providerId === 'local_conversation'
+    const localAgentProbe = localAgentReadinessTarget && machineId && executionMachineTarget.isOnline && accountScopeLifetime
+      ? { serverId: accountScopeLifetime.scope.serverId, machineId, accountLifetime: accountScopeLifetime, target: localAgentReadinessTarget, force: true }
+      : null;
+    if (agentOnly && !localAgentProbe) return;
+    const canInspectRawSpeech = !agentOnly && voice.providerId === 'local_conversation'
       && machineId !== null
       && executionMachineTarget.isOnline
       && selectedRawSpeechTargets !== null
@@ -948,18 +962,18 @@ export function useVoiceConversationsReadinessModel(props: {
       providerId: voice.providerId,
       checkKey: selectedReadinessCheckKey,
       accountScopeLifetime,
-      status: canInspectPassiveSetup || canInspectRawSpeech ? 'checking' : 'terminal',
+      status: canInspectPassiveSetup || canInspectRawSpeech || localAgentProbe ? 'checking' : 'terminal',
       passiveRealtimeSetupResult: null,
       rawCredentialAuthorizationByContribution: {},
     });
 
-    if (selectedPassiveSetup && executionMachineTarget.isOnline) {
+    if (!agentOnly && selectedPassiveSetup && executionMachineTarget.isOnline) {
       passiveCapability.refresh({
         request: passiveCapabilityRequest,
         bypassCache: true,
       });
     }
-    if (!canInspectPassiveSetup && !canInspectRawSpeech) return;
+    if (!canInspectPassiveSetup && !canInspectRawSpeech && !localAgentProbe) return;
     const settle = (result: Readonly<{
       passive: unknown | null;
       raw: readonly Readonly<{ providerId: string; contribution: Readonly<{ pluginId: string; localId: string }>; status: 'ready' | 'approval_required' | 'unknown' }>[] | null;
@@ -993,15 +1007,28 @@ export function useVoiceConversationsReadinessModel(props: {
     };
 
     if (!machineId) return;
-    void inspectVoiceProviderReadiness({ machineId,
+    const providerProbe = canInspectPassiveSetup || canInspectRawSpeech ? inspectVoiceProviderReadiness({ machineId,
       passiveSetup: canInspectPassiveSetup ? selectedPassiveSetup : null,
       connectedServices: selectedPassiveConnectedServicesBinding,
       rawTargets: canInspectRawSpeech ? selectedRawSpeechTargets : [],
       isCurrent: () => checkedReadinessRevision.current === revision
         && currentReadinessCheckKeyRef.current === selectedReadinessCheckKey
         && (accountScopeLifetime === null || accountScopeLifetime.isCurrent()),
-    }).then(settle);
+    }) : Promise.resolve({ passive: null, raw: null });
+    void Promise.allSettled([
+      providerProbe,
+      localAgentProbe ? refreshMachineAgents(localAgentProbe) : null,
+    ]).then(([result]) => settle(result.status === 'fulfilled' ? result.value : { passive: null, raw: null }));
   };
+
+  // Settings checks the selected provider. An open Setup panel only demands Local Agent inventory.
+  const checkProviderReadinessRef = React.useRef(checkProviderReadiness);
+  checkProviderReadinessRef.current = checkProviderReadiness;
+  React.useEffect(() => {
+    if (selectedReadinessCheckKey && props.autoCheckReadiness) {
+      checkProviderReadinessRef.current(props.autoCheckReadiness === 'localAgent');
+    }
+  }, [props.autoCheckReadiness, selectedReadinessCheckKey]);
 
   // One tile per service: a service whose options only change who pays (hosted or your own account)
   // is one tile, and its billing is chosen in the Account section beneath the gallery.
@@ -1092,7 +1119,7 @@ export function useVoiceConversationsReadinessModel(props: {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows,
     selectedProviderReadiness: effectiveSelectedProviderReadiness,
     selectedProviderCredentialResolving: selectedProviderRow?.credentialResolving === true,
-    isCheckingPassiveSetup, checkProviderReadiness, showCheckedReadiness, checkedReadinessRecoveryHandler,
+    isCheckingPassiveSetup, checkProviderReadiness: () => checkProviderReadiness(), showCheckedReadiness, checkedReadinessRecoveryHandler,
     checkedProviderResult, checkedReadinessRecoveryAction, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
     selectedExternalHasSavedSecret, selectedExternalHasConnectedAccount, selectedExternalCredentialAccessIsRaw,
@@ -1160,22 +1187,14 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
   const {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows, selectedProviderReadiness,
     selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedReadinessCheckKey, selectedProviderCredentialResolving,
-    checkProviderReadiness, showCheckedReadiness,
+    showCheckedReadiness,
     checkedProviderResult, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
     selectedExternalHasSavedSecret, selectedExternalHasConnectedAccount, selectedExternalCredentialAccessIsRaw,
     selectedExternalRawReviewGrants, selectedExternalConnectedRawReviewEligible,
     selectedDeclarativeSettings, selectedDeclarativeSettingsSource, declarativeSettingsGroup, selectedDeclarativeConfig,
     selectedDeclarativeSettingsRow, localizePluginText, writeExternalSetting,
-  } = useVoiceConversationsReadinessModel(props);
-  // Always-on card readiness (lab C1): the model's passive check runs when this page opens and
-  // whenever the setup it checks changes. Only the page renders this section — the hub reads the same
-  // model without probing. The check itself is passive: no microphone, no audio, nothing billable.
-  const checkProviderReadinessRef = React.useRef(checkProviderReadiness);
-  checkProviderReadinessRef.current = checkProviderReadiness;
-  React.useEffect(() => {
-    if (selectedReadinessCheckKey) checkProviderReadinessRef.current();
-  }, [selectedReadinessCheckKey]);
+  } = useVoiceConversationsReadinessModel({ ...props, autoCheckReadiness: 'provider' });
   const executionMachine = useVoiceExecutionMachinePresentation();
   const selectedServiceTitle = serviceTiles.find((tile) => tile.selected)?.title ?? null;
   const conversationsPipeline = React.useMemo(() => buildVoiceConversationsPipeline({

@@ -95,6 +95,7 @@ it.each([
     { source: 'canonical', endBeforeReply: true, restartBeforeInput: true },
 ] as const)('publishes one observed $source completion to real setup and composer consumers (reply after End: $endBeforeReply, second Try: $restartBeforeInput, reply persisted first: $replyBeforeInput)', async (scenario) => {
     const { source, endBeforeReply, restartBeforeInput } = scenario;
+    const liveTry = source === 'canonical' && !endBeforeReply;
     const replyBeforeInput = 'replyBeforeInput' in scenario && scenario.replyBeforeInput;
     const initial = storage.getState();
     const locks = installWebLockManagerMock();
@@ -185,9 +186,11 @@ it.each([
         const control = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
         const setup = useVoiceSetupBlock({ layout: 'wide', inPlace: true,
             attemptTarget: { kind: 'session', sessionAddress: conversation } });
+        const panel = setup?.renderPanel?.({ close() {} });
         return <>
             {source === 'durable' ? <VoiceSessionRuntime /> : <VoiceSetupFirstSuccessRuntime />}
-            {setup?.renderPanel?.({ close() {} })}
+            {panel}
+            {liveTry && React.isValidElement<React.ComponentProps<typeof VoiceSetupPanel>>(panel) && panel.props.renderTry}
             <VoiceComposerPlanet pose="ready" muted={false} markEvent={control.markEvent}
                 accessibilityLabel="Voice" accessibilityHint="Voice" onPress={() => {}} />
         </>;
@@ -283,6 +286,14 @@ it.each([
         expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)).toBeNull();
         expect(screen.findByType(VoiceSetupPanel).props.model.facts.firstTurnComplete).toBe(false);
         expect(events()).toEqual([null, null]);
+        if (liveTry) {
+            await act(async () => {
+                setVoiceSessionSnapshot({ adapterId: binding.adapterId, sessionId: binding.controlSessionId,
+                    status: 'connected', mode: 'thinking', canStop: true }, binding,
+                    { accountScope: scope, conversationScope: { kind: 'voice_home' } });
+            });
+            expect(screen.getTextContent()).toContain('Thinking…');
+        }
         const attemptId = getVoiceSessionPresentedAttemptId();
         if (endBeforeReply) await act(async () => {
             if (source === 'durable') await voiceSessionManager.stop(conversation.sessionId);
@@ -295,6 +306,11 @@ it.each([
         });
         await act(async () => publish(messages));
         expect(screen.findByType(VoiceSetupPanel).props.model.facts.firstTurnComplete).toBe(true);
+        if (liveTry) {
+            expect(screen.getTextContent()).toContain('Hi');
+            expect(screen.getTextContent()).toContain('Connected');
+            expect(screen.getTextContent()).not.toContain('Thinking…');
+        }
         const completed = events();
         expect(completed).toEqual([{ kind: 'gather', id: `${attemptId}:first-success` }, { kind: 'gather', id: `${attemptId}:first-success` }]);
         await act(async () => publish([...messages]));

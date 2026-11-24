@@ -2160,7 +2160,8 @@ describe('VoiceProviderSection', () => {
             const facts = deriveVoiceSetupFacts({ providerId: voice.providerId, readiness: model.selectedProviderReadiness,
                 microphonePermission: 'granted', messages: [] });
             return <>
-                {React.createElement('ColdHome', { readiness: model.selectedProviderReadiness, canTry: facts.canTry })}
+                {React.createElement('ColdHome', { readiness: model.selectedProviderReadiness, canTry: facts.canTry,
+                    checkReadiness: model.checkProviderReadiness })}
                 <VoiceSetupPanel testID="cold-home" model={{ facts, serviceTitle: 'Local Voice', serviceTiles: [],
                     readiness: null, tryLive: false, canStart: facts.canTry, shortcutLabel: null }}
                     actions={{ onSelectService() {}, onRecover() {}, onAllowMicrophone() {}, onOpenSystemSettings: null,
@@ -2199,7 +2200,7 @@ describe('VoiceProviderSection', () => {
         expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { code: 'runtime_unknown' }, canTry: false });
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Missing Settings Account lifetime');
-        const refreshAgent = async (status: 'signedOut' | 'signedIn') => {
+        const setDetectResult = (status: 'signedOut' | 'signedIn') => {
             capabilityState = { status: 'loaded', snapshot: { response: { protocolVersion: 1, results: {
                 'cli.claude': { ok: true, checkedAt: Date.now(), data: { agentId: 'claude', title: 'Claude', installed: true,
                     available: true, version: '1', latestVersion: '1', update: { supported: false, command: null },
@@ -2208,9 +2209,9 @@ describe('VoiceProviderSection', () => {
                     signIn: { status, loginSupport: 'login_terminal' },
                 } },
             } } } };
-            await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: 'machine-1', accountLifetime: lifetime, force: true });
         };
-        await act(async () => { await refreshAgent('signedOut'); });
+        setDetectResult('signedOut');
+        await act(async () => { await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: 'machine-1', accountLifetime: lifetime, force: true }); });
         expect(readMachineAgentsForScope(lifetime, 'machine-1').agents.find(agent => agent.agentId === 'claude'))
             .toMatchObject({ state: 'needsSignIn', stale: false });
         const requestsBefore = machineRequests.length;
@@ -2231,7 +2232,10 @@ describe('VoiceProviderSection', () => {
         expect(machineRequests.length).toBe(requestsBefore);
         expect(getVoiceSessionFailedAttempt('local_conversation', { ...accountFixture.scope, accountId: 'other-account' })).toBeNull();
         expect(getVoiceSessionFailedAttempt('other-provider', accountFixture.scope)).toBeNull();
-        await act(async () => { await refreshAgent('signedIn'); });
+        setDetectResult('signedIn');
+        await act(async () => { screen.tree.root.findByType('ColdHome').props.checkReadiness(); });
+        await vi.waitFor(() => expect(screen.tree.root.findByType('ColdHome').props)
+            .toMatchObject({ readiness: { code: 'ready' }, canTry: true }));
         expect(readMachineAgentsForScope(lifetime, 'machine-1').agents.find(agent => agent.agentId === 'claude'))
             .toMatchObject({ state: 'ready', stale: false });
         expect(getVoiceSessionFailedAttempt('local_conversation', accountFixture.scope)).toMatchObject({ errorMessage: 'agent_signed_out' });
