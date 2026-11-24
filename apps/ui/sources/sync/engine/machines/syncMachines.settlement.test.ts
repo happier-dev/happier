@@ -53,7 +53,7 @@ function createInventory() {
 
 describe('Machine-list settlement through sync and the real store', () => {
 
-    it.each([[2, 1], [32, 17]])('publishes one Machine census for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
+    it.each([[2, 1], [32, 17], [50, 370]])('publishes one Machine census for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
         const inventory = createInventory();
         const sessions = Array.from({ length: sessionCount }, (_, index) => {
             const machineId = `machine-${index % machineCount}`;

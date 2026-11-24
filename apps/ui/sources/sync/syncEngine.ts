@@ -7700,40 +7700,46 @@ class Sync {
                             return new Map(sessionIds.map(id => [id, { ok: false as const, error }] as const));
                         });
                     if (!shouldContinue()) return;
-                    for (const sessionId of sessionIds) {
-                        if (!shouldContinue()) return;
-                        const result = results.get(sessionId);
-                        if (result?.ok) {
-                            applyRequiredHydrationSessions([result.snapshot.session]);
-                        } else if (result && result.error instanceof SessionSnapshotReadError && result.error.errorCode === 'not_found') {
-                            stagedSessionDataKeys.delete(sessionId);
-                            stagedSessionDataKeyEnvelopes.delete(sessionId);
-                            // Exact absence retires this Home's row and fences older snapshots.
-                            this.retireLocalSession(sessionId, activeServerId);
-                        } else {
-                            const teamAuthenticationRefused = result !== undefined && !result.ok
-                                && result.error instanceof SessionSnapshotReadError
-                                && isSessionTeamAuthenticationRefusalCode(result.error.errorCode);
-                            if (teamAuthenticationRefused) teamAuthenticationRefusedSessionIds.add(sessionId);
-                            else if (requiredHydrationSessionIds.has(sessionId)) {
-                                throw result && !result.ok ? result.error : new Error('Required Session result missing');
+                    const hydratedSessions: Parameters<typeof applyRequiredHydrationSessions>[0] = [];
+                    try {
+                        for (const sessionId of sessionIds) {
+                            if (!shouldContinue()) return;
+                            const result = results.get(sessionId);
+                            if (result?.ok) {
+                                hydratedSessions.push(result.snapshot.session);
+                            } else if (result && result.error instanceof SessionSnapshotReadError && result.error.errorCode === 'not_found') {
+                                stagedSessionDataKeys.delete(sessionId);
+                                stagedSessionDataKeyEnvelopes.delete(sessionId);
+                                // Exact absence retires this Home's row and fences older snapshots.
+                                this.retireLocalSession(sessionId, activeServerId);
+                            } else {
+                                const teamAuthenticationRefused = result !== undefined && !result.ok
+                                    && result.error instanceof SessionSnapshotReadError
+                                    && isSessionTeamAuthenticationRefusalCode(result.error.errorCode);
+                                if (teamAuthenticationRefused) teamAuthenticationRefusedSessionIds.add(sessionId);
+                                else if (requiredHydrationSessionIds.has(sessionId)) {
+                                    throw result && !result.ok ? result.error : new Error('Required Session result missing');
+                                }
+                                // An additive pin, or a Session this credential's Team
+                                // authentication refuses, keeps its retained row and can
+                                // recover on the next read, Team sign-in or explicit open.
+                                const patch = buildFailedHydrationUnavailableRenderablePatch(
+                                    { id: sessionId, documents: 'omitted' },
+                                    storage.getState().sessionListRowsByServerId[activeServerId]?.[sessionId],
+                                );
+                                if (patch) storage.getState().applyServerScopedSessionListRowPatches(activeServerId, [patch]);
+                                continue;
                             }
-                            // An additive pin, or a Session this credential's Team
-                            // authentication refuses, keeps its retained row and can
-                            // recover on the next read, Team sign-in or explicit open.
-                            const patch = buildFailedHydrationUnavailableRenderablePatch(
-                                { id: sessionId, documents: 'omitted' },
-                                storage.getState().sessionListRowsByServerId[activeServerId]?.[sessionId],
-                            );
-                            if (patch) storage.getState().applyServerScopedSessionListRowPatches(activeServerId, [patch]);
-                            continue;
+                            const stagedKey = stagedSessionDataKeys.get(sessionId);
+                            if (stagedKey) this.sessionDataKeys.set(sessionId, stagedKey);
+                            else this.sessionDataKeys.delete(sessionId);
+                            const stagedEnvelope = stagedSessionDataKeyEnvelopes.get(sessionId);
+                            if (typeof stagedEnvelope === 'string') this.sessionDataKeyEnvelopes.set(sessionId, stagedEnvelope);
+                            else this.sessionDataKeyEnvelopes.delete(sessionId);
                         }
-                        const stagedKey = stagedSessionDataKeys.get(sessionId);
-                        if (stagedKey) this.sessionDataKeys.set(sessionId, stagedKey);
-                        else this.sessionDataKeys.delete(sessionId);
-                        const stagedEnvelope = stagedSessionDataKeyEnvelopes.get(sessionId);
-                        if (typeof stagedEnvelope === 'string') this.sessionDataKeyEnvelopes.set(sessionId, stagedEnvelope);
-                        else this.sessionDataKeyEnvelopes.delete(sessionId);
+                    } finally {
+                        // Preserve admitted siblings when a required repair rejects.
+                        if (hydratedSessions.length > 0) applyRequiredHydrationSessions(hydratedSessions);
                     }
                 });
             } finally {
@@ -7742,7 +7748,8 @@ class Sync {
         };
         let observedSnapshot: SessionSnapshotObservation | undefined;
         const snapshotAccountId = this.serverID;
-        const coldPageOne = !isAppend && activeServerId && !this.hasFetchedSessionsSnapshotForActiveServer
+        const isColdSnapshot = !isAppend && !this.hasFetchedSessionsSnapshotForActiveServer;
+        const coldPageOne = activeServerId && isColdSnapshot
             ? this.readColdOrdinarySessionListPage(appliedTransportTarget, credentials, sessionRequest)
             : undefined;
         const result = await fetchAndApplySessions({
@@ -7805,6 +7812,7 @@ class Sync {
             requiredHydrationSessionIds: [...new Set([...requiredHydrationSessionIds, ...organizationPinnedSessionIds])],
             hydrateRequiredSessions,
             awaitSessionListHydration: options?.awaitSessionListHydration,
+            publishHydrationWhenComplete: isColdSnapshot,
             sessionListHydrationConcurrencyLimit: this.syncTuning.sessionListHydrationConcurrencyLimit,
             sessionListBackgroundHydrationConcurrencyLimit: this.syncTuning.sessionListBackgroundHydrationConcurrencyLimit,
             sessionListBackgroundHydrationYieldDelayMs: this.syncTuning.sessionListBackgroundHydrationYieldDelayMs,

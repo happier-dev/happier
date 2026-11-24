@@ -1438,6 +1438,7 @@ function createHydratedSessionApplyBatcher(params: {
     batchSize: number;
     flushDelayMs: number;
     coalesceRequiredRows?: boolean;
+    shouldScheduleFlush?: () => boolean;
 }): {
     enqueue: (session: HydratedSession, options?: { required?: boolean }) => void;
     flush: (reason?: HydrationApplyFlushReason) => void;
@@ -1512,6 +1513,7 @@ function createHydratedSessionApplyBatcher(params: {
 
     const queue = createHydrationApplyQueue({
         apply, batchSize, flushDelayMs,
+        shouldScheduleFlush: params.shouldScheduleFlush,
         flushRequiredRowsImmediately: () => pendingRequiredRows > 0 && params.coalesceRequiredRows !== true,
         coalesceRequiredRows: () => pendingRequiredRows > 0 && params.coalesceRequiredRows === true,
     });
@@ -1598,6 +1600,7 @@ export async function fetchAndApplySessions(params: {
     hydrateRequiredSessions?: (sessionIds: readonly string[], accountCurrentness: AccountEncryptionCurrentnessResponse | undefined,
         prefetched?: SessionListFetchResult['prefetchedFullSessionReads']) => Promise<void>;
     awaitSessionListHydration?: boolean;
+    publishHydrationWhenComplete?: boolean;
     sessionListEagerHydrationCount?: number;
     sessionListHydrationConcurrencyLimit?: number;
     sessionListBackgroundHydrationConcurrencyLimit?: number;
@@ -2499,6 +2502,9 @@ export async function fetchAndApplySessions(params: {
                 pendingRequiredHydrationIds.clear();
                 rejectRequiredHydration(error);
             };
+            // Cold Home can already render the display page while its full documents open.
+            let holdHydrationPublication = params.publishHydrationWhenComplete === true
+                && params.awaitSessionListHydration !== true;
             const hydratedSessionBatcher = createHydratedSessionApplyBatcher({
                 applySessions,
                 applySessionListRenderablePatches,
@@ -2509,6 +2515,7 @@ export async function fetchAndApplySessions(params: {
                 batchSize: backgroundHydrationApplyBatchSize,
                 flushDelayMs: backgroundHydrationApplyFlushDelayMs,
                 coalesceRequiredRows: params.awaitSessionListHydration === true,
+                shouldScheduleFlush: () => !holdHydrationPublication,
             });
             const hydrationAttribution = createBackgroundHydrationAttribution();
             const hydrationPromise = syncPerformanceTelemetry.measureAsync(
@@ -2754,7 +2761,8 @@ export async function fetchAndApplySessions(params: {
                     );
                     const finalFlushStartedAtMs = nowMs();
                     if (
-                        params.awaitSessionListHydration !== true
+                        !holdHydrationPublication
+                        && params.awaitSessionListHydration !== true
                         && backgroundHydrationApplyFlushDelayMs > 0
                     ) {
                         await yieldToSessionListBackgroundHydration(backgroundHydrationApplyFlushDelayMs);
@@ -2793,6 +2801,11 @@ export async function fetchAndApplySessions(params: {
                     return results;
                 },
             ).catch((error) => {
+                if (holdHydrationPublication) {
+                    // Keep successful siblings, including workers still finishing after the failure.
+                    holdHydrationPublication = false;
+                    hydratedSessionBatcher.flush('final');
+                }
                 rejectPendingRequiredHydration(error);
                 throw error;
             });

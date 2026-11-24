@@ -23,10 +23,11 @@ import {
     createSessionOwnerViewerFixture,
 } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
 import {
@@ -354,6 +355,112 @@ describe('cold Session-list page one', () => {
         await initializeRealAppRuntimeForTests();
     });
     afterEach(async () => { await dispose?.(); });
+
+    it.each([1, 10, 50])('publishes %i missing pinned Sessions together before the mounted Home is usable', async count => {
+        const records = Array.from({ length: count }, (_, index) => row(`fallback-${index}`, 200_000 - index));
+        const ids = records.map(record => record.id);
+        const firstRow = row('visible-page-row', 100_000);
+        const pins = ids.map((sessionId, index) => ({
+            sessionId, sortKey: String(index).padStart(2, '0'), pinnedAt: index + 1, listPinned: true, railPinned: false,
+        }));
+        const organization = SessionOrganizationSnapshotResponseSchema.parse({
+            snapshot: { schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION, version: 1, pins,
+                folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [] },
+        });
+        const openCursor = createDeferred<void>();
+        const releaseFallback = createDeferred<void>();
+        const fallbackRequested = createDeferred<void>();
+        storage.setState(storage.getInitialState(), true);
+        const connection = await restoreServerAccountForTest({
+            serverUrl: `https://cold-fallback-${count}.test`, accountId, configureSocket: configureConnectedServerSocketBoundary,
+            request: async (input, init) => {
+                const { pathname } = new URL(String(input));
+                if (pathname === '/v2/cursor') await openCursor.promise;
+                if (pathname === '/v1/account/profile') return Response.json({ id: accountId });
+                if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (pathname === '/v2/session-organization') return Response.json(organization);
+                if (pathname === '/v2/sessions') {
+                    return Response.json({ sessions: [firstRow], observationCursor: 0, hasNext: false, nextCursor: null });
+                }
+                const record = records.find(record => pathname === `/v2/sessions/${record.id}`);
+                if (record) {
+                    fallbackRequested.resolve();
+                    await releaseFallback.promise;
+                    return Response.json({ session: record });
+                }
+                return createEmptyAccountBootstrapHttpResponse(pathname, init);
+            },
+        });
+        const serverId = connection.home.id;
+        const container = document.createElement('div');
+        const root = createRoot(container);
+        document.body.appendChild(container);
+        const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+        const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+        actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+        const readRows = () => storage.getState().sessionListRowsByServerId[serverId];
+        const readReady = () => storage.getState().isDataReady;
+        const publications: string[][] = [];
+        const readHydratedIds = (state: ReturnType<typeof storage.getState>) => ids.filter(id => state.sessions[id]);
+        const stop = storage.subscribe((next, previous) => {
+            if (next.sessions !== previous.sessions) {
+                const hydrated = readHydratedIds(next);
+                if (hydrated.length !== readHydratedIds(previous).length) publications.push(hydrated);
+            }
+        });
+        let commits = 0;
+        let usableCommit: number | undefined;
+        function HomeRows() {
+            const rows = React.useSyncExternalStore(storage.subscribe, readRows);
+            const ready = React.useSyncExternalStore(storage.subscribe, readReady);
+            const usable = ready && Boolean(rows?.[firstRow.id]?.metadata?.name)
+                && ids.every(id => Boolean(rows?.[id]?.metadata?.name));
+            return <div data-usable={usable}><ul>{[firstRow.id, ...ids].flatMap(id => {
+                const name = rows?.[id]?.metadata?.name;
+                return name ? [<li key={id}>{name}</li>] : [];
+            })}</ul></div>;
+        }
+        dispose = async () => {
+            stop();
+            await act(async () => {
+                root.unmount();
+                openCursor.resolve();
+                releaseFallback.resolve();
+            });
+            container.remove();
+            actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+            await connection.dispose();
+            storage.setState(storage.getInitialState(), true);
+            dispose = null;
+        };
+
+        await act(async () => {
+            root.render(<React.Profiler id="cold-fallback-home" onRender={() => {
+                commits++;
+                if (container.querySelector('[data-usable="true"]')) usableCommit ??= commits;
+            }}><HomeRows /></React.Profiler>);
+            openCursor.resolve();
+            await fallbackRequested.promise;
+        });
+        expect(Array.from(container.querySelectorAll('li'), node => node.textContent)).toEqual([`Session ${firstRow.id}`]);
+        expect(usableCommit).toBeUndefined();
+        expect(publications).toEqual([]);
+        const beforeFallback = commits;
+        await act(async () => {
+            releaseFallback.resolve();
+        });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(usableCommit).toBeDefined();
+        });
+        expect(Array.from(container.querySelectorAll('li'), node => node.textContent)).toEqual(
+            [firstRow.id, ...ids].map(id => `Session ${id}`));
+        expect.soft(usableCommit! - beforeFallback, `root commits while applying ${count} required rows`).toBe(1);
+        expect.soft(publications.map(batch => batch.length), `store publications while applying ${count} required rows`).toEqual([count]);
+        await dispose();
+    });
 
     it('reads own and Team-shared page one once on a Home that carries the ordinary page', async () => {
         const after = await coldLoad(true);

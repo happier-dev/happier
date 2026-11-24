@@ -180,6 +180,89 @@ it.each([[2, 1], [32, 17], [200, 370]])('publishes a hydrated query page once fo
     }
 });
 
+it.each([1, 10, 50])('publishes %i background Session documents in one hydration and skips equal replay', async count => {
+    const serverId = `background-hydration-${count}`;
+    const records = Array.from({ length: count }, (_, index) => createPlainSessionCurrentProjectionRecordFixture({
+        id: `background-${index}`, metadata: { name: `Background ${index}`, path: '/workspace', host: 'machine' },
+    }));
+    const byId = new Map(records.map(record => [record.id, record]));
+    const readRows = () => storage.getState().sessionListRowsByServerId[serverId];
+    const readSessions = () => storage.getState().sessions;
+    const refresh = () => fetchAndApplySessions({
+        serverId, credentials: { token: 'background-hydration' }, encryption: null,
+        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), sessionDataKeys: new Map(),
+        publishHydrationWhenComplete: true,
+        sessionListBackgroundHydrationMaxRows: count,
+        sessionListBackgroundHydrationConcurrencyLimit: 1,
+        sessionListBackgroundHydrationYieldEveryRows: 4,
+        sessionListBackgroundHydrationYieldDelayMs: 16,
+        sessionListBackgroundHydrationApplyBatchSize: 4,
+        sessionListBackgroundHydrationApplyFlushDelayMs: 64,
+        request: async (path, init) => {
+            if (path === '/v2/sessions/read-batch') {
+                const ids = (JSON.parse(String(init.body)) as { sessionIds: string[] }).sessionIds;
+                return Response.json({ results: ids.map(id => ({
+                    sessionId: id, detail: { status: 200, body: { session: byId.get(id) } },
+                })) });
+            }
+            return Response.json(V2SessionListResponseSchema.parse({
+                sessions: records.map(createCompactSessionListRowFixture), nextCursor: null, hasNext: false,
+            }));
+        },
+        getExistingSession: id => readSessions()[id],
+        getCurrentSessionListRenderable: id => readRows()?.[id],
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: storage.getState().applySessions,
+        log: { log() {} },
+    });
+    let commits = 0;
+    const mounted = await renderHook(() => {
+        const sessions = React.useSyncExternalStore(storage.subscribe, readSessions);
+        React.useLayoutEffect(() => { commits++; }, [sessions]);
+        return records.filter(record => sessions[record.id]).map(record => sessions[record.id]);
+    });
+    const publications: string[][] = [];
+    const stop = storage.subscribe((next, previous) => {
+        if (next.sessions === previous.sessions) return;
+        const changed = records.filter(record => next.sessions[record.id] !== previous.sessions[record.id]);
+        if (changed.length) publications.push(changed.map(record => record.id));
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+        const initialCommit = commits;
+        await act(async () => { await refresh(); });
+        expect(mounted.getCurrent()).toEqual([]);
+        for (let index = 0; index < Math.ceil(count / 4) + 5; index++) {
+            // Let each real scheduler yield and apply deadline pass in its own React turn.
+            await act(async () => { await vi.advanceTimersByTimeAsync(16); });
+        }
+        const ids = records.map(record => record.id);
+        expect(mounted.getCurrent().map(session => session.id)).toEqual(ids);
+        expect(ids.map(id => readRows()[id]?.metadata?.name))
+            .toEqual(records.map((_, index) => `Background ${index}`));
+        expect.soft(publications.map(batch => batch.length), `store publications while applying ${count} background rows`)
+            .toEqual([count]);
+        expect(publications.flat()).toEqual(ids);
+        expect.soft(commits - initialCommit, `mounted commits while applying ${count} background rows`).toBe(1);
+
+        const settledRows = readRows();
+        const settledSessions = readSessions();
+        const beforeReplay = commits;
+        publications.length = 0;
+        await act(async () => { await refresh(); });
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(publications).toHaveLength(0);
+        expect(commits).toBe(beforeReplay);
+        expect(readRows()).toBe(settledRows);
+        expect(readSessions()).toBe(settledSessions);
+    } finally {
+        vi.useRealTimers();
+        stop();
+        await mounted.unmount();
+    }
+});
+
 it('keeps the transcript title used by @ mentions when demanded metadata hydration advances', async () => {
     const id = 'docs-title-reviewer';
     const serverId = 'docs-title-home';

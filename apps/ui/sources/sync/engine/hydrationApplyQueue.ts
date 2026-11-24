@@ -6,6 +6,7 @@ export function createHydrationApplyQueue<T>(params: {
     batchSize?: number;
     /** Omitted when already-admitted rows can coalesce in the next microtask. */
     flushDelayMs?: number;
+    shouldScheduleFlush?: () => boolean;
     flushRequiredRowsImmediately?: () => boolean;
     coalesceRequiredRows?: () => boolean;
 }) {
@@ -43,6 +44,7 @@ export function createHydrationApplyQueue<T>(params: {
         getPendingCount: () => pending.length,
         enqueue: (row: T): void => {
             pending.push(row);
+            if (params.shouldScheduleFlush?.() === false) return;
             if (params.batchSize !== undefined && pending.length >= params.batchSize) {
                 if (params.flushRequiredRowsImmediately?.()) flush('size');
                 else schedule(params.coalesceRequiredRows?.() ? 'timer' : 'size');
