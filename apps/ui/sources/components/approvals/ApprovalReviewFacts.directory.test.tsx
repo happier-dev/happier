@@ -59,3 +59,29 @@ it('labels the owners and admins roster filter', async () => {
         expect(text).not.toContain('owners_admins');
     } finally { await screen.unmount(); }
 });
+
+
+it('names the directory that owns the external Group mappings being read', async () => {
+    const home = await harness.addHome({ name: 'Review Home', serverUrl: 'https://directory-review.test', accountId: 'reviewer' });
+    const resolution = await resolveServerCredentialAccountScope(home);
+    if (resolution.kind !== 'bound') throw new Error('Missing reviewer credentials');
+    const binding = captureServerCredentialAccountScopeLifetime(resolution);
+    const source = teamDirectorySourceFixture({ id: '9e9b44d4-2167-4837-adb5-92dc43f3b481', displayName: 'Research directory' });
+    teamDirectorySourcePages.apply(managedIdentityQueryKey(binding.scope, source.teamId), binding, { items: [source], nextCursor: null });
+    const actionId = 'teams.externalGroupBindings.list';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ v: 1, teamId: source.teamId,
+        ownerKind: 'directory_source', directorySourceId: source.id });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={home} testID="directory-mapping-review" />);
+    try {
+        await waitForHomeGovernance(() => {
+            const text = screen.getTextContent();
+            expect(text).toContain(source.displayName);
+            expect(text).toContain(t('teams.authentication.directory.section'));
+            expect(text).not.toContain(source.id);
+            expect(text).not.toContain('directory_source');
+        });
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(source.id);
+    } finally { await screen.unmount(); }
+});

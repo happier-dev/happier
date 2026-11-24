@@ -77,10 +77,23 @@ function createHomeHubLayoutActionSpecs() {
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: HomeHubLayoutUpdateInputSchema, outputSchema: HomeHubLayoutResultSchema,
     approvalPresentation: {
+      technicalInputPaths: [
+        'intent.instance.id', 'intent.group.id', 'intent.group.children.[].instance.id',
+        'intent.expectedInstance.id', 'intent.expectedInstance.definition.id', 'intent.expectedInstance.definition.artifactId',
+        'intent.expectedPresentation.groupId',
+        { path: 'intent.groupId', when: { path: 'intent.kind', equals: 'group_create' } },
+      ],
+      clearInputPaths: ['intent.displayName', 'intent.frameStyle', 'intent.groupId'],
       referenceForField: (path, value, input) => {
         if (typeof value !== 'string') return undefined;
         if (path === 'intent.sectionId' || path === 'intent.instanceId' || path === 'intent.position.anchorId'
           || path === 'intent.sectionIds.[]' || path === 'intent.instanceIds.[]') return { kind: 'homeLayoutItem', id: value };
+        if (path === 'intent.instance.definition.artifactId' || path === 'intent.group.children.[].instance.definition.artifactId') {
+          return { kind: 'artifact', id: value, unavailableWithoutName: true };
+        }
+        if (path === 'intent.instance.definition.id' || path === 'intent.group.children.[].instance.definition.id') {
+          return { kind: 'builtinWidget', id: value };
+        }
         // Creating a group allocates this ID. In all other intents it selects a saved group.
         if (path === 'intent.groupId' && readRecord(readRecord(input).intent).kind !== 'group_create') {
           return { kind: 'homeLayoutItem', id: value };

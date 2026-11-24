@@ -109,6 +109,7 @@ import { redactObservationInputPaths } from './observationRedaction.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDisclosureApprovalSummary } from './teamCredentialApproval.js';
 import { formatGovernanceApprovalSummary, type ApprovalPresentationContext } from './definition.js';
+import { readDefaultsPlacementApprovalReference } from './governanceDefaultsApproval.js';
 import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Schema,
   TeamMembershipHistoryPreparationResultV1Schema } from '../../teams/membershipHistoryPreparationV1.js';
 
@@ -137,6 +138,16 @@ const INVITATION_ID_FIELD = approvalField('invitationId', 'Invitation ID', { req
 // Input grammar may name the bearer, but never offer a value/default/example.
 // Observation custody below still drops it before plugins or durable approval.
 const INVITATION_TOKEN_FIELD = approvalField('token', 'Invitation token', { widget: 'secret' });
+
+const invitationApprovalReference: NonNullable<PreNormalizedActionSpec['approvalPresentation']> = {
+  summary: () => null,
+  referenceForField: (path, value, input) => {
+    const { teamId } = readRecord(input);
+    if (path === 'invitationId' && typeof value === 'string' && typeof teamId === 'string') {
+      return { kind: 'teamInvitation', id: value, teamId };
+    }
+  },
+};
 
 function projectTeamInvitationCreateObservation(output: unknown): unknown {
   const parsed = TeamInvitationCreateResultV1Schema.safeParse(output);
@@ -254,6 +265,7 @@ function teamExternalGroupBindingActionRow<
   approval: PreNormalizedActionSpec['approval'];
   path: string;
   approvalPolicy?: PreNormalizedActionSpec['approvalPolicy'];
+  approvalPresentation?: PreNormalizedActionSpec['approvalPresentation'];
 }>): HomeDomainActionRow<TActionId, TInputSchema, TOutputSchema> {
   return homeDomainActionRow(input);
 }
@@ -272,10 +284,14 @@ function teamCredentialApprovalReferences(actionId: TeamCredentialHomeActionIdV1
   NonNullable<PreNormalizedActionSpec['approvalPresentation']> {
   const createsResource = actionId === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1;
   return {
-    referenceForField: (path, value, input) => {
+    referenceForField: (path, value, input, parent) => {
       if (typeof value !== 'string' || !value.trim()) return;
       if ((path === 'resourceId' && !createsResource) || path === 'query.resourceId') {
         return { kind: 'teamCredentialResource', id: value, unavailableWithoutName: true };
+      }
+      if (path === 'keyId' && actionId !== TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1) {
+        const { resourceId } = readRecord(input);
+        if (typeof resourceId === 'string') return { kind: 'teamCredentialExternalKey', id: value, resourceId };
       }
       if (path === 'source.connectionId' || path === 'replacement.custodian.source.connectionId') {
         return { kind: 'providerConnection', id: value };
@@ -284,9 +300,9 @@ function teamCredentialApprovalReferences(actionId: TeamCredentialHomeActionIdV1
         return { kind: 'machine', id: value, unavailableWithoutName: true };
       }
       if (path === 'brokerPlacement.poolId' || path === 'replacement.custodian.brokerPlacement.poolId') return { kind: 'machinePool', id: value };
-      if (path === 'limit.subjectId') {
+      if (path === 'limit.subjectId' || path === 'replacement.usageLimitDelta.upserts.[].subjectId') {
         const { limit, resourceId } = readRecord(input);
-        const { subjectKind } = readRecord(limit);
+        const { subjectKind } = readRecord(path === 'limit.subjectId' ? limit : parent);
         if (subjectKind === 'team_member') return { kind: 'account', id: value };
         if (subjectKind === 'team_group' && typeof resourceId === 'string') {
           return { kind: 'teamCredentialAudience', id: value, resourceId, audience: 'group' };
@@ -301,8 +317,14 @@ function teamCredentialApprovalReferences(actionId: TeamCredentialHomeActionIdV1
       }
       if (typeof resourceId === 'string') return { kind: 'teamCredentialAudience', id: value, resourceId, audience };
     },
-    clearInputPaths: createsResource ? [] : ['allMembersAllowedRoutes', 'requestPolicy', 'brokerPlacement'],
-    technicalInputPaths: ['cursor', 'query.cursor', 'limit.id', ...(createsResource ? ['resourceId'] : []),
+    clearInputPaths: createsResource ? [] : [
+      'allMembersAllowedRoutes', 'requestPolicy', 'brokerPlacement',
+      'requestPolicy.allowedProtocolKinds', 'requestPolicy.allowedModelIds', 'requestPolicy.reasoningEffort',
+      'replacement.allMembersAllowedRoutes', 'replacement.requestPolicy', 'replacement.custodian.brokerPlacement',
+      'replacement.requestPolicy.allowedProtocolKinds', 'replacement.requestPolicy.allowedModelIds', 'replacement.requestPolicy.reasoningEffort',
+    ],
+    technicalInputPaths: ['cursor', 'query.cursor', 'limit.id', 'replacement.usageLimitDelta.upserts.[].id',
+      ...(createsResource ? ['resourceId'] : []),
       ...(actionId === TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1 ? ['keyId'] : [])],
   };
 }
@@ -468,6 +490,27 @@ function createTeamActionSpecs(): TeamActionSpecs {
     { value: 'team_context_required', label: 'Team context required', labelKey: 'teams.credentials.usePolicy.teamContextRequired' },
     { value: 'team_visibility_required', label: 'Team visibility required', labelKey: 'teams.credentials.usePolicy.teamVisibilityRequired' },
   ];
+  const credentialProtocolOptions = [
+    { value: 'openai_responses', label: 'OpenAI Responses', labelKey: 'teams.credentials.requestPolicy.protocol.openaiResponses' },
+    { value: 'openai_chat_completions', label: 'OpenAI Chat Completions', labelKey: 'teams.credentials.requestPolicy.protocol.openaiChatCompletions' },
+    { value: 'anthropic_messages', label: 'Anthropic Messages', labelKey: 'teams.credentials.requestPolicy.protocol.anthropicMessages' },
+  ];
+  const credentialLimitAudienceOptions = [
+    { value: 'resource', label: 'Resource', labelKey: 'teams.credentials.limits.subject.resource' },
+    { value: 'each_member', label: 'Each member', labelKey: 'teams.credentials.limits.subject.eachMember' },
+    { value: 'team_group', label: 'Group', labelKey: 'teams.credentials.limits.subject.group' },
+    { value: 'team_member', label: 'Member', labelKey: 'teams.credentials.limits.subject.member' },
+  ];
+  const credentialLimitPeriodOptions = [
+    { value: 'day', label: 'Day', labelKey: 'teams.credentials.limits.period.day' },
+    { value: 'week', label: 'Week', labelKey: 'teams.credentials.limits.period.week' },
+    { value: 'month', label: 'Month', labelKey: 'teams.credentials.limits.period.month' },
+  ];
+  const credentialLimitMetricOptions = [
+    { value: 'inference_requests', label: 'Requests', labelKey: 'teams.credentials.limits.metric.requests' },
+    { value: 'total_tokens', label: 'Tokens', labelKey: 'teams.credentials.limits.metric.tokens' },
+    { value: 'cost_usd', label: 'Cost', labelKey: 'teams.credentials.limits.metric.cost' },
+  ];
   const credentialApprovalFields: Partial<Record<TeamCredentialHomeActionIdV1, readonly ActionInputFieldHint[]>> = {
     'teams.credentials.create': [
       TEAM_ID_FIELD,
@@ -482,6 +525,23 @@ function createTeamActionSpecs(): TeamActionSpecs {
       approvalField('groupGrants', 'Group grants', { widget: 'json' }),
       approvalField('memberGrants', 'Member grants', { widget: 'json' }),
       approvalField('usageLimits', 'Usage limits', { widget: 'json' }),
+    ],
+    'teams.credentials.update': [
+      approvalField('resourceId', 'Resource', { required: true }),
+      approvalField('expectedRevision', 'Expected revision', { required: true }),
+      approvalField('enabled', 'Enabled'),
+      approvalField('displayName', 'Name', { widget: 'json' }),
+      approvalField('deliveryPolicy', 'Delivery policy', { widget: 'json' }),
+      approvalChoiceField('sessionUsePolicy', 'Session use policy', credentialSessionUseOptions),
+      approvalField('brokerPlacement', 'Broker placement', { widget: 'json' }),
+      approvalField('requestPolicy', 'Request policy', { widget: 'json' }),
+      { path: 'requestPolicy.allowedProtocolKinds', title: 'Allowed protocols', widget: 'multiselect', options: credentialProtocolOptions },
+      approvalField('replacement', 'Changes', { widget: 'json' }),
+      approvalChoiceField('replacement.sessionUsePolicy', 'Session use policy', credentialSessionUseOptions),
+      { path: 'replacement.requestPolicy.allowedProtocolKinds', title: 'Allowed protocols', widget: 'multiselect', options: credentialProtocolOptions },
+      approvalChoiceField('replacement.usageLimitDelta.upserts.[].subjectKind', 'Audience', credentialLimitAudienceOptions),
+      approvalChoiceField('replacement.usageLimitDelta.upserts.[].period', 'Period', credentialLimitPeriodOptions),
+      approvalChoiceField('replacement.usageLimitDelta.upserts.[].metric', 'Usage measure', credentialLimitMetricOptions),
     ],
     'teams.credentials.list': [
       TEAM_ID_FIELD,
@@ -500,23 +560,10 @@ function createTeamActionSpecs(): TeamActionSpecs {
       approvalField('resourceId', 'Resource', { required: true }),
       approvalField('expectedRevision', 'Expected revision', { required: true }),
       approvalField('limit.id', 'Limit ID'),
-      approvalChoiceField('limit.subjectKind', 'Audience', [
-        { value: 'resource', label: 'Resource', labelKey: 'teams.credentials.limits.subject.resource' },
-        { value: 'each_member', label: 'Each member', labelKey: 'teams.credentials.limits.subject.eachMember' },
-        { value: 'team_group', label: 'Group', labelKey: 'teams.credentials.limits.subject.group' },
-        { value: 'team_member', label: 'Member', labelKey: 'teams.credentials.limits.subject.member' },
-      ]),
+      approvalChoiceField('limit.subjectKind', 'Audience', credentialLimitAudienceOptions),
       approvalField('limit.subjectId', 'Audience target'),
-      approvalChoiceField('limit.period', 'Period', [
-        { value: 'day', label: 'Day', labelKey: 'teams.credentials.limits.period.day' },
-        { value: 'week', label: 'Week', labelKey: 'teams.credentials.limits.period.week' },
-        { value: 'month', label: 'Month', labelKey: 'teams.credentials.limits.period.month' },
-      ]),
-      approvalChoiceField('limit.metric', 'Usage measure', [
-        { value: 'inference_requests', label: 'Requests', labelKey: 'teams.credentials.limits.metric.requests' },
-        { value: 'total_tokens', label: 'Tokens', labelKey: 'teams.credentials.limits.metric.tokens' },
-        { value: 'cost_usd', label: 'Cost', labelKey: 'teams.credentials.limits.metric.cost' },
-      ]),
+      approvalChoiceField('limit.period', 'Period', credentialLimitPeriodOptions),
+      approvalChoiceField('limit.metric', 'Usage measure', credentialLimitMetricOptions),
       approvalField('limit.maximum', 'Maximum', { required: true }),
       approvalField('limit.enabled', 'Enabled', { required: true }),
     ],
@@ -783,7 +830,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     approvalPolicy: { uiConfirmation: 'direct' },
     approvalPresentation: {
       inputHints: TEAM_POLICY_INPUT_HINTS,
-      referenceForField: (path, value, input) => {
+      referenceForField: (path, value, input, parent) => {
         if (path === 'managedDefaults.team.approvalProfileId' || path === 'managedGroupDefaults.defaults.approvalProfileId'
           || path === 'managedDefaults.groups.[].defaults.approvalProfileId') {
           if (value === null || (typeof value === 'string' && value.trim())) return { kind: 'approvalProfile', id: value };
@@ -794,7 +841,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
           const teamId = readRecord(input).teamId;
           if (typeof teamId === 'string' && teamId.trim()) return { kind: 'group', id: value, teamId };
         }
-        return undefined;
+        return readDefaultsPlacementApprovalReference(path, value, parent);
       },
       summary: (input, context) => {
         const change = readRecord(input);
@@ -1212,6 +1259,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/invitations/revoke',
     inputSchema: TeamInvitationRevokeInputV1Schema,
     outputSchema: TeamInvitationRevokeResultV1Schema,
+    approvalPresentation: invitationApprovalReference,
     inputHints: { fields: [TEAM_ID_FIELD, INVITATION_ID_FIELD] },
   }),
   { ...homeDomainActionRow({
@@ -1225,6 +1273,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/invitations/reissue',
     inputSchema: TeamInvitationReissueInputV1Schema,
     outputSchema: TeamInvitationReissueResultV1Schema,
+    approvalPresentation: invitationApprovalReference,
     inputHints: { fields: [
       TEAM_ID_FIELD,
       INVITATION_ID_FIELD,
@@ -1469,6 +1518,27 @@ function createTeamActionSpecs(): TeamActionSpecs {
     safety: 'safe',
     sideEffectClass: 'read',
     cliPath: ['teams', 'external-group-bindings', 'list'],
+    approvalPresentation: {
+      inputHints: { fields: [
+        TEAM_ID_FIELD,
+        approvalChoiceField('ownerKind', 'Source', [
+          { value: 'directory_source', label: 'Directory', labelKey: 'teams.authentication.directory.section' },
+          { value: 'identity_connection', label: 'Sign-in connections', labelKey: 'teams.authentication.connectionsSection' },
+        ]),
+        approvalField('directorySourceId', 'Directory'),
+        approvalField('teamIdentityConnectionId', 'Sign-in connection'),
+        approvalField('limit', 'Limit', { widget: 'integer' }),
+        approvalField('cursor', 'Cursor'),
+      ] },
+      technicalInputPaths: ['cursor'],
+      referenceForField: (path, value, args) => {
+        const { teamId } = readRecord(args);
+        if (typeof value !== 'string' || typeof teamId !== 'string') return undefined;
+        if (path === 'directorySourceId') return { kind: 'teamDirectorySource', id: value, teamId };
+        if (path === 'teamIdentityConnectionId') return { kind: 'signInConnection', id: value, teamId };
+        return undefined;
+      },
+    },
   }),
   teamExternalGroupBindingActionRow({
     id: 'teams.externalGroupBindings.set', approval: {result: 'required',flow: 'deferred'},

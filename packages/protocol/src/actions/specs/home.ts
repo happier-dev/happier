@@ -19,7 +19,7 @@ import {
   HomeGovernanceGetInputV1Schema,
   HomeEmptinessGetInputV1Schema,
 } from '../../home/governance/actionsV1.js';
-import { HomeGovernancePolicySetInputV1Schema } from '../../home/governance/policy.js';
+import { HomeGovernancePolicySetInputV1Schema, MANAGED_IDENTITY_PROVIDER_KIND_LABELS } from '../../home/governance/policy.js';
 import {
   HomeGovernanceClaimInputV1Schema,
   HomeGovernanceClaimResultV1Schema,
@@ -59,9 +59,32 @@ import { homeAccountApprovalReferenceForField, homeDomainActionRow, homeDomainAp
 import { HomePublicProfileModerationInputV1Schema, HomePublicProfileModerationResultV1Schema } from '../../home/governance/publicProfiles.js';
 import { SERVER_CONFIG_REGISTRY_BASE } from '../../serverConfig/registry.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
+import { readDefaultsPlacementApprovalReference } from './governanceDefaultsApproval.js';
 
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
 const HOME_ACCOUNT_APPROVAL = { referenceForField: homeAccountApprovalReferenceForField(ACCOUNT_ID_FIELD.path) };
+const TEAM_PROVIDER_KINDS_PATH = 'teamProviderPolicy.allowedTeamProviderKinds';
+const HOME_POLICY_FIELDS = [
+  approvalField('expectedRevision', 'Expected revision', { widget: 'integer', required: true }),
+  approvalField('teamCreationPolicy', 'Team creation policy'),
+  approvalField('teamsVisibleToMembers', 'Show Teams to members', { widget: 'boolean' }),
+  approvalField('authenticationPolicy.enabledMethodIds', 'Enabled sign-in methods', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('authenticationPolicy.permittedAccountModes', 'Permitted Account modes', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('authenticationPolicy.recommendedProvisioningMode', 'Recommended Account mode'),
+  approvalField('authenticationPolicy.admission', 'Account admission'),
+  approvalField('authenticationPolicy.signInService.mode', 'Sign-in service'),
+  approvalField(TEAM_PROVIDER_KINDS_PATH, 'Allowed Team provider kinds', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('teamProviderPolicy.teamJitAllowed', 'Team JIT allowed', { widget: 'boolean' }),
+  approvalField('teamProviderPolicy.approvedGitHubEnterpriseOrigins', 'Approved GitHub Enterprise origins', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('identityNetworkPolicy.mode', 'Identity network mode'),
+  approvalField('identityNetworkPolicy.hostnames', 'Allowed hostnames', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('identityNetworkPolicy.cidrs', 'Allowed CIDRs', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('identityNetworkPolicy.ports', 'Allowed ports', { widget: 'text_list', listSeparator: 'comma' }),
+  approvalField('sessionDefaults', 'Home Session defaults', { widget: 'json' }),
+  approvalField('authenticationPolicy.anonymousSignup', 'Anonymous sign-up', { widget: 'boolean' }),
+  approvalField('authenticationPolicy.storagePolicy', 'Storage policy'),
+  approvalField('confirmWidening', 'Widening confirmed', { widget: 'boolean' }),
+];
 
 /**
  * Home Administration rows.
@@ -316,27 +339,20 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/policy/set',
     inputSchema: HomeGovernancePolicySetInputV1Schema,
     outputSchema: HomeGovernancePolicyProjectionV1Schema,
-    inputHints: { fields: [
-      approvalField('expectedRevision', 'Expected revision', { widget: 'integer', required: true }),
-      approvalField('teamCreationPolicy', 'Team creation policy'),
-      approvalField('teamsVisibleToMembers', 'Show Teams to members', { widget: 'boolean' }),
-      approvalField('authenticationPolicy.enabledMethodIds', 'Enabled sign-in methods', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('authenticationPolicy.permittedAccountModes', 'Permitted Account modes', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('authenticationPolicy.recommendedProvisioningMode', 'Recommended Account mode'),
-      approvalField('authenticationPolicy.admission', 'Account admission'),
-      approvalField('authenticationPolicy.signInService.mode', 'Sign-in service'),
-      approvalField('teamProviderPolicy.allowedTeamProviderKinds', 'Allowed Team provider kinds', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('teamProviderPolicy.teamJitAllowed', 'Team JIT allowed', { widget: 'boolean' }),
-      approvalField('teamProviderPolicy.approvedGitHubEnterpriseOrigins', 'Approved GitHub Enterprise origins', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('identityNetworkPolicy.mode', 'Identity network mode'),
-      approvalField('identityNetworkPolicy.hostnames', 'Allowed hostnames', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('identityNetworkPolicy.cidrs', 'Allowed CIDRs', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('identityNetworkPolicy.ports', 'Allowed ports', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('sessionDefaults', 'Home Session defaults', { widget: 'json' }),
-      approvalField('authenticationPolicy.anonymousSignup', 'Anonymous sign-up', { widget: 'boolean' }),
-      approvalField('authenticationPolicy.storagePolicy', 'Storage policy'),
-      approvalField('confirmWidening', 'Widening confirmed', { widget: 'boolean' }),
-    ] },
+    inputHints: { fields: HOME_POLICY_FIELDS },
+    approvalPresentation: {
+      summary: () => null,
+      inputHints: { fields: HOME_POLICY_FIELDS.map(field => field.path === TEAM_PROVIDER_KINDS_PATH
+        ? { ...field, widget: 'multiselect', options: Object.entries(MANAGED_IDENTITY_PROVIDER_KIND_LABELS)
+          .map(([value, label]) => ({ value, label })) }
+        : field) },
+      referenceForField: (path, value, _input, parent) => {
+        if (path === 'sessionDefaults.approvalProfileId' && (value === null || typeof value === 'string' && value.trim())) {
+          return { kind: 'approvalProfile', id: value };
+        }
+        return readDefaultsPlacementApprovalReference(path, value, parent);
+      },
+    },
   }),
   homeDomainActionRow({
     id: 'home.settings.get', approval: {result: 'required'},

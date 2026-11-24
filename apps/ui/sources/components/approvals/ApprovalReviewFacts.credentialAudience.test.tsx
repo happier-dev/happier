@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { TeamCredentialExternalApiKeySummaryV1Schema } from '@happier-dev/protocol/teams';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamCredentialResourceFixture, teamMembershipFixture } from '@/dev/testkit/fixtures/teamFixtures';
@@ -12,7 +13,8 @@ installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
-const { applyTeamCredentialResource, resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { applyTeamCredentialResource, resetTeamsSnapshotsForTests, teamCredentialExternalApiKeyObservations, teamCredentialExternalKeyObservationKey } = await import('@/sync/store/teams/teamsSnapshots');
+const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
 
 const resourceId = '67cffe92-bd4e-4b28-8512-706b1cc4ab77';
 const teamId = '299c21a2-4015-40ad-8940-38867c442c2c';
@@ -89,5 +91,101 @@ it.each(['readable', 'other Account'] as const)('reviews a Team credential audie
         });
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         for (const id of [resourceId, groupId, membershipId]) expect(screen.getTextContent()).toContain(id);
+    } finally { await screen.unmount(); }
+});
+
+it('names selected protocols in a replacement request policy', async () => {
+    const actionId = 'teams.credentials.update';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ resourceId, expectedRevision: 1, replacement: {
+        requestPolicy: { allowedProtocolKinds: ['openai_responses', 'anthropic_messages'],
+            allowedModelIds: ['model-for-release'], reasoningEffort: null },
+    } });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={null} testID="credential-replacement-protocols" />);
+    try {
+        const text = screen.getTextContent();
+        expect(text).toContain(t('teams.credentials.requestPolicy.protocol.openaiResponses'));
+        expect(text).toContain(t('teams.credentials.requestPolicy.protocol.anthropicMessages'));
+        expect(text).toContain('model-for-release');
+        expect(text).not.toContain('openai_responses');
+        expect(text).not.toContain('anthropic_messages');
+    } finally { await screen.unmount(); }
+});
+
+it('distinguishes clearing a replacement request policy from leaving it alone', async () => {
+    const actionId = 'teams.credentials.update';
+    const review = (replacement: unknown) => <ApprovalReviewFacts actionId={actionId}
+        actionArgs={getActionSpec(actionId).inputSchema.parse({ resourceId, expectedRevision: 1, replacement })}
+        preview={null} status="open" serverId={null} testID="credential-replacement-clear" />;
+    const screen = await renderScreen(review({ enabled: false }));
+    const clear = t('approvals.clearsField', { field: 'Request policy' });
+    try {
+        expect(screen.getTextContent()).not.toContain(clear);
+        await screen.update(review({ enabled: false, requestPolicy: null }));
+        expect(screen.getTextContent()).toContain(clear);
+    } finally { await screen.unmount(); }
+});
+
+it('reads the replacement usage limit’s own audience and measure', async () => {
+    const actionId = 'teams.credentials.update';
+    const limitId = '0b811ee3-29f3-42b5-9130-21d55a619ec4';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ resourceId, expectedRevision: 1, replacement: {
+        usageLimitDelta: { deleteIds: [], upserts: [{ id: limitId, subjectKind: 'team_member', subjectId: membershipId,
+            period: 'week', metric: 'inference_requests', maximum: '40', enabled: true }] },
+    } });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={null} testID="credential-replacement-limit" />);
+    try {
+        const text = screen.getTextContent();
+        expect(text).toContain(t('teams.credentials.limits.subject.member'));
+        expect(text).toContain(t('teams.credentials.limits.metric.requests'));
+        expect(text).toContain('40');
+        expect(text).not.toContain('team_member');
+        expect(text).not.toContain('inference_requests');
+        expect(text).not.toContain(limitId);
+        expect(text).not.toContain(membershipId);
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(limitId);
+    } finally { await screen.unmount(); }
+});
+
+it.each([
+    ['teams.credentials.externalKeys.authorize', true],
+    ['teams.credentials.externalKeys.revoke', true],
+    ['teams.credentials.externalKeys.revoke', false],
+] as const)('reads the scoped external key label for %s (readable %s)', async (actionId, readable) => {
+    const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://credential-review.test', accountId: 'reviewer' });
+    const resolution = await resolveServerCredentialAccountScope(serverId);
+    if (resolution.kind !== 'bound') throw new Error('Missing reviewer credentials');
+    const binding = captureServerCredentialAccountScopeLifetime(resolution);
+    const address = { serverId, teamId };
+    const keyId = '4a1db1f6-fc8a-4a73-a994-97cb3ef57615';
+    const label = 'Studio integration key';
+    const scope = readable ? binding.scope : { ...binding.scope, accountId: 'other' };
+    applyTeamCredentialResource({ scope, address, resource: teamCredentialResourceFixture({
+        id: resourceId, teamId, displayName: resourceName,
+    }), observedAt: 1 });
+    const key = TeamCredentialExternalApiKeySummaryV1Schema.parse({
+        keyId, resourceId, teamMembershipId: membershipId,
+        label: { content: { t: 'plain', v: label }, recipientEnvelope: null },
+        displayPrefix: 'hapek_v1_4a1db1f6', createdAt: '2026-11-23T00:00:00Z',
+        expiresAt: null, lastUsedAt: null, authenticationStatus: 'satisfied', canAuthorize: false,
+    });
+    teamCredentialExternalApiKeyObservations.apply(teamCredentialExternalKeyObservationKey(scope, address, resourceId), binding, [key]);
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId}
+        actionArgs={getActionSpec(actionId).inputSchema.parse({ resourceId, keyId })}
+        preview={null} status="open" serverId={serverId} testID="credential-external-key" />);
+    try {
+        await waitForHomeGovernance(() => {
+            const text = screen.getTextContent();
+            expect(text).not.toContain(keyId);
+            if (readable) expect(text).toContain(label);
+            else {
+                expect(text).toContain(t('common.unavailable'));
+                expect(text).not.toContain(label);
+            }
+        });
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(keyId);
     } finally { await screen.unmount(); }
 });

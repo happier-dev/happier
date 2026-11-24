@@ -220,7 +220,9 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
   | Readonly<{ kind: 'signInConnection' | 'signInProvider'; id: string; teamId: string | null }>
   | Readonly<{ kind: 'teamDirectorySource'; id: string; teamId: string }>
+  | Readonly<{ kind: 'teamInvitation'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamCredentialResource'; id: string; unavailableWithoutName: true }>
+  | Readonly<{ kind: 'teamCredentialExternalKey'; id: string; resourceId: string }>
   | Readonly<{ kind: 'teamCredentialAudience'; id: string; resourceId: string; audience: 'group' | 'teamMembership' }>
   /** An explicit null is the default picker’s None choice. An omitted field has no reference. */
   | Readonly<{ kind: 'approvalProfile'; id: string | null }>
@@ -243,8 +245,9 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'managedMachine'; id: string; homeId?: string; unavailableWithoutName?: true }>
   | Readonly<{ kind: 'machinePreset'; id: string; homeId?: string }>
   | Readonly<{ kind: 'machinePool'; id: string }>
-  | Readonly<{ kind: 'artifact' | 'skill' | 'mcpServer' | 'project' | 'agent' | 'registrySource'; id: string }>
-  | Readonly<{ kind: 'machine'; id: string; workspaceRoot?: string; unavailableWithoutName?: true }>
+  | Readonly<{ kind: 'artifact' | 'skill'; id: string; unavailableWithoutName?: true }>
+  | Readonly<{ kind: 'mcpServer' | 'project' | 'agent' | 'registrySource' | 'builtinWidget'; id: string }>
+  | Readonly<{ kind: 'machine'; id: string; serverId?: string; workspaceRoot?: string; unavailableWithoutName?: true }>
   /** A workspace the app already knows (a ref id): read by its folder name and its machine. */
   | Readonly<{ kind: 'workspace'; id: string; unavailableWithoutName?: true }>
   /** A persisted workspace-sync link: read by the two folders it joins and their machines. */

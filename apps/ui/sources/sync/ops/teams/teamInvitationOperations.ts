@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 
 import { runTeamAction, type HomeDomainFailure } from './teamActionClient';
 
@@ -52,6 +52,11 @@ function failed<TValue>(failure: HomeDomainFailure): TeamInvitationOutcome<TValu
 }
 
 export const TEAM_INVITATIONS_PAGE_LIMIT = 50;
+
+export function teamInvitationsPageKey(scope: ServerAccountScope, address: TeamAddress,
+    state: TeamInvitationStateV1 | null, limit = TEAM_INVITATIONS_PAGE_LIMIT): string {
+    return serverAccountScopedTeamResourceKey(scope, address, 'invitations', JSON.stringify([state, limit]));
+}
 
 export async function listTeamInvitations(params: Readonly<{
     scope: ServerAccountScope;

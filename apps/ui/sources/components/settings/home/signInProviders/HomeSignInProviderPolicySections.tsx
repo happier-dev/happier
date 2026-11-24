@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
     HomeTeamProviderPolicyV1Schema,
+    MANAGED_IDENTITY_PROVIDER_KIND_LABELS,
     type HomeIdentityNetworkPolicyV1,
     type HomeTeamProviderPolicyV1,
     type ManagedIdentityProviderKindV1,
@@ -35,14 +36,6 @@ const TEAM_PROVIDER_KINDS: readonly ManagedIdentityProviderKindV1[] = [
     'oidc',
     'github_app_identity',
 ];
-
-function teamProviderKindLabel(kind: ManagedIdentityProviderKindV1): string {
-    switch (kind) {
-        case 'workos_sso': return 'WorkOS';
-        case 'oidc': return 'OpenID Connect';
-        case 'github_app_identity': return 'GitHub';
-    }
-}
 
 /** The one mode choice answers a search for either of its two settings. */
 const NETWORK_MODE_SETTINGS = [
@@ -542,7 +535,7 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
                         <Item
                             key={kind}
                             testID={`home-policy-team-provider:${kind}`}
-                            title={teamProviderKindLabel(kind)}
+                            title={MANAGED_IDENTITY_PROVIDER_KIND_LABELS[kind]}
                             // A switch that cannot be turned on says why.
                             subtitle={addable ? undefined : t('homeGovernance.signInPolicy.methodUnavailable')}
                             loading={pending === kind}

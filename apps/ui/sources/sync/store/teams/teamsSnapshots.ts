@@ -275,6 +275,17 @@ export function readTeamDirectorySourceName(scope: ServerAccountScope, teamId: s
 
 export const teamInvitationPages = createTeamObservations<TeamPage<TeamInvitationRowV1>>();
 export const teamCredentialExternalApiKeyObservations = createTeamObservations<readonly TeamCredentialExternalApiKeySummaryV1[]>();
+export function teamCredentialExternalKeyObservationKey(scope: ServerAccountScope, address: TeamAddress, resourceId: string): string {
+    return serverAccountScopedTeamResourceKey(scope, address, 'credential-external-api-keys', resourceId);
+}
+
+export function readObservedTeamCredentialExternalKey(
+    scope: ServerAccountScope, teamId: string, resourceId: string, keyId: string,
+): TeamCredentialExternalApiKeySummaryV1 | undefined {
+    const key = teamCredentialExternalKeyObservationKey(scope, { serverId: scope.serverId, teamId }, resourceId);
+    return teamCredentialExternalApiKeyObservations.get(key)?.find(row => row.resourceId === resourceId && row.keyId === keyId);
+}
+
 export const teamCredentialUsageObservations = createTeamObservations<TeamCredentialUsageQueryResultV1>();
 export const teamGroupMemberPages = createTeamObservations<TeamPage<TeamGroupMemberV1>>();
 export const teamMemberGroupPages = createTeamObservations<TeamPage<TeamGroupV1>>();

@@ -24,7 +24,6 @@ import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDi
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { serverAccountScopedTeamResourceKey } from '@/sync/domains/teams/teamAddress';
 import { randomUUID } from '@/platform/randomUUID';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
@@ -36,7 +35,7 @@ import {
     revokeAllTeamCredentialExternalApiKeys,
     revokeTeamCredentialExternalApiKey,
 } from '@/sync/ops/teams/teamCredentialOperations';
-import { teamCredentialExternalApiKeyObservations } from '@/sync/store/teams/teamsSnapshots';
+import { teamCredentialExternalApiKeyObservations, teamCredentialExternalKeyObservationKey } from '@/sync/store/teams/teamsSnapshots';
 import { t, type TranslationKey } from '@/text';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -135,7 +134,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const replaceRoute = router.replace;
     // This route can be reused while its qualified Home/resource parameters
     // change. The accepted route owns the key summaries and the separate one-time reveal.
-    const targetKey = serverAccountScopedTeamResourceKey(context.scope, context.address, 'credential-external-api-keys', resourceId);
+    const targetKey = teamCredentialExternalKeyObservationKey(context.scope, context.address, resourceId);
     const targetPath = teamCredentialExternalApiPath(context.address, resourceId);
     const currentTargetKey = React.useRef(targetKey);
     const actionLifetime = React.useRef<AbortController | null>(null);

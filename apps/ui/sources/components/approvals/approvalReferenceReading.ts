@@ -16,8 +16,11 @@ import { mcpServerDisplayName } from '@/components/settings/mcpServers/collectio
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { useAgentCatalogIdentities } from '@/agents/registry/useSessionAgentCatalogIdentity';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { readObservedTeamInvitation } from '@/hooks/teams/useTeamInvitations';
+import { resolveTeamInvitationPresentation } from '@/components/settings/teams/invitations/teamInvitationPresentation';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries';
+import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprovalHomeSentenceName } from './approvalRequesterLabels';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -27,8 +30,9 @@ import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readSignInIdentityName } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
-import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
-import { readTeamCredentialResourceApprovalProjection, readTeamDirectorySourceName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
+import { teamCredentialDisplayNameBinding, teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
+import { readObservedTeamCredentialExternalKey, readTeamCredentialResourceApprovalProjection, readTeamDirectorySourceName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
@@ -69,12 +73,14 @@ export type ApprovalReferenceReading = Readonly<{ text: string; named: boolean; 
     session?: Readonly<{ id: string; serverId: string | null }> }>;
 
 /** Both cached UI rows and authorized exact reads use the same content-readable name rule. */
-function readApprovalArtifactReference(kind: 'artifact' | 'skill', id: string, artifact: DecryptedArtifact | null | undefined): ApprovalReferenceReading {
+function readApprovalArtifactReference(reference: Extract<ApprovalReference, { kind: 'artifact' | 'skill' }>,
+    artifact: DecryptedArtifact | null | undefined): ApprovalReferenceReading {
+    const { kind, id, unavailableWithoutName } = reference;
     const readable = artifact?.isDecrypted === true && (kind === 'artifact'
         || kind === 'skill' && artifact.header?.kind === 'prompt_bundle.v2'
             && artifact.header.bundleSchemaId === 'skills.skill_md_v1');
     const title = readable ? artifact.title?.trim() || artifact.header?.title?.trim() : null;
-    return { text: title || id, named: Boolean(title) };
+    return { text: title || (unavailableWithoutName ? t('common.unavailable') : id), named: Boolean(title) };
 }
 
 function readApprovalProject(reference: ApprovalReference | undefined, rows: ProjectAccountRowsSnapshot | null,
@@ -96,7 +102,9 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         viewer: scope, ownHome: true, sessionReading: { name: null, machineId: '', status: 'unavailable' },
         // Account references carry no execution Machine from which to admit installed declarations.
         declarations: readAccountProviderDeclarations({ kind: 'account' }),
-        machine: reference.kind === 'machine' ? resolveServerScopedMachine(state, account.serverId, reference.id) : null,
+        machine: reference.kind === 'machine' && (!reference.serverId
+            || areServerProfileIdentifiersEquivalent(reference.serverId, account.serverId))
+            ? resolveServerScopedMachine(state, account.serverId, reference.id) : null,
         registries: getPromptLibraryCatalogValue(scope, 'registry-sources'),
         project: readApprovalProject(reference, projects, scope, account.serverId),
         projectCensusComplete: projects?.status === 'ready' && projects.coverage === 'complete',
@@ -142,6 +150,20 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         }
         account.assertCurrent();
     }
+    if (reference.kind === 'teamCredentialExternalKey') {
+        const teamId = readTeamCredentialResourceApprovalProjection(scope, reference.resourceId)?.teamId;
+        const label = teamId ? readObservedTeamCredentialExternalKey(scope, teamId, reference.resourceId, reference.id)?.label : null;
+        if (label) {
+            try {
+                sources.teamCredentialExternalKeyName = await createPrivateLabelClientForActionAccountContext(account).open({
+                    binding: teamCredentialExternalApiKeyLabelBinding(reference.id), label, readPolicy: { kind: 'team-resource' }, signal,
+                });
+            } catch {
+                // A missing or unreadable projection keeps the ordinary unavailable reading.
+            }
+            account.assertCurrent();
+        }
+    }
     if (reference.kind === 'signInConnection' || reference.kind === 'signInProvider') {
         account.assertCurrent();
         sources.signInIdentityName = readSignInIdentityName(scope, reference);
@@ -149,6 +171,10 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     if (reference.kind === 'teamDirectorySource') {
         account.assertCurrent();
         sources.teamDirectorySourceName = readTeamDirectorySourceName(scope, reference.teamId, reference.id);
+    }
+    if (reference.kind === 'teamInvitation') {
+        account.assertCurrent();
+        sources.teamInvitationName = readTeamInvitationName(scope, reference);
     }
     if (reference.kind === 'artifact' || reference.kind === 'skill') {
         sources.artifact = await account.fetchArtifact(reference.id, { signal });
@@ -234,9 +260,11 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const viewer = useAccountSettingsScope();
     const ownHome = areServerProfileIdentifiersEquivalent(viewer?.serverId, approvalServerId);
     const artifact = useArtifact((reference?.kind === 'skill' || reference?.kind === 'artifact') && ownHome ? reference.id : '');
-    const machine = useServerScopedMachine(approvalServerId, reference?.kind === 'machine' ? reference.id : '');
+    const machineReference = reference?.kind === 'machine' && (!reference.serverId
+        || areServerProfileIdentifiersEquivalent(reference.serverId, approvalServerId)) ? reference : null;
+    const machine = useServerScopedMachine(approvalServerId, machineReference?.id ?? '');
     // Same-named Machines (twenty "Build box"es) are told apart the way their picker tells them apart.
-    const machineInventory = useMachineListForServer(approvalServerId ?? '', reference?.kind === 'machine' && Boolean(approvalServerId));
+    const machineInventory = useMachineListForServer(approvalServerId ?? '', Boolean(machineReference && approvalServerId));
     const sessionMachine = useServerScopedMachine(serverId, reference?.kind === 'session' ? sessionReading.machineId : '');
     const mcp = useMcpServerCatalogForServer(reference?.kind === 'mcpServer' ? approvalServerId : null, reference?.kind === 'mcpServer');
     const registries = usePromptLibraryCatalogValue('registry-sources', reference?.kind === 'registrySource' && ownHome ? viewer : null);
@@ -277,7 +305,9 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     // A Saved Secret reads by its name from the Account's catalog on its own Home; another Home's catalog is not read.
     const savedSecret = useSavedSecretCatalogName(reference?.kind === 'savedSecret' ? reference.id : null, ownHome ? viewer : null);
     const credentialAudience = reference?.kind === 'teamCredentialAudience' ? reference : null;
-    const credentialResourceId = credentialAudience?.resourceId ?? (reference?.kind === 'teamCredentialResource' ? reference.id : null);
+    const credentialKey = reference?.kind === 'teamCredentialExternalKey' ? reference : null;
+    const credentialResourceId = credentialAudience?.resourceId ?? credentialKey?.resourceId
+        ?? (reference?.kind === 'teamCredentialResource' ? reference.id : null);
     const credentialProjection = useApprovalTeamCredentialResource(credentialResourceId, approvalServerId);
     const principal = useApprovalPrincipalName(credentialAudience
         ? credentialAudiencePrincipal(credentialAudience, credentialProjection.resource?.teamId) : reference, approvalServerId);
@@ -299,13 +329,23 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const discussion = useApprovalDiscussionTitle(reference, approvalServerId);
     const teamCredentialResourceName = useApprovalTeamCredentialResourceName(
         reference?.kind === 'teamCredentialResource' ? reference.id : null, credentialProjection);
+    const keyId = credentialKey?.id;
+    const keyTeamId = credentialProjection.resource?.teamId;
+    const keyLabel = credentialKey && keyTeamId && credentialProjection.scope
+        ? readObservedTeamCredentialExternalKey(credentialProjection.scope, keyTeamId, credentialKey.resourceId, credentialKey.id)?.label : null;
+    const keyLabelRequests = React.useMemo(() => keyId && keyLabel ? [{ key: keyId, label: keyLabel,
+        binding: teamCredentialExternalApiKeyLabelBinding(keyId), readPolicy: { kind: 'team-resource' as const } }] : [], [keyId, keyLabel]);
+    const openedKeyLabels = useOpenedPrivateLabels({ scope: credentialProjection.scope, requests: keyLabelRequests });
+    const teamCredentialExternalKeyName = keyId && keyLabel ? openedKeyLabels[keyId] ?? null : null;
     const signInReference = reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider' ? reference : null;
     const directorySource = reference?.kind === 'teamDirectorySource' ? reference : null;
-    const signInBinding = useServerCredentialAccountScopeBinding(signInReference || directorySource ? approvalServerId : null).binding;
-    const signInIdentityName = signInReference && signInBinding?.isCurrent()
-        ? readSignInIdentityName(signInBinding.scope, signInReference) : null;
-    const teamDirectorySourceName = directorySource && signInBinding?.isCurrent()
-        ? readTeamDirectorySourceName(signInBinding.scope, directorySource.teamId, directorySource.id) : null;
+    const invitation = reference?.kind === 'teamInvitation' ? reference : null;
+    const governanceBinding = useServerCredentialAccountScopeBinding(signInReference || directorySource || invitation ? approvalServerId : null).binding;
+    const governanceScope = governanceBinding?.isCurrent() ? governanceBinding.scope : null;
+    const signInIdentityName = signInReference && governanceScope ? readSignInIdentityName(governanceScope, signInReference) : null;
+    const teamDirectorySourceName = directorySource && governanceScope
+        ? readTeamDirectorySourceName(governanceScope, directorySource.teamId, directorySource.id) : null;
+    const teamInvitationName = invitation && governanceScope ? readTeamInvitationName(governanceScope, invitation) : null;
     const homeLayout = useHomeHubLayoutReading(reference?.kind === 'homeLayoutItem' && ownHome);
     const homeSection = reference?.kind === 'homeLayoutItem' && ownHome
         ? homeLayout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section])
@@ -320,10 +360,16 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         principalName: principal.name, principalResolving: principal.resolving,
         approvalProfileName: profileId === null ? undefined : lookup.value ?? undefined,
         approvalProfileResolving: profileId !== null && lookup.resolving,
-        teamCredentialResourceName, signInIdentityName, teamDirectorySourceName, homeLayoutItemName,
+        teamCredentialResourceName, teamCredentialExternalKeyName, signInIdentityName, teamDirectorySourceName, teamInvitationName, homeLayoutItemName,
         homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading',
         machineCatalogName: machineCatalogReference ? lookup.value : null,
         machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
+}
+
+function readTeamInvitationName(scope: NonNullable<ApprovalReferenceSources['viewer']>,
+    reference: Extract<ApprovalReference, { kind: 'teamInvitation' }>): string | null {
+    const invitation = readObservedTeamInvitation(scope, reference.teamId, reference.id);
+    return invitation ? resolveTeamInvitationPresentation(invitation, Date.now(), scope.accountId).title : null;
 }
 
 const NO_DISCUSSION_IDS: readonly string[] = Object.freeze([]);
@@ -416,8 +462,10 @@ type ApprovalReferenceSources = {
     approvalProfileName?: string;
     approvalProfileResolving?: boolean;
     teamCredentialResourceName?: string | null;
+    teamCredentialExternalKeyName?: string | null;
     signInIdentityName?: string | null;
     teamDirectorySourceName?: string | null;
+    teamInvitationName?: string | null;
     homeLayoutItemName?: string | null;
     homeLayoutItemResolving?: boolean;
     machineCatalogName?: string | null;
@@ -469,12 +517,20 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         const name = sources.teamCredentialResourceName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
     }
+    if (reference?.kind === 'teamCredentialExternalKey') {
+        const name = sources.teamCredentialExternalKeyName;
+        return { text: name ?? t('common.unavailable'), named: name != null };
+    }
     if (reference?.kind === 'teamDirectorySource') {
         const name = sources.teamDirectorySourceName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
     }
     if (reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider') {
         const name = sources.signInIdentityName;
+        return { text: name ?? t('common.unavailable'), named: Boolean(name) };
+    }
+    if (reference?.kind === 'teamInvitation') {
+        const name = sources.teamInvitationName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
     }
     if (reference?.kind === 'machinePreset' || reference?.kind === 'machinePool') {
@@ -489,7 +545,12 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         return { text: title || t(reference.unavailableWithoutName ? 'common.unavailable' : 'contextBar.machine'), named: Boolean(title), subject: 'managedMachine',
             ...(sources.managedMachineLoading && !title ? { resolving: true } : {}) };
     }
-    if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference.kind, reference.id, ownHome ? artifact : null);
+    if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference, ownHome ? artifact : null);
+    if (reference?.kind === 'builtinWidget') {
+        const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: reference.id });
+        const name = descriptor ? t(descriptor.titleKey) : null;
+        return { text: name ?? t('common.unavailable'), named: Boolean(name) };
+    }
     if (reference?.kind === 'machine') {
         // A machine whose details were never read has no name yet: the reference's own id stands in, unnamed.
         const name = getSettledMachineDisplayName(machine, sources.machineInventory ?? undefined);

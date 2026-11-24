@@ -1263,5 +1263,6832 @@
         "cursor": "Review sample"
       }
     ]
+  },
+  {
+    "actionId": "home.policy.set",
+    "cases": [
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service"
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "managed_only",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "managed_only"
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "disabled",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "disabled"
+      },
+      {
+        "expectedRevision": 1,
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamsVisibleToMembers": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": false,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamsVisibleToMembers": false
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ]
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ]
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "e2ee"
+          ]
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "e2ee"
+          ]
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "plain"
+          ]
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "permittedAccountModes": [
+            "plain"
+          ]
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "recommendedProvisioningMode": "e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "recommendedProvisioningMode": "e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "recommendedProvisioningMode": "plain"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "recommendedProvisioningMode": "plain"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "closed"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "closed"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "invitation_only",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "invitation_only",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "invitation_only"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "invitation_only"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "self_service",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "self_service",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "self_service"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "admission": "self_service"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "signInService": {
+            "mode": "disabled"
+          }
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "signInService": {
+            "mode": "disabled"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": null,
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": null,
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "signInService": null
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "signInService": null
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "anonymousSignup": true,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "anonymousSignup": true
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "anonymousSignup": true
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": false,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": false,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "anonymousSignup": false
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "anonymousSignup": false
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "required_e2ee"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "required_e2ee"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "optional"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "optional"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "optional"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "optional"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "plaintext_only"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true,
+          "storagePolicy": "plaintext_only"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "plaintext_only"
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "storagePolicy": "plaintext_only"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": {
+          "v": 1,
+          "enabledMethodIds": [
+            "review-sample"
+          ],
+          "permittedAccountModes": [
+            "e2ee"
+          ],
+          "recommendedProvisioningMode": "e2ee",
+          "admission": "closed",
+          "signInService": {
+            "mode": "disabled"
+          },
+          "anonymousSignup": true
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": null,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "authenticationPolicy": null
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "workos_sso"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "workos_sso"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "github_app_identity"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "github_app_identity"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": false,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": false,
+          "approvedGitHubEnterpriseOrigins": []
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": null,
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamProviderPolicy": null
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "private_allowlist",
+          "hostnames": [
+            "Review sample"
+          ],
+          "cidrs": [
+            "Review sample"
+          ],
+          "ports": [
+            1
+          ]
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "private_allowlist",
+          "hostnames": [
+            "Review sample"
+          ],
+          "cidrs": [
+            "Review sample"
+          ],
+          "ports": [
+            1
+          ]
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": null,
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "identityNetworkPolicy": null
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "sessionDefaults": {},
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {}
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "git_clone"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "git_clone"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "git_clone"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "git_clone"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "machine",
+            "target": {
+              "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "git_clone"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "git_clone"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "git_clone"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "git_clone"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_synced"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "sync",
+              "mode": "keep_both_in_sync"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFiles": {
+              "kind": "copy_once"
+            },
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "placement": {
+            "kind": "preset",
+            "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "projectFilesSource": {
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              },
+              "directory": "/workspace/project"
+            }
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "approvalProfileId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "approvalProfileId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "approvalProfileId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "approvalProfileId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "approvalProfileId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "approvalProfileId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "approvalProfileId": null
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "approvalProfileId": null
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "permissionModeByAgentTargetKey": {}
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "permissionModeByAgentTargetKey": {}
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "modelByAgentTargetKey": {}
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "modelByAgentTargetKey": {}
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "connectedServicesByAgentTargetKey": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": []
+          }
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "connectedServicesByAgentTargetKey": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": []
+          }
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {
+          "connectedServicesByAgentTargetKey": {}
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": {
+          "connectedServicesByAgentTargetKey": {}
+        }
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": null,
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "sessionDefaults": null
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "confirmWidening": true
+      },
+      {
+        "expectedRevision": 1,
+        "teamCreationPolicy": "self_service",
+        "teamsVisibleToMembers": true,
+        "authenticationPolicy": {
+          "v": 1
+        },
+        "teamProviderPolicy": {
+          "v": 1,
+          "allowedTeamProviderKinds": [
+            "oidc"
+          ],
+          "teamJitAllowed": true,
+          "approvedGitHubEnterpriseOrigins": []
+        },
+        "identityNetworkPolicy": {
+          "v": 1,
+          "mode": "public_only"
+        },
+        "sessionDefaults": {}
+      }
+    ]
+  },
+  {
+    "actionId": "teams.policy.set",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "authenticationPolicy": null,
+        "previousAuthenticationPolicy": {
+          "v": 1,
+          "status": "repair_required"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "defaults": {
+            "approvalProfileId": null
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "team_required",
+        "reviewCreationPolicy": "team_default",
+        "externalSharingPolicy": "team_admins_only",
+        "defaultSessionHistoryAccess": "from_membership",
+        "admissionMode": "invite_only"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "private_default"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "team_default"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "team_required"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "reviewCreationPolicy": "private_default"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "reviewCreationPolicy": "team_default"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "reviewCreationPolicy": "team_required"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalSharingPolicy": "allowed"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalSharingPolicy": "team_admins_only"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalSharingPolicy": "disabled"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "defaultSessionHistoryAccess": "all_existing"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "defaultSessionHistoryAccess": "from_membership"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "admissionMode": "invite_only"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "admissionMode": "provisioned"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "admissionMode": "jit"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "copy_once"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "git_clone"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_synced"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_both_in_sync"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "copy_once"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "git_clone"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_synced"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_both_in_sync"
+              }
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "approvalProfileId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "approvalProfileId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "approvalProfileId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "approvalProfileId": null
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "permissionModeByAgentTargetKey": {}
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "modelByAgentTargetKey": {}
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "connectedServicesByAgentTargetKey": {
+              "3d703df7-5a51-4be7-91ec-dc877ae861ab": []
+            }
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {
+            "connectedServicesByAgentTargetKey": {}
+          },
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {
+                "3d703df7-5a51-4be7-91ec-dc877ae861ab": []
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "modelByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "permissionModeByAgentTargetKey": {}
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "approvalProfileId": null
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "approvalProfileId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "approvalProfileId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "approvalProfileId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "preset",
+                "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "preset",
+                "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "preset",
+                "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "preset",
+                "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "preset",
+                "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "machine",
+                "target": {
+                  "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                  "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "machine",
+                "target": {
+                  "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                  "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "machine",
+                "target": {
+                  "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                  "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "machine",
+                "target": {
+                  "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                  "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "placement": {
+                "kind": "machine",
+                "target": {
+                  "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                  "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {}
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedDefaults": {
+          "team": {},
+          "groups": {}
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "private_default",
+        "reviewCreationPolicy": "private_default",
+        "externalSharingPolicy": "allowed",
+        "defaultSessionHistoryAccess": "all_existing",
+        "admissionMode": "invite_only",
+        "previousAuthenticationPolicy": {
+          "v": 1,
+          "mode": "restricted",
+          "accepted": [
+            {
+              "kind": "home_method",
+              "methodId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          ]
+        },
+        "authenticationPolicy": {
+          "v": 1,
+          "mode": "inherit"
+        },
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {}
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {}
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "defaults": {}
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+          "defaults": {}
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "copy_once"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "git_clone"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_synced"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "machine",
+              "target": {
+                "serverId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+                "machineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+              },
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_both_in_sync"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "copy_once"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "git_clone"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_synced"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "placement": {
+              "kind": "preset",
+              "homeId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "presetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+              "projectFiles": {
+                "kind": "sync",
+                "mode": "keep_both_in_sync"
+              }
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "approvalProfileId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "approvalProfileId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "approvalProfileId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "approvalProfileId": null
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "permissionModeByAgentTargetKey": {}
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "modelByAgentTargetKey": {}
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "connectedServicesByAgentTargetKey": {
+              "3d703df7-5a51-4be7-91ec-dc877ae861ab": []
+            }
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": {
+            "connectedServicesByAgentTargetKey": {}
+          }
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedGroupDefaults": {
+          "teamGroupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "defaults": null
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sessionCreationPolicy": "private_default",
+        "reviewCreationPolicy": "private_default",
+        "externalSharingPolicy": "allowed",
+        "defaultSessionHistoryAccess": "all_existing",
+        "admissionMode": "invite_only",
+        "previousAuthenticationPolicy": {
+          "v": 1,
+          "mode": "restricted",
+          "accepted": [
+            {
+              "kind": "home_method",
+              "methodId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+            }
+          ]
+        },
+        "authenticationPolicy": {
+          "v": 1,
+          "mode": "inherit"
+        },
+        "managedDefaults": {
+          "team": {},
+          "groups": {
+            "3d703df7-5a51-4be7-91ec-dc877ae861ab": {
+              "connectedServicesByAgentTargetKey": {}
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "teams.members.management.set",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "membershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "management": {
+          "kind": "native"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "membershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "management": {
+          "kind": "native"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "membershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "management": {
+          "kind": "native"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "membershipId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "management": {
+          "kind": "native"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "membershipId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "management": {
+          "kind": "native"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "membershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "management": {
+          "kind": "directory_source",
+          "directorySourceId": "/workspace/project"
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "teams.members.list",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "filter": "all",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "filter": "all"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "filter": "all",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "filter": "all"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "owners_admins",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "owners_admins"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "members",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "members"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "guests",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "guests"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "suspended",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "suspended"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "limit": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "limit": 1,
+        "cursor": null,
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "cursor": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "limit": 1,
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all",
+        "limit": 1,
+        "cursor": "Review sample"
+      }
+    ]
+  },
+  {
+    "actionId": "session.access.principals.resolve",
+    "cases": [
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "team",
+            "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "groupId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "group",
+            "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "groupId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+          }
+        ]
+      },
+      {
+        "v": 1,
+        "subjects": [],
+        "creationTeamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "subjects": []
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "subjects": [
+          {
+            "kind": "account",
+            "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+          }
+        ],
+        "creationTeamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.invitations.revoke",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.invitations.reissue",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "recipientEmail": "approver@example.test",
+        "requestKey": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "recipientEmail": "approver@example.test",
+        "requestKey": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "recipientEmail": "approver@example.test",
+        "requestKey": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "recipientEmail": "approver@example.test",
+        "requestKey": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "recipientEmail": "approver@example.test",
+        "requestKey": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "invitationId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "recipientEmail": null,
+        "requestKey": "Review sample"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.externalGroupBindings.list",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project",
+        "limit": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project",
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": null,
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project",
+        "cursor": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "ownerKind": "directory_source",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": null,
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "ownerKind": "identity_connection",
+        "teamIdentityConnectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
   }
 ]

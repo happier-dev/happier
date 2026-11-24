@@ -137,6 +137,12 @@ export const ManagedIdentityProviderKindV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type ManagedIdentityProviderKindV1 = z.infer<typeof ManagedIdentityProviderKindV1Schema>;
 
+export const MANAGED_IDENTITY_PROVIDER_KIND_LABELS = {
+  workos_sso: 'WorkOS',
+  oidc: 'OpenID Connect',
+  github_app_identity: 'GitHub',
+} as const satisfies Record<ManagedIdentityProviderKindV1, string>;
+
 const UniqueManagedIdentityProviderKindsV1Schema = lazyZodSchema(() => z.array(ManagedIdentityProviderKindV1Schema).check(z.superRefine((values, ctx) => {
   if (new Set(values).size !== values.length) {
     ctx.addIssue({ code: "custom", message: 'Managed identity-provider kinds must be unique.' });

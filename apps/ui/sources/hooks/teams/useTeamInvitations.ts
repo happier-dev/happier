@@ -8,14 +8,18 @@ import type {
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
-import { serverAccountScopedTeamResourceKey } from '@/sync/domains/teams/teamAddress';
-import { listTeamInvitations, TEAM_INVITATIONS_PAGE_LIMIT } from '@/sync/ops/teams/teamInvitationOperations';
+import { listTeamInvitations, teamInvitationsPageKey } from '@/sync/ops/teams/teamInvitationOperations';
 import { teamInvitationPages } from '@/sync/store/teams/teamsSnapshots';
 
 import { useTeamObservedPagedList } from './useTeamObservedPagedList';
 import type { TeamPagedList } from './useTeamPagedList';
 
 const invitationRowKey = (row: TeamInvitationRowV1) => row.id;
+
+export function readObservedTeamInvitation(scope: ServerAccountScope, teamId: string, invitationId: string): TeamInvitationRowV1 | undefined {
+    const key = teamInvitationsPageKey(scope, { serverId: scope.serverId, teamId }, null);
+    return teamInvitationPages.get(key)?.items.find(row => row.id === invitationId && row.teamId === teamId);
+}
 
 /**
  * One Team's invitations for one exact Home and Account.
@@ -51,12 +55,7 @@ export function useTeamInvitations(params: Readonly<{
     const accountId = params.scope?.accountId ?? '';
     const teamId = params.address?.teamId ?? '';
     const { state, limit } = params;
-    const sequenceKey = params.scope && params.address ? serverAccountScopedTeamResourceKey(
-        params.scope,
-        params.address,
-        'invitations',
-        JSON.stringify([state, limit ?? TEAM_INVITATIONS_PAGE_LIMIT]),
-    ) : '';
+    const sequenceKey = params.scope && params.address ? teamInvitationsPageKey(params.scope, params.address, state, limit) : '';
     const activeSequenceKeyRef = React.useRef(sequenceKey);
     activeSequenceKeyRef.current = sequenceKey;
     const [emailDelivery, setEmailDelivery] = React

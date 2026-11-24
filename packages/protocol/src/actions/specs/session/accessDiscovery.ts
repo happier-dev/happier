@@ -37,6 +37,10 @@ function createSessionAccessDiscoveryActionSpecsV1() {
     bindings: { mcpToolName: 'session_access_principals_resolve' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     sideEffectClass: 'read',
+    approvalPresentation: {
+      referenceForField: (path, value) => path === 'creationTeamId' && typeof value === 'string'
+        ? { kind: 'team', id: value } : undefined,
+    },
     inputHints: { description: 'Resolve visible recipient labels and, optionally, the Team decision for creating a Session.', fields: [] },
     inputSchema: ResolveSessionAccessPrincipalsRequestV1Schema,
     outputSchema: ResolveSessionAccessPrincipalsResponseV1Schema,
