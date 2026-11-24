@@ -264,6 +264,7 @@ function selectSchemaRows(protocol, keys, readSource) {
     });
   };
   for (const path of specPaths) {
+    const wrappedOutputs = new Map();
     const visit = node => {
       // Scope adapters may construct rows by passing a literal Action id or tuple to
       // a helper. Resolve only its keyed schema maps, without evaluating the
@@ -279,6 +280,12 @@ function selectSchemaRows(protocol, keys, readSource) {
           for (const statement of helper.body?.statements ?? []) {
             if (!ts.isReturnStatement(statement) || !statement.expression) continue;
             const row = unwrapped(statement.expression);
+            // A spec constructor can replace the literal row's output schema.
+            // Let the checker read that constructor's returned schema.
+            if (ts.isObjectLiteralExpression(argument) && ts.isObjectLiteralExpression(row)
+              && row.properties.some(member => member.name?.text === 'outputSchema')) {
+              wrappedOutputs.set(argument, { path, node, key: 'outputSchema' });
+            }
             const idExpression = property(path, row, 'id', locals)?.node;
             if (!idExpression || !ts.isIdentifier(idExpression)) continue;
             const idIndex = ts.isArrayBindingPattern(binding) ? binding.elements.findIndex(element =>
@@ -348,7 +355,7 @@ function selectSchemaRows(protocol, keys, readSource) {
         }
         if (typeof key === 'string' && keys.includes(key) && !selected.has(key)) {
           const input = property(path, node, 'inputSchema');
-          const output = property(path, node, 'outputSchema');
+          const output = wrappedOutputs.get(node) ?? property(path, node, 'outputSchema');
           const surface = property(path, node, 'surfaceBindings');
           const plugin = surface && property(surface.path, surface.node, 'plugin');
           const pluginInput = plugin && property(plugin.path, plugin.node, 'inputSchema');

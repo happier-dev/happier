@@ -117,6 +117,11 @@ export type ScmRepositoryActionInputById = {
 export type ScmRepositoryActionResultById = {
     readonly "scm.repository.discover": {
         success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
         errorCode: string;
         error: string;
     } | {
@@ -811,6 +816,11 @@ export type ScmRepositoryActionResultById = {
         };
         stdout?: string | undefined;
         stderr?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.repository.init": {
         [x: string]: unknown;
@@ -1768,6 +1778,11 @@ export type ScmRepositoryActionResultById = {
         };
         stdout?: string | undefined;
         stderr?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.repository.removeIndexLock": {
         [x: string]: unknown;
@@ -2727,8 +2742,18 @@ export type ScmRepositoryActionResultById = {
         };
         stdout?: string | undefined;
         stderr?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.hostingRepository.resolveAddress": {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
         success: true;
         kind: 'invalid';
     } | {
@@ -2759,6 +2784,11 @@ export type ScmRepositoryActionResultById = {
         kind: 'unsupported';
     };
     readonly "scm.hostingRepository.get": {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
         success: false;
         kind: 'failed';
         code: 'repository_unavailable';
@@ -3191,6 +3221,11 @@ export type ScmRepositoryActionResultById = {
             diagnostics?: string[] | undefined;
         }[];
         diagnostics?: string[] | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.hostingRepository.publish": {
         [x: string]: unknown;
@@ -4176,5 +4211,10 @@ export type ScmRepositoryActionResultById = {
         };
         stdout?: string | undefined;
         stderr?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
 };

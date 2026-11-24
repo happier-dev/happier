@@ -9,6 +9,15 @@ import { ScmRepositoryProvisioningFailureResponseSchema as canonicalProvisioning
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN as canonicalScmWorktreeRemoveAuthorizationToken } from '@happier-dev/protocol/scm/worktrees';
 import { ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema } from '@happier-dev/protocol/scm/freshness';
 import { ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema, ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
+import type { ScmHostingRepositoryAuthSummary, ScmHostingRepositoryPublishResponse, ScmHostingRepositorySummary, ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+export type {
+    ScmHostingRepositoryAuthSummary,
+    ScmHostingRepositoryDescribePublishTargetsResponse,
+    ScmHostingRepositoryPublishResponse,
+    ScmHostingRepositoryPublishTarget,
+    ScmHostingRepositorySummary,
+    ScmWorkingSnapshot,
+} from '@happier-dev/protocol/scm';
 import { ScmSelectedMutationPathSchema as canonicalScmSelectedMutationPathSchema } from '@happier-dev/protocol/scm/selectedMutationPath';
 import { SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema } from '@happier-dev/protocol/scm/cloneProtocol';
 import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema, ScmComparisonSchema as canonicalScmComparisonSchema, ScmRevisionRangeV1ProtocolSchema as canonicalRevisionRange } from '@happier-dev/protocol/scm/comparison';
@@ -32,7 +41,6 @@ export const ScmFileAtRevisionResponseSchema: {
 import type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 export type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
-import type { ActionFailureCauseV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 export const ScmFileViewedStateV1Schema: ProtocolComposableSchema<ScmFileViewedStateV1> = canonicalFileViewedState;
 export const ScmFileViewedReadResultV1Schema: ProtocolComposableSchema<ScmFileViewedReadResultV1> = canonicalFileViewedRead;
 export const ScmFileViewedSetResultV1Schema: ProtocolComposableSchema<ScmFileViewedSetResultV1> = canonicalFileViewedSet;
@@ -420,61 +428,6 @@ export type ScmPullRequestStatusProjection = {
         expiresAt?: number;
     };
     refreshPolicy?: ScmRefreshPolicy;
-};
-
-export type ScmWorkingSnapshot = {
-    projectKey: string;
-    fetchedAt: number;
-    // Keep the complete schema-inferred source union; validation narrows the
-    // local-only semantic at runtime.
-    freshness?: {
-        source: 'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote';
-        observedAt: number;
-        expiresAt?: number;
-    };
-    refreshPolicy?: ScmRefreshPolicy;
-    repo: {
-        isRepo: boolean;
-        rootPath: string | null;
-        backendId: string | null;
-        mode: ScmRepoMode | null;
-        defaultBranch?: string | null;
-        worktrees: ScmWorktree[];
-        remotes: ScmRemoteInfo[];
-    };
-    capabilities: ScmCapabilities;
-    branch: {
-        head: string | null;
-        headOid?: string;
-        upstream: string | null;
-        upstreamOid?: string;
-        ahead: number;
-        behind: number;
-        detached: boolean;
-    };
-    stashCount?: number;
-    operationState?: ScmOperationState | null;
-    operationStateVersion?: 1;
-    hostingProvider?: ScmHostingProviderRef | null;
-    pullRequestStatus?: ScmPullRequestStatusProjection | null;
-    hasConflicts: boolean;
-    entries: ScmWorkingEntry[];
-    entriesPage?: { totalFiles: number; nextCursor: number | null };
-    /** Set on a `detail` reply: `entries` was not sent ('facts' also measured no totals or conflicts). */
-    detail?: 'summary' | 'facts';
-    /** Content revision of a full changed-file list, reusable as knownListRevision. */
-    listRevision?: string;
-    summary?: { changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number };
-    totals: {
-        includedFiles: number;
-        pendingFiles: number;
-        untrackedFiles: number;
-        includedAdded: number;
-        includedRemoved: number;
-        pendingAdded: number;
-        pendingRemoved: number;
-        isComplete?: boolean;
-    };
 };
 
 export type ScmBranchListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
@@ -956,52 +909,6 @@ export type ScmWorktreePruneResponse = {
 export type ScmHostingRepositoryVisibility = 'private' | 'public' | 'internal';
 export type ScmHostingRepositoryRemoteUrlKind = 'https' | 'ssh';
 
-export type ScmHostingRepositoryAuthSummary = {
-    [key: string]: unknown;
-    state: 'authenticated' | 'authentication_required' | 'unsupported' | 'unknown';
-    profileKind: 'connected_account' | 'provider_cli' | 'no_auth' | 'unknown';
-    profileKey?: string;
-    label?: string;
-    remediation?: {
-        [key: string]: unknown;
-        kind:
-            | 'commit_required'
-            | 'set_url_required'
-            | 'auth_required'
-            | 'install_required'
-            | 'unsupported_provider'
-            | 'confirmation_required'
-            | 'retry';
-        label?: string;
-        action?: string;
-        url?: string;
-    };
-};
-
-export type ScmHostingRepositoryPublishTarget = {
-    [key: string]: unknown;
-    provider: ScmHostingProviderRef;
-    owner: string;
-    ownerKind: 'user' | 'org';
-    label: string;
-    isDefault?: boolean;
-    supportedVisibilities: ScmHostingRepositoryVisibility[];
-    supportedRemoteUrlKinds: ScmHostingRepositoryRemoteUrlKind[];
-    auth?: ScmHostingRepositoryAuthSummary;
-    diagnostics?: string[];
-};
-
-export type ScmHostingRepositorySummary = {
-    [key: string]: unknown;
-    provider: ScmHostingProviderRef;
-    nameWithOwner: string;
-    webUrl: string;
-    cloneUrl?: string;
-    sshUrl?: string;
-    visibility: ScmHostingRepositoryVisibility;
-    defaultBranch?: string | null;
-};
-
 export type ScmHostingRepositoryDescribePublishTargetsRequest = {
     [key: string]: unknown;
     cwd?: string;
@@ -1011,43 +918,7 @@ export type ScmHostingRepositoryDescribePublishTargetsRequest = {
     providerKind?: ScmHostingProviderKind;
 };
 
-/** Structural author projection of Protocol’s shared provisioning refusal. */
-type ScmRepositoryProvisioningFailureResponse = {
-    [key: string]: unknown;
-    success: false;
-    outcome?: ScmOperationOutcome;
-    error: string;
-    errorCode?: ScmOperationErrorCode;
-    failureCause?: ActionFailureCauseV1;
-    retryNotBeforeMs?: number;
-    remediation?: {
-        [key: string]: unknown;
-        kind:
-            | 'commit_required'
-            | 'set_url_required'
-            | 'auth_required'
-            | 'install_required'
-            | 'unsupported_provider'
-            | 'confirmation_required'
-            | 'retry';
-        label?: string;
-        action?: string;
-        url?: string;
-    };
-    stdout?: string;
-    stderr?: string;
-};
-
-export type ScmHostingRepositoryDescribePublishTargetsResponse =
-    | ({
-        [key: string]: unknown;
-        success: true;
-        auth: ScmHostingRepositoryAuthSummary;
-        defaultRepositoryName: string;
-        targets: ScmHostingRepositoryPublishTarget[];
-        diagnostics?: string[];
-    })
-    | ScmRepositoryProvisioningFailureResponse;
+type ScmRepositoryProvisioningFailureResponse = Extract<ScmHostingRepositoryPublishResponse, { success: false }>;
 
 export type ScmHostingRepositoryPublishRequest = {
     [key: string]: unknown;
@@ -1067,20 +938,6 @@ export type ScmHostingRepositoryPublishRequest = {
     remoteConflictStrategy?: 'fail' | 'set-url';
     pushCurrentBranch?: boolean;
 };
-
-export type ScmHostingRepositoryPublishResponse =
-    | ({
-        [key: string]: unknown;
-        success: true;
-        outcome?: ScmOperationOutcome;
-        repository: ScmHostingRepositorySummary;
-        remote: ScmRemoteInfo;
-        pushed: boolean;
-        snapshot?: ScmWorkingSnapshot;
-        stdout?: string;
-        stderr?: string;
-    })
-    | ScmRepositoryProvisioningFailureResponse;
 
 export type ScmRepositoryInitRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;

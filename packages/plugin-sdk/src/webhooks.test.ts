@@ -5,6 +5,7 @@ import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
 } from '@happier-dev/protocol/plugins/manifest';
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 import {
   PluginWebhookActionInputV1DeclarationSchema,
   PluginWebhookActionResultV1DeclarationSchema,
@@ -88,7 +89,7 @@ describe('webhook authoring surface', () => {
     })).toThrow();
 
     expectTypeOf<PluginWebhookContribution['verifier']['kind']>()
-      .toEqualTypeOf<'github_hmac_sha256_v1' | 'sentry_hmac_sha256_v1' | 'capabilityUrl_v1'>();
+      .toEqualTypeOf<PluginWebhookVerifierV1['kind']>();
   });
 
   it('projects the webhook action boundary schemas and raw-body decoder without exposing a general codec', () => {

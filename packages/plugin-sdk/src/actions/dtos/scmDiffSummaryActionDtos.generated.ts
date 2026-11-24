@@ -1256,6 +1256,11 @@ export type ScmDiffSummaryActionResultById = {
         candidateTreeOid?: string | undefined;
         error?: string | undefined;
         errorCode?: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported' | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.diffSummary.capture": {
         success: false;
@@ -1263,6 +1268,11 @@ export type ScmDiffSummaryActionResultById = {
         errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
         failureCause?: ActionFailureCauseV1 | undefined;
         effectAttempted?: boolean | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     } | {
         success: true;
         comparison: {
@@ -1570,6 +1580,11 @@ export type ScmDiffSummaryActionResultById = {
             outputTokens?: number | undefined;
             estimatedUsd?: number | undefined;
         };
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     } | {
         success: true;
         sourceKey: string;
@@ -2012,6 +2027,11 @@ export type ScmDiffSummaryActionResultById = {
             estimatedUsd?: number | undefined;
         };
     } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
         success: true;
         sourceKey: string;
         metadata: {
@@ -2235,7 +2255,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.list": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -2264,7 +2289,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.clear": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -2276,7 +2306,7 @@ export type ScmDiffSummaryActionResultById = {
         }[];
         failures: ({
             success: false;
-            errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+            errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
             error: string;
             resultId: string;
             latestRevision?: number | undefined;
@@ -2302,7 +2332,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.accept": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -2904,7 +2939,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.stop": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -3506,7 +3546,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.includeHookChanges": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -4108,7 +4153,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.cancel": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -4710,7 +4760,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.recover": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -5312,6 +5367,11 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.reviewed.mark": {
         success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
         errorCode: string;
         error: string;
         record?: undefined | {
@@ -5330,6 +5390,11 @@ export type ScmDiffSummaryActionResultById = {
         version: number;
     };
     readonly "scm.diffSummary.reviewed.unmark": {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
         success: false;
         errorCode: string;
         error: string;
@@ -5350,7 +5415,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.read": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -5952,7 +6022,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.edit": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -6554,7 +6629,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.undo": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -7156,7 +7236,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.delete": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -7166,7 +7251,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.refine": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -7768,7 +7858,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.addOutputs": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -8370,7 +8465,12 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.discuss": {
         success: false;
-        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'source_changed' | 'source_not_pending';
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
+    } | {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'attachment_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_model_transition_apply_failed' | 'session_team_credential_binding_rejected' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {

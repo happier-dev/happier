@@ -68,6 +68,21 @@ test('managed machine Action DTO maps retain every complete readonly result with
   assert.ok(retainedRoots.every(field => field.questionToken), 'retained transport remains optional');
 });
 
+test('Action DTO derivation retains native SCM refusal and per-file results', () => {
+  const derived = deriveActionDtoBindings({
+    repoRoot: process.cwd(),
+    keys: ['scm.suggestion.apply'],
+    bindings: [
+      ['actions/actionSpecs.ts', 'PluginActionInputById', 'ScmSuggestionInputs', true],
+      ['actions/actionSpecs.ts', 'PluginActionResultById', 'ScmSuggestionResults', false],
+    ],
+  });
+  const dto = derived.declarations.find(([name]) => name === 'ScmSuggestionResults')?.[1];
+  assert.match(dto, /errorCode: ['"]BACKEND_UNAVAILABLE['"]/u);
+  assert.match(dto, /actionErrorCode: string/u);
+  assert.match(dto, /files: /u);
+});
+
 test('real schema DTOs exclude authorization runtime attachments and retain deployment fields', () => {
   const derived = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
     ['workflows/workflowDefinitionV1.ts', 'WorkflowAcceptedAuthorizationV1'],

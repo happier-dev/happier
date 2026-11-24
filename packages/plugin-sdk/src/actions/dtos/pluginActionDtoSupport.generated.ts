@@ -12791,6 +12791,7 @@ export type ActionInputFieldHint = {
     prompt?: string | undefined;
     description?: string | undefined;
     placeholder?: string | undefined;
+    unsetLabel?: string | undefined;
     options?: readonly {
         value: JsonValue;
         label: string;
@@ -12852,6 +12853,7 @@ export type ActionInputHints = {
         prompt?: string | undefined;
         description?: string | undefined;
         placeholder?: string | undefined;
+        unsetLabel?: string | undefined;
         options?: readonly {
             value: JsonValue;
             label: string;
@@ -12966,6 +12968,7 @@ export type EffectiveActionInputField = {
     prompt?: string | undefined;
     description?: string | undefined;
     placeholder?: string | undefined;
+    unsetLabel?: string | undefined;
     options?: readonly {
         value: JsonValue;
         label: string;
@@ -13399,6 +13402,11 @@ export type PluginActionContributionV2 = {
                 params?: Record<string, number | string> | undefined;
             };
             placeholder?: string | undefined | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+            unsetLabel?: string | undefined | {
                 key: string;
                 fallback: string;
                 params?: Record<string, number | string> | undefined;
@@ -16529,6 +16537,7 @@ export type ActionSpec = {
             prompt?: string | undefined;
             description?: string | undefined;
             placeholder?: string | undefined;
+            unsetLabel?: string | undefined;
             options?: readonly {
                 value: JsonValue;
                 label: string;
@@ -18267,6 +18276,7 @@ export type SessionBoardItemUpsertSchemaInputV1 = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: unknown;
                                     label: string;
@@ -19513,6 +19523,18 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     machineId: string;
                     inputDigest: string;
                 }[];
+            } | {
+                operation: "targetCheck";
+                source: {
+                    id: string;
+                };
+                target: {
+                    pluginId: string;
+                    localId: string;
+                };
+                environment?: undefined | {
+                    id: string;
+                };
             } | {
                 operation: "template";
                 mode: "apply" | "preview";
@@ -20849,6 +20871,18 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     machineId: string;
                     inputDigest: string;
                 }[];
+            } | {
+                operation: "targetCheck";
+                source: {
+                    id: string;
+                };
+                target: {
+                    pluginId: string;
+                    localId: string;
+                };
+                environment?: undefined | {
+                    id: string;
+                };
             } | {
                 operation: "template";
                 mode: "apply" | "preview";
@@ -22239,6 +22273,18 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     machineId: string;
                     inputDigest: string;
                 }[];
+            } | {
+                operation: "targetCheck";
+                source: {
+                    id: string;
+                };
+                target: {
+                    pluginId: string;
+                    localId: string;
+                };
+                environment?: undefined | {
+                    id: string;
+                };
             } | {
                 operation: "template";
                 mode: "apply" | "preview";

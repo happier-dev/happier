@@ -79,7 +79,8 @@ describe('canonical values composed by Session handoffs', () => {
         const validate = compilePluginJsonSchema(schema.jsonSchema);
         expect(validate({ address, metadata: response })).toBe(true);
         expect(validate({ address, metadata: { ...response, output: 'terminal body' } })).toBe(false);
-        expectTypeOf(ActionOperationGetV1ResponseProtocolSchema.parse(response)).toEqualTypeOf<ActionOperationGetV1Response>();
+        // The public DTO erases validator brands, including nested provider connection IDs.
+        expectTypeOf<ActionOperationGetV1Response>().toMatchTypeOf<PluginActionResultById['action.operations.get']>();
     });
     it('composes exact Agent selections without losing configured definition identity', () => {
         const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-a' };

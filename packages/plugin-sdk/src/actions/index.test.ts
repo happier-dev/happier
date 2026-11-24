@@ -549,19 +549,15 @@ describe('ActionsService source contract', () => {
             } satisfies SessionSpawnNewInputV2;
             const sessionSpawnResult = service.execute('session.spawn_new', sessionSpawnInput);
             type ProjectedSessionSpawnResult = Awaited<typeof sessionSpawnResult>;
-            type CanonicalSpawnError = Exclude<
-                Extract<SessionSpawnNewActionResultV1, { type: 'error' }>,
-                { code: 'update_required' }
-            >;
-            type CanonicalProviderError = NonNullable<CanonicalSpawnError['providerError']>;
-            type PublicSpawnResult =
-                | (Omit<Extract<SessionSpawnNewActionResultV1, { type: 'success' }>, 'sessionId'> & { sessionId: string })
-                | Extract<SessionSpawnNewActionResultV1, { type: 'pending' }>
-                | (Omit<CanonicalSpawnError, 'providerError'> & {
-                    providerError?: Omit<CanonicalProviderError, 'connectionId'> & { connectionId?: string };
-                })
-                | Extract<SessionSpawnNewActionResultV1, { type: 'error'; code: 'update_required' }>
-                | ActionApprovalRequestCreatedResult;
+            type ProjectSpawnResult<Result> =
+                Result extends { type: 'success' }
+                    ? Omit<Result, 'sessionId'> & { sessionId: string }
+                    : Result extends { providerError?: infer ProviderError }
+                        ? Omit<Result, 'providerError'> & {
+                            providerError?: Omit<ProviderError, 'connectionId'> & { connectionId?: string };
+                        }
+                        : Result;
+            type PublicSpawnResult = ProjectSpawnResult<SessionSpawnNewActionResultV1> | ActionApprovalRequestCreatedResult;
             const projectedToPublic = (value: ProjectedSessionSpawnResult): PublicSpawnResult => value;
             const publicToProjected = (value: PublicSpawnResult): ProjectedSessionSpawnResult => value;
             void projectedToPublic;

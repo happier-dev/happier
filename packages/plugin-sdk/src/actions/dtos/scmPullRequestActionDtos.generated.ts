@@ -629,6 +629,11 @@ export type ScmPullRequestActionResultById = {
             expiresAt?: number | undefined;
         };
         refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.pullRequest.get": {
         [x: string]: unknown;
@@ -1107,6 +1112,11 @@ export type ScmPullRequestActionResultById = {
             expiresAt?: number | undefined;
         };
         refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.pullRequest.openOrReuse": {
         [x: string]: unknown;
@@ -1867,6 +1877,11 @@ export type ScmPullRequestActionResultById = {
         };
         composeUrl?: string | undefined;
         authState?: 'authenticated' | 'authentication_required' | 'unknown' | 'unsupported' | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.pullRequest.openCompose": {
         [x: string]: unknown;
@@ -2249,6 +2264,11 @@ export type ScmPullRequestActionResultById = {
             kind: 'ready';
             body?: string | undefined;
         };
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.pullRequest.checkout": {
         [x: string]: unknown;
@@ -2994,6 +3014,11 @@ export type ScmPullRequestActionResultById = {
         branch?: string | undefined;
         headSha?: null | string | undefined;
         baseSha?: null | string | undefined;
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.pullRequest.prepareWorktree": {
         [x: string]: unknown;
@@ -3738,11 +3763,21 @@ export type ScmPullRequestActionResultById = {
                 description?: string | undefined;
             };
         };
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
     readonly "scm.reviewWorkspace.materializePrepared": {
         success: false;
         error: string;
         errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     } | {
         success: true;
         targetPath: string;
@@ -4567,5 +4602,10 @@ export type ScmPullRequestActionResultById = {
             committedAtMs?: number | undefined;
             signed?: boolean | undefined;
         };
+    } | {
+        success: false;
+        errorCode: 'BACKEND_UNAVAILABLE';
+        actionErrorCode: string;
+        error?: string | undefined;
     };
 };
