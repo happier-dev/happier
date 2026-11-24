@@ -1,6 +1,7 @@
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { processGenerationMatches } from '@happier-dev/cli-common/processInstance';
 import { logger } from '@/ui/logger';
+import { createConfiguredBrowserProfileStore } from '../browser/profiles/configuredStore';
 import { daemonProcessMatchesCurrentScope } from '../ownership/daemonProcessScopeIdentity';
 import type { StoredCredentials } from '@/persistence';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
@@ -898,6 +899,18 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0)
         .map((sessionId) => sessionId.trim()),
     );
+    // Reuse the dead-runner decision after markerless recovery: a live sibling
+    // keeps its Browser workspace, while a crashed Session has no final exit
+    // callback left to reclaim it. The store also recovers prior-daemon profiles
+    // and preserves saved user/plugin profiles under the same identity.
+    const endedSessionIds = new Set(orphanedDeadDaemonSessions.map(session => session.sessionId)
+      .filter(sessionId => !recoveredLiveSessionIds.has(sessionId)));
+    if (endedSessionIds.size > 0) {
+      const profiles = createConfiguredBrowserProfileStore({ emitAudit: record => {
+        logger.infoFile('[DAEMON RUN] Browser profile startup purge', record);
+      } });
+      for (const sessionId of endedSessionIds) await profiles.purgeForSessionDeleted({ sessionId });
+    }
     for (const marker of aliveMarkers) {
       const restartIntent = readConnectedServiceRestartIntent(marker);
       if (!restartIntent) continue;
