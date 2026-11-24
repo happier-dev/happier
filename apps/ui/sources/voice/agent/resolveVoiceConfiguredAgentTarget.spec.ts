@@ -250,7 +250,7 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
       expect(restored).not.toBeNull();
       expect(readLocalConversationVoiceSettings(restored!.voice).agent).toMatchObject({ agentSource: 'session', agentId: 'opencode',
         agentTargetKey: 'agent:happier.agent.opencode/opencode', agentIdentity: null,
-        chatModelId: 'gpt-6-luna' });
+        chatModelId: 'default', chatModelSelection: null });
     } finally { captured.dispose(); }
   });
 

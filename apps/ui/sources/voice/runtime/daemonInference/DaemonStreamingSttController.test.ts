@@ -649,7 +649,7 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
       await controller().start(params);
       expect(params.sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'daemon_streaming_stt_internal_error' }));
       const safe = { code: 'internal_error', message: 'redacted_start_failure', step: 'sender_start', errorClass: 'Error',
-        failureCause: projectActionFailureCauseV1(Object.assign(new Error(), { code: 'internal_error' }), 'voice.runtime', { allowUnknownErrorCode: false }) };
+        failureCause: { phase: 'voice.runtime', errorClass: 'Error', errorCode: 'internal_error', httpStatus: null } };
       expect(daemonSpeechStreamDiagnostics.snapshot().lastStartFailure).toEqual(safe);
       expect(warn).toHaveBeenCalledWith('[daemonVoiceInference] streaming STT start failed ' + JSON.stringify(safe));
       expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');

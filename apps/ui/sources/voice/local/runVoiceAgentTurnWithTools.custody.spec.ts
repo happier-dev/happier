@@ -139,7 +139,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(result.toolResultBatches[0]?.[0]?.result, JSON.stringify(result.toolResultBatches))
       .toMatchObject({ ok: true, type: 'success' });
     expect(result.assistantTurns).toHaveLength(1);
-    expect(result.assistantTurns[0]).toBe(t('newSession.sessionStartedMessage'));
+    expect(result.assistantTurns[0]).toBe(t('voiceSurface.sessionCreated'));
     expect(result.assistantTurns[0]).not.toContain('creation action');
   });
 

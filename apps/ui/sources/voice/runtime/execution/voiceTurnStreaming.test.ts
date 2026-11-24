@@ -377,7 +377,10 @@ describe('Voice streaming through retained initialization, execution transport a
         expect(payload).not.toContain(oldUpdate);
         expect(payload).not.toContain('PRIVATE_UI_ENTITY_SENTINEL');
         expect(payload.match(/CURRENT UI CONTEXT/g)).toHaveLength(1);
-        expect(f.starts[1]?.message).toBe('again');
+        expect(f.starts[1]?.displayMessage).toBe('again');
+        expect(f.starts[1]?.message).toContain('omit sessionId');
+        expect(f.starts[1]?.message).not.toContain('STREAMING_TARGET_SENTINEL');
+        expect(f.starts[1]?.message).not.toContain('CURRENT UI CONTEXT');
     });
 
     it('retains explicit attempt context after rejected start and retires it after acceptance', async () => {
@@ -428,7 +431,10 @@ describe('Voice streaming through retained initialization, execution transport a
         expect(f.starts[1]?.message).toBe(f.starts[0]?.message);
         expect(f.starts[1]?.message.match(/RECOVERED_ATTEMPT_SENTINEL/g)).toHaveLength(1);
         expect(f.starts[1]?.message.match(/THIS IS THE CURRENT TARGET SESSION/g)).toHaveLength(1);
-        expect(f.starts[2]?.message).toBe('next');
+        expect(f.starts[2]?.displayMessage).toBe('next');
+        expect(f.starts[2]?.message).toContain('omit sessionId');
+        expect(f.starts[2]?.message).not.toContain('RECOVERED_ATTEMPT_SENTINEL');
+        expect(f.starts[2]?.message).not.toContain('THIS IS THE CURRENT TARGET SESSION');
         expect(f.transport.isActive(f.controlSessionId)).toBe(true);
     });
 });

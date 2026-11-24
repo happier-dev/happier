@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
-import { ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunTurnStreamStartRequestSchema, ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema, type ExecutionRunTurnStreamStartRequest } from '@happier-dev/protocol/execution/runs/index';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import { createStandaloneVoicePolicyHarness, prepareStandaloneVoicePolicyHarness } from '@/dev/testkit/harness/standaloneVoicePolicyHarness';
 import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
@@ -10,7 +10,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceSession } from '@/realtime/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionListRenderableSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { waitForTestEvent } from '@/dev/testkit';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 
@@ -28,7 +28,7 @@ const realtimeState = {
   hostAuthoredContext: 'session_context' as 'session_context' | 'current_ui_only',
   session: null as Pick<VoiceSession, 'sendContextualUpdate' | 'sendTextMessage'> | null,
 };
-const localProviderTurns = vi.fn<(input: unknown) => void>();
+const localProviderTurns = vi.fn<(input: ExecutionRunTurnStreamStartRequest) => void>();
 const { createCurrentUiContextAutomaticUpdateProjector, voiceHooks } = await import('./voiceHooks');
 const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -36,6 +36,33 @@ const { getVoiceContextSinkForSession } = await import('./getVoiceContextSinkFor
 let TEST_SERVER_ID: string;
 let fixture: Awaited<ReturnType<typeof createStandaloneVoicePolicyHarness>>;
 let activation: Awaited<ReturnType<typeof fixture.activateLocalAgent>> | undefined;
+const CONTEXT_QUEUE_PROBE = 'CONTEXT_QUEUE_PROBE';
+let cleanProbeMessage: string;
+
+async function probeLocalTurn(): Promise<string> {
+  const callCount = localProviderTurns.mock.calls.length;
+  await voiceAgentSessions.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, CONTEXT_QUEUE_PROBE);
+  expect(localProviderTurns).toHaveBeenCalledTimes(callCount + 1);
+  const [request] = localProviderTurns.mock.calls[callCount]!;
+  expect(request.displayMessage).toBe(CONTEXT_QUEUE_PROBE);
+  return request.message;
+}
+
+async function bindLocalTarget(conversationSessionId = 'voice-conversation-1'): Promise<void> {
+  voiceSessionBindingStore.getState().bind({
+    adapterId: 'local_conversation',
+    controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+    conversationSessionId,
+    conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: conversationSessionId },
+    transcriptMode: 'native_session',
+    targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
+    updatedAt: 1,
+  });
+  // A clean bound turn includes routing guidance. Observe it at the real
+  // daemon boundary before delivering the lifecycle event under test.
+  cleanProbeMessage = await probeLocalTurn();
+  localProviderTurns.mockClear();
+}
 
 function announcementTexts(sessionId: string): string[] {
   return readStoredSessionMessages(storage.getState(), sessionId).flatMap(message =>
@@ -47,7 +74,7 @@ describe('voiceHooks sink routing', () => {
     const daemon = await createRetainedVoiceAgentRpcBoundary({
       handleOtherRpc: async (method, input) => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
-          localProviderTurns(input);
+          localProviderTurns(ExecutionRunTurnStreamStartRequestSchema.parse(input));
           return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'context-stream' });
         }
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) return ExecutionRunTurnStreamReadResponseSchema.parse({
@@ -71,10 +98,9 @@ describe('voiceHooks sink routing', () => {
   afterEach(async () => {
     try {
       if (voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)) {
-        await voiceAgentSessions.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'CONTEXT_QUEUE_PROBE');
         // An accidental second foreground Follow queue is observable on the next
         // real provider turn, even if it produced no immediate transport call.
-        expect(localProviderTurns.mock.calls.at(-1)?.[0]).toMatchObject({ message: 'CONTEXT_QUEUE_PROBE' });
+        expect(await probeLocalTurn()).toBe(cleanProbeMessage);
       }
     } finally {
       await activation?.dispose();
@@ -113,6 +139,7 @@ describe('voiceHooks sink routing', () => {
       persistedBindingsByConversationSessionId: {},
     });
     localProviderTurns.mockClear();
+    cleanProbeMessage = CONTEXT_QUEUE_PROBE;
     realtimeState.started = false;
     realtimeState.hostAuthoredContext = 'session_context';
     realtimeState.session = null;
@@ -345,16 +372,8 @@ describe('voiceHooks sink routing', () => {
     expect(sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it('prefers the active realtime owner over newly selected local-agent settings during ready-event routing', () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+  it('prefers the active realtime owner over newly selected local-agent settings during ready-event routing', async () => {
+    await bindLocalTarget();
     setVoiceSessionSnapshot({
       adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
@@ -391,15 +410,7 @@ describe('voiceHooks sink routing', () => {
         },
       },
     }));
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget();
     setVoiceSessionSnapshot({
       adapterId: 'local_conversation',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -427,31 +438,15 @@ describe('voiceHooks sink routing', () => {
     expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
 
-  it('leaves local ready catch-up to daemon turn admission', () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+  it('leaves local ready catch-up to daemon turn admission', async () => {
+    await bindLocalTarget();
 
     voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('routes non-target session updates when other-session voice updates are enabled', () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+  it('routes non-target session updates when other-session voice updates are enabled', async () => {
+    await bindLocalTarget();
 
     voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's2' }, [{
       kind: 'agent-text', id: 'other-completion', localId: null, createdAt: 2, text: 'Unrelated background result.',
@@ -498,15 +493,7 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('routes active-target assistant replies to local voice as deterministic foreground announcements only', async () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget();
 
     const completion = [{
       kind: 'agent-text',
@@ -524,15 +511,7 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('announces failed sub-agent run summaries immediately in the bound hidden voice conversation', async () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-hidden-s1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-hidden-s1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget('voice-hidden-s1');
 
     voiceHooks.onMessages({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
       kind: 'tool-call',
@@ -562,15 +541,7 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('mirrors active-target assistant replies into the bound hidden voice conversation for hands-free follow-up', async () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-hidden-s1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-hidden-s1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget('voice-hidden-s1');
 
     voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
       kind: 'agent-text',
@@ -587,15 +558,7 @@ describe('voiceHooks sink routing', () => {
   it('treats the bound local target session as the primary action session without retaining background context when the target store is stale', async () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-hidden-s1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-hidden-s1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget('voice-hidden-s1');
 
     voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
       kind: 'agent-text',
@@ -610,15 +573,7 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('announces permission requests immediately without retaining a second detailed-request queue', async () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget();
 
     voiceHooks.onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's1' }, 'req_1', 'permission', 'Bash', { command: 'rm -rf /tmp/x' });
 
@@ -629,15 +584,7 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('announces non-target user-action requests in the local hidden voice conversation when other-session updates are enabled', async () => {
-    voiceSessionBindingStore.getState().bind({
-      adapterId: 'local_conversation',
-      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-conversation-1',
-      conversationSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 'voice-conversation-1' },
-      transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: TEST_SERVER_ID, sessionId: 's1' },
-      updatedAt: 1,
-    });
+    await bindLocalTarget();
 
     voiceHooks.onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's2' }, 'req_2', 'user_action', 'AskUserQuestion', {
       prompt: 'Pick a shape',
@@ -781,46 +728,38 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('routes duplicate-id lifecycle events only by their exact Home and fails closed for a bare id', () => {
-    storage.setState((state: any) => ({
-      ...state,
+    const homeA = { serverId: TEST_SERVER_ID, sessionId: 'same' };
+    const homeB = { serverId: 'server-b', sessionId: 'same' };
+    const metadataA = { path: '/home-a', host: 'home-a.test', summary: { text: 'Home A session', updatedAt: 1 } };
+    const metadataB = { path: '/home-b', host: 'home-b.test', summary: { text: 'Home B session', updatedAt: 1 } };
+    storage.setState(state => ({
       sessions: {
         ...state.sessions,
-        same: {
-          id: 'same',
-          serverId: TEST_SERVER_ID,
-          metadata: { summary: { text: 'Home A session' } },
-          presence: 'online',
-        },
+        same: createSessionFixture({ id: homeA.sessionId, serverId: homeA.serverId, metadata: metadataA }),
       },
       sessionListRowsByServerId: {
         ...state.sessionListRowsByServerId,
-        [TEST_SERVER_ID]: {
-          ...state.sessionListRowsByServerId?.[TEST_SERVER_ID],
-          same: {
-            id: 'same',
-            serverId: TEST_SERVER_ID,
-            metadata: { summary: { text: 'Home A session' } },
-            presence: 'online',
-          },
+        [homeA.serverId]: {
+          ...state.sessionListRowsByServerId[homeA.serverId],
+          same: createSessionListRenderableSessionFixture({ id: homeA.sessionId, serverId: homeA.serverId, metadata: metadataA }),
         },
-        'server-b': {
-          same: {
-            id: 'same',
-            serverId: 'server-b',
-            metadata: { summary: { text: 'Home B session' } },
-            presence: 'online',
-            viewer: { follow: { following: true, includeInVoice: true } },
-          },
+        [homeB.serverId]: {
+          same: createSessionListRenderableSessionFixture({
+            id: homeB.sessionId,
+            serverId: homeB.serverId,
+            metadata: metadataB,
+            viewer: createSessionViewerFixture({ follow: { follows: true, notificationLevel: 'important', includeInVoice: true } }),
+          }),
         },
       },
       ordinarySessionListMembershipByServerId: {
         ...state.ordinarySessionListMembershipByServerId,
-        [TEST_SERVER_ID]: [...(state.ordinarySessionListMembershipByServerId?.[TEST_SERVER_ID] ?? []), 'same'],
-        'server-b': ['same'],
+        [homeA.serverId]: [...(state.ordinarySessionListMembershipByServerId[homeA.serverId] ?? []), homeA.sessionId],
+        [homeB.serverId]: [homeB.sessionId],
       },
     }));
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: TEST_SERVER_ID, sessionId: 'same' });
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: TEST_SERVER_ID, sessionId: 'same' }]);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(homeA);
+    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([homeA]);
 
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
@@ -834,16 +773,15 @@ describe('voiceHooks sink routing', () => {
       canStop: true,
     });
 
-    const homeB = { serverId: 'server-b', sessionId: 'same' } as const;
     voiceHooks.onSessionFocus(homeB);
-    voiceHooks.onSessionOnline(homeB, { summary: { text: 'Home B session' } });
-    voiceHooks.onSessionOffline(homeB, { summary: { text: 'Home B session' } });
-    voiceHooks.onMessages(homeB, [{ kind: 'agent-text', text: 'Only Home B changed.', createdAt: 1 } as any]);
-    voiceHooks.onReady(homeB, [{ kind: 'agent-text', text: 'Home B is ready.', createdAt: 2 } as any]);
+    voiceHooks.onSessionOnline(homeB, metadataB);
+    voiceHooks.onSessionOffline(homeB, metadataB);
+    voiceHooks.onMessages(homeB, [{ kind: 'agent-text', id: 'changed', localId: null, text: 'Only Home B changed.', createdAt: 1 }]);
+    voiceHooks.onReady(homeB, [{ kind: 'agent-text', id: 'ready', localId: null, text: 'Home B is ready.', createdAt: 2 }]);
 
     expect(useVoiceTargetStore.getState().lastFocusedSessionAddress).toEqual(homeB);
-    expect(useVoiceTargetStore.getState().primaryActionSessionAddress).toEqual({ serverId: TEST_SERVER_ID, sessionId: 'same' });
-    expect(useVoiceTargetStore.getState().voiceLiveContextSessionAddresses).toEqual([{ serverId: TEST_SERVER_ID, sessionId: 'same' }]);
+    expect(useVoiceTargetStore.getState().primaryActionSessionAddress).toEqual(homeA);
+    expect(useVoiceTargetStore.getState().voiceLiveContextSessionAddresses).toEqual([homeA]);
     expect([...sendContextualUpdate.mock.calls, ...sendTextMessage.mock.calls].flat().join('\n'))
       .toContain('Home B');
     expect([...sendContextualUpdate.mock.calls, ...sendTextMessage.mock.calls].flat().join('\n'))
