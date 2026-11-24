@@ -17291,6 +17291,7 @@ settingsSession: {
             scopeReadRefused: "Für diesen Bereich ist keine Nutzung verfügbar.",
             changeScope: "Bereich ändern",
             sessionRecipientSubtitle: "Nutzung deines Kontos in dieser Sitzung.",
+            sessionRecipientFigure: "Deine Nutzung",
             machinesCount: ({ count }: { count: string | number }) => `${count} Rechner`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'Agent', plural: 'Agenten' })}`,
             purposeDaily: "Wie viel du an jedem Tag genutzt hast, nach Agent.",

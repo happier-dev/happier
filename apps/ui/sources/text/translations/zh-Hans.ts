@@ -16755,6 +16755,7 @@ settingsSession: {
             scopeReadRefused: "无法查看此范围内的用量。",
             changeScope: "更改范围",
             sessionRecipientSubtitle: "你的账号在此会话中的用量。",
+            sessionRecipientFigure: "你的用量",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台机器`,
             agentsCount: ({ count }: { count: string | number }) => `${count} 个代理`,
             purposeDaily: "每天的用量，按代理划分。",

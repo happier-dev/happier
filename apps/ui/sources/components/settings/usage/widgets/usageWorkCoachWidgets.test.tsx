@@ -1383,6 +1383,23 @@ describe('Work and Coach widget bodies', () => {
     expect(text).toContain('Compaction');
     expect(screen.findByTestId('value.autopsy.unknownEnds')).toBeTruthy();
   });
+  it.each(['view', 'owner'] as const)('labels a Session page\'s figures as the viewer\'s own for %s access, and draws no empty dashboard line for a recipient (r226 #62)', async level => {
+    const { createSessionFixture, createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const previous = storage.getState();
+    storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: 'home', access: createSessionAccessFixture(level) })]);
+    try {
+      const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
+      // The viewer's own ledger in this Session has no Work: zero is the answer, not "nothing in this period".
+      const none = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [], evidence: [] }));
+      const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+        slice={{ ...slice, shownQuery: sessionQuery, work: none }} id="usage_session_value" testID="value" />);
+      const text = screen.getTextContent();
+      expect.soft(text.includes(t('usage.board.page.sessionRecipientFigure'))).toBe(level === 'view');
+      expect.soft(text.includes(t('usage.board.page.thisSession'))).toBe(level === 'owner');
+      expect.soft(text.includes(t('usage.board.work.emptyReason'))).toBe(level === 'owner');
+      await screen.unmount();
+    } finally { storage.setState(previous, true); }
+  });
   it('says only the PR is missing for a turn whose commit is linked, and keeps the broad absence for a turn with no git evidence', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
     const branch = { ref: 'refs/heads/master', headSha: 'b'.repeat(40) };

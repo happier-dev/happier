@@ -50,6 +50,8 @@ export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/d
 import { useUsageWidgetPageHasCoverageDetail, useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { useAllMachines, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { useSessionSelector } from '@/sync/store/hooks';
+import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identity/projectChoiceMachineNames';
 import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
@@ -81,13 +83,32 @@ export function useUsagePluginTheme(): PluginUiThemeV1 {
   return usePluginUiTheme(theme);
 }
 
-/** Exact shown dates; a date range does not establish a rolling preset identity. */
-export function usagePeriodPhrase(query: Pick<UsageQuery, 'period' | 'timeZoneOffsetMinutes'> & Partial<Pick<UsageQuery, 'session'>>): string {
+/** The one Session a query reads, when it reads exactly one. */
+export function usageQuerySingleSession(query: Partial<Pick<UsageQuery, 'session'>>): string | null {
+  return typeof query.session === 'string' ? query.session : query.session?.length === 1 ? query.session[0]! : null;
+}
+
+/**
+ * Whether the viewer was given access to this Session rather than owning it: their figures are their own account's
+ * usage in it, never the Session's. Decided once, by the access owner, for the page header and the Session bodies.
+ */
+export function useUsageSessionRecipient(sessionId: string | null, serverId: string | null | undefined): boolean {
+  return useSessionSelector(sessionId ?? '', serverId,
+    session => sessionId !== null && session !== null && isSessionAccessRecipient(session.access, session.accessLevel));
+}
+
+/**
+ * Exact shown dates; a date range does not establish a rolling preset identity. `viewerOwn`: the viewer was given
+ * access to this one Session, so its figures are "Your usage", not the Session's (acceptance r226 #62).
+ */
+export function usagePeriodPhrase(query: Pick<UsageQuery, 'period' | 'timeZoneOffsetMinutes'> & Partial<Pick<UsageQuery, 'session'>>,
+  options?: Readonly<{ viewerOwn?: boolean }>): string {
   // One Session read over its whole life: the period is the Session itself.
   const oneSession = typeof query.session === 'string' || (Array.isArray(query.session) && query.session.length === 1);
-  if (oneSession && 'relative' in query.period && query.period.relative === 'all') return t('usage.board.page.thisSession');
+  const sessionLabel = t(options?.viewerOwn ? 'usage.board.page.sessionRecipientFigure' : 'usage.board.page.thisSession');
+  if (oneSession && 'relative' in query.period && query.period.relative === 'all') return sessionLabel;
   const period = formatUsageCalendarPeriod({ ...query.period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes });
-  return oneSession ? `${t('usage.board.page.thisSession')} · ${period}` : period;
+  return oneSession ? `${sessionLabel} · ${period}` : period;
 }
 
 // One projection per admitted accounting response and presentation; bodies share it, never rebuild it.
@@ -773,8 +794,16 @@ function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
   return source.source === 'work' && source.errorCode === 'machine_offline';
 }
 
+/**
+ * A Work read that settled with evidence (`partial`: some Sessions on unreachable Machines or failed) is listed by the
+ * page and stated once at the ledger's total; the page header says nothing about it (acceptance r226 #61).
+ */
+function isUsageWorkSettledWithEvidence(source: UsageQuerySourceState): boolean {
+  return source.source === 'work' && source.status === 'partial';
+}
+
 export function readUsagePageWorkOffline(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
-  return slices.some(slice => slice.sources.some(isUsageWorkOffline));
+  return slices.some(slice => slice.sources.some(source => isUsageWorkOffline(source) && !isUsageWorkSettledWithEvidence(source)));
 }
 
 function usageCoverageHeadlineKey(gaps: readonly UsageCoverageStatus[]) {
@@ -920,7 +949,8 @@ function isUsagePageReadSource(source: string): boolean {
 }
 
 function readUsagePageFailures(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): UsageQuerySourceState[] {
-  return slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)));
+  return slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)
+    && !isUsageWorkSettledWithEvidence(source)));
 }
 
 /** Whether this Home's server is too old to answer one page read (`how_you_work`, `work`): a figure that read fills says so, not "not measured yet". */
@@ -947,8 +977,10 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
   const quiet = !ownershipUnproven && retryable.every(source => source.source === 'work');
   const names = [...new Set(retryable.map(source => usageSourceTitle(usagePageReadFamily(source.source))))].join(', ');
   const witnessed = readUsagePageWitnessedNames(slices);
+  // "Not available" only while nothing of Work is shown; a failed reread over retained links says what arrived.
+  const nothingShown = retryable.every(source => source.status === 'error');
   const reason = [
-    ...(names ? [quiet && !witnessed.length ? t('usage.board.page.workNotRead') : witnessed.length
+    ...(names ? [quiet && nothingShown && !witnessed.length ? t('usage.board.page.workNotRead') : witnessed.length
       ? t('usage.board.page.coverageFailedWitnessed', { sources: names, witnessed: witnessed.join(', ') })
       : t('usage.board.page.coverageFailed', { sources: names })] : []),
     ...(ownershipUnproven ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),

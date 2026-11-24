@@ -25,6 +25,8 @@ import {
   leadingUsageRows,
   usageDimensionLabel,
   usagePeriodPhrase,
+  useUsageSessionRecipient,
+  usageQuerySingleSession,
   useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -82,13 +84,11 @@ export function UsageWorkAutopsy(
   // Session totals use the same admitted accounting projection as Overview and Costs.
   // Work allocations describe turn linkage; they cannot establish a second Session total.
   const amount = props.query.metric === 'cost' ? cost?.amountUsd ?? null : accounting?.hero.totalTokens ?? null;
-  const selected =
-    typeof props.query.session === 'string'
-      ? props.query.session
-      : props.query.session?.length === 1
-        ? props.query.session[0]!
-        : null;
+  const selected = usageQuerySingleSession(props.query);
   const work = props.slice.work;
+  // A viewer given access to this Session sees their own account's usage in it: its label says so, and zero is the
+  // answer, never the dashboard's empty state (acceptance r226 #62).
+  const viewerOwn = useUsageSessionRecipient(selected, props.serverId);
   const linksNotice = usageWorkLinksNotice(props.slice);
   const { metric, costBasis } = props.query;
   const autopsy = React.useMemo(
@@ -257,7 +257,7 @@ export function UsageWorkAutopsy(
               theme={theme}
               size="stat"
               showLabel
-              label={usagePeriodPhrase(props.query)}
+              label={usagePeriodPhrase(props.query, { viewerOwn })}
               // Unknown is never the headline: a quiet dash, with the reason in the caption.
               value={amount ?? '—'}
               valueFormatter={value => metric === 'cost' ? formatUsageCost(value, costCurrency) : format(value)}
@@ -327,14 +327,14 @@ export function UsageWorkAutopsy(
             </Text>
           </View> : null}
         </View>
-      ) : work ? (
+      ) : work && !viewerOwn ? (
         <UsageBodyInsufficient
           testID={`${props.testID}.empty`}
           replacesContent={false}
           title={t('usage.board.work.emptyTitle')}
           reason={t('usage.board.work.emptyReason')}
         />
-      ) : props.unavailableSaid ? null : (
+      ) : props.unavailableSaid || work ? null : (
         // No Work facts were admitted for this read: say so rather than show an empty autopsy.
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}

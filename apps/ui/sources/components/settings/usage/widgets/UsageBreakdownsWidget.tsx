@@ -21,6 +21,8 @@ import {
   UsageCoverageLine,
   usageDimensionLabel,
   usagePeriodPhrase,
+  useUsageSessionRecipient,
+  usageQuerySingleSession,
   useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -98,7 +100,10 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const selection = view?.pageCost.selection ?? null;
   // The money basis is the card's: said once beside its period, and on a row only where that row's differs.
   const basisPhrase = metric === 'cost' && view ? usagePageCostCaption(view.pageCost) ?? null : null;
-  useWidgetFrameBodyCaption(basisPhrase ? `${usagePeriodPhrase(props.query)} · ${basisPhrase}` : usagePeriodPhrase(props.query));
+  // On a Session page opened through a share the rows are the viewer's own usage in it (r226 #62).
+  const viewerOwn = useUsageSessionRecipient(usageQuerySingleSession(props.query), props.serverId);
+  const period = usagePeriodPhrase(props.query, { viewerOwn });
+  useWidgetFrameBodyCaption(basisPhrase ? `${period} · ${basisPhrase}` : period);
   const currency = selection?.currency ?? 'USD';
   const total = accounting
     ? metric === 'cost'

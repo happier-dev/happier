@@ -328,7 +328,10 @@ function ResetTimeline(
         // A lane is the plan: its identity, never its title alone, so two "Leeroy" accounts keep their own lanes.
         lane: name ? name.identity ? `${name.primaryLabel ?? name.title} · ${name.identity}` : name.title : '',
         // Drawn as the pool cell draws an account: the name, its address beneath with the local part whole (11-22 #34).
-        ...(name?.identity ? { laneTitle: name.primaryLabel ?? name.title, laneDetail: name.identity } : {}),
+        // Same names told apart only by a number keep it on its own line, so truncation never cuts it (r226 #64).
+        ...(name?.identity ? { laneTitle: name.primaryLabel ?? name.title, laneDetail: name.identity }
+          : name?.numbered ? { laneTitle: name.numbered.label, laneDetail: t('connectedServicesCollection.accountLabelNumbered',
+            { service: name.serviceLabel, number: name.numbered.number }) } : {}),
         datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatMoment(event.atMs, props.nowMs) },
         annotation: datum?.value,
         // Each mark says which window it is ("Weekly", "5-hour") or what happens (lab p2sheet-D).

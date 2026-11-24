@@ -50,8 +50,6 @@ import { UsageAppsNothingRecorded } from './UsageAppsNothingRecorded';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
-import { useSessionSelector } from '@/sync/store/hooks';
-import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import {
   USAGE_SESSION_WIDGET_PRESET_ID,
   USAGE_WIDGET_PRESET_IDS,
@@ -82,7 +80,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -677,8 +675,7 @@ function UsagePageHeader(
   // Which notice is open, by its identity: a new notice (Views Retry turning into the ownership refusal) opens closed.
   const [openNotice, setOpenNotice] = React.useState<string | null>(null);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
-  const isRecipient = useSessionSelector(props.sessionId ?? '', props.serverId,
-    session => session !== null && isSessionAccessRecipient(session.access, session.accessLevel));
+  const isRecipient = useUsageSessionRecipient(props.sessionId ?? null, props.serverId);
   const scopeRefusal = props.facts.failure?.scopeRefusal;
   const subtitle = props.sessionId && scopeRefusal ? undefined : isRecipient
     ? t('usage.board.page.sessionRecipientSubtitle')

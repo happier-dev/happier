@@ -133,6 +133,11 @@ export type ConnectedAccountNamePresentation = Readonly<{
   identityLabel: string | null;
   /** Distinguishes matching names where a compact consumer has no secondary identity line. */
   inlineLabel?: string;
+  /**
+   * Names that nothing else tells apart are numbered ("Name 2"): the shared name and the number, for a consumer that
+   * gives the number its own line so truncating the name never cuts it.
+   */
+  numbered?: Readonly<{ label: string; number: number }>;
   /** The email as the privacy policy shows it. */
   email: string | null;
 }>;
@@ -240,7 +245,7 @@ export function presentConnectedAccountNames(entries: readonly ConnectedAccountN
     if (indistinguishable.length < 2) continue;
     [...indistinguishable].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)).forEach((key, index) => {
       const name = names.get(key)!;
-      names.set(key, { ...name, primaryLabel: [name.primaryLabel, index + 1].join(' ') });
+      names.set(key, { ...name, primaryLabel: [name.primaryLabel, index + 1].join(' '), numbered: { label: name.primaryLabel, number: index + 1 } });
     });
   }
   return names;

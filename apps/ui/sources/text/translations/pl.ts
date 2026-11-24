@@ -17228,6 +17228,7 @@ settingsSession: {
       scopeReadRefused: "Dane o użyciu w tym zakresie są niedostępne.",
       changeScope: "Zmień zakres",
       sessionRecipientSubtitle: "Użycie na Twoim koncie w tej sesji.",
+      sessionRecipientFigure: "Twoje użycie",
       machinesCount: ({ count }: { count: string | number }) => `Maszyny: ${count}`,
       agentsCount: ({ count }: { count: string | number }) => `Agenci: ${count}`,
       purposeDaily: "Dzienne użycie z podziałem na agentów.",

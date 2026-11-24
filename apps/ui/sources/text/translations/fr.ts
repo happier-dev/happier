@@ -16987,6 +16987,7 @@ settingsSession: {
             scopeReadRefused: "L’utilisation n’est pas accessible pour ce périmètre.",
             changeScope: "Modifier le périmètre",
             sessionRecipientSubtitle: "Utilisation de votre compte dans cette session.",
+            sessionRecipientFigure: "Votre utilisation",
             machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'machine', plural: 'machines' })}`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agent', plural: 'agents' })}`,
             purposeDaily: "Ton usage de chaque jour, par agent.",

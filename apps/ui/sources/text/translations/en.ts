@@ -20585,6 +20585,7 @@ const enUsage = {
       scopeReadRefused: "Usage isn’t available for this scope.",
       changeScope: "Change scope",
       sessionRecipientSubtitle: "Your account’s usage in this session.",
+      sessionRecipientFigure: "Your usage",
       machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'machine', plural: 'machines' })}`,
       agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agent', plural: 'agents' })}`,
       purposeDaily: "How much you used each day, by agent.",

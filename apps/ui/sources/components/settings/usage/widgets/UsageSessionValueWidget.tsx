@@ -24,6 +24,8 @@ import {
   type UsageBodyProps,
   leadingUsageRows,
   UsageShowAllRows,
+  useUsageSessionRecipient,
+  usageQuerySingleSession,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
 import { partitionUsageWorkMoneyRows, projectUsageSessionValuePlots, type UsageWorkSessionRow } from './usageWorkPresentation';
@@ -52,6 +54,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const agentColor = useUsageAgentColor();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
+  const viewerOwn = useUsageSessionRecipient(usageQuerySingleSession(props.query), props.serverId);
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
   const { summary, format, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
     props.slice,
@@ -89,12 +92,13 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   }
   if (summary.sessions.length === 0)
     return (
-      <View><UsageBodyInsufficient
+      // A viewer given access to this Session reads their own zero in the autopsy's figures: not an empty dashboard.
+      <View>{viewerOwn ? null : <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
         replacesContent={false}
         title={t('usage.board.work.emptyTitle')}
         reason={t('usage.board.work.emptyReason')}
-      />{outside}<UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} /></View>
+      />}{outside}<UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} /></View>
     );
   const merged = (row: UsageWorkSessionRow) =>
     row.outcomes.filter((outcome) => outcome.pullRequest.state === 'merged')

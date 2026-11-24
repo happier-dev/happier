@@ -26,7 +26,7 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline,readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -503,6 +503,33 @@ describe('shared Usage identity and dependent coverage', () => {
             .toBe(t('usage.board.page.workNotRead'));
         expect(readUsagePageFailure([slice([{ source: 'comparison', status: 'error' }])])).toBeNull();
         expect(readUsagePageFailure([slice([{ source: 'work', status: 'pending' }])])).toBeNull();
+    });
+    it('keeps the header silent about a Work read that settled with evidence; the ledger total owns the partial statement (r226 #61)', () => {
+        const slice = (work: Readonly<Record<string, unknown>>) =>
+            ({ sources: [{ source: 'work', ...work }] }) as unknown as Parameters<typeof readUsagePageFailure>[0][number];
+        const header = (work: Readonly<Record<string, unknown>>) => {
+            const failure = readUsagePageFailure([slice(work)]);
+            return { reason: failure?.reason ?? null, retry: failure?.retryable ?? false, offline: readUsagePageWorkOffline([slice(work)]),
+                refused: failure?.scopeRefusal != null };
+        };
+        const failedWork = t('usage.board.page.coverageFailed', { sources: usageSourceTitle('work') });
+        // Settled with evidence: Machines unreachable, Sessions that failed retryably, or both. Nothing in the header.
+        expect.soft(header({ status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1229 } }))
+            .toEqual({ reason: null, retry: false, offline: false, refused: false });
+        expect.soft(header({ status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { machine_unavailable: 1229, failed: 2 } }))
+            .toEqual({ reason: null, retry: false, offline: false, refused: false });
+        expect.soft(header({ status: 'available' })).toEqual({ reason: null, retry: false, offline: false, refused: false });
+        // A quiet reread of a settled answer says nothing either.
+        expect.soft(header({ status: 'pending', asOfMs: 100 })).toEqual({ reason: null, retry: false, offline: false, refused: false });
+        // Nothing read: the outage line and its Retry; Machines offline with nothing read keeps the offline line.
+        expect.soft(header({ status: 'error', errorCode: 'work_evidence_failed' }))
+            .toEqual({ reason: t('usage.board.page.workNotRead'), retry: true, offline: false, refused: false });
+        expect.soft(header({ status: 'unknown', errorCode: 'machine_offline' })).toEqual({ reason: null, retry: false, offline: true, refused: false });
+        // A failed reread over retained links: what is listed is what arrived, and a Retry can replace it.
+        expect.soft(header({ status: 'stale', errorCode: 'work_evidence_failed', asOfMs: 100 }))
+            .toEqual({ reason: failedWork, retry: true, offline: false, refused: false });
+        // A typed refusal keeps its own line, never a Retry.
+        expect.soft(header({ status: 'error', errorCode: 'forbidden' })).toEqual({ reason: '', retry: false, offline: false, refused: true });
     });
     it('says a settled partial activity read once for the header, never while it is still reading', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>

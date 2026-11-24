@@ -91,8 +91,16 @@ type Cell = Readonly<{
 }>;
 type Run = Readonly<{ pool: UsagePlanPool | null; cells: readonly Cell[]; /** Accounts outside every pool, joined under one label. */ outside?: boolean }>;
 
-/** Only a run of two or more members is a group worth an outline; a pool of one reads as its account does. */
-const isFramedRun = (run: Run) => (run.pool !== null && run.cells.length > 1) || run.outside === true;
+/** A run of two or more members, or the accounts outside every pool, is a group worth an outline. */
+const isGroupRun = (run: Run) => (run.pool !== null && run.cells.length > 1) || run.outside === true;
+
+/**
+ * Whether a run is drawn in its own outline. A pool of one reads as its account does, until another run on the widget
+ * is outlined: then it is outlined and named like the others, never a loose cell between two outlines (r226 #63).
+ */
+function isFramedRun(run: Run, runs: readonly Run[]): boolean {
+  return isGroupRun(run) || run.pool !== null && runs.some(isGroupRun);
+}
 
 /** Beside an outlined pool the accounts outside it read as one labelled group, not loose unlabelled cells. */
 function joinRunsOutsidePools(runs: readonly Run[]): Run[] {
@@ -332,8 +340,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const retryTime = spentRetry ? formatMoment(spentRetry.retryAtMs, nowMs) : null;
   const heroPercent = tightest ? Math.round(tightest.window.remainingFraction! * 100) : null;
   const shownReset = tightest?.window.resetAtMs ?? null;
-  // Equal cells while they fit; a narrow frame (a phone) lists them a row each rather than shrinking them.
-  const listed = !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX;
+  // Equal cells while each outlined run's own cells fit the width (runs wrap to lines); a frame too narrow for some run's cells
+  // (a phone) lists every account a row each rather than shrinking them. The account total never decides it: eleven
+  // accounts at 994 px keep their pools' tiles (r226 #63).
+  // Accounts outside any outline share one line, so they count together.
+  const looseCells = runs.filter(run => !isFramedRun(run, runs)).reduce((count, run) => count + run.cells.length, 0);
+  const listed = !pooled && width !== null && [...runs.filter(run => isFramedRun(run, runs)).map(run => run.cells.length), looseCells]
+    .some(count => count > 0 && width / count < CELL_MIN_WIDTH_PX);
   const renderCells = (run: Run) => run.cells.map((cell) => (
     <CapacityCell
       key={cell.account.key}
@@ -439,9 +452,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         {runs.map((run) => (
           <View
             key={runKey(run)}
-            testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
+            testID={run.pool && isFramedRun(run, runs) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
             style={[
-              isFramedRun(run) ? styles.pool : listed ? styles.list : styles.run,
+              isFramedRun(run, runs) ? styles.pool : listed ? styles.list : styles.run,
               // A run keeps room for every cell's name and address; when the runs cannot all hold it on one line
               // (nine accounts beside a sidebar) a pool takes the next line instead of cutting each address to a
               // fragment (acceptance 11-21 #4).
@@ -449,12 +462,12 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
             ]}
           >
             {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
-            {isFramedRun(run) && (run.outside || run.pool!.name) ? (
+            {isFramedRun(run, runs) && (run.outside || run.pool!.name) ? (
               <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.outside ? 'outside' : run.pool!.groupId}.label`}>
                 {run.outside ? t('usage.board.plans.poolOutside') : run.pool!.name}
               </Text>
             ) : null}
-            {isFramedRun(run) ? <View style={listed ? styles.list : styles.run}>{renderCells(run)}</View> : renderCells(run)}
+            {isFramedRun(run, runs) ? <View style={listed ? styles.list : styles.run}>{renderCells(run)}</View> : renderCells(run)}
           </View>
         ))}
       </View>
@@ -554,9 +567,9 @@ function CapacityPooledBar(props: Readonly<{
     <View style={styles.pooledBar} accessibilityRole="list" testID={`${props.testID}.pooled`}>
       {props.runs.map((run) => (
         <View key={runKey(run)}
-          testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
+          testID={run.pool && isFramedRun(run, props.runs) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
           style={[styles.pooledRun, { flexGrow: run.cells.length, minWidth: run.cells.length * POOLED_SEGMENT_MIN_WIDTH_PX }]}>
-          <View style={[styles.pooledTrack, isFramedRun(run) ? styles.pooledTrackPool : null]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <View style={[styles.pooledTrack, isFramedRun(run, props.runs) ? styles.pooledTrackPool : null]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             {run.cells.map((cell) => {
               const window = cell.account.headline;
               return (
@@ -658,9 +671,9 @@ function CapacityCell(
   const statusDetail = cell.excluded ?? staleDetail ?? usedUpDetail
     ?? (noAllowance ? t('usage.board.plans.cellNoAllowance') : unread ? t('usage.board.plans.paceNotLoaded') : null);
   const detail = [statusDetail, ...secondaryAmounts].filter(Boolean).join(' · ') || null;
-  const value = figure?.amount ?? (remaining === null
-    ? t('usage.board.plans.cellUnknown')
-    : formatPlanPercent(remaining));
+  // A percent-only reading (a percentage and a reset, no absolute used or limit) says what it is: "92% left".
+  const percentLeft = remaining === null ? null : t('usage.board.plans.cellLeft', { percent: formatPlanPercent(remaining) });
+  const value = figure?.amount ?? percentLeft ?? t('usage.board.plans.cellUnknown');
   const valueInk = (
     <Text
       style={[
@@ -713,7 +726,7 @@ function CapacityCell(
         props.name.primaryLabel ?? props.name.title,
         props.name.qualifier,
         window?.label ?? figure?.window.label,
-        figure?.amount ?? (remaining === null ? value : t('usage.board.plans.cellLeft', { percent: value })),
+        value,
         window?.resetAtMs != null ? formatPlanResetPhrase(window.resetAtMs, nowMs) : null,
         detail,
         // Every other window stays readable here and in Projections; none is stacked into the bar.

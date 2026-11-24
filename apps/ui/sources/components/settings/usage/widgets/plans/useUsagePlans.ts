@@ -38,6 +38,8 @@ export type UsagePlanAccountName = Readonly<{
   identity?: string;
   /** The plan and account identity, quiet beside the title. */
   qualifier: string;
+  /** Same names nothing else tells apart: the shared name and the number the title ends with. */
+  numbered?: Readonly<{ label: string; number: number }>;
   serviceLabel: string;
   service?: PluginContributionIdentityV1;
   legacyServiceId: ConnectedServiceId | null;
@@ -139,6 +141,7 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
         qualifier: [plan, name?.identityLabel ?? null]
           .filter(Boolean)
           .join(' · '),
+        ...(name?.numbered && !name.inlineLabel ? { numbered: name.numbered } : {}),
         serviceLabel,
         service: account.service,
         legacyServiceId: summary?.legacyServiceId ?? serviceEntryOf(account)?.legacyServiceId ?? null,

@@ -13825,6 +13825,7 @@ settingsSession: {
             scopeReadRefused: "無法查看此範圍內的用量。",
             changeScope: "變更範圍",
             sessionRecipientSubtitle: "你的帳號在此工作階段中的用量。",
+            sessionRecipientFigure: "你的用量",
             noneLinkedByEvidence: "尚未連結",
             oldestSourceUpdate: ({ time }: { time: string }) => `最早的來源更新：${time}`,
             sourceClaudeResponses: "Claude 回覆",

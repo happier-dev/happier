@@ -17058,6 +17058,7 @@ settingsSession: {
             scopeReadRefused: "Данные об использовании в этой области недоступны.",
             changeScope: "Изменить область",
             sessionRecipientSubtitle: "Использование вашего аккаунта в этой сессии.",
+            sessionRecipientFigure: "Ваше использование",
             machinesCount: ({ count }: { count: string | number }) => `Машин: ${count}`,
             agentsCount: ({ count }: { count: string | number }) => `Агентов: ${count}`,
             purposeDaily: "Сколько вы использовали за каждый день, по агентам.",

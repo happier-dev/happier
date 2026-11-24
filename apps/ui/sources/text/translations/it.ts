@@ -17484,6 +17484,7 @@ settingsSession: {
             scopeReadRefused: "L’utilizzo non è disponibile per questo ambito.",
             changeScope: "Cambia ambito",
             sessionRecipientSubtitle: "Utilizzo del tuo account in questa sessione.",
+            sessionRecipientFigure: "Il tuo utilizzo",
             machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'macchina', plural: 'macchine' })}`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agente', plural: 'agenti' })}`,
             purposeDaily: "Quanto hai usato ogni giorno, per agente.",

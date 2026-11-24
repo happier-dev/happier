@@ -395,7 +395,65 @@ it('renders every overlapping pool membership without duplicating standalone Acc
   expect(screen.findAllHostsByTestId('capacity.cell.work')).toHaveLength(2);
 });
 
-it('outlines only a pool of two or more members; a pool of one reads as its account does', async () => {
+it('keeps each pool in tiles at a desktop width with eleven accounts, frames a pool of one beside another pool, and says a percent-only reading as "left" (r226 #63)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const now = Date.now();
+  const pooledIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
+  const outsideIds = ['o1', 'o2', 'o3', 'o4'];
+  const quota = [...pooledIds, 'solo', ...outsideIds].map(accountId => {
+    const recordKey = { providerId: 'anthropic', accountSubjectId: accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId }, bindingKind: 'account' },
+      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: accountId },
+        observedAtMs: now, fetchedAtMs: now, staleAfterMs: 60_000,
+        source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null, accountLabel: `Account ${accountId}`,
+        // A percentage and a reset, no absolute used or limit (Muse on r226).
+        meters: [{ meterId: 'weekly', label: 'Weekly', usedPct: 8, utilizationPct: 8, used: null, limit: null,
+          unit: 'count', status: 'ok', resetsAt: now + 86_400_000, resetAtMs: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  });
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota },
+    pools: [{ query, value: [
+      { group: { service, groupId: 'duo' }, memberAccountIds: pooledIds, activeAccountId: 'a1', selection: { status: 'pending' } },
+      { group: { service, groupId: 'one' }, memberAccountIds: ['solo'], activeAccountId: 'solo', selection: { status: 'pending' } },
+    ] }],
+  }, bundledUsageModelPriceCatalog).results[0]!;
+  const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
+    freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const view = (width: number) => <InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'large', footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'regular' },
+      geometry: { width, height: 640 } }}>
+      <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>;
+  // 994 px / 11 accounts < one cell, but each run's own cells fit: the pools keep their tiles.
+  const screen = await renderScreen(view(994));
+  expect.soft(screen.findHostByTestId('capacity.accounts')).toBeNull();
+  expect.soft(screen.findHostByTestId('capacity.pool.duo')).not.toBeNull();
+  // Beside a framed pool, a pool of one is framed and named like it, never a loose cell between two outlines.
+  expect.soft(screen.findHostByTestId('capacity.pool.one')).not.toBeNull();
+  expect.soft(screen.findHostByTestId('capacity.pool.one.label')).not.toBeNull();
+  expect.soft(screen.findHostByTestId('capacity.pool.outside.label')).not.toBeNull();
+  const leftText = t('usage.board.plans.cellLeft', { percent: '92%' });
+  const cellText = (accountId: string) => {
+    const cell = screen.findHostByTestId(`capacity.cell.${accountId}`);
+    return cell ? visibleCapacityText(cell) : '';
+  };
+  // A percent-only reading prints what its label says: "92% left", never a bare "92%".
+  expect.soft(cellText('o1')).toContain(leftText);
+  expect.soft(screen.findHostByTestId('capacity.cell.o1')?.props.accessibilityLabel).toContain(leftText);
+  expect.soft(screen.findHostByTestId('capacity.cell.o1')?.props.accessibilityLabel).not.toContain(`${leftText} left`);
+  // A phone lists every account a row each, as accepted; the row says "left" too.
+  await screen.update(view(358));
+  expect.soft(screen.findHostByTestId('capacity.accounts')).not.toBeNull();
+  expect.soft(cellText('solo')).toContain(leftText);
+});
+
+it('outlines a pool of two or more members, and a pool of one beside it', async () => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const quota = ['work', 'personal', 'solo'].map(accountId => {
@@ -422,7 +480,8 @@ it('outlines only a pool of two or more members; a pool of one reads as its acco
     <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
   </InjectedAuthProvider>);
   expect(screen.findHostByTestId('capacity.pool.duo')).not.toBeNull();
-  expect(screen.findHostByTestId('capacity.pool.one')).toBeNull();
+  // Beside an outlined pool a pool of one is outlined and named too (r226 #63).
+  expect(screen.findHostByTestId('capacity.pool.one')).not.toBeNull();
   expect(screen.findHostByTestId('capacity.cell.solo')).not.toBeNull();
   // Each cell is an item of the meter list it sits in (axe aria-required-children on the list).
   expect(screen.findHostByTestId('capacity.cell.solo')?.props.role).toBe('listitem');
@@ -475,6 +534,40 @@ it('keeps each reset and renewal as an exact point when the shared plot cannot f
   expect(rows.every(row => !row!.props.accessibilityLabel.includes('End:'))).toBe(true);
   expect(screen.getTextContent()).toContain('Weekly');
   expect(screen.getTextContent()).toContain('Monthly');
+});
+
+it('splits each Resets lane of same-named accounts into the shared name and the number that tells them apart (r226 #64)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const now = Date.now();
+  const quota = ['m1', 'm2', 'm3'].map((accountId, index) => {
+    const recordKey = { providerId: 'anthropic', accountSubjectId: accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId }, bindingKind: 'account' },
+      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: accountId },
+        observedAtMs: now, fetchedAtMs: now, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed',
+        state: 'loaded_data', planLabel: null, accountLabel: 'a-very-long-shared-address@example.com',
+        meters: [{ meterId: 'weekly', label: 'Weekly', usedPct: 8, utilizationPct: 8, used: null, limit: null, unit: 'count', status: 'ok',
+          resetsAt: now + (index + 1) * 3_600_000, resetAtMs: now + (index + 1) * 3_600_000, windowDurationMs: 7 * 86_400_000 }] },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  });
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
+  const { UsageResetPlannerWidget } = await import('./UsageResetPlannerWidget');
+  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'large', footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'regular' },
+      geometry: { width: 994, height: 480 } }}>
+      <UsageResetPlannerWidget id="usage_resets" model={{ refresh: async () => {} }} slice={slice} query={query} serverId="home" testID="reset" />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>);
+  const intervals = screen.findByType(IntervalTimeline).props.intervals as readonly Readonly<{ lane?: string; laneTitle?: string; laneDetail?: string }>[];
+  // Three distinct lanes; each says the shared name on its title line and the number on its own line, so truncating
+  // the long name never cuts the one fact that tells the three apart.
+  expect.soft(new Set(intervals.map(interval => interval.lane)).size).toBe(3);
+  expect.soft(intervals.map(interval => interval.laneTitle)).toEqual(Array(3).fill('a-very-long-shared-address@example.com'));
+  expect.soft(new Set(intervals.map(interval => interval.laneDetail)).size).toBe(3);
+  expect.soft(intervals.every(interval => /[123]/.test(interval.laneDetail ?? ''))).toBe(true);
 });
 
 it('names only pending accounts once in the held headline row, and drops it once nothing is pending', async () => {
