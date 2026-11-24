@@ -387,17 +387,17 @@ describe('captured Account Action response decoding', () => {
         expect(homes.requestsFor(actionPath)).toHaveLength(1);
     });
     it('sends unbound host repair Actions through the Home action.invoke owner', async () => {
-        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1' };
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === row.id ? row : null).json(),
-        }) });
-        homes.answer(serverId, '/v1/actions/action.invoke', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.input).toEqual({ action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} });
-            return { body: { v: 1, actionId: 'action.invoke', requestId: envelope.requestId,
-                execution: { ok: true, result: { installed: true } } } };
-        } });
-        expect(await machinePluginStructuredMessageActionExecute(row.id, { serverId,
+        const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+            actionId: 'action.invoke', machineId: 'machine-1', tokenEpoch: 0,
+            execute: (input, { invocation }) => {
+                expect(input).toEqual({ action: { pluginId: 'happier.machine.crabbox', localId: 'install' },
+                    expectedContributorOccurrenceId: 'crabbox-current', input: {} });
+                expect(invocation).toMatchObject({ surface: 'ui', authority: 'present_user',
+                    presentUserConfirmation: { actionId: 'action.invoke' } });
+                return { installed: true };
+            },
+        });
+        expect(await machinePluginStructuredMessageActionExecute(boundary.machine.id, { serverId,
             qualifiedActionId: 'happier.machine.crabbox/install', expectedContributorOccurrenceId: 'crabbox-current',
             executionSurface: 'ui', input: {}, presentUserIntent: 'confirmed',
         })).toEqual({ supported: true, result: { ok: true, result: { installed: true } } });
@@ -644,8 +644,8 @@ describe('captured Account Action response decoding', () => {
         if (!account) throw new Error('Captured Services list Account unavailable');
         const rpcInput = { ...input, serverId: account.serverId };
         let checkingAddressedFrontDoor = true;
-        // The incumbent finite list uses Machine RPC, while the replacement Resource
-        // uses the original-Account HTTP Action. Both stop at their real network edge.
+        // Keep the Socket boundary available while the finite Action and mounted
+        // Resource send their requests through Home HTTP.
         const socketBoundary = installDisconnectedServerSocketBoundary(socket => {
             configureConnectedServerSocketBoundary(socket);
             socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
@@ -664,7 +664,12 @@ describe('captured Account Action response decoding', () => {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
             const reply = (result: unknown) => ({ body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
             const continuation = envelope.resourceContinuation;
-            if (!continuation) { heldReads++; await readGate; return reply(current); }
+            if (!continuation) {
+                if (checkingAddressedFrontDoor) return reply(current);
+                heldReads++;
+                await readGate;
+                return reply(current);
+            }
             if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
                 heldReads++; resourceReads++; await readGate; return reply({ ok: true, resource: continuation.params.resource, ...content() });
             }

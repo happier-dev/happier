@@ -18,9 +18,15 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture,
   createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import tweetnacl from 'tweetnacl';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock().module;
+});
 // Only the addressed daemon network is replaced; Account capture and Action policy stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
   const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
@@ -106,11 +112,13 @@ describe('worker Actions through the captured UI Home', () => {
     const workspace = { serverId: homeId, machineId: source.id, workspaceId: key.id, rootPath: '/source' };
     const row = ProjectAccountRowV1Schema.parse({ key, revision: 1, content: { t: 'plain', v: { key,
       value: { id: key.id, serverId: homeId, machineId: source.id, rootPath: workspace.rootPath, createdAtMs: 1 } } } });
-    // The daemon has committed this row, but the UI's existing change pipeline has not delivered it.
+    // Before the push, this client cannot recover the committed row by exact read.
+    let rowDelivered = false;
     const owner = createProjectAccountRowsSync({ scope,
       cipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }),
       transport: { list: async () => ({ status: 'listed', coverage: 'complete', rows: [] }),
-        read: async () => ({ status: 'present', row }), mutate: async () => { throw new Error('unexpected mutation'); } },
+        read: async () => rowDelivered ? { status: 'present', row } : { status: 'absent' },
+        mutate: async () => { throw new Error('unexpected mutation'); } },
       isCurrent: () => true, apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
     await owner.refresh();
     // Hydrate the real app composition with that Account's real held owner, without mocking internal decisions.
@@ -156,6 +164,7 @@ describe('worker Actions through the captured UI Home', () => {
       // Reproduce the live caller: if Open already reported success, issue its first create now.
       // A corrected Open stays pending, so that same first create follows the pushed completion below.
       const prematureCreate = opened ? await create() : null;
+      rowDelivered = true;
       await owner.refreshKeys([buildProjectAccountRowPhysicalKeyV1(key)]);
       expect(await opening).toMatchObject({ ok: true, result: { kind: 'opened', workspace } });
       // A real create enters source admission exactly once after Open, with no user retry.
@@ -311,10 +320,22 @@ describe('worker Actions through the captured UI Home', () => {
     const refusal = { protocolVersion: 1, machineId: request.machineId, targetId: request.targetId,
       status: 'denied', reasonCode: 'project_service_effect_changed',
       snapshot: { v: 1, machineId: request.machineId, updatedAt: 1, targets: [] } };
-    rpc.machine.mockResolvedValueOnce(refusal);
-    expect(await createDefaultActionExecutor().execute('localServices.launcher.start', request, {
+    homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [] } });
+    const review = LocalServiceStartApprovalReviewV1Schema.parse({
+      request, target: { ...request.workspace, machineId: request.machineId },
+      reviewedEffect: { command: 'serve web' }, reviewedEffectDigest: 'a'.repeat(64),
+      setup: { required: false, project: { serverId: request.workspace.serverId, projectId: 'project' },
+        reviewedEffect: { commands: [] }, reviewedEffectDigest: 'no-setup' },
+    });
+    rpc.machine.mockResolvedValueOnce({ protocolVersion: 1, snapshot: refusal.snapshot, startReview: review })
+      .mockResolvedValueOnce(refusal);
+    const presentUserActionConfirmation = vi.fn(async () => true);
+    expect(await createDefaultActionExecutor({ presentUserActionConfirmation }).execute('localServices.launcher.start', request, {
       serverId, expectedAccountId: 'owner', surface: 'ui',
     })).toEqual({ ok: true, result: refusal });
+    expect(presentUserActionConfirmation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      input: request, preview: expect.objectContaining({ serviceStartReview: review }),
+    }));
     expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId,
       machineId: request.machineId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, payload: request }));
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
@@ -382,11 +403,15 @@ describe('worker Actions through the captured UI Home', () => {
     homes.answer(serverId, '/v1/projects/execution/config/read', { body: {
       status: 'present', revision: 4, content: { t: 'plain', v: { ...preference, services: {} } },
     } });
+    const { Modal } = await import('@/modal');
+    const confirm = vi.mocked(Modal.confirm);
+    confirm.mockClear().mockResolvedValueOnce(true);
     const result = await executeProjectWorkerActionV1('projects.worker.preferences.set', {
         workspace: { serverId, refId: 'checkout' }, expectedRevision: 'absent', expected: { kind: 'absent' },
         next: { enabled: false, unavailable: 'ask', allowAdHoc: true, scriptOverrides: {} },
       }, { expectedAccountId: 'owner' });
     expect(result).toEqual({ status: 'conflict', preference, revision: 4, provenance: 'saved' });
+    expect(confirm).toHaveBeenCalledOnce();
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
     expect(rpc.machine).not.toHaveBeenCalled();
   });
