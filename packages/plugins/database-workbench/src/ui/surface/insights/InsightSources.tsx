@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import {
+  DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1,
   DATABASE_INSIGHT_SOURCES_POINT_REF_V1,
   DatabaseInsightSourceDescriptorV1ProtocolSchema,
   DatabaseInsightSourceOperationSchemasV1 as schemas,
@@ -51,6 +53,11 @@ export function useInsightSources(database: DatabaseDescriptorV1) {
   return React.useMemo(() => projectSources(targetedContributions, database), [targetedContributions, database]);
 }
 
+const sourceReadAction = {
+  pluginId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pluginId,
+  localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1),
+} as const;
+
 type ReadState<TResult> = { kind: 'pending' | 'cancelled' }
   | { kind: 'result'; result: TResult; selection: PluginTargetedContributionSelectionV1 }
   | { kind: 'failed'; error: unknown };
@@ -71,9 +78,9 @@ function useSourceRead<TResult>(operation: PluginUiTargetedContributionOperation
           setState({ kind: 'cancelled' });
           return;
         }
-        const raw = await host.executeAction(selected.action, selected.input, {
-          signal, selectedActionInput: { operation, result: selected },
-        });
+        const raw = await host.executeAction(sourceReadAction, {
+          ...draft, role: operation.role, sourceSelection: selected.selection,
+        }, { signal, selectedActionInput: { operation, result: selected } });
         if (!signal.aborted) setState({ kind: 'result', result: parse(raw), selection: selected.selection });
       } catch (error) {
         if (!signal.aborted) setState({ kind: 'failed', error });

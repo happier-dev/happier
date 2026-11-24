@@ -3,7 +3,7 @@ import { definePlugin, type JsonValue, type PluginServices } from '@happier-dev/
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DatabaseFindingBriefBuildResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { DatabaseInsightSourceContributionProtocolV1 as sourceProtocol, DatabaseInsightSourceOperationSchemasV1 as sourceSchemas } from '@happier-dev/database-protocol/v1';
 import { PLUGIN_MANIFEST, plugin } from './manifest.js';
 
@@ -23,7 +23,7 @@ it('publishes the point external authors target for listing and reading findings
     }));
 });
 
-it('prepares the shared brief from the selected public source and preserves its exact typed refusal', async () => {
+it('admits selected source reads and briefs before invoking the provider and preserves typed refusal', async () => {
     const { pluginId, pointId, protocol } = DATABASE_INSIGHT_SOURCES_POINT_REF_V1;
     const source = { pluginId: 'acme.insight-source', localId: 'observations' };
     const workspace = { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/repo' };
@@ -39,13 +39,19 @@ it('prepares the shared brief from the selected public source and preserves its 
     const refusal = { ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' } as const;
     let expired = false;
     let detailReads = 0;
+    let listReads = 0;
+    let contributorLookups = 0;
     const sourcePlugin = definePlugin({
         id: source.pluginId, version: '0.0.0',
         actions: {
             list: { title: 'List observations', surfaces: sourceProtocol.operations.list.declaration.surfaces,
                 inputSchema: sourceSchemas.listInput,
                 resultSchema: sourceSchemas.listResult,
-                run: async () => ({ ok: true as const, findings: [{ recordKey, title: finding.title, summary: finding.summary }] }) },
+                run: async input => {
+                    expect(input).toEqual({ target });
+                    listReads++;
+                    return { ok: true as const, findings: [{ recordKey, title: finding.title, summary: finding.summary }] };
+                } },
             detail: { title: 'Read observation', surfaces: sourceProtocol.operations.detail.declaration.surfaces,
                 inputSchema: sourceSchemas.detailInput,
                 resultSchema: sourceSchemas.detailResult,
@@ -66,7 +72,10 @@ it('prepares the shared brief from the selected public source and preserves its 
     let kit: PluginTestkit | undefined;
     const point = { targetPluginId: pluginId, id: pointId, protocol };
     const targetedContributions = { observeForSelf: () => ({
-        readCurrent: async () => kit!.readTargetedContributionFixture(point),
+        readCurrent: async () => {
+            contributorLookups++;
+            return kit!.readTargetedContributionFixture(point);
+        },
         dispose() {},
     }) } as PluginServices['targetedContributions'];
     const entries = new Map<string, JsonValue>();
@@ -108,6 +117,14 @@ it('prepares the shared brief from the selected public source and preserves its 
             chosenMachine: { machineId: workspace.machineId, installationId: target.installationId },
             agentCaller: false, authority: 'present_user' as const };
         const agent = { ...invocation, agentCaller: true };
+        const read = databaseActionLocalIdV1(DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1);
+        const listInput = { target, role: 'list', sourceSelection: input.sourceSelection };
+        const detailInput = { ...input, role: 'detail' };
+        await expect(kit.invokeAction(read, listInput, agent)).resolves.toEqual({
+            ok: true, findings: [{ recordKey, title: finding.title, summary: finding.summary }],
+        });
+        await expect(kit.invokeAction(read, detailInput, agent)).resolves.toEqual({ ok: true, finding });
+        await expect(kit.invokeAction(read, { ...listInput, recordKey }, invocation)).rejects.toThrow();
         const reply = DatabaseFindingBriefBuildResultV1Schema.parse(await kit.invokeAction(action, input, agent));
         expect(reply).toMatchObject({ ok: true, brief: { text: expect.stringContaining(finding.exercise), evidence: { items: [
             expect.objectContaining({ source: { kind: 'databaseFinding', label: finding.title },
@@ -119,15 +136,25 @@ it('prepares the shared brief from the selected public source and preserves its 
         });
         expired = true;
         await expect(kit.invokeAction(action, input, agent)).resolves.toEqual(refusal);
+        await expect(kit.invokeAction(read, detailInput, agent)).resolves.toEqual(refusal);
         const setAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);
         await expect(kit.invokeAction(setAccess, { target, agentAccess: 'none' }, invocation))
             .resolves.toEqual({ ok: true, agentAccess: 'none' });
+        const admittedContributorLookups = contributorLookups;
         await expect(kit.invokeAction(action, input, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
-        expect(detailReads).toBe(2);
+        await expect(kit.invokeAction(read, listInput, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+        await expect(kit.invokeAction(read, detailInput, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+        expect(contributorLookups).toBe(admittedContributorLookups);
+        expect(listReads).toBe(1);
+        expect(detailReads).toBe(4);
         await expect(kit.invokeAction(action, input, invocation)).resolves.toEqual(refusal);
         await contributor.dispose();
-        await expect(kit.invokeAction(action, input, invocation)).resolves.toMatchObject({ ok: false, status: 'unavailable',
-            reason: 'contributor_unavailable' });
+        const unavailable = { ok: false, status: 'unavailable', reason: 'contributor_unavailable' };
+        await expect(kit.invokeAction(action, input, invocation)).resolves.toMatchObject(unavailable);
+        await expect(kit.invokeAction(read, listInput, invocation)).resolves.toMatchObject(unavailable);
+        await expect(kit.invokeAction(read, detailInput, invocation)).resolves.toMatchObject(unavailable);
+        expect(listReads).toBe(1);
+        expect(detailReads).toBe(5);
     } finally {
         await release?.();
         await kit?.dispose();

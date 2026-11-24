@@ -35,7 +35,7 @@ function dismissalStorageKey(accountId: string, target: DatabaseFindingsListInpu
 type AdmittedSource = {
     contributor: TargetedContributionAdmittedEntry['contributor'];
     protocol: typeof DATABASE_INSIGHT_SOURCES_POINT_REF_V1.protocol;
-    operations: { detail: AdmittedTargetedOperationExecutionHandle };
+    operations: Record<'list' | 'detail', AdmittedTargetedOperationExecutionHandle>;
 };
 const sourcePoint = {
     targetPluginId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pluginId,
@@ -165,7 +165,7 @@ export function projectDatabaseFindingObservation(stats: AvailableStats, target:
 export function createDatabaseInsightProducers(options: Readonly<{
     executeOperation: NonNullable<DatabaseActionProducers['executeOperation']>;
     admit: DatabaseOperationAdmission;
-}>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'dismissFinding' | 'buildInsightBrief'>> {
+}>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'readInsightSource' | 'dismissFinding' | 'buildInsightBrief'>> {
     async function read(input: DatabaseFindingsListInputV1, context: PluginInvocationContext) {
         // The existing operation owner pairs this operand with its stats result;
         // its broader union does not express the input/output correspondence.
@@ -214,6 +214,23 @@ export function createDatabaseInsightProducers(options: Readonly<{
             return { ok: true, observation: result.observation, findings: projected.filter(entry => entry !== null) };
         },
         readFinding,
+        async readInsightSource(input, context) {
+            const { target, role } = input;
+            await options.admit({ input: { operation: 'describe', target }, context, access: 'read' });
+            const current = await selectCurrentTargetedContribution<AdmittedSource>({
+                service: context.services.targetedContributions, point: sourcePoint,
+                selection: input.sourceSelection, operationRole: role, signal: context.signal,
+            });
+            if (current.kind === 'unavailable') return { ok: false, status: 'unavailable',
+                code: 'database_insight_source_unavailable', reason: current.reason };
+            const operands = input.role === 'list' ? { target } : { target, recordKey: input.recordKey };
+            const raw = await context.services.actions.executeAdmittedTargetedOperation(
+                current.contribution.operations[role], projectNativeJsonValueForTransport(operands),
+                { signal: context.signal, expectedSelectedConnectedAccountRef: null },
+            );
+            return role === 'list' ? DatabaseInsightSourceOperationSchemasV1.listResult.parse(raw)
+                : DatabaseInsightSourceOperationSchemasV1.detailResult.parse(raw);
+        },
         async dismissFinding({ target, dismissalKey }, context) {
             const accountId = context.requesterAccount?.accountId;
             if (!accountId) throw new PluginError({ code: 'plugin_service_unavailable' });

@@ -314,7 +314,9 @@ describe('Database Insights surfaces', () => {
       coverage: { status: 'complete' }, summary: { records: 1 },
     };
     const sourceRead = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
-      expect(call.selectedActionInput?.operation.action).toEqual(call.action);
+      expect(call.selectedActionInput?.operation.action).toEqual({
+        pluginId: contributorPluginId, localId: call.selectedActionInput?.operation.role,
+      });
       if (call.selectedActionInput?.operation.role === 'detail') {
         return projectNativeJsonValueForTransport({ ok: true, finding: {
           ...observation, title: 'Repeated query', normalizedShape: LINES,
@@ -342,7 +344,7 @@ describe('Database Insights surfaces', () => {
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
       handlers: { ...resourceHandlers(), selectActionInput: pick, actionControl: actionControl.handler,
         replacePageLocation: async ({ subPath }) => subPath,
-        executeAction: call => typeof call.action === 'object' && call.action.pluginId === contributorPluginId
+        executeAction: call => typeof call.action === 'object' && call.action.pluginId === pluginId && call.action.localId === 'insights/sources/read'
           ? sourceRead(call) : call.action === databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1)
             ? prepare(call) : nativeRead(call) },
     });
@@ -354,10 +356,18 @@ describe('Database Insights surfaces', () => {
       expect(await page.queryByRole('button', { name: 'MySQL observations' })).toBeUndefined();
       await page.press(await page.getByRole('button', { name: 'Database observations' }));
       await settle();
-      expect(sourceRead.mock.calls.map(([call]) => call.input)).toEqual([{ target: descriptor.target }]);
+      const selectedList = pick.mock.results.at(-1)?.value;
+      expect(selectedList).toBeDefined();
+      expect(sourceRead.mock.calls[0]?.[0].input).toEqual({
+        target: descriptor.target, role: 'list', sourceSelection: (await selectedList)?.selection,
+      });
       await page.press(await page.getByRole('button', { name: 'Repeated query' }));
       await settle();
-      expect(sourceRead.mock.calls.map(([call]) => call.input)).toEqual([
+      const selectedDetail = await pick.mock.results.at(-1)?.value;
+      expect(sourceRead.mock.calls[1]?.[0].input).toEqual({
+        target: descriptor.target, role: 'detail', recordKey: 'n-plus-one-17', sourceSelection: selectedDetail?.selection,
+      });
+      expect(sourceRead.mock.calls.map(([call]) => call.selectedActionInput?.result.input)).toEqual([
         { target: descriptor.target }, { target: descriptor.target, recordKey: 'n-plus-one-17' },
       ]);
       expect(await page.queryByText(LINES)).toBeTruthy();

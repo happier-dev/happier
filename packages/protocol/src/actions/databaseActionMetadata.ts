@@ -113,6 +113,7 @@ const databaseActionDeclarations = {
     },
     [database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1]: { ...read, title: 'List database findings' },
     [database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1]: { ...read, title: 'Read database finding' },
+    [database.DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1]: { ...read, title: 'Read selected database insight source' },
     [database.DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1]: {
         ...read, readOnly: false, dangerLevel: 'writesLocal', databaseAccess: 'read', title: 'Dismiss database finding',
         confirmationWhen: { presentUserUi: false },

@@ -20,6 +20,8 @@ export type DatabaseActionProducers = Readonly<{
         => databaseAbi.DatabaseFindingsListResultV1 | Promise<databaseAbi.DatabaseFindingsListResultV1>;
     readFinding?: (input: databaseAbi.DatabaseFindingReadInputV1, context: PluginInvocationContext)
         => databaseAbi.DatabaseFindingReadResultV1 | Promise<databaseAbi.DatabaseFindingReadResultV1>;
+    readInsightSource?: (input: ReturnType<typeof databaseAbi.DatabaseInsightSourceReadSchemasV1.input.parse>, context: PluginInvocationContext)
+        => Promise<ReturnType<typeof databaseAbi.DatabaseInsightSourceReadSchemasV1.result.parse>>;
     dismissFinding?: (input: databaseAbi.DatabaseFindingDismissInputV1, context: PluginInvocationContext) => Promise<{ ok: true }>;
     buildInsightBrief?: (input: databaseAbi.DatabaseInsightBriefBuildInputV1, context: PluginInvocationContext)
         => databaseAbi.DatabaseFindingBriefBuildResultV1 | Promise<databaseAbi.DatabaseFindingBriefBuildResultV1>;
@@ -139,6 +141,16 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: databaseAbi.DatabaseFindingReadResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 await readFinding(input as databaseAbi.DatabaseFindingReadInputV1, context)),
+        };
+    }
+    const readInsightSource = producers.readInsightSource;
+    if (readInsightSource) {
+        const actionId = database.DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1;
+        const { input: inputSchema, result: resultSchema } = databaseAbi.DatabaseInsightSourceReadSchemasV1;
+        actions[databaseActionLocalIdV1(actionId)] = {
+            ...common, ...databaseActionMetadata[actionId], inputSchema, resultSchema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await readInsightSource(input as ReturnType<typeof inputSchema.parse>, context)),
         };
     }
     const dismissFinding = producers.dismissFinding;

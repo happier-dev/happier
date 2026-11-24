@@ -142,9 +142,8 @@ export const DatabaseTaskEvidenceV1Schema = z.union([
 export type DatabaseTaskEvidenceV1 = z.infer<typeof DatabaseTaskEvidenceV1Schema>;
 export const DatabaseTaskBriefBuildInputV1Schema = z.strictObject({ task: DatabaseTaskEvidenceV1Schema });
 export type DatabaseTaskBriefBuildInputV1 = z.infer<typeof DatabaseTaskBriefBuildInputV1Schema>;
-const sourceBriefInput = z.extend(sourceDetailInput, {
-    sourceSelection: asProtocolZod(PluginTargetedContributionSelectionV1Schema),
-});
+const sourceSelection = asProtocolZod(PluginTargetedContributionSelectionV1Schema);
+const sourceBriefInput = z.extend(sourceDetailInput, { sourceSelection });
 export const DatabaseInsightBriefBuildInputV1Schema = z.union([
     DatabaseFindingBriefBuildInputV1Schema, DatabaseTaskBriefBuildInputV1Schema, sourceBriefInput,
 ]);
@@ -190,6 +189,16 @@ export const DatabaseInsightSourceOperationSchemasV1 = {
     detailInput: projectZodProtocolSchema(sourceDetailInput),
     listResult: projectZodProtocolSchema<z.core.$ZodType<z.infer<typeof sourceListResult>, unknown>>(sourceListResult),
     detailResult: projectZodProtocolSchema<z.core.$ZodType<z.infer<typeof sourceDetailResult>, unknown>>(sourceDetailResult),
+} as const;
+
+const sourceReadInput = z.union([
+    z.extend(sourceListInput, { role: z.literal('list'), sourceSelection }),
+    z.extend(sourceBriefInput, { role: z.literal('detail') }),
+]);
+const sourceReadResult = z.union([sourceListResult, sourceDetailResult]);
+export const DatabaseInsightSourceReadSchemasV1 = {
+    input: projectZodProtocolSchema(sourceReadInput),
+    result: projectZodProtocolSchema<z.core.$ZodType<z.infer<typeof sourceReadResult>, unknown>>(sourceReadResult),
 } as const;
 
 /** Existing targeted contributions bind list/detail Actions; the Resource is

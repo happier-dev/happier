@@ -26,6 +26,7 @@ export const DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1 = 'happier.database/actions/a
 export const DATABASE_STATS_ENABLE_ACTION_ID_V1 = 'happier.database/actions/stats/enable' as const;
 export const DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1 = 'happier.database/actions/insights/findings/list' as const;
 export const DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1 = 'happier.database/actions/insights/findings/read' as const;
+export const DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1 = 'happier.database/actions/insights/sources/read' as const;
 export const DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1 = 'happier.database/actions/insights/findings/dismiss' as const;
 export const DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 = 'happier.database/actions/insights/brief/build' as const;
 export const DATABASE_CAPTURE_STATUS_ACTION_ID_V1 = 'happier.telemetry/actions/capture/status' as const;
@@ -94,6 +95,7 @@ export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_STATS_ENABLE_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
+    DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,

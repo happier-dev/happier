@@ -67,6 +67,20 @@ describe('deployment current-health read admission', () => {
             input: { ...input.input, target: { ...databaseTarget, password: 'caller-credential' } } })).toBeUndefined();
     });
 
+    it('admits selected insight-source reads on the exact deployed database', () => {
+        const action = { pluginId: 'happier.database', localId: 'insights/sources/read' };
+        const target = {
+            kind: 'deployment_service',
+            environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+            deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'restored',
+        };
+        const operands = { role: 'detail', target, recordKey: 'selected-record', sourceSelection: { contributor: 'selected-source' } };
+        expect(projectDeploymentReadAdmissionV1('action.invoke', { action, input: operands })).toEqual({
+            actionId: 'action.invoke', action, environmentId: 'environment', targetLinkId: 'link',
+            databaseTarget: target, access: 'read',
+        });
+    });
+
     it('binds the read-only current edge to one Environment, link and controller without a receipt', () => {
         const input = { serverId: 'server', environmentId: 'environment', targetLinkId: 'link', machineId: 'controller' };
         const admission = projectDeploymentReadAdmissionV1('deployments.health.current', input);
