@@ -17,7 +17,7 @@ import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema,
-    DeploymentReceiptGetResultV1Schema, DeploymentDataSizeResultV1Schema,
+    DeploymentReceiptGetResultV1Schema, DeploymentDataSizeResultV1Schema, DeploymentTeardownResultV1Schema,
     DeploymentReceiptResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTeardownPreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownVolumesV1';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -77,6 +77,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
     let environmentId: string | undefined;
     let targetLinkId: string | undefined;
     const fixtureTargets: Array<{ environmentId: string; targetLinkId: string }> = [];
+    const nativeProjects = new Set<string>();
     try {
         owner = await fixture.createAccount('recovery-owner');
         // G2 starts before Connect, Project creation, Environment creation or deploy.
@@ -202,6 +203,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         const content = DeploymentContentV1Schema.parse(JSON.parse(artifact.body));
         const project = content.ownServer?.approvedInputBasis.physicalProjectName;
         if (!project) throw new Error('R6 setup receipt omitted its admitted native project');
+        nativeProjects.add(project);
         const container = (await execute('docker', ['ps', '--quiet', '--filter', `label=com.docker.compose.project=${project}`,
             '--filter', 'label=com.docker.compose.service=database'])).stdout.trim();
         if (!container || /\s/u.test(container)) throw new Error('R6 setup must identify exactly one selected database container');
@@ -475,6 +477,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             if (!artifact || typeof artifact.body !== 'string') throw new Error('R6 drill receipt content unavailable');
             const project = DeploymentContentV1Schema.parse(JSON.parse(artifact.body)).ownServer?.approvedInputBasis.physicalProjectName;
             if (!project) throw new Error('R6 drill receipt omitted native project');
+            nativeProjects.add(project);
             expect((await execute('docker', ['ps', '--quiet', '--filter', `label=com.docker.compose.project=${project}`])).stdout.trim(),
                 'R6 always-run cleanup must stop all isolated services').toBe('');
         }
@@ -550,19 +553,34 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
     } finally {
         try {
             const account = owner;
-            const cleanup = await Promise.allSettled(fixtureTargets.reverse().map(async placement => {
-                if (!account) return;
-                const target = { serverId: fixture.serverId, ...placement, reason: 'manual' };
-                const preview = await account.execute('deployments.teardown', { ...target, mode: 'preview' });
-                if (!preview.ok) throw new Error(`R6 fixture teardown preview refused (${preview.errorCode})`);
-                const inventory = DeploymentTeardownPreviewV1Schema.parse(preview.result);
-                const removed = await account.execute('deployments.teardown', { ...target,
-                    volumes: inventory.volumes.map(volume => ({ name: volume.name, disposition: 'delete', confirmation: volume.name })) },
-                { presentUserConfirmation: { actionId: 'deployments.teardown' } });
-                if (!removed.ok) throw new Error(`R6 fixture native cleanup refused (${removed.errorCode})`);
-            }));
-            const failures = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+            const failures: unknown[] = [];
+            if (account) {
+                for (const placement of fixtureTargets.reverse()) {
+                    try {
+                        const target = { serverId: fixture.serverId, ...placement, reason: 'manual' };
+                        const preview = await account.execute('deployments.teardown', { ...target, mode: 'preview' });
+                        if (!preview.ok) throw new Error(`R6 fixture teardown preview refused (${preview.errorCode})`);
+                        const inventory = DeploymentTeardownPreviewV1Schema.parse(preview.result);
+                        const removed = await account.executeReviewed('deployments.teardown', { ...target,
+                            volumes: inventory.volumes.map(({ name }) => ({ name, disposition: 'delete', confirmation: name })) },
+                        { presentUserConfirmation: { actionId: 'deployments.teardown' } });
+                        if (!removed.ok) throw new Error(`R6 fixture native cleanup refused (${removed.errorCode})`);
+                        expect(DeploymentTeardownResultV1Schema.parse(removed.result)).toMatchObject({ ok: true, state: 'succeeded' });
+                        const volumes = await execute('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+                        const nativeNames = new Set(volumes.stdout.split(/\r?\n/u));
+                        expect(inventory.volumes.filter(({ name }) => nativeNames.has(name)).map(({ name }) => name),
+                            'R6 teardown must remove the reviewed volumes').toEqual([]);
+                    } catch (error) { failures.push(error); }
+                }
+            }
             if (failures.length) throw new AggregateError(failures, 'R6 native fixture cleanup failed');
+            for (const project of nativeProjects) {
+                const filter = `label=com.docker.compose.project=${project}`;
+                expect((await execute('docker', ['ps', '--all', '--quiet', '--filter', filter])).stdout.trim(),
+                    'R6 teardown must remove stopped and running fixture containers').toBe('');
+                expect((await execute('docker', ['network', 'ls', '--quiet', '--filter', filter])).stdout.trim(),
+                    'R6 teardown must remove fixture networks').toBe('');
+            }
         } finally { await fixture.stop(); }
     }
 }, 0);
