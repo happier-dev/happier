@@ -275,7 +275,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
         return ids;
     };
     const viewAccess = (sessionId: string) => projectSessionRuntimeManagedSubtreeAccess({ accountId: params.userId, sessionId });
-    return await captureSessionListingSnapshot(async tx => {
+    const { page, ownerAccountModes } = await captureSessionListingSnapshot(async tx => {
         const ids = await readIds(tx);
         const source: SessionListReadSource = { kind: 'effective', reader: tx,
             accessMode: 'effective_access_v1', baseWhere: conjoinSessionListWhereInputs(
@@ -288,6 +288,9 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
             orderBy: V2_SESSION_LIST_ORDER_BY, take: (query.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT) + 1 });
         const page = createV2SessionListRowPage({ rows, limit: query.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT });
         const ownerAccountModes = await readSessionListOwnerAccountModes(page.rows, tx);
+        return { page, ownerAccountModes };
+    });
+    return params.timing.measure("page", () => {
         const sessions = [];
         let metadataUpgradeRequiredCount = 0;
         for (const row of page.rows) {

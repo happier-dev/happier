@@ -21,7 +21,10 @@ import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibi
 const boundary = vi.hoisted(() => ({ db: undefined as unknown }));
 // Only persistent storage is replaced; route, runtime currentness, graph traversal,
 // access filtering, pagination, metadata projection and admission are real.
-vi.mock('@/storage/db', () => ({ get db() { return boundary.db; } }));
+vi.mock('@/storage/db', async () => ({
+    ...await import('@/config/databaseProvider'),
+    get db() { return boundary.db; },
+}));
 
 const principal = VerifiedEphemeralSessionRunnerPrincipalSchema.parse({
     kind: 'ephemeral_session_runner', authority: 'session_runtime', accountId: 'account',
@@ -76,13 +79,17 @@ function fixture() {
     mocks.db.machine.findFirst.mockResolvedValue({ installationPublicKey: new Uint8Array(32).fill(1) });
     mocks.db.accessKey.findUnique.mockResolvedValue({ accountId: account.id });
     mocks.db.teamMembership.findMany.mockResolvedValue([]);
-    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
-    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
-    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
+    mocks.db.sessionGrant.findMany.mockImplementation(async ({ where }) => rows
+        .flatMap(row => row.grants.map(grant => ({ ...grant, sessionId: row.id })))
+        .filter(grant => matchesDbMockWhere(grant, where)));
     mocks.db.homeSettings.findUnique.mockResolvedValue(null);
     mocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     mocks.db.simpleCache.findUnique.mockResolvedValue({ value: 'srv_test_home' });
     const reader = { ...mocks.db, ...inTxPostgresControlStatementMock,
+        async $executeRawUnsafe(sql: string, ...values: unknown[]) {
+            if (sql === 'SET LOCAL jit = off' && values.length === 0) return 0;
+            return inTxPostgresControlStatementMock.$executeRawUnsafe(sql, ...values);
+        },
         // PostgreSQL's canonical singleton join returns one empty-Home row.
         $queryRawUnsafe: vi.fn().mockResolvedValue([{ revision: null, values: null,
             encryptedSecrets: null, authenticationPolicy: null }]),
@@ -145,6 +152,24 @@ describe('restricted coordinator Under-self listing', () => {
         }
         expect(await f.access('worker')).toMatchObject({ status: 'unavailable' });
         expect(await f.access('coordinator')).toMatchObject({ status: 'allowed' });
+    });
+
+    it('releases the storage snapshot before mapping the admitted Session page', async () => {
+        const f = fixture();
+        const coordinator = f.rows.find(row => row.id === 'coordinator')!;
+        let snapshotClosed = false;
+        const mappingPhases: boolean[] = [];
+        const readCreatedAt = coordinator.createdAt.getTime.bind(coordinator.createdAt);
+        coordinator.createdAt.getTime = () => {
+            mappingPhases.push(snapshotClosed);
+            return readCreatedAt();
+        };
+        f.afterCapture(() => { snapshotClosed = true; });
+
+        const page = await f.read();
+        expect(page?.sessions.find(row => row.id === 'coordinator')?.createdAt).toBe(1);
+        // Selection can also read this Date. The final access serializes the admitted row.
+        expect(mappingPhases.at(-1)).toBe(true);
     });
 
     it('retains admitted graph membership and runtime authority until the next request', async () => {
