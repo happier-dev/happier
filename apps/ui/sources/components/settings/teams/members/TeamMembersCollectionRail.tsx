@@ -10,6 +10,10 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import {
   CollectionList,
   collectionListStyles,
+  collectionRailRowKey,
+  estimateCollectionRailRowHeight,
+  renderCollectionRailRow,
+  type CollectionRailRow,
 } from '@/components/ui/lists/collection/CollectionList';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -29,10 +33,6 @@ import { teamMemberRowSubtitle } from './teamMemberPresentation';
 /** Fits the rail's mark box, so names align with the rest of the rail. */
 /** The column's identity-mark box, so names align with the rest of the rail. */
 const MEMBER_RAIL_AVATAR_SIZE = HAPPIER_COLLECTION_LIST_METRICS.markSize;
-
-type RailRow = Readonly<{ key: string; render: () => React.ReactElement }>;
-const railRowKey = (row: RailRow) => row.key;
-const renderRailRow = ({ item }: Readonly<{ item: RailRow }>) => item.render();
 
 const MemberRailRow = React.memo(function MemberRailRow(props: Readonly<{
   membership: TeamMembershipV1;
@@ -112,9 +112,9 @@ export const TeamMembersCollectionRail = React.memo(
       [addressServerId, teamId, router],
     );
 
-    const rows: RailRow[] = [];
-    const add = (key: string, render: () => React.ReactElement) =>
-      rows.push({ key, render });
+    const rows: CollectionRailRow[] = [];
+    const add = (key: string, render: () => React.ReactElement, estimatedHeightPx?: number) =>
+      rows.push({ key, render, estimatedHeightPx });
     // While the first page is read, the people the Team summary counts hold their place in the rail's own rows (the
     // avatar, the name and role); an unknown count, or a search, reserves nothing rather than a guess.
     const reservedPeople = searching ? 0 : Math.min(team?.counts?.members ?? 0, TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1);
@@ -128,7 +128,7 @@ export const TeamMembersCollectionRail = React.memo(
           leadingMark="avatar"
           accessibilityLabel={t('teams.loading')}
         />
-      ));
+      ), reservedPeople * HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight);
     }
     if (searching && roster.status === 'ready' && roster.rows.length === 0) {
       add('search-empty', () => (
@@ -149,7 +149,7 @@ export const TeamMembersCollectionRail = React.memo(
           selected={props.selectedMembershipId === membership.id}
           onOpen={open}
         />
-      ));
+      ), HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight);
     }
     if (roster.error) {
       const failure = roster.error;
@@ -215,8 +215,9 @@ export const TeamMembersCollectionRail = React.memo(
           <VirtualizedList
             testID="team-members-rail-list"
             data={rows}
-            keyExtractor={railRowKey}
-            renderItem={renderRailRow}
+            keyExtractor={collectionRailRowKey}
+            renderItem={renderCollectionRailRow}
+            getEstimatedItemSize={estimateCollectionRailRowHeight}
             extraData={props.selectedMembershipId}
             style={{ flex: 1, minHeight: 0 }}
             contentContainerStyle={{ paddingBottom: theme.space.s16 }}

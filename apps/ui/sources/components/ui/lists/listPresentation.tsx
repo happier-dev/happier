@@ -180,8 +180,8 @@ export function usePageListInsets(): PageListInsets {
  */
 const PageColumnContext = React.createContext<PageColumn>('reading');
 
-/** The enclosing PageFrame's content width available before its rows lay out. */
-export const PageColumnWidthContext = React.createContext<number | null>(null);
+/** The page frame's inner span for its header and its constrained column for rows, before child layout. */
+export const PageFrameWidthsContext = React.createContext<Readonly<{ frame: number; column: number }> | null>(null);
 
 /**
  * A contained surface (a card modal's body) is its page lists' column: a page list inside it takes the

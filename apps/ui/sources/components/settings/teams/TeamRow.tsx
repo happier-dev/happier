@@ -13,6 +13,10 @@ import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@hap
 /** The column's identity-mark box, so Team names align with the rest of the rail. */
 const TEAM_RAIL_AVATAR_SIZE = HAPPIER_COLLECTION_LIST_METRICS.markSize;
 
+export function teamRailRowHasSubtitle(row: TeamsDirectoryRow, showHome: boolean): boolean {
+    return row.team.viewerRole !== null || (showHome && row.homeName.length > 0);
+}
+
 /**
  * One Team in the directory.
  *
@@ -36,16 +40,18 @@ export const TeamRow = React.memo(function TeamRow(props: Readonly<{
     const rail = props.variant === 'rail';
     const roleLabel = teamViewerStandingLabel(row.team) ?? '';
     // The compact rail stays one fact: the viewer's role.
-    const subtitle = [teamStandingSummary(row.team, { count: !rail }), props.showHome ? row.homeName : '']
-        .filter((part) => part.length > 0)
-        .join(' · ');
+    const subtitle = !rail || teamRailRowHasSubtitle(row, props.showHome)
+        ? [teamStandingSummary(row.team, { count: !rail }), props.showHome ? row.homeName : '']
+            .filter((part) => part.length > 0)
+            .join(' · ')
+        : undefined;
 
     return (
         <Item
             rowRole="catalogRow"
             testID={`teams-row:${row.address.serverId}:${row.address.teamId}`}
             title={row.team.name}
-            subtitle={subtitle.length > 0 ? subtitle : undefined}
+            subtitle={subtitle || undefined}
             accessibilityLabel={t('teams.directory.rowAccessibilityLabel', {
                 name: row.team.name,
                 role: roleLabel,

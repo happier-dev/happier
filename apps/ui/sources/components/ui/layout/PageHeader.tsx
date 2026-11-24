@@ -26,6 +26,7 @@ import { t } from '@/text';
 import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/InlineTextField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { PageFrameWidthsContext } from '@/components/ui/lists/listPresentation';
 import { NavigationHeaderActions, type NavigationHeaderAction } from '@/components/ui/layout/NavigationHeaderActions';
 import { useNavigationChromeShowsBack, useNavigationLeavesLargeTitle, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
@@ -208,6 +209,7 @@ function usePageHeaderMeta(facts: readonly PageHeaderMetaFact[] | undefined) {
 
 export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps) {
     const maxWidth = useLayoutMaxWidth();
+    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.frame;
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const chromeShowsBack = useNavigationChromeShowsBack();
     const largeTitle = useNavigationLeavesLargeTitle();
@@ -335,6 +337,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             actionsLayout={props.actionsLayout}
             status={props.status}
             renderBack={renderBack}
+            initialFrameWidthPx={initialFrameWidthPx}
             columnMaxWidthPx={props.columnWidth === 'pane' ? undefined : maxWidth}
             {...(props.contentInsetPx === undefined ? {} : { contentInsetPx: props.contentInsetPx })}
             renderText={renderText}

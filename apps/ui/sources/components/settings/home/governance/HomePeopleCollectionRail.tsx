@@ -1,13 +1,20 @@
 import * as React from 'react';
 import type { HomeAccountRowV1 } from '@happier-dev/protocol/home/governance';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { CollectionList, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import {
+    CollectionList,
+    collectionListStyles,
+    collectionRailRowKey,
+    estimateCollectionRailRowHeight,
+    renderCollectionRailRow,
+    type CollectionRailRow,
+} from '@/components/ui/lists/collection/CollectionList';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { useHomeAccountRoster } from '@/hooks/home/useHomeAccountRoster';
 import { useHomeAccountSearch } from '@/hooks/home/useHomeAccountSearch';
@@ -23,10 +30,6 @@ import { homeRoleLabel } from './homeGovernanceLabels';
 
 /** Fits the rail's mark box, so names align with the rest of the rail. */
 const PERSON_RAIL_AVATAR_SIZE = 28;
-
-type RailRow = Readonly<{ key: string; render: () => React.ReactElement }>;
-const railRowKey = (row: RailRow) => row.key;
-const renderRailRow = ({ item }: Readonly<{ item: RailRow }>) => item.render();
 
 /** Formatting and row elements are produced only for the recycler's mounted window. */
 const PeopleRailRosterRow = React.memo(function PeopleRailRosterRow(props: Readonly<{
@@ -91,8 +94,8 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
         if (result !== true) fireAndForget(result, { tag: 'HomePeopleCollectionRail.open' });
     }, [props.serverId, router]);
 
-    const rows: RailRow[] = [];
-    const add = (key: string, render: () => React.ReactElement) => rows.push({ key, render });
+    const rows: CollectionRailRow[] = [];
+    const add = (key: string, render: () => React.ReactElement, estimatedHeightPx?: number) => rows.push({ key, render, estimatedHeightPx });
     if (searching) {
         if (search.rows.length === 0) {
             // Searching holds the result rows' place; a failed or empty answer is one quiet line.
@@ -141,7 +144,7 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
             add(`roster:${row.accountId}`, () => (
                 <PeopleRailRosterRow row={row} viewerAccountId={scope?.accountId}
                     selected={props.selectedAccountId === row.accountId} onOpen={open} locale={locale} />
-            ));
+            ), HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight);
         }
         if (roster.error) {
             add('retry', () => (
@@ -179,8 +182,9 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
                 <VirtualizedList
                     testID="home-people-rail-list"
                     data={rows}
-                    keyExtractor={railRowKey}
-                    renderItem={renderRailRow}
+                    keyExtractor={collectionRailRowKey}
+                    renderItem={renderCollectionRailRow}
+                    getEstimatedItemSize={estimateCollectionRailRowHeight}
                     extraData={props.selectedAccountId}
                     style={{ flex: 1, minHeight: 0 }}
                     contentContainerStyle={{ paddingBottom: 16 }}

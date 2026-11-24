@@ -104,6 +104,33 @@ describe('PageHeader back control placement', () => {
         expect(narrow.findHostByTestId('page-header-back-line')?.props.style).not.toContainEqual({ opacity: 0 });
     });
 
+    it.each([
+        { content: 'free', splitWidth: 1440, frameWidth: PAGE_LIST_METRICS.columnMaxWidthPx.reading - 2 * PAGE_LIST_METRICS.sheetInsetPx },
+        { content: 'sections', splitWidth: 1056, frameWidth: 1056 - 272 - 2 * PAGE_LIST_METRICS.detailSideInsetPx },
+    ] as const)('keeps the first title offset when the $content page is narrower than the split detail', async ({ content, splitWidth, frameWidth }) => {
+        const { PageFrame } = await import('@/components/ui/layout/PageFrame');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const screen = await renderInCollectionLayout(
+            <ListPresentationProvider value="page">
+                <PageFrame content={content}>
+                    <NavigationBackChromeProvider control={BackArrow}>
+                        <PageHeader testID="page-header" title="Team member" />
+                    </NavigationBackChromeProvider>
+                </PageFrame>
+            </ListPresentationProvider>,
+            'split',
+            splitWidth,
+        );
+        const aboveTitleHeight = () => {
+            const style = screen.findHostByTestId('page-header-back-line')?.props.style?.[0];
+            return style ? style.height + style.marginBottom : 0;
+        };
+        const firstOffset = aboveTitleHeight();
+        layoutPane(screen, frameWidth);
+        expect(aboveTitleHeight()).toBe(PAGE_LIST_METRICS.backControlSizePx + PAGE_LIST_METRICS.pageHeaderLineGapPx);
+        expect(firstOffset).toBe(aboveTitleHeight());
+    });
+
     it('keeps the title on the content edge and puts back in the gutter on wide panes', async () => {
         const screen = await renderHeader();
         layoutPane(screen, 1400);

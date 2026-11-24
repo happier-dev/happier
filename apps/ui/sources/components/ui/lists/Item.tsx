@@ -35,6 +35,7 @@ import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, resolveHappierFocusRingVisible, res
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     ITEM_CHEVRON_SIZE,
+    ITEM_COMPACT_MIN_HEIGHT_PX,
     ITEM_ICON_BOX_SIZE,
     ITEM_ICON_GLYPH_SIZE,
     MENU_ROW_METRICS, MENU_ROW_SHAPE, MENU_ROW_TRAILING,
@@ -56,7 +57,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { SectionRowBleedContext, useSectionRowBleedStyle } from './bareRowBleed';
-import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, PageColumnWidthContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, PageFrameWidthsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
@@ -488,7 +489,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         // Compact rows are used heavily in right rails (files/SCM) and should feel editor-like on web/tablet.
         // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
         // The dense row of the spacing rhythm on pointer platforms (`HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight`).
-        minHeight: Platform.select({ ios: 38, default: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight }),
+        minHeight: ITEM_COMPACT_MIN_HEIGHT_PX,
     },
     containerCozy: {
         paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.cozy,
@@ -1262,7 +1263,7 @@ function ItemRow(props: ItemProps & Readonly<{
     // Use the page column before the first row layout. Floating lists start in their own surface,
     // and an unframed list can still use the window width known to the shell before paint.
     const initialColumnWidthPx = accessoryLayout === 'adaptive' && !isMenuRow && !isCatalogRow && measuredRowWidthPx === null
-        ? (floatingList ? null : React.use(PageColumnWidthContext)) ?? Dimensions.get('window').width
+        ? (floatingList ? null : React.use(PageFrameWidthsContext)?.column) ?? Dimensions.get('window').width
         : null;
     const initialSheetInsetsPx = pageSheet?.framed === true && !containedList ? 2 * PAGE_LIST_METRICS.sheetInsetPx : 0;
     const rowWidthPx = measuredRowWidthPx

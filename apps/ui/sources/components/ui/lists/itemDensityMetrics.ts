@@ -12,6 +12,8 @@ function selectValue<T>(values: { ios?: T; default: T }): T {
     return Platform.OS === 'ios' && values.ios !== undefined ? values.ios : values.default;
 }
 
+export const ITEM_COMPACT_MIN_HEIGHT_PX = selectValue({ ios: 38, default: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight });
+
 function roleMetrics(role: Parameters<typeof resolveHappierTypeScale>[0]) {
     const { weight: _weight, ...metrics } = resolveHappierTypeScale(role, Platform.OS);
     return metrics;

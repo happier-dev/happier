@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -136,13 +137,12 @@ export const TeamsDirectoryScreen = React.memo(function TeamsDirectoryScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams();
     const sourceHint = React.useMemo(() => readTeamCredentialSourceHint(params), [params]);
-    useRouteLaunchCurtainHold(view === 'pending', sourceHint?.serverId);
 
     React.useEffect(() => {
         navigation.setOptions({ title: t('teams.title') });
     }, [navigation]);
 
-    if (view === 'pending') return null;
+    if (view === 'pending') return <DestinationBodyLoading routeServerId={sourceHint?.serverId} />;
     if (view === 'land') return <TeamsCollectionLanding sourceHint={sourceHint} />;
     return <TeamsDirectoryPage sourceHint={sourceHint} />;
 });
@@ -158,8 +158,6 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
     const landing = props.sourceHint || waiting
         ? null
         : resolveTeamsCollectionLanding(active.rows, readLastVisitedTeamsCollectionTeam());
-    // The renderless index redirect still owns the pane until the selected Team takes over.
-    useRouteLaunchCurtainHold(waiting || landing !== null, props.sourceHint?.serverId);
 
     if (props.sourceHint) {
         // Sharing a credential: the rail beside this page is the choice.
@@ -174,16 +172,11 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
         );
     }
 
-    // Wait for an answer so "first Team" is not a guess. The rail beside this pane shows the one
-    // loading state; the pane keeps only its header meanwhile.
-    if (waiting) {
-        return (
-            <ItemList>
-                <PageHeader testID="teams-directory-header" title={t('teams.title')} description={t('teams.pages.directory')} />
-            </ItemList>
-        );
-    }
-    if (landing) return <Redirect href={teamDetailPath(landing) as never} />;
+    // The index stays visible during the transition to the chosen Team's lazy route.
+    if (waiting || landing) return <>
+        <DestinationBodyLoading routeServerId={landing?.serverId} />
+        {landing ? <Redirect href={teamDetailPath(landing) as never} /> : null}
+    </>;
 
     // A Home that failed to answer has not said it has no Teams: name the failure, never "No Teams yet" beside it.
     const answeredUnavailableHomes = active.unavailableHomes.filter((home) => home.reason !== 'loading');

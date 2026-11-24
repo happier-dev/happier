@@ -351,6 +351,17 @@ export function CollectionShellColumnScope(props: Readonly<{ children: React.Rea
  */
 export const CollectionRailColumnContext = React.createContext(false);
 
+/** A rail cell's row metric is known before the recycler measures its element. */
+export type CollectionRailRow = Readonly<{
+    key: string;
+    render: () => React.ReactElement;
+    estimatedHeightPx?: number;
+}>;
+
+export const collectionRailRowKey = (row: CollectionRailRow) => row.key;
+export const renderCollectionRailRow = ({ item }: Readonly<{ item: CollectionRailRow }>) => item.render();
+export const estimateCollectionRailRowHeight = (row: CollectionRailRow) => row.estimatedHeightPx;
+
 /**
  * How many items a list holds before its header offers the search field (`search` is "present only when
  * the list is long enough to need it"). A list whose whole length is not yet known counts as long.

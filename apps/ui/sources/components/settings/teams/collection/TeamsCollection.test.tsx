@@ -91,6 +91,28 @@ describe('Team collection first read', () => {
     });
 });
 
+it('places the second Team and Show archived at the mounted row offsets on the first recycler layout', async () => {
+    const home = await addHome('rail-geometry-home');
+    await harness.selectHomes([home]);
+    harness.answer(home, LIST_PATH, { body: { items: [
+        teamSummaryFixture({ id: 'alpha', name: 'Alpha', viewerRole: 'owner' }),
+        teamSummaryFixture({ id: 'beta', name: 'Beta', viewerRole: 'member' }),
+    ], nextCursor: null } });
+    const screen = await renderScreen(<TeamsCollectionRail />);
+    await vi.waitFor(() => expect(screen.findHostByTestId('teams-directory-toggle-archived')).not.toBeNull());
+
+    // Legend has the rendered cells and its first estimates, but has received no layout events.
+    const list = screen.tree.findByType('LegendList').props;
+    const estimates = list.data.slice(0, 2).map((row: unknown, index: number): number =>
+        list.getEstimatedItemSize?.(row, index) ?? list.estimatedItemSize,
+    );
+    expect(screen.findHostByTestId(`teams-row:${home}:alpha`)).not.toBeNull();
+    expect(screen.findHostByTestId(`teams-row:${home}:beta`)).not.toBeNull();
+    const { HAPPIER_COLLECTION_LIST_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+    const rowHeight = HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight;
+    expect([estimates[0], estimates[0] + estimates[1]]).toEqual([rowHeight, 2 * rowHeight]);
+});
+
 describe('Team collection loaded-page search', () => {
     it('updates only the changed mounted Team row on a 400-Team page arrival', async () => {
         const home = await addHome('row-cost-home');

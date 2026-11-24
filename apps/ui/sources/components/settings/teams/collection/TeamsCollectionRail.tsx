@@ -12,7 +12,7 @@ import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { TeamRow } from '../TeamRow';
+import { TeamRow, teamRailRowHasSubtitle } from '../TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath } from '../teamsRoutes';
 import type { TeamsDirectoryUnavailableHome } from '../teamsDirectoryViewState';
 import { teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
@@ -23,13 +23,18 @@ import {
     resolveSelectedTeamAddress,
 } from './teamsCollection';
 import { useTeamsCollection } from './useTeamsCollection';
-import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
-
-
-type CollectionRow = Readonly<{ key: string; render: () => React.ReactElement }>;
-const collectionRowKey = (row: CollectionRow) => row.key;
-const renderCollectionRow = ({ item }: Readonly<{ item: CollectionRow }>) => item.render();
+import {
+    CollectionDraftRow,
+    CollectionList,
+    CollectionListGroupLabel,
+    collectionListStyles,
+    collectionRailRowKey,
+    estimateCollectionRailRowHeight,
+    renderCollectionRailRow,
+    type CollectionRailRow,
+} from '@/components/ui/lists/collection/CollectionList';
+import { ITEM_COMPACT_MIN_HEIGHT_PX } from '@/components/ui/lists/itemDensityMetrics';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The collection's "+": a new Team, shown only where a Home in view offers creation to this viewer,
@@ -107,14 +112,17 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
     const searchable = collection.searchable;
     const noMatches = total > 0 && collection.visibleActiveRows.length === 0;
 
-    const rows: Array<Readonly<{ key: string; render: () => React.ReactElement }>> = [];
-    const add = (key: string, render: () => React.ReactElement) => rows.push({ key, render });
+    const rows: CollectionRailRow[] = [];
+    const add = (key: string, render: () => React.ReactElement, estimatedHeightPx?: number) => rows.push({ key, render, estimatedHeightPx });
     const addTeams = (prefix: string, teams: typeof collection.visibleActiveRows) => {
         for (const row of teams) {
+            const estimatedHeight = teamRailRowHasSubtitle(row, collection.multiHome)
+                ? HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight
+                : ITEM_COMPACT_MIN_HEIGHT_PX;
             add(`${prefix}:${teamAddressKey(row.address)}`, () => (
                 <TeamRow row={row} variant="rail" selected={selectedKey === teamAddressKey(row.address)}
                     showHome={collection.multiHome} onPress={openTeam} />
-            ));
+            ), estimatedHeight);
         }
     };
     if (drafting) add('draft', () => <TeamDraftRow />);
@@ -149,10 +157,11 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
                 title={collection.showArchived ? t('teams.directory.hideArchived') : t('teams.directory.showArchived')}
                 titleStyle={collectionListStyles.dimmedTitle} accessibilityExpanded={collection.showArchived}
                 density="compact" showChevron={false} pressableStyle={collectionListStyles.row} onPress={collection.toggleArchived} />
-        ));
+        ), ITEM_COMPACT_MIN_HEIGHT_PX);
         if (collection.showArchived || collection.visibleArchivedRows.length > 0) {
             if (collection.visibleArchivedRows.length > 0) {
-                add('archived-heading', () => <CollectionListGroupLabel title={t('teams.directory.archivedSection')} />);
+                add('archived-heading', () => <CollectionListGroupLabel title={t('teams.directory.archivedSection')} />,
+                    HAPPIER_COLLECTION_LIST_METRICS.groupLabelHeight);
             }
             addTeams('archived', collection.visibleArchivedRows);
             if (collection.visibleArchivedRows.length === 0 && collection.archivedPending) {
@@ -193,8 +202,9 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
                 <VirtualizedList
                     testID="teams-collection-virtualized-list"
                     data={rows}
-                    keyExtractor={collectionRowKey}
-                    renderItem={renderCollectionRow}
+                    keyExtractor={collectionRailRowKey}
+                    renderItem={renderCollectionRailRow}
+                    getEstimatedItemSize={estimateCollectionRailRowHeight}
                     extraData={selectedKey}
                     style={{ flex: 1, minHeight: 0 }}
                     contentContainerStyle={{ paddingBottom: 16 }}

@@ -138,7 +138,7 @@ describe('TeamsDirectoryScreen craft', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-search');
     });
 
-    it('beside the rail, leaves the one loading line to the rail instead of a second loading card', async () => {
+    it('beside the rail, keeps the detail loading frame mounted while landing on the first Team', async () => {
         const home = await harness.addHome({
             name: 'Studio', serverUrl: 'https://studio.example', accountId: 'member-a', teamsEnabled: true,
         });
@@ -152,11 +152,13 @@ describe('TeamsDirectoryScreen craft', () => {
 
         const screen = await renderDirectory();
         await vi.waitFor(() => expect(harness.requestsFor(TEAMS_LIST_PATH).length).toBeGreaterThan(0));
-        const ids = collectRenderedTestIds(screen.tree.toJSON());
-        expect(ids).toContain('teams-directory-header');
-        expect(ids).not.toContain('teams-directory-loading');
+        const ids = () => collectRenderedTestIds(screen.tree.toJSON());
+        const firstFrame = screen.findHostByTestId('workspace-destination-body-loading');
+        expect(ids()).not.toContain('teams-directory-loading');
         pending.answer();
         await vi.waitFor(() => expect(sdkRedirect).toHaveBeenCalledWith(`/settings/teams/${home}/team-0`));
+        expect(firstFrame).not.toBeNull();
+        expect(screen.findHostByTestId('workspace-destination-body-loading')).toBe(firstFrame);
     });
 
     it('beside the rail, never calls a Home that failed to answer "No Teams yet"', async () => {

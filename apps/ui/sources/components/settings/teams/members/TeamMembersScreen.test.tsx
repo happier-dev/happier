@@ -142,7 +142,7 @@ describe('TeamMembersScreen', () => {
         await vi.waitFor(() => expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe(`/settings/teams/${encodeURIComponent(serverId)}/team-1/members/membership-1`));
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-virtualized-list');
     });
-    it('beside the Members rail, draws nothing of its own while the roster is read, then lands on a person', async () => {
+    it('keeps the detail header and rows in place while the Members landing waits and redirects', async () => {
         const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
         let answer!: () => void;
         harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null },
@@ -150,11 +150,21 @@ describe('TeamMembersScreen', () => {
         const screen = await renderMembers(serverId, true);
         await act(async () => screen.findByTestId('members-test-layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200 } } }));
         await vi.waitFor(() => expect(harness.requestsFor(MEMBERS_LIST_PATH).length).toBeGreaterThan(0));
-        // No "Members" header that the person's own header would replace.
+        const frame = () => {
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            return {
+                header: ids.includes('workspace-destination-body-loading-header'),
+                rows: ids.includes('workspace-destination-body-loading-rows'),
+            };
+        };
+        const firstFrame = frame();
+        // The index does not take the person's title while the roster is pending.
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-page-header');
         expect(screen.findAllByType('Redirect' as never)).toEqual([]);
         await act(async () => { answer(); });
         await vi.waitFor(() => expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe(`/settings/teams/${encodeURIComponent(serverId)}/team-1/members/membership-1`));
+        expect(firstFrame).toEqual({ header: true, rows: true });
+        expect(frame()).toEqual(firstFrame);
     });
     it('keeps the last roster row, and its Load more control, clear of the phone floating tab bar', async () => {
         const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));

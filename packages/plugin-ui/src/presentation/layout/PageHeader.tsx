@@ -134,6 +134,8 @@ export type HappierPageHeaderProps = Readonly<{
    * Absent, the column is the pane.
    */
   columnMaxWidthPx?: number;
+  /** Width published by the containing page frame before this header measures its own box. */
+  initialFrameWidthPx?: number;
   /**
    * How a string slot is drawn. Happier core supplies its own text owner (its
    * font families and text scaling); absent, the shared text owner draws each
@@ -349,8 +351,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const inlineActions = hangsFromTitle || (!centered && props.actionsLayout === 'inline');
   // The mark keeps to the title's row; what supports the title runs under both, from the column's edge.
   const markOnTitleRow = props.markSpan === 'title' && Boolean(props.leading) && showTitle && !centered;
-  // The header's own measurement wins; until it arrives, the split's detail width places back.
-  const backPlacement = resolveHappierPageBackPlacement({ paneWidthPx: paneWidthPx ?? detailWidthPx, columnMaxWidthPx, backShown: showsBack });
+  const backPlacement = resolveHappierPageBackPlacement({
+    paneWidthPx: paneWidthPx ?? props.initialFrameWidthPx ?? detailWidthPx, columnMaxWidthPx, backShown: showsBack,
+  });
 
   // In the gutter the arrow is outside the flow, anchored to what sits on the
   // content's left edge (the mark, else the text), so that keeps its place and
