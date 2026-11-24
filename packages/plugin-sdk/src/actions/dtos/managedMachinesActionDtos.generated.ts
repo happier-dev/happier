@@ -18768,6 +18768,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -18853,6 +18871,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -18938,6 +18974,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -19024,6 +19078,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -23242,6 +23314,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -23327,6 +23417,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -23412,6 +23520,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -23498,6 +23624,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -30564,6 +30708,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -30649,6 +30811,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -30734,6 +30914,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -30820,6 +31018,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -35038,6 +35254,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -35123,6 +35357,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -35208,6 +35460,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -35294,6 +35564,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -49297,6 +49585,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -49382,6 +49688,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -49467,6 +49791,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -49553,6 +49895,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -53771,6 +54131,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -53856,6 +54234,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -53941,6 +54337,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -54027,6 +54441,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -59065,6 +59497,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -59150,6 +59600,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -59235,6 +59703,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -59321,6 +59807,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -63539,6 +64043,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -63624,6 +64146,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -63709,6 +64249,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -63795,6 +64353,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -68757,6 +69333,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -68842,6 +69436,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -68927,6 +69539,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -69013,6 +69643,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };
@@ -73231,6 +73879,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -73316,6 +73982,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 } | {
@@ -73401,6 +74085,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                         waitMs?: number | undefined;
                     };
@@ -73487,6 +74189,24 @@ export type ManagedMachinesActionResultById = {
                             };
                             expectedGeneration: string;
                             sourceRevision: string;
+                        } | {
+                            hostRead: 'telemetry.capture';
+                            input: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            windowMs: number;
                         };
                     };
                 };

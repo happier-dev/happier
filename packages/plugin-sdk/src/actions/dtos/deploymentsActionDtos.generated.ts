@@ -4909,6 +4909,10 @@ export type DeploymentsActionInputById = {
                 desiredRevision: number;
                 providerRevision?: string | undefined;
             }[];
+            ownedTelemetryDestinations?: undefined | {
+                type: 'logs' | 'traces';
+                slug: string;
+            }[];
             data?: undefined | {
                 engine: string;
                 version?: string | undefined;
@@ -9209,6 +9213,10 @@ export type DeploymentsActionResultById = {
                         desiredRevision: number;
                         providerRevision?: string | undefined;
                     }[];
+                    ownedTelemetryDestinations?: undefined | {
+                        type: 'logs' | 'traces';
+                        slug: string;
+                    }[];
                     data?: undefined | {
                         engine: string;
                         version?: string | undefined;
@@ -12668,6 +12676,10 @@ export type DeploymentsActionResultById = {
                     desiredRevision: number;
                     providerRevision?: string | undefined;
                 }[];
+                ownedTelemetryDestinations?: undefined | {
+                    type: 'logs' | 'traces';
+                    slug: string;
+                }[];
                 data?: undefined | {
                     engine: string;
                     version?: string | undefined;
@@ -15240,6 +15252,10 @@ export type DeploymentsActionResultById = {
                 desiredRevision: number;
                 providerRevision?: string | undefined;
             }[];
+            ownedTelemetryDestinations?: undefined | {
+                type: 'logs' | 'traces';
+                slug: string;
+            }[];
             data?: undefined | {
                 engine: string;
                 version?: string | undefined;
@@ -15384,6 +15400,10 @@ export type DeploymentsActionResultById = {
                 providerId: string;
                 desiredRevision: number;
                 providerRevision?: string | undefined;
+            }[];
+            ownedTelemetryDestinations?: undefined | {
+                type: 'logs' | 'traces';
+                slug: string;
             }[];
             data?: undefined | {
                 engine: string;
@@ -16134,6 +16154,21 @@ export type DeploymentsActionResultById = {
                 code: 'deployment_conflict' | 'deployment_content_unavailable' | 'outcome_unknown' | 'plugin_secret_custody_unavailable' | 'provider_request_failed' | 'provider_response_invalid' | 'secret_missing' | 'secret_use_client_required';
             }[];
             persisted: boolean;
+            telemetryDestination?: undefined | {
+                owned: {
+                    type: 'logs' | 'traces';
+                    slug: string;
+                }[];
+                configured: {
+                    name: string;
+                    type: 'logs' | 'traces';
+                    slug: string;
+                }[];
+                failures: {
+                    type: 'logs' | 'traces';
+                    code: 'deployment_access_denied' | 'deployment_conflict' | 'outcome_unknown' | 'plugin_secret_custody_unavailable' | 'provider_request_failed' | 'provider_response_invalid' | 'secret_missing' | 'secret_use_client_required';
+                }[];
+            };
         };
     };
     readonly "deployments.environments.list": {

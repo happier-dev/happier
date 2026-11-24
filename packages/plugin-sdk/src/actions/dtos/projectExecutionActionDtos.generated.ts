@@ -1830,6 +1830,10 @@ export type ProjectExecutionActionResultById = {
                                     desiredRevision: number;
                                     providerRevision?: string | undefined;
                                 }[];
+                                ownedTelemetryDestinations?: undefined | {
+                                    type: 'logs' | 'traces';
+                                    slug: string;
+                                }[];
                                 data?: undefined | {
                                     engine: string;
                                     version?: string | undefined;
@@ -4770,6 +4774,10 @@ export type ProjectExecutionActionResultById = {
                                     desiredRevision: number;
                                     providerRevision?: string | undefined;
                                 }[];
+                                ownedTelemetryDestinations?: undefined | {
+                                    type: 'logs' | 'traces';
+                                    slug: string;
+                                }[];
                                 data?: undefined | {
                                     engine: string;
                                     version?: string | undefined;
@@ -7709,6 +7717,10 @@ export type ProjectExecutionActionResultById = {
                                     providerId: string;
                                     desiredRevision: number;
                                     providerRevision?: string | undefined;
+                                }[];
+                                ownedTelemetryDestinations?: undefined | {
+                                    type: 'logs' | 'traces';
+                                    slug: string;
                                 }[];
                                 data?: undefined | {
                                     engine: string;

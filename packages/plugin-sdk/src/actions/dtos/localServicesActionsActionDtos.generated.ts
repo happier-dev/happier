@@ -2094,6 +2094,10 @@ export type LocalServicesActionsActionResultById = {
                                     desiredRevision: number;
                                     providerRevision?: string | undefined;
                                 }[];
+                                ownedTelemetryDestinations?: undefined | {
+                                    type: 'logs' | 'traces';
+                                    slug: string;
+                                }[];
                                 data?: undefined | {
                                     engine: string;
                                     version?: string | undefined;
