@@ -40,8 +40,8 @@ describe('local capture background lifecycle', () => {
    const exportLogs = (...messages: string[]) => fetch(`${bound!.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: messages.map(stringValue =>
      ({ timeUnixNano: '1700000000000000000', body: { stringValue } })) }] }] }) });
-   expect((await exportLogs('busy writer')).status).toBe(200);
-   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 1, reason: 'store_busy' });
+   expect((await exportLogs('busy writer')).status).toBe(503);
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 0, reason: null });
    held.release();
    await runtime.ingest.settled();
    runtime.ingest.offer([{ id: 'next', worktree: 'other', kind: 'log', source: 'otlp', at: 2 }]);
@@ -61,10 +61,14 @@ describe('local capture background lifecycle', () => {
    held = fixture.holdNextCommit();
    runtime.ingest.offer([{ id: 'third', worktree: 'other', kind: 'log', source: 'otlp', at: 3 }]);
    await held.entered;
-   expect((await exportLogs('removed before flush')).status).toBe(200);
+   runtime.observeWire({ kind: 'transaction', id: 'removed-before-flush', connectionId: 'wire',
+    startedAt: 3, durationMs: 1, outcome: 'commit', executionIds: [] },
+   { partition: 'first', physicalRootIdentity: '/physical/first' });
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 1, reason: 'store_busy' });
    const removed = runtime.removeWorktree('/physical/first');
    held.release();
    await removed;
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 0, reason: null });
    runtime.ingest.offer([{ id: 'fourth', worktree: 'other', kind: 'log', source: 'otlp', at: 4 }]);
    await runtime.ingest.settled();
    expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toEqual([]);

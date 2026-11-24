@@ -127,8 +127,10 @@ export function createCaptureRuntime(input: {
     },
     withWriter: options.admit ? operation => ingest.exclusive(operation) : undefined,
     async onBatch(batch, context) {
-     if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
      const events = normalizeBatch(batch, context);
+     const localOffer = options.admit ? undefined : ingest.tryOffer(events);
+     if (localOffer === 'busy') return { accepted: false as const, retryable: true, message: 'Capture store is busy' };
+     if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
      if (options.admit) {
       const result = await ingest.write(events);
       if (result.accepted) {
@@ -141,7 +143,7 @@ export function createCaptureRuntime(input: {
       return { accepted: false as const, retryable: !full, ...(full ? { status: 507 as const } : {}),
        message: full ? 'collector storage full' : 'OTLP store write failed' };
      }
-     const accepted = ingest.offer(events);
+     const accepted = localOffer === 'accepted';
      return { accepted: true as const, rejectedRecords: accepted ? 0 : events.length,
       ...(accepted ? {} : { message: 'Capture coverage lost while storage was unavailable' }) };
     },

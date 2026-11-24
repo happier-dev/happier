@@ -84,27 +84,41 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }
     });
 
-    it('returns visible partial success while a real write transaction is held, then clears and resumes without a queue', async () => {
+    it('retains concurrent trace and log exports without counting the retryable batch as lost', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
         const held = f.holdNextCommit();
         try {
-            expect((await post(receiver.endpoint, 'traces', traceRequest())).status).toBe(200);
+            const traces = () => post(receiver.endpoint, 'traces', traceRequest());
+            const logs = () => post(receiver.endpoint, 'logs', { resourceLogs: [{ scopeLogs: [{ logRecords: [{
+                traceId, spanId, timeUnixNano: '1700000000001000000', body: { stringValue: 'request completed' },
+            }] }] }] });
+            const responses = Promise.all([traces(), logs()]);
             await held.entered;
-            const dropped = await post(receiver.endpoint, 'traces', traceRequest('2234567890abcdef'));
-            expect(dropped.status).toBe(200);
-            expect(await dropped.json()).toMatchObject({ partialSuccess: { rejectedSpans: '1' } });
-            expect(f.runtime.ingest.coverage()).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
-            const clearing = f.runtime.clear(partition);
+            const [traceResponse, logResponse] = await responses;
+            const traceAcceptedFirst = traceResponse.status === 200;
+            const accepted = traceAcceptedFirst ? traceResponse : logResponse;
+            const busy = traceAcceptedFirst ? logResponse : traceResponse;
+            expect(await accepted.json()).toEqual({});
+            expect(busy.status).toBe(503);
+            expect(await busy.json()).toMatchObject({ code: 14, message: expect.any(String) });
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
+            expect(f.publications).toEqual([]);
+
             held.release();
-            await clearing;
             await f.runtime.ingest.settled();
-            expect(await f.runtime.store.list({ worktree: partition, limit: 20 })).toEqual([]);
-            expect((await post(receiver.endpoint, 'traces', traceRequest('3234567890abcdef'))).status).toBe(200);
+            const replay = await (traceAcceptedFirst ? logs() : traces());
+            expect(replay.status).toBe(200);
+            expect(await replay.json()).toEqual({});
             await f.runtime.ingest.settled();
-            expect(await f.runtime.store.list({ worktree: partition, limit: 20 })).toEqual([
-                expect.objectContaining({ spanId: '3234567890abcdef' }),
+            expect(await f.runtime.store.list({ worktree: partition, kind: 'query', limit: 10 })).toEqual([
+                expect.objectContaining({ traceId, spanId }),
             ]);
+            expect(await f.runtime.store.list({ worktree: partition, kind: 'log', limit: 10 })).toEqual([
+                expect.objectContaining({ traceId, spanId, bodyPrefix: 'request completed' }),
+            ]);
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
+            expect(f.publications).toEqual([[partition], [partition]]);
         } finally {
             held.release();
             await receiver.release();
@@ -113,31 +127,58 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }
     });
 
-    it('publishes coverage loss only for the dropped partition and keeps other partition coverage isolated', async () => {
+    it('counts observations refused by degraded storage, then clears and resumes', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
+        try {
+            f.failWrites('daemon_database_quota_exceeded');
+            expect((await post(receiver.endpoint, 'traces', traceRequest())).status).toBe(200);
+            await f.runtime.ingest.settled();
+            const dropped = await post(receiver.endpoint, 'traces', traceRequest('2234567890abcdef'));
+            expect(dropped.status).toBe(200);
+            expect(await dropped.json()).toMatchObject({ partialSuccess: { rejectedSpans: '1' } });
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 2, reason: 'daemon_database_quota_exceeded' });
+
+            f.failWrites(null);
+            await f.runtime.clear(partition);
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
+            expect((await post(receiver.endpoint, 'traces', traceRequest('3234567890abcdef'))).status).toBe(200);
+            await f.runtime.ingest.settled();
+            expect(await f.runtime.store.list({ worktree: partition, limit: 20 })).toEqual([
+                expect.objectContaining({ spanId: '3234567890abcdef' }),
+            ]);
+        } finally {
+            await receiver.release();
+            await f.runtime.ingest.settled();
+            f.close();
+        }
+    });
+
+    it('counts wire observations per partition while an OTLP write is held', async () => {
         const f = await fixture();
         const first = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
         const otherPartition = 'another-account/machine/project/worktree';
-        const second = await f.runtime.acquireReceiver({ port: 0, context: { partition: otherPartition } });
+        const observeTransaction = (worktree: string) => f.runtime.observeWire({
+            id: 'wire-transaction', kind: 'transaction', connectionId: 'wire', startedAt: 1,
+            durationMs: 1, outcome: 'commit', executionIds: [],
+        }, { partition: worktree });
         const held = f.holdNextCommit();
         try {
             expect((await post(first.endpoint, 'traces', traceRequest())).status).toBe(200);
             await held.entered;
-            const droppedOther = await post(second.endpoint, 'traces', traceRequest('4234567890abcdef'));
-            expect(droppedOther.status).toBe(200);
-            expect(await droppedOther.json()).toMatchObject({ partialSuccess: { rejectedSpans: '1' } });
+            observeTransaction(otherPartition);
             expect(f.runtime.ingest.coverage(otherPartition)).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
             expect(f.runtime.ingest.coverage(partition)).toMatchObject({ lostObservations: 0 });
             expect(f.publications).toEqual([[otherPartition]]);
 
-            const droppedFirst = await post(first.endpoint, 'traces', traceRequest('5234567890abcdef'));
-            expect(droppedFirst.status).toBe(200);
+            observeTransaction(partition);
             expect(f.runtime.ingest.coverage(partition)).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
             expect(f.runtime.ingest.coverage(otherPartition)).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
             expect(f.runtime.ingest.coverage('unaffected-partition')).toMatchObject({ lostObservations: 0 });
             expect(f.publications).toEqual([[otherPartition], [partition]]);
         } finally {
             held.release();
-            await Promise.all([first.release(), second.release()]);
+            await first.release();
             await f.runtime.ingest.settled();
             f.close();
         }

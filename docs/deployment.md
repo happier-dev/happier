@@ -3257,6 +3257,12 @@ the collector receives only its SHA-256 hash after a successful runtime launch.
 Changing collectors requires confirmation before deleting the old Environment
 partition, including reconciliation when that Machine next comes online.
 
+In 0.3 development, the workspace-local OTLP receiver returns HTTP 503 when its
+capture writer is busy. The exporter can retry the batch. Capture counts
+discarded observations, including PostgreSQL wire observations dropped during
+a held write. The counter excludes OTLP batches refused for retry.
+[OTLP/HTTP retry rules](https://opentelemetry.io/docs/specs/otlp/#retryable-response-codes)
+
 The same Action independently selects Metrics, App LLM cost and Exceptions in
 private Environment content. Missing choices are off. Project and Source creation
 defaults preselect new Environments only. One changed binding CAS also projects

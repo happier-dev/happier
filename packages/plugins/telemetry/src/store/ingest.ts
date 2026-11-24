@@ -54,14 +54,22 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    return { accepted: false, code };
   }
  }
+ function tryOffer(events: readonly CaptureEvent[]): 'accepted' | 'busy' | 'failed' {
+  if (!events.length) return 'accepted';
+  if (failure) { loseEvents(events, failure); return 'failed'; }
+  if (pending) return 'busy';
+  pending = Promise.resolve().then(() => persist(events)).then(() => {}).finally(() => { pending = null; });
+  return 'accepted';
+ }
  return {
   /** Called inside exclusive admission; local observation offers use the same persistence owner. */
   write: persist,
+  /** Busy observations stay with the caller when its transport supports retry. */
+  tryOffer,
   offer(events: readonly CaptureEvent[]): boolean {
-   if (!events.length) return true;
-   if (pending || failure) { loseEvents(events, failure ?? 'store_busy'); return false; }
-   pending = Promise.resolve().then(() => persist(events)).then(() => {}).finally(() => { pending = null; });
-   return true;
+   const result = tryOffer(events);
+   if (result === 'busy') loseEvents(events, 'store_busy');
+   return result === 'accepted';
   },
   coverage,
   recordLoss(partition: string, cause: string, count = 1, physicalRootIdentity?: string) {
