@@ -9,7 +9,7 @@ import { projectSessionSummaryV1 } from '../sessions/control/listResult.js';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { deriveActionChildRequestIdV1 } from '../workflows/workflowInvocationIdentityV1.js';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort as createActionExecutor } from './executor/actionAutomationAdmission.testkit.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { resolveActionSessionTargets } from './executor/sessionTargets.js';
 import { OpenedSessionFollowRuleV1Schema, SessionFollowActionOutputSchemasV1 } from '../sessions/follow/actions.js';

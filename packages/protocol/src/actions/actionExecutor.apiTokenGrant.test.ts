@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort as createActionExecutor } from './executor/actionAutomationAdmission.testkit.js';
 
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';

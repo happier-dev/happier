@@ -2,7 +2,7 @@ import { ActionIdSchema } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort as createActionExecutor } from './executor/actionAutomationAdmission.testkit.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { getActionSpec } from './actionSpecs.js';

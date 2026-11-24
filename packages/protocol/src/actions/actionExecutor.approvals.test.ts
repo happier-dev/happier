@@ -1606,7 +1606,7 @@ describe('createActionExecutor (approvals)', () => {
       } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
         | 'isApprovalExecutionOriginCurrent' | 'homeDomainAction' | 'observeActionExecution' | 'sessionSendMessage'>;
       // Unused transport arms are absent from this boundary fixture.
-      const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
+      const executor = createActionExecutor({ ...deps, actionAutomations: createEmptyActionAutomationPortV1('account') });
       const created = await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
         serverId: 'creator-profile', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
         actionRequestId: 'proposal-request', actionCaller: caller, defaultSessionId: 'source', callerPermissionMode: null,
@@ -1961,7 +1961,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(sessionPermissionRespond).toHaveBeenCalledOnce();
   });
 
-  it.each(['agent', 'mcp'] as const)('lets %s reject a same-Account person-created request without approval delegation', async surface => {
+  it.each(['agent', 'mcp'] as const)('keeps a person-created request open when %s has no approval delegation', async surface => {
     const origin = buildApprovalExecutionOriginV1({ actionId: 'usage.prices.refresh', input: {},
       context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: 'server-1', runtimeAccountId: 'account', actionRequestId: 'person-refresh' },
@@ -1977,12 +1977,10 @@ describe('createActionExecutor (approvals)', () => {
     const context = { surface, authority: 'account_automation',
       actionCaller: { kind: 'session', sessionId: 'lead-session', starterDepth: 0, turnDepth: 0 },
       defaultSessionId: 'lead-session', actionRequestId: 'lead-decision', runtimeAccountId: 'account' } as const;
-    // Withdrawal grants no authority; the 11:55Z Coordination ruling removes
-    // the approval-waiver and independent-requester requirements for it.
     const result = await executor.execute('approval.request.decide', input, context);
     expect(result, JSON.stringify(result))
-      .toMatchObject({ ok: true, result: { status: 'rejected' } });
-    expect(request.status).toBe('rejected');
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(request.status).toBe('open');
   });
 
   it('delegates ordinary approval decisions to a host agent only after the user waives that Action', async () => {

@@ -10,7 +10,8 @@ import {
   type ApprovalRequest,
   type ApprovalRequestV1,
 } from '../approvals/approvalRequestV1.js';
-import { buildApprovalExecutionOriginV1, createActionExecutor } from './actionExecutor.js';
+import { buildApprovalExecutionOriginV1 } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort as createActionExecutor } from './executor/actionAutomationAdmission.testkit.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './executor/workflowRunActions.js';

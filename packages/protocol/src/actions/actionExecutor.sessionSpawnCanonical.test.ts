@@ -6,7 +6,7 @@ import { z } from 'zod/mini';
 import { RPC_ERROR_CODES } from '../rpc/index.js';
 import { RpcError } from '../rpc/errors.js';
 import { deriveSessionCreationTagV1 } from '../sessions/creation/sessionCreationIdentityV1.js';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort as createActionExecutor } from './executor/actionAutomationAdmission.testkit.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import type { ResolvedRolesSnapshotV1 } from '../prompts/roles/rolesV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
