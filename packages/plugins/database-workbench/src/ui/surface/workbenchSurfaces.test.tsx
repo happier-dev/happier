@@ -252,14 +252,15 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('selects only Console when the location carries the last table', async () => {
+  it('selects only Console when the location carries the last table and reuses the opened target', async () => {
+    const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'console-rail', mountNonce: 'console-rail' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
       surface: renderPage, subPath: `${savedDatabasePath}/console/public/invoices`,
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]) },
+      handlers: { ...connectionResourceHandlers(), executeAction },
     });
     try {
       await settle(20);
@@ -267,6 +268,8 @@ describe('Database workbench surfaces', () => {
       expect(document.querySelector('[role="button"][aria-label="invoices"]')).toBeTruthy();
       const current = [...document.querySelectorAll('[role="button"][aria-current="page"]')];
       expect(current.map(row => row.getAttribute('aria-label') ?? row.textContent)).toEqual(['Console']);
+      expect(executeAction.mock.calls.map(([request]) => request.action))
+        .not.toContain(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1));
     } finally { await fixture.dispose(); }
   });
 
@@ -397,6 +400,8 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(configured).toBe(true);
       expect(await fixture.findByRole('button', { name: 'invoices' })).toBeTruthy();
+      expect(daemon.mock.calls.map(([request]) => request.action))
+        .not.toContain(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1));
     } finally { await fixture.dispose(); }
   });
 
@@ -486,8 +491,8 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(await fixture.getByText('412 MB')).toBeTruthy();
-      expect(await fixture.getByText('Needs pg_stat_statements')).toBeTruthy();
+      expect(await fixture.getByRole('group', { name: 'Size: 412 MB' })).toBeTruthy();
+      expect(await fixture.getByRole('group', { name: 'Statement statistics: Off, Needs pg_stat_statements' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

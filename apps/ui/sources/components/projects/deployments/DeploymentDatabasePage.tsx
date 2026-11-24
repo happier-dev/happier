@@ -93,8 +93,9 @@ import {
 } from './useDeploymentReads';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
-import { DatabaseTargetsListResultV1Schema } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/database-protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 
@@ -149,8 +150,7 @@ export function DeploymentDatabasePage(
   );
   const detail = record.snapshot.value;
   const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
-  // The size DB-SIZE-1113's read reports for this database, for the facts row; read with the page.
-  const sizes = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId, database: props.database });
+  const databaseRead = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId, database: props.database });
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,
@@ -207,7 +207,7 @@ export function DeploymentDatabasePage(
     configuration: database?.kind === 'selfHosted' ? backupConfiguration ?? null : null, actions,
     review: props.review, onSettled: backup.reload });
   const restoreDrill = useDeploymentRestoreDrill(lifetime && detail ? detail.environment.serverId : null);
-  // Opening the console reads its targets through the Action owner; a refusal reads as words in the console section.
+  // Use the section's existing outcome banner for target and navigation refusals.
   const consoleOpen = useDeploymentChangePress(props.review, noop);
   const machineIds = React.useMemo(
     () => (target ? [target.machineId] : []),
@@ -232,39 +232,6 @@ export function DeploymentDatabasePage(
     props.onBack,
   );
   const workbenchNavigation = usePluginSurfaceDestinationNavigationBinding();
-  const openWorkbench = () => consoleOpen.press(async () => {
-    if (!actions || !detail || !database || !workbenchNavigation) return { ok: true };
-    if (!detail.environment.controllerMachineId) return { ok: false, error: 'machine_unavailable' };
-    const scope = { kind: 'environment' as const, environment: {
-      serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
-      environmentId: detail.environment.id,
-    }, selection: database.kind === 'selfHosted'
-      ? { kind: 'native_service' as const, service: database.data.service }
-      : { kind: 'managed_link' as const, targetLinkId: database.link.targetLink.id } };
-    const result = await actions.inspectPlatformTarget(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope }, {
-      externalActionTarget: { kind: 'machine', machineId: detail.environment.controllerMachineId },
-    });
-    if (!result.ok) return { ok: false, error: result.code, details: result.details, failureCause: result.failureCause };
-    const listed = DatabaseTargetsListResultV1Schema.parse(result.value);
-    const matches = listed.targets.filter(({ target }) => database.kind === 'selfHosted'
-      ? target.kind === 'deployment_service' && target.serviceId === database.data.service
-      : target.kind === 'managed_deployment' && target.targetLinkId === database.link.targetLink.id);
-    const descriptor = matches.length === 1 ? matches[0] : undefined;
-    let subPath = 'console';
-    if (descriptor) {
-      const { encodeWorkbenchPageSubPath } = await import(
-        '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native'
-      );
-      const { placement, target } = descriptor;
-      const serverId = resolvePortableServerIdentityForRoutingId(placement.serverId) ?? placement.serverId;
-      subPath = encodeWorkbenchPageSubPath({ target, placement: { ...placement, serverId } }, { mode: 'console' });
-    }
-    const opened = await workbenchNavigation.openSurface({
-      destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' }, subPath,
-    });
-    if (!opened.ok) return { ok: false, error: opened.reason };
-    return { ok: true };
-  });
   const id = 'project-deployments.database';
   const { theme } = useUnistyles();
 
@@ -419,8 +386,35 @@ export function DeploymentDatabasePage(
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
   // The data-service owner resolves identity; a failed or pending read keeps the shared section in place.
-  const dataRead = sizes.snapshot;
+  const dataRead = databaseRead.snapshot;
   const dataItem = dataRead.value?.items.find((item) => item.environment.id === detail.environment.id);
+  const workbenchTarget = dataRead.status === 'ready' ? dataItem?.workbenchTarget : undefined;
+  const openWorkbench = () => consoleOpen.press(async () => {
+    if (!lifetime || !workbenchNavigation) return { ok: false, error: 'plugin_surface_open_unavailable' };
+    if (!workbenchTarget) return { ok: false, error: dataRead.failure?.code ?? 'database_target_unavailable' };
+    if (!workbenchTarget.ok) {
+      const { code, details, failureCause, effectAttempted } = workbenchTarget.failure;
+      return { ok: false, error: code, details, failureCause, effectAttempted };
+    }
+    const { openWorkbenchPage } = await import(
+      '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native'
+    );
+    const { placement, target } = workbenchTarget.value;
+    const serverId = resolvePortableServerIdentityForRoutingId(placement.serverId) ?? placement.serverId;
+    const opened = await openWorkbenchPage({
+      async openSurface(view, input, options) {
+        if (!lifetime.isCurrent()) throw new PluginError({ code: 'action_account_scope_changed' });
+        const result = await workbenchNavigation.openSurface({
+          destination: qualifyPluginContributionReferenceV1(view, DATABASE_PLUGIN_ID_V1),
+          ...(input === undefined ? {} : { input }),
+          ...(options?.subPath === undefined ? {} : { subPath: options.subPath }),
+          ...(options?.instanceKey === undefined ? {} : { instanceKey: options.instanceKey }),
+        });
+        if (!result.ok) throw new PluginError({ code: result.reason });
+      },
+    }, { target, placement: { ...placement, serverId } }, { mode: 'console' });
+    return opened.status === 'opened' ? { ok: true } : { ok: false, error: 'plugin_surface_open_unavailable' };
+  });
   const automationSubject = dataItem?.databaseSubjects?.[props.database];
   // A settled read failure has the same presentation as an unavailable size measurement in Services.
   const sizeReadUnavailable = dataRead.status === 'unavailable' || dataRead.value?.coverage === 'partial';
@@ -584,7 +578,8 @@ export function DeploymentDatabasePage(
               {actions && workbenchNavigation ? (
                 <Item testID={`${id}.query`} title={t('common.open')}
                   icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                  loading={consoleOpen.running} onPress={() => { void openWorkbench(); }} />
+                  loading={consoleOpen.running || dataRead.status === 'idle' || dataRead.status === 'loading'}
+                  onPress={() => { void openWorkbench(); }} />
               ) : (
                 <Item
                   testID={`${id}.console.access`}
@@ -647,7 +642,7 @@ export function DeploymentDatabasePage(
                 || dataItem?.databaseSubjectFailure?.code === 'target_unavailable'
                 ? t('workflows.triggers.section.automationsSubjectUnreachable')
                 : t('workflows.triggers.section.automationsSubjectFailed')}
-              onRetry={automationSubject?.ok === false ? undefined : sizes.refresh} />
+              onRetry={automationSubject?.ok === false ? undefined : databaseRead.refresh} />
           ) : null}
 
           <ItemGroup

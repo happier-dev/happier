@@ -8,6 +8,8 @@ import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProj
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
 import type { AutomationDatabaseSubjectReadV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 
 /** Local read projection over admitted link and demand-loaded receipt content, never a stored member vector. */
 export type DeploymentEnvironmentReadDetailV1 = DeploymentEnvironmentDetailV1 & Readonly<{
@@ -95,6 +97,9 @@ export type DeploymentDataServiceQueryV1 = DeploymentAccountPageQueryV1 & (
 export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{
     environment: DeploymentEnvironmentHeaderV1; environmentTitle: string; projectSourceName: string | null;
 }>;
+export type DeploymentWorkbenchTargetReadV1 =
+    | Readonly<{ ok: true; value: Pick<DatabaseDescriptorV1, 'target' | 'placement'> }>
+    | Readonly<{ ok: false; failure: DeploymentReadFailureV1 & Pick<ActionExecuteFailure, 'details' | 'failureCause' | 'effectAttempted'> }>;
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
     projectSourceName?: string | null;
@@ -103,6 +108,8 @@ export type DeploymentDataServiceReadItemV1 = Readonly<{
     databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
     /** Descriptor discovery can fail independently of the Environment's database facts. */
     databaseSubjectFailure?: DeploymentReadFailureV1;
+    /** The exact descriptor operands for this selected Database page. */
+    workbenchTarget?: DeploymentWorkbenchTargetReadV1;
 }>;
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;

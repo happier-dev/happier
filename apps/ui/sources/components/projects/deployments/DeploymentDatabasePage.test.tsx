@@ -154,7 +154,7 @@ async function renderDatabase(
   input: Readonly<{
     answers?: Answers;
     workbenchDiscoveryRefused?: boolean | (() => boolean);
-    /** Exercise the Database subject read through the real selected-Environment transport. */
+    /** Read the Database subject and Workbench target through the real selected-Environment transport. */
     readDatabaseAutomations?: boolean;
     /** Open from the Project Source route with a saved Workflow to link. */
     linkWorkflow?: string;
@@ -875,11 +875,12 @@ describe('Environment → Database → Workbench', () => {
     } finally { await view.dispose(); }
   });
 
-  it('opens the shared workbench for the exact deployment database through environment discovery', async () => {
-    const view = await renderDatabase();
+  it('opens the exact deployment database without rediscovering its target', async () => {
+    const view = await renderDatabase({ readDatabaseAutomations: true });
     try {
       await view.settle(`${page}.query`);
-      expect(view.effects.some(effect => effect.actionId === 'action.invoke')).toBe(false);
+      expect(await view.settle('subject-triggers-add')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toHaveLength(1);
       await view.screen.pressByTestIdAsync(`${page}.query`);
       await waitForHomeGovernance(async () => {
         await act(async () => {});
@@ -895,28 +896,57 @@ describe('Environment → Database → Workbench', () => {
     } finally { await view.dispose(); }
   });
 
-  it('shows the Workbench discovery refusal in Details', async () => {
-    const view = await renderDatabase({ workbenchDiscoveryRefused: true });
+  it('shows the Workbench discovery refusal in Details without rediscovering the target', async () => {
+    const view = await renderDatabase({ readDatabaseAutomations: true, workbenchDiscoveryRefused: true });
     const details = 'project-deployments.outcome.refused.other.details';
     try {
       await view.settle(`${page}.query`);
+      expect(await view.settle('subject-triggers-read-retry')).not.toBeNull();
+      const attempts = () => homes.requestsFor('/v1/actions/action.invoke');
+      const before = attempts().length;
       await view.screen.pressByTestIdAsync(`${page}.query`);
       expect(await view.settle(details)).not.toBeNull();
       await view.screen.pressByTestIdAsync(details);
       expect(view.screen.getTextContent()).toContain('plugin_service_unavailable');
+      expect(attempts()).toHaveLength(before);
       expect(view.opened).toEqual([]);
     } finally { await view.dispose(); }
   });
 
-  it.each([false, true])('opens managed databases through the shared workbench without selecting an arbitrary database (multiple %s)', async multiple => {
-    const view = await renderDatabase({ managed: true, multipleManagedDatabases: multiple });
+  it('opens the exact managed database through the shared Workbench', async () => {
+    const view = await renderDatabase({ managed: true, readDatabaseAutomations: true });
     try {
-      await view.settle(`${page}.query`);
+      await waitForHomeGovernance(() => {
+        expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toHaveLength(1);
+        const button = view.screen.findByTestId(`${page}.query`);
+        expect(button).not.toBeNull();
+        expect(button?.props['aria-disabled']).not.toBe(true);
+      });
       await view.screen.pressByTestIdAsync(`${page}.query`);
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(view.opened).toHaveLength(1); });
-      if (multiple) expect(view.opened[0]).toMatchObject({ subPath: 'console' });
-      else expectOpenedDatabaseConsole(view);
+      expectOpenedDatabaseConsole(view);
       expect(view.opened[0]).not.toHaveProperty('input');
+      expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([
+        expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
+          ...view.scope, selection: { kind: 'managed_link', targetLinkId: 'managed-database' } } } }) })]);
+    } finally { await view.dispose(); }
+  });
+
+  it('reports an unavailable exact target when the managed link has multiple databases', async () => {
+    const view = await renderDatabase({ managed: true, multipleManagedDatabases: true, readDatabaseAutomations: true });
+    try {
+      await waitForHomeGovernance(() => {
+        expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toHaveLength(1);
+        const button = view.screen.findByTestId(`${page}.query`);
+        expect(button).not.toBeNull();
+        expect(button?.props['aria-disabled']).not.toBe(true);
+      });
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      const details = 'project-deployments.outcome.refused.other.details';
+      expect(await view.settle(details)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(details);
+      expect(view.screen.getTextContent()).toContain('database_target_unavailable');
+      expect(view.opened).toEqual([]);
     } finally { await view.dispose(); }
   });
 

@@ -161,7 +161,10 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         client,
         targets(scope: DatabaseTargetsListInputV1['scope']) {
             return resource<DatabaseTargets>(key(['targets', scope]), async () => {
-                const result = await client.targets({ scope }, reads.signal);
+                // An exact page already holds the descriptor from its target read.
+                const result: Awaited<ReturnType<typeof client.targets>> = options.selectedTarget
+                    ? { targets: [options.selectedTarget], completeness: { complete: true } }
+                    : await client.targets({ scope }, reads.signal);
                 const machineReads = new Map<string, ReturnType<NonNullable<typeof client.machineDisplayName>>>();
                 return { targets: await Promise.all(result.targets.map(async descriptor => {
                     const targetKey = workbenchTargetKey(descriptor.target);

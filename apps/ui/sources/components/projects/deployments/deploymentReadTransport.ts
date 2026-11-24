@@ -22,7 +22,7 @@ import {
 import { projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1, readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type {
-    DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1,
+    DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1, DeploymentWorkbenchTargetReadV1,
 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -254,7 +254,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
-                let databaseSubjectFailure: ReturnType<typeof failure>['failure'] | undefined;
+                let databaseSubjectFailure: Extract<DeploymentWorkbenchTargetReadV1, { ok: false }>['failure'] | undefined;
                 const templateData = row.content.template?.data ?? [];
                 const data = query.database === undefined ? templateData : templateData.filter(service => service.service === query.database);
                 const runtimeLink = runtimeByEnvironment.get(environment.id);
@@ -294,12 +294,19 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                                     ...(selection ? { selection } : {}) },
                             }, options.signal);
                         } catch (error) {
-                            databaseSubjectFailure = failureFromError(error).failure;
+                            databaseSubjectFailure = { ...failureFromError(error).failure,
+                                ...(error instanceof HappyError ? { details: error.details, failureCause: error.failureCause,
+                                    effectAttempted: error.effectAttempted } : {}) };
                         }
                     } else {
                         databaseSubjectFailure = failure('machine_unavailable').failure;
                     }
                 }
+                const descriptor = databaseTargets?.completeness.complete && databaseTargets.targets.length === 1
+                    ? databaseTargets.targets[0] : undefined;
+                const workbenchTarget: DeploymentWorkbenchTargetReadV1 | undefined = selection === undefined ? undefined
+                    : descriptor ? { ok: true, value: { target: descriptor.target, placement: descriptor.placement } }
+                        : { ok: false, failure: databaseSubjectFailure ?? failure('database_target_unavailable').failure };
                 // The controller can be unavailable while the saved serving receipt still identifies the native Database.
                 if (databaseSubjectFailure && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
                     && data.some(service => service.engine === 'postgres' || service.engine === 'mysql')) {
@@ -350,6 +357,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 }
                 items.push({ environment, title: row.title, content: row.content,
                     projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects: Object.fromEntries(databaseSubjects),
+                    ...(workbenchTarget ? { workbenchTarget } : {}),
                     ...(databaseSubjectFailure ? { databaseSubjectFailure } : {}) });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
