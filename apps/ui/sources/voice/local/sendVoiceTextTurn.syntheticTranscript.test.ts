@@ -41,6 +41,7 @@ import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voic
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { SpeechOptions } from 'expo-speech';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
@@ -88,7 +89,7 @@ let account: Awaited<ReturnType<typeof serveAccountHomes>>;
 let disconnect: (() => Promise<void>) | undefined;
 const events: string[] = [];
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
-let directPendingEntered = createDeferred<void>();
+let directSendEntered = createDeferred<void>();
 const sessionSends: Array<Extract<ReturnType<typeof SessionSendMessageInputSchema.parse>, { message: string }> & { localId: string }> = [];
 type TurnReply = { assistantText: string; actions: VoiceAssistantAction[]; speechSegments?: string[] };
 let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
@@ -230,7 +231,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     conversationModeState.current = 'agent';
     events.length = 0;
     approvalArtifacts.clear();
-    directPendingEntered = createDeferred<void>();
+    directSendEntered = createDeferred<void>();
     sessionSends.length = 0;
     turnIndex = 0;
     rejectStart = false;
@@ -246,12 +247,13 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     const actionHttp = await createRetainedVoiceAgentActionHttpBoundaries({ ...voiceHome, machineId: 'machine-1',
       dispatch: (method, input) => retainedAgent.dispatch(method, input) });
     const sessionSendHttp = await createExternalActionAccountHttpBoundary({ ...voiceHome,
-      machineId: 'machine-1', actionId: 'session.message.send', tokenEpoch: 0,
+      machineId: 'machine-1', actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1, tokenEpoch: 0,
       execute(input, { requestId }) {
         const send = SessionSendMessageInputSchema.parse(input);
         if (!('message' in send)) throw new Error('Expected a text message from Voice');
         const localId = send.localId ?? `action-request:${requestId}`;
         sessionSends.push({ ...send, localId });
+        if (conversationModeState.current === 'direct_session') directSendEntered.resolve();
         return SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId });
       },
     });
@@ -305,7 +307,6 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         const body = request.body;
         if (!body || typeof body !== 'object' || !('localId' in body) || !('requestedAction' in body)) throw new Error('Expected canonical pending producer');
         events.push(`enqueue:${body.localId}`);
-        if (request.path === '/v2/sessions/s1/pending') directPendingEntered.resolve();
         // The canonical enqueue producer omits deliveryMode for ordinary
         // queued Actions; only explicit external handoff includes that field.
         return Response.json({ requestedAction: body.requestedAction, pending: { localId: body.localId,
@@ -639,9 +640,12 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       voiceAgentSessions,
     });
 
-    expect(pendingWrites('s1')).toHaveLength(1);
-    expect(pendingWrites('s1')[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: 'send_now' } });
-    expect(pendingRecords('s1')[0]).toMatchObject({ role: 'user', content: { type: 'text', text: 'send this directly' } });
+    expect(sessionSends).toMatchObject([
+      { sessionId: 's1', message: 'send this directly', requestedAction: { v: 1, kind: 'send_now' } },
+    ]);
+    expect(account.requests.filter(request => request.method === 'POST'
+      && request.path === `/v1/actions/${SESSION_MESSAGE_SEND_ACTION_ID_V1}`))
+      .toMatchObject([{ home: 'voice', accountId: 'account-a' }]);
     expect(pendingWrites()).toEqual([]);
   });
 
@@ -660,6 +664,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       voiceAgentSessions,
     })).rejects.toMatchObject({ name: 'AbortError' });
 
+    expect(sessionSends).toEqual([]);
     expect(pendingWrites('s1')).toEqual([]);
   });
 
@@ -667,7 +672,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     conversationModeState.current = 'direct_session';
     const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
     const { sync } = await import('@/sync/sync');
-    // Observe the real submit promise so the reply clock starts after HTTP acceptance.
+    // Observe the real submit promise so the reply clock starts after daemon acknowledgement.
     const submission = vi.spyOn(sync, 'submitMessage');
     const settings = buildAccountSettings();
     const config = readLocalConversationVoiceSettings(settings.voice);
@@ -684,17 +689,18 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       playbackController: createVoicePlaybackController(), voiceAgentSessions,
     }).then(() => { settled = true; });
     try {
-      await directPendingEntered.promise;
-      expect(pendingWrites('s1')).toHaveLength(1);
+      await Promise.race([directSendEntered.promise, turn.then(() => {
+        throw new Error('Voice turn settled before Session Send reached its Home');
+      })]);
+      expect(sessionSends).toHaveLength(1);
+      const { localId } = sessionSends[0]!;
       await submission.mock.results[0]!.value;
       await vi.advanceTimersByTimeAsync(65_000);
       expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(account.homes.voice!.id)).toContain('s1');
       if (outcome === 'cancel') controller.abort();
       if (outcome === 'remote_cancel') {
-        const admission = pendingWrites('s1')[0]?.body;
-        if (!admission || typeof admission !== 'object' || !('localId' in admission)) throw new Error('Missing durable admission');
         const user = { id: 'voice-user', kind: 'user-text', text: 'slow spoken reply', seq: 17,
-          localId: String(admission.localId), createdAt: Date.now() } satisfies Message;
+          localId, createdAt: Date.now() } satisfies Message;
         storage.setState({ sessions: { ...storage.getState().sessions, s1: { ...storage.getState().sessions.s1!,
           sessionTurns: buildSessionTurnsProjectionV1({ sessionId: 's1', updatedAt: Date.now(), turns: [{
             turnId: 'coding-turn', startedAt: Date.now(), updatedAt: Date.now(), status: 'cancelled',
@@ -713,10 +719,8 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
           segmentState: 'complete', startedAtMs: Date.now(), updatedAtMs: Date.now() } },
       } satisfies Message;
       if (outcome === 'reply') {
-        const admission = pendingWrites('s1')[0]?.body;
-        if (!admission || typeof admission !== 'object' || !('localId' in admission)) throw new Error('Missing durable admission');
         const user = { id: 'voice-user', kind: 'user-text', text: 'slow spoken reply', seq: 17,
-          localId: String(admission.localId), createdAt: Date.now() } satisfies Message;
+          localId, createdAt: Date.now() } satisfies Message;
         const previousReply = { id: 'older-reply', kind: 'agent-text', text: 'An older hydrated reply.', seq: 16,
           localId: null, createdAt: Date.now() - 1 } satisfies Message;
         storage.setState({ sessionMessages: { s1: createSessionMessagesFixture({
