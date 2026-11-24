@@ -5,7 +5,7 @@ CREATE TABLE `ReviewRequestedReviewer` (
     `principalKey` VARCHAR(191) NOT NULL,
     `principal` JSON NOT NULL,
     `required` BOOLEAN NOT NULL,
-    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     CONSTRAINT `ReviewRequestedReviewer_reviewId_fkey` FOREIGN KEY (`reviewId`) REFERENCES `Artifact` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -25,7 +25,7 @@ CREATE TABLE `ReviewVerdict` (
     `verdict` VARCHAR(191) NOT NULL,
     `content` JSON,
     `revision` INTEGER NOT NULL DEFAULT 1,
-    `submittedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `submittedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`reviewId`, `roundOrdinal`, `accountId`),
     CONSTRAINT `ReviewVerdict_reviewId_fkey` FOREIGN KEY (`reviewId`) REFERENCES `Artifact` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT `ReviewVerdict_accountId_fkey` FOREIGN KEY (`accountId`) REFERENCES `Account` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
