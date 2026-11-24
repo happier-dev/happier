@@ -50,7 +50,7 @@ async function enableAutomationsInSettings(params: Readonly<{ baseUrl: string; p
     await enableEnhancedSessionWizard({ page: params.page, baseUrl: params.baseUrl, timeoutMs: 180_000 });
     await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/settings/features?happier_hmr=0`, 180_000);
     await ensureSettingsSwitchEnabled(params.page, 'settings-feature-experiments-toggle');
-    await ensureSettingsSwitchEnabled(params.page, 'settings-feature-toggle-automations');
+    await ensureSettingsSwitchEnabled(params.page, 'settings-feature-toggle-workflows');
 }
 
 async function selectMachineForNewSession(params: Readonly<{
