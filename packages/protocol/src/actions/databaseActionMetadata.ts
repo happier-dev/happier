@@ -84,7 +84,7 @@ const databaseActionDeclarations = {
     [database.DATABASE_ACCESS_READ_ACTION_ID_V1]: { ...read, title: 'Read database access' },
     [database.DATABASE_ACCESS_SET_ACTION_ID_V1]: {
         ...targetWrite, dangerLevel: 'writesLocal', title: 'Set database access', placementBindings: ['secondary'],
-        confirmation: { title: 'Change access to this database?' },
+        confirmation: { title: 'Change access to this database?', mountedReview: 'exact_input' },
     },
     [database.DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1]: {
         ...write, title: 'Attach read-only database login', approvalScope: 'environment',

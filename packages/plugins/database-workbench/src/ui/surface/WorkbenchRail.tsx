@@ -132,6 +132,9 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
     readWriteAsk: t('plugins.database.access.level.ask', 'Read and write (asks first)'),
     readWriteNoApproval: t('plugins.database.access.level.write', 'Read and write (no approval)'),
   } satisfies Record<DatabaseAgentAccessV1, string>;
+  const input = projectNativeJsonValueForTransport({
+    target: instance.target(targetKey).target, agentAccess: selected,
+  });
   function settle(execution: PluginUiActionControlExecution) {
     const result = projectPluginActionControlExecutionV1(execution, t);
     if (isPluginActionConfirmationDeclined(result)) return;
@@ -164,9 +167,8 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
     </Row>
     <Action.Control action={setAgentAccess} title={t('plugins.database.access.save', 'Save')}
       disabled={selected === level || notice?.pending}
-      controller={{ prepare: () => ({ input: projectNativeJsonValueForTransport({
-        target: instance.target(targetKey).target, agentAccess: selected,
-      }) }), onSettled: settle }} />
+      reviewedInput={input}
+      controller={{ prepare: () => ({ input }), onSettled: settle }} />
     {notice?.error ? <ErrorState layout="line" title={notice.text} details={notice.code} />
       : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
   </Stack>;

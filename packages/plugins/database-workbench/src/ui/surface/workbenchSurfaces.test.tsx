@@ -353,13 +353,15 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('loads the selected database agent access on demand and edits it through its owner', async () => {
+  it('confirms the selected machine policy on Save in the access sheet', async () => {
     const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
     const setAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);
     const daemon = daemonAnswers([descriptor]);
     let agentAccess = 'readWriteAsk';
+    let reviewedInput: JsonValue | undefined;
     const write = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
       expect(request).toMatchObject({ action: setAccess, input: { target: descriptor.target, agentAccess: 'none' } });
+      expect(reviewedInput).toEqual(request.input);
       agentAccess = 'none';
       return { ok: true as const, result: { ok: true, agentAccess } };
     });
@@ -380,6 +382,11 @@ describe('Database workbench surfaces', () => {
             renderCodeBlock: () => null,
             renderIcon: () => null,
             renderMarkdown: () => null,
+            renderActionControl: ({ control: bound, presentation, reviewedInput: input }) =>
+              <Button title={presentation.title} disabled={!bound || presentation.disabled} onPress={() => {
+                reviewedInput = input;
+                return control.press(presentation.title);
+              }} />,
             renderPopover: input => input.content({
               presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose,
             }),
@@ -404,7 +411,7 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByText('Agents can read and ask before writing.')).toBeTruthy();
       await act(async () => fixture.press(await fixture.getByRole('button', { name: 'None' })));
       expect(write).not.toHaveBeenCalled();
-      await act(async () => control.press('Save'));
+      await act(async () => fixture.press(await fixture.getByRole('button', { name: 'Save' })));
       expect(await fixture.getByText('Agents can’t use this database.')).toBeTruthy();
       expect(write).toHaveBeenCalledTimes(1);
       expect(reads()).toHaveLength(1);
