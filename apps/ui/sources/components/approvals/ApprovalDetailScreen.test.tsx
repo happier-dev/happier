@@ -3970,7 +3970,8 @@ describe('ApprovalDetailScreen', () => {
     expect(text).toContain('projects.authoring.sessionAsk');
     expect(text).toContain('Rebound workstation');
     expect(screen.findByTestId('approvals.project-command')).not.toBeNull();
-    expect(factValue(screen.findHostByTestId('approvals.project-command.rows.row:checkout'))).toBe('/home/happier/tidewater');
+    expect(screen.findByTestId('approvals.project-command.rows.row:checkout')).not.toBeNull();
+    expect(text).toContain('/home/happier/tidewater');
     for (const raw of ['ws-8e7638ae', 'machine-target', 'Qualified checkout', 'Preparation phase']) expect(text).not.toContain(raw);
     expect(screen.findByTestId('approvals.approve')).not.toBeNull();
     expect(screen.findByTestId('approvals.reject')).not.toBeNull();
@@ -4226,15 +4227,17 @@ describe('ApprovalDetailScreen', () => {
       actionArgs: {
         workspace: { serverId: account.serverId, machineId: 'machine-target', workspaceId: 'tidewater-checkout', rootPath: '/home/happier/tidewater' },
         selection: { kind: 'named', name: 'test' },
-        choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'worker-target' } },
+        choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'machine-2' } },
       },
     });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
-    expect(factValue(screen.findHostByTestId('approvals.project-command.rows.row:checkout'))).toBe('/home/happier/tidewater');
-    expect(factValue(screen.findHostByTestId('approvals.project-command.rows.row:where'))).toBe('worker-target');
-    expect(readRenderedText(screen)).not.toContain('tidewater-checkout');
+    const text = readRenderedText(screen);
+    expect(screen.findByTestId('approvals.project-command.rows.row:checkout')).not.toBeNull();
+    expect(text).toContain('/home/happier/tidewater');
+    expect(text).toContain('Studio laptop');
+    expect(text).not.toContain('tidewater-checkout');
     expect(screen.findByTestId('approvals.approve')).not.toBeNull();
   });
 

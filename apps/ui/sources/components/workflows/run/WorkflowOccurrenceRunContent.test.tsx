@@ -366,13 +366,12 @@ describe('canonical Run page occurrence target', () => {
         const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
         const unqualified = createWorkflowRunRoute({ kind: 'occurrence', automationId: 'a1', runId: 'run-1' });
-        const location = { pathname: '/workflows/runs/run-1', search: unqualified.slice(unqualified.indexOf('?')), hash: '' };
+        const location = new URL(unqualified, 'https://happier.invalid');
         const history = { state: null as unknown,
             replaceState(state: unknown, _unused: string, href?: string | URL | null) {
                 history.state = state;
                 if (!href) return;
-                const next = new URL(href, 'https://happier.invalid');
-                location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+                location.href = new URL(href, location.href).href;
             },
             pushState(state: unknown, unused: string, href: string) { history.replaceState(state, unused, href); },
             go() {},

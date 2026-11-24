@@ -264,8 +264,8 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(h.counts().dispatches).toBe(1));
-        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-start-problem-details.header')).not.toBeNull());
-        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-start-problem-details')).not.toBeNull());
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details');
         expect(h.screen.getTextContent()).toContain('content_unavailable');
         expect(h.screen.getTextContent()).toContain('account_role_overrides_unavailable');
         expect(h.counts()).toMatchObject({ admissions: 0, reads: 0, dispatches: 1 });
@@ -275,7 +275,7 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         const h = await harness('refused');
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await h.pending();
-        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details');
         expect(h.screen.getTextContent()).toContain('content_unavailable');
         expect(h.screen.getTextContent()).toContain('account_role_overrides_unavailable');
         expect(h.counts()).toMatchObject({ admissions: 0, reads: 0, dispatches: 1 });

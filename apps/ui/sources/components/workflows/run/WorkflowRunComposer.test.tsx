@@ -688,7 +688,7 @@ describe('workflow composer admission', () => {
             message: failure.error, failure }));
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}}
             onRun={() => {}} onCancel={() => {}} startProblem={problem} />);
-        await screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        await screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details');
         expect(screen.getTextContent()).toContain('content_unavailable');
         expect(screen.getTextContent()).toContain('account_role_overrides_unavailable');
         expect(screen.getTextContent()).not.toContain(failure.error);
