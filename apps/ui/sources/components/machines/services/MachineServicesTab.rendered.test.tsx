@@ -18,7 +18,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment
 import { createDeferred, createMachineFixture, flushHookEffects, renderHook, renderScreen, standardCleanup, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
 import { Modal } from '@/modal';
 import type { ServiceCommandSheetProps } from './command/ServiceCommandSheet';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installHostResourceWatchSocket, type SelectResourceWatchFixture } from '@/components/projects/deployments/resourceWatchSocket.testFixture';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -272,11 +272,11 @@ beforeEach(async () => {
     });
     serverId = await homes.addHome({ name: 'Services rendered', serverUrl: 'https://services-rendered.test',
         serverIdentityId, accountId, currentAccount: true, active: true });
-    const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), isShared: false });
     await sodium.ready;
     const installationKey = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(23));
-    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId, machine }), installationId: 'installation',
-        installationPublicKey: encodeBase64(installationKey.publicKey, 'base64') };
+    const machine = createHydratedPlainMachineFixture({ id: machineId, accountId, machine: { activeAt: Date.now(),
+        isShared: false, installationId: 'installation', installationPublicKey: encodeBase64(installationKey.publicKey, 'base64') } });
+    const row = createPlainMachineRowFixture({ id: machineId, accountId, machine });
     homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async input => ({ body:
         await createMachineReadBatchResponseFixture(input, () => row).json() }) });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
