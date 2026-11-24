@@ -100,6 +100,26 @@ const segmented = (screen: Awaited<ReturnType<typeof render>>) =>
   });
 
 describe('Machine → Security → Administrator power', () => {
+  it('offers console recovery when Preauthorized was saved but its native effect was refused', async () => {
+    const policy = { version: 1, mode: 'preauthorized' } as const;
+    const result = MachineAdminAccessMutationResultV1Schema.parse({
+      status: 'applied',
+      policy,
+      metadataVersion: 8,
+      effect: { outcome: 'not_applied', reasonCode: 'not_preauthorized' },
+    });
+    const screen = await render(authority({ observation: observation(), desiredAdminAccess: policy }), {
+      control: controls({ save: settleAdminAccessSave({ ok: true, result }) }),
+    });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-admin-result' });
+    expect(card?.props).toMatchObject({
+      kind: 'error',
+      reason: t('machineDetailPage.security.reasons.restorePasswordlessSudo'),
+      title: t('machineDetailPage.security.reasons.adminAccessUnavailable'),
+      diagnosticCode: 'not_preauthorized',
+    });
+  });
+
   it.each([
     ['distinctAdministrator', 'Choose an administrator account different from the Machine daemon user, then retry.'],
     ['administratorSudoToRoot', 'The selected administrator needs its own sudo-to-root right and a valid password. Choose an administrator with that right or grant it, then retry.'],

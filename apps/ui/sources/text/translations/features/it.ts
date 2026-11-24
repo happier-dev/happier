@@ -9534,6 +9534,7 @@ const machineDetailPageTranslations = { it: translated({
                 reasons: {
                     requiredFactUnavailable: `Manca un dato necessario al controllo.`,
                     needsAdminToCheck: `Il controllo richiede l’accesso da amministratore.`,
+                    restorePasswordlessSudo: "Un amministratore deve ripristinare l’accesso a sudo senza password per l’utente del demone dalla console della macchina. Poi verifica l’accesso e riprova.",
                     packageManagerBusy: `Il gestore di pacchetti è occupato. Riprova tra poco.`,
                     foreignEffectConflict: `Una modifica già presente su questa macchina è in conflitto con questa configurazione.`,
                     planChanged: `Ciò che è in attesa è cambiato dalla revisione. Preparalo di nuovo.`,

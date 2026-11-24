@@ -391,6 +391,7 @@ export const english = {
             reasons: {
                 requiredFactUnavailable: `A fact the check needs isn’t available.`,
                 needsAdminToCheck: `Checking needs administrator access.`,
+                restorePasswordlessSudo: "An administrator must restore passwordless sudo for the daemon user from the Machine console. Then inspect and retry.",
                 packageManagerBusy: `The package manager is busy. Try again in a moment.`,
                 foreignEffectConflict: `An existing change on this machine conflicts with this setup.`,
                 planChanged: `What’s waiting changed since the review. Prepare it again.`,

@@ -9421,6 +9421,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 reasons: {
                     requiredFactUnavailable: `缺少检查所需的信息。`,
                     needsAdminToCheck: `检查需要管理员权限。`,
+                    restorePasswordlessSudo: "管理员必须在计算机控制台中恢复守护进程用户无需密码即可使用 sudo 的权限。然后检查访问权限并重试。",
                     packageManagerBusy: `软件包管理器正忙，请稍后再试。`,
                     foreignEffectConflict: `此机器上的现有更改与此设置冲突。`,
                     planChanged: `自审查以来待安装内容已变化，请重新准备。`,

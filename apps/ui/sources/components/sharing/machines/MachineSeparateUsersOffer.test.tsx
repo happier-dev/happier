@@ -161,7 +161,7 @@ describe('separate users reviewed setup', () => {
         { setup: { outcome: 'not_applied', reasonCode: 'mode_none' },
             message: (): string => t('machines.sharing.fallback.adminDisabled') },
         { setup: { outcome: 'not_applied', reasonCode: 'not_preauthorized' },
-            message: (): string => t('machines.sharing.fallback.adminCheckRequired') },
+            message: (): string => t('machineDetailPage.security.reasons.restorePasswordlessSudo') },
         { setup: { outcome: 'not_applied', reasonCode: 'managed_cli_unavailable' },
             message: (): string => t('machines.sharing.fallback.managedCliRequired') },
     ] as const)('explains the setup prerequisite when the reviewed Apply is refused: $setup.reasonCode', async ({ setup, message }) => {
@@ -235,7 +235,7 @@ describe('separate users reviewed setup', () => {
             recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } } },
             message: (): string => t('machines.sharing.fallback.adminDisabled') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'not_preauthorized' } },
-            message: (): string => t('machines.sharing.fallback.adminCheckRequired') },
+            message: (): string => t('machineDetailPage.security.reasons.restorePasswordlessSudo') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'managed_cli_unavailable',
             recovery: { kind: 'install_managed_cli', executablePath: '/opt/happier/current/happier' } } },
             message: (): string => t('machines.sharing.fallback.managedCliRequired') },

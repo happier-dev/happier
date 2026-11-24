@@ -9521,6 +9521,7 @@ const machineDetailPageTranslations = { pt: translated({
                 reasons: {
                     requiredFactUnavailable: `Falta um dado de que a verificação precisa.`,
                     needsAdminToCheck: `A verificação precisa de acesso de administrador.`,
+                    restorePasswordlessSudo: "Um administrador tem de restaurar o acesso a sudo sem palavra-passe para o utilizador do daemon a partir da consola da máquina. Em seguida, verifica o acesso e tenta novamente.",
                     packageManagerBusy: `O gestor de pacotes está ocupado. Tente novamente daqui a pouco.`,
                     foreignEffectConflict: `Uma alteração existente nesta máquina entra em conflito com esta configuração.`,
                     planChanged: `O que está pendente mudou desde a revisão. Prepare novamente.`,

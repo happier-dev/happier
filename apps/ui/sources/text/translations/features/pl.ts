@@ -9557,6 +9557,7 @@ const machineDetailPageTranslations = { pl: translated({
                 reasons: {
                     requiredFactUnavailable: `Brakuje informacji potrzebnej do sprawdzenia.`,
                     needsAdminToCheck: `Sprawdzenie wymaga dostępu administratora.`,
+                    restorePasswordlessSudo: "Administrator musi przywrócić dostęp do sudo bez hasła dla użytkownika demona z konsoli maszyny. Następnie sprawdź dostęp i spróbuj ponownie.",
                     packageManagerBusy: `Menedżer pakietów jest zajęty. Spróbuj za chwilę.`,
                     foreignEffectConflict: `Istniejąca zmiana na tej maszynie koliduje z tą konfiguracją.`,
                     planChanged: `Od przeglądu zmieniło się to, co czeka. Przygotuj to ponownie.`,

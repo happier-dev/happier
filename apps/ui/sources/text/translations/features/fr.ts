@@ -9543,6 +9543,7 @@ const machineDetailPageTranslations = { fr: translated({
                 reasons: {
                     requiredFactUnavailable: `Une information nécessaire à la vérification manque.`,
                     needsAdminToCheck: `La vérification nécessite un accès administrateur.`,
+                    restorePasswordlessSudo: "Un administrateur doit rétablir l’accès à sudo sans mot de passe pour l’utilisateur du démon depuis la console de la machine. Vérifiez ensuite l’accès et réessayez.",
                     packageManagerBusy: `Le gestionnaire de paquets est occupé. Réessayez dans un instant.`,
                     foreignEffectConflict: `Une modification existante sur cette machine est incompatible avec cette configuration.`,
                     planChanged: `Ce qui attend a changé depuis la vérification. Préparez-le à nouveau.`,

@@ -9538,6 +9538,7 @@ const machineDetailPageTranslations = { de: translated({
                 reasons: {
                     requiredFactUnavailable: `Eine für die Prüfung nötige Angabe fehlt.`,
                     needsAdminToCheck: `Die Prüfung braucht Administratorzugriff.`,
+                    restorePasswordlessSudo: "Ein Administrator muss sudo ohne Passwort für den Daemon-Benutzer über die Konsole der Maschine wiederherstellen. Prüfe den Zugriff danach erneut und wiederhole den Vorgang.",
                     packageManagerBusy: `Der Paketmanager ist beschäftigt. Versuch es gleich noch einmal.`,
                     foreignEffectConflict: `Eine bestehende Änderung auf dieser Maschine steht im Konflikt mit dieser Einrichtung.`,
                     planChanged: `Seit der Prüfung hat sich geändert, was wartet. Bereite es erneut vor.`,

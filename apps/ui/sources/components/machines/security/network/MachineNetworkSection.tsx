@@ -1084,7 +1084,8 @@ function NetworkReviewFoot(
   }
   if (review.kind === 'failed') {
     const planChanged = review.failure.errorCode === 'plan_changed';
-    const nativeFailure = describeMachineNativeFailureCode(review.failure.errorCode, review.failure.details);
+    const nativeFailure = describeMachineNativeFailureCode(review.failure.errorCode, review.failure.details)
+      ?? describeActionExecutionPrerequisite(review.failure.errorCode)?.message;
     // The firewall owner's closed result: a verified restoration means the Machine is back as it was.
     const details = MachineReachabilityConfigureFailureDetailsV1Schema.safeParse(review.failure.details);
     const rolledBack = details.success && 'status' in details.data && details.data.status === 'rolledBack'

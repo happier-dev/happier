@@ -120,9 +120,12 @@ export function isMachineUnreachableFailureCode(code: unknown): boolean {
 /** A refused read needs its prerequisite resolved, rather than another identical attempt. */
 export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
     message: string;
-    recovery: 'machine_security' | 'access';
+    recovery: 'machine_security' | 'machine_console' | 'access';
 }> | null {
-    if (code === 'mode_none' || code === 'not_preauthorized') {
+    if (code === 'not_preauthorized') {
+        return { message: t('machineDetailPage.security.reasons.restorePasswordlessSudo'), recovery: 'machine_console' };
+    }
+    if (code === 'mode_none') {
         return { message: t('machineDetailPage.security.reasons.needsAdminToCheck'), recovery: 'machine_security' };
     }
     if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'machine_manage_required' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'

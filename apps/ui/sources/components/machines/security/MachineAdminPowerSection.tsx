@@ -24,6 +24,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useMachineGuestExecution, type MachineAgentRunAs } from '@/hooks/machine/useMachineGuestExecution';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 import {
@@ -476,6 +477,8 @@ function AdminAccessSaveFoot(
     save.kind === 'conflict' ||
     save.kind === 'failed'
   ) {
+    const needsConsole = save.kind === 'failed'
+      && describeActionExecutionPrerequisite(save.code)?.recovery === 'machine_console';
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -489,7 +492,7 @@ function AdminAccessSaveFoot(
           }
           layout="inline"
           size="line"
-          title={t(
+          title={needsConsole ? t('machineDetailPage.security.reasons.adminAccessUnavailable') : t(
             save.kind === 'saved'
               ? `${s}.saved`
               : save.kind === 'conflict'

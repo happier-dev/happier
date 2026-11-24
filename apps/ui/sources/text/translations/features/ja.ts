@@ -9481,6 +9481,7 @@ const machineDetailPageTranslations = { ja: translated({
                 reasons: {
                     requiredFactUnavailable: `確認に必要な情報がありません。`,
                     needsAdminToCheck: `確認には管理者アクセスが必要です。`,
+                    restorePasswordlessSudo: "管理者がマシンのコンソールから、デーモンのユーザーがパスワードなしで sudo を使えるように戻す必要があります。その後、アクセスを確認して再試行してください。",
                     packageManagerBusy: `パッケージマネージャーが使用中です。しばらくしてからもう一度お試しください。`,
                     foreignEffectConflict: `このマシンで行われた変更が、このセットアップと競合しています。`,
                     planChanged: `レビュー後に待機中の内容が変わりました。もう一度準備してください。`,

@@ -9421,6 +9421,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 reasons: {
                     requiredFactUnavailable: `缺少檢查所需的資訊。`,
                     needsAdminToCheck: `檢查需要管理員權限。`,
+                    restorePasswordlessSudo: "管理員必須在機器主控台中恢復常駐程式使用者無需密碼即可使用 sudo 的權限。接著檢查存取權限並重試。",
                     packageManagerBusy: `套件管理員正忙，請稍後再試。`,
                     foreignEffectConflict: `這部機器上的現有變更與此設定衝突。`,
                     planChanged: `自審查以來待安裝內容已變更，請重新準備。`,

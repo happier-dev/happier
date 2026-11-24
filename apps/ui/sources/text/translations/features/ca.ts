@@ -9527,6 +9527,7 @@ const machineDetailPageTranslations = { ca: translated({
                 reasons: {
                     requiredFactUnavailable: `No hi ha una dada que la comprovació necessita.`,
                     needsAdminToCheck: `La comprovació necessita accés d’administrador.`,
+                    restorePasswordlessSudo: "Un administrador ha de restaurar l’accés a sudo sense contrasenya per a l’usuari del dimoni des de la consola de la màquina. Després, torna a comprovar-ho i reintenta l’operació.",
                     packageManagerBusy: `El gestor de paquets està ocupat. Torna-ho a provar d’aquí a una estona.`,
                     foreignEffectConflict: `Un canvi existent en aquesta màquina entra en conflicte amb aquesta configuració.`,
                     planChanged: `El que hi ha pendent ha canviat des de la revisió. Torna-ho a preparar.`,

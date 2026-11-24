@@ -210,6 +210,18 @@ describe('Machine → Network page', () => {
     expect(onOpenSecurity).toHaveBeenCalledOnce();
     expect(network.refresh).not.toHaveBeenCalled();
   });
+  it.each([false, true])('shows console recovery without linking to Security with retained facts=%s', async retained => {
+    const failure = { ok: false as const, errorCode: 'not_preauthorized', error: 'not_preauthorized' };
+    const networkFacts = retained ? facts : { posture: null, selections: null, observation: null };
+    const read = { kind: 'failed' as const, failure };
+    const network = { ...model(read, true), ...presentMachineNetwork({ facts: networkFacts, read, reachable: true }) };
+    const screen = await render(network, true);
+    const notice = retained
+      ? findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-refresh-failed' })
+      : findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-unavailable' });
+    expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.restorePasswordlessSudo'));
+    expect(notice?.props.action).toBeUndefined();
+  });
   it('keeps the last-reported facts at full strength while the Machine is offline, and says so once', async () => {
     const screen = await render(model({ kind: 'settled' }, false), false);
     const line = findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, {

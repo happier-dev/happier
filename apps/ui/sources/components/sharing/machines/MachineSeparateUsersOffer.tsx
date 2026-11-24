@@ -38,7 +38,6 @@ type ReadyPreview = Extract<
 
 function setupFailureMessage(setup: MachineElevatedNotAppliedResultV1 | undefined, fallback: string): string {
   if (setup?.reasonCode === 'mode_none') return t('machines.sharing.fallback.adminDisabled');
-  if (setup?.reasonCode === 'not_preauthorized') return t('machines.sharing.fallback.adminCheckRequired');
   if (setup?.reasonCode === 'managed_cli_unavailable') return t('machines.sharing.fallback.managedCliRequired');
   return setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode, failure: setup.failure }, fallback) : fallback;
 }

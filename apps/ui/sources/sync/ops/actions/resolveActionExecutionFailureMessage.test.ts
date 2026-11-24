@@ -252,11 +252,14 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable' }, 'fallback')).toBe(expected);
         expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'credential_unavailable' }), 'fallback')).toBe(expected);
     });
-    it.each(['mode_none', 'not_preauthorized'])('names the administrator prerequisite for %s without treating it as transport failure', code => {
+    it.each([
+        ['mode_none', 'machineDetailPage.security.reasons.needsAdminToCheck'],
+        ['not_preauthorized', 'machineDetailPage.security.reasons.restorePasswordlessSudo'],
+    ] as const)('names the administrator prerequisite for %s without treating it as transport failure', (code, key) => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Could not read the network'))
-            .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+            .toBe(t(key));
         expect(resolveActionExecutionErrorMessage({ code }, 'Could not read the network'))
-            .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+            .toBe(t(key));
     });
     it.each(['access_denied', 'permission_denied', 'denied', RPC_ERROR_CODES.FORBIDDEN])('preserves the %s denial from a Machine Resource read', code => {
         expect(resolveActionExecutionErrorMessage({ code, message: 'Resource is unavailable' }, 'Could not read services'))
