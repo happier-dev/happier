@@ -2214,9 +2214,17 @@ describe('managed-services SVC09 owner', () => {
             },
         });
         const spec: ManagedServiceSpec = {
-            ...lifecycleSpec({ id: 'gateway', port: 4_351 }),
+            ...lifecycleSpec({ id: 'gateway', port: 4_351, environment: { PURPOSE_CONFIGURATION: '{"purposes":[]}' } }),
             requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
             clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+        };
+        if (spec.mode.kind !== 'spawn') throw new Error('Expected a spawn specification');
+        const projectedSpec: ManagedServiceSpec = {
+            ...spec,
+            mode: { ...spec.mode, launch: {
+                ...spec.mode.launch,
+                env: { PURPOSE_CONFIGURATION: '{"wireProjection":true,"purposes":[]}' },
+            } },
         };
         const gateway = { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine' };
         const bind = (sessionId: string, purpose: string) => harness.owner.bindScope(
@@ -2246,6 +2254,17 @@ describe('managed-services SVC09 owner', () => {
             expect(harness.owner.readSharedProviderGatewayRuntime({ ...gateway, machineId: 'other-machine' }).status).toBe('idle');
             expect(first.snapshot().state).toBe('healthy');
             expect(second.snapshot().state).toBe('healthy');
+            const conflict = await bind('session-three', 'first-purpose').supervise(projectedSpec).catch((error: unknown) => error);
+            expect(conflict).toMatchObject({
+                code: 'plugin_managed_service_spec_conflict',
+                message: expect.stringMatching(/mode\.launch\.env.*[Rr]estart the provider service/u),
+            });
+            expect(projectActionFailureCauseV1(conflict, 'providers.runtime_start')).toMatchObject({
+                errorCode: 'plugin_managed_service_spec_conflict',
+                phase: 'managed_service.supervise',
+                nativeErrorReason: 'mode.launch.env',
+            });
+            expect(harness.exec.spawn).toHaveBeenCalledOnce();
             const registryPath = harness.exec.spawn.mock.calls[0]?.[0].env?.CONSUMER_ACCESS_PATH;
             expect(registryPath).toBeTypeOf('string');
             const registry = JSON.parse(await readFile(registryPath!, 'utf8'));
@@ -2285,8 +2304,9 @@ describe('managed-services SVC09 owner', () => {
             expect(remaining.consumers).toHaveLength(1);
             await second.dispose();
             expect(process.dispose).toHaveBeenCalledOnce();
-            const third = await bind('session-three', 'first-purpose').supervise(spec);
+            const third = await bind('session-three', 'first-purpose').supervise(projectedSpec);
             expect(harness.exec.spawn).toHaveBeenCalledTimes(2);
+            expect(harness.exec.spawn.mock.calls[1]?.[0].env?.PURPOSE_CONFIGURATION).toContain('"wireProjection":true');
             expect(third.snapshot().state).toBe('healthy');
             await third.dispose();
             expect(claimRecords()).toHaveLength(6);

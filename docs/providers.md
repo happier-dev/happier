@@ -2781,6 +2781,14 @@ deltas and completion snapshots have separate observations. The projection
 omits argument values and keeps CommercialMode enabled. Capture the file while
 the instance is live and clear the selector after the replay.
 
+The selector changes the managed gateway's launch environment. An active
+gateway keeps its admitted specification until its consumers release it.
+If a later start requests a different specification for that gateway, the
+owner reports the differing field through `plugin_managed_service_spec_conflict`
+under `provider_endpoint_unavailable`. The diagnostic omits environment keys
+and values. End or release the gateway's active consumers, then start the
+Provider service again with the desired configuration.
+
 The managed HTTP Responses gateway recognizes the native app-server's
 `happier_cli` originator and User-Agent so the embedded SDK applies its existing
 Codex tool schema rules. The Meta executor sends its own User-Agent to Muse.

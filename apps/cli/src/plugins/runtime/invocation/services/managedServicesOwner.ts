@@ -528,6 +528,42 @@ function canonicalSpecIdentity(spec: ManagedServiceSpec): string {
     });
 }
 
+function managedServiceSpecConflict(incumbentIdentity: string, requestedIdentity: string): PluginError {
+    const incumbent = JSON.parse(incumbentIdentity) as ManagedServiceSpec;
+    const requested = JSON.parse(requestedIdentity) as ManagedServiceSpec;
+    // Diagnostic labels are fixed. Launch values, environment keys and
+    // private paths must stay in the owner, even when the spec conflicts.
+    const fields = {
+        'mode.kind': [incumbent.mode.kind, requested.mode.kind],
+        'mode.launch.env': ['launch' in incumbent.mode ? incumbent.mode.launch.env : undefined,
+            'launch' in requested.mode ? requested.mode.launch.env : undefined],
+        'mode.launch': ['launch' in incumbent.mode ? incumbent.mode.launch : undefined,
+            'launch' in requested.mode ? requested.mode.launch : undefined],
+        mode: [incumbent.mode, requested.mode],
+        credentialBindings: [incumbent.credentialBindings, requested.credentialBindings],
+        clientAccess: [incumbent.clientAccess, requested.clientAccess],
+        requestAuth: ['requestAuth' in incumbent ? incumbent.requestAuth : undefined,
+            'requestAuth' in requested ? requested.requestAuth : undefined],
+        healthCheck: [incumbent.healthCheck, requested.healthCheck],
+        healthPolicy: [incumbent.healthPolicy, requested.healthPolicy],
+        startupTimeoutMs: [incumbent.startupTimeoutMs, requested.startupTimeoutMs],
+        durableLog: [incumbent.durableLog, requested.durableLog],
+    };
+    const field = Object.entries(fields).find(([, [prior, next]]) => !isDeepStrictEqual(prior, next))?.[0] ?? 'spec';
+    const code = 'plugin_managed_service_spec_conflict';
+    return new PluginError({
+        code,
+        message: `The managed service specification differs in ${field}. Restart the provider service to apply the requested specification.`,
+        failureCause: {
+            phase: 'managed_service.supervise',
+            errorClass: 'PluginError',
+            errorCode: code,
+            httpStatus: null,
+            nativeErrorReason: field,
+        },
+    });
+}
+
 function assertScopeCurrent(scope: ManagedServicesScope): void {
     if (scope.signal?.aborted || !scope.isOccurrenceCurrent()) {
         fail(
@@ -3859,10 +3895,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 }
                 if (existing) {
                     if (existing.specIdentity !== specIdentity) {
-                        return fail(
-                            'plugin_managed_service_spec_conflict',
-                            'A different managed-service specification already owns this exact lifecycle scope',
-                        );
+                        throw managedServiceSpecConflict(existing.specIdentity, specIdentity);
                     }
                     if (existing.terminal) {
                         await retireEntry(existing);
