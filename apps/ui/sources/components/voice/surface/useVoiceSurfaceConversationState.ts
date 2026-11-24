@@ -31,6 +31,8 @@ type VoiceSurfaceConversationParams = Readonly<{
     surfaceSessionId: string | null;
     transcriptEnabled: boolean;
     voiceSettings: unknown;
+    /** Direct Session capture has live transcript items without a Voice conversation binding. */
+    unboundTranscriptSessionId?: string | null;
 }>;
 
 function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationParams) {
@@ -130,6 +132,7 @@ export function useVoiceSurfaceLatestTranscriptText(params: VoiceSurfaceConversa
 export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversationParams) {
     const { openConversationSessionId, fallbackOpenConversationControlSessionId } = useVoiceSurfaceConversationBinding(params);
     const transcriptEnabled = params.transcriptEnabled;
+    const canonicalSessionId = openConversationSessionId ?? params.unboundTranscriptSessionId ?? null;
     const language = getPreferredLanguage();
     // Exact message demand avoids delivery and projection for other Sessions;
     // a closed feed or missing conversation has no storage demand.
@@ -153,16 +156,16 @@ export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversatio
         );
     }, [transcriptEnabled, openConversationSessionId, conversationMessagesSlice, language]);
     const subscribeCanonical = React.useCallback(
-        (listener: () => void) => transcriptEnabled && openConversationSessionId
-            ? subscribeCanonicalVoiceTranscript(openConversationSessionId, listener)
+        (listener: () => void) => transcriptEnabled && canonicalSessionId
+            ? subscribeCanonicalVoiceTranscript(canonicalSessionId, listener)
             : () => {},
-        [openConversationSessionId, transcriptEnabled],
+        [canonicalSessionId, transcriptEnabled],
     );
     const readCanonical = React.useCallback(
-        () => transcriptEnabled && openConversationSessionId
-            ? readCanonicalVoiceTranscriptSnapshot(openConversationSessionId)
+        () => transcriptEnabled && canonicalSessionId
+            ? readCanonicalVoiceTranscriptSnapshot(canonicalSessionId)
             : EMPTY_CANONICAL_ENTRIES,
-        [openConversationSessionId, transcriptEnabled],
+        [canonicalSessionId, transcriptEnabled],
     );
     const canonicalEntries = React.useSyncExternalStore(subscribeCanonical, readCanonical, readCanonical);
     const mergedTranscriptEntries: readonly VoiceSurfaceTranscriptEntry[] = React.useMemo(

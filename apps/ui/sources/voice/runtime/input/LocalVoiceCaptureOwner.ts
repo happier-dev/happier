@@ -134,6 +134,7 @@ type LocalVoiceCaptureOwnerDeps = Readonly<{
     }>) => void;
     /** Interim/committed transcript updates, equality-gated + throttled by the owner. */
     onPartialTranscript?: (partial: RuntimeCapturePartial) => void;
+    onPartialTranscriptCleared?: () => void;
     /**
      * Continuous capture amplitude in [0,1] from the live mic, forwarded so the
      * engine can drive the UI-thread level visualizer. Reset to 0 on teardown by
@@ -294,6 +295,12 @@ export function createLocalVoiceCaptureOwner(
             await cleanup.catch(() => {});
         }
     };
+    const clearPartialTranscript = (): void => {
+        latestPartialTranscript = null;
+        if (lastPublishedPartial === null) return;
+        lastPublishedPartial = null;
+        deps.onPartialTranscriptCleared?.();
+    };
     const failActiveCapture = (failure: MicSessionFailure): Promise<void> => {
         const activeSessionId = activeCaptureSessionId;
         const activeProvider = activeCaptureProvider;
@@ -304,6 +311,7 @@ export function createLocalVoiceCaptureOwner(
         clearMicPlateauWatchdog();
         activeCaptureErrored = true;
         activeCaptureStarted = false;
+        clearPartialTranscript();
         activeCaptureSessionId = null;
         activeCaptureProvider = null;
         activeCaptureSettings = null;
@@ -368,6 +376,7 @@ export function createLocalVoiceCaptureOwner(
         clearMicPlateauWatchdog();
         runtimeTurnPolicyController.clearHandsFreeCaptureSession({ provider, sessionId });
         if (activeCaptureSessionId === sessionId && activeCaptureProvider === provider) {
+            clearPartialTranscript();
             activeCaptureSessionId = null;
             activeCaptureProvider = null;
             activeCaptureSettings = null;
@@ -441,9 +450,7 @@ export function createLocalVoiceCaptureOwner(
     }> => {
         clearMicPlateauWatchdog();
         activeCaptureErrored = false;
-        latestPartialTranscript = null;
-        lastPublishedPartial = null;
-        lastPartialAt = 0;
+        clearPartialTranscript();
         let audioStarted = false;
         const abortController = new AbortController();
         activeAbortController = abortController;
@@ -497,7 +504,7 @@ export function createLocalVoiceCaptureOwner(
                 if (activeAbortController !== abortController || abortController.signal.aborted) return;
                 if (state === 'reconnecting') {
                     clearMicPlateauWatchdog();
-                    latestPartialTranscript = null;
+                    clearPartialTranscript();
                     audioStarted = false;
                 } else if (state === 'recovered') {
                     armMicPlateauWatchdog();
@@ -514,10 +521,14 @@ export function createLocalVoiceCaptureOwner(
                 clearMicPlateauWatchdog();
             },
             onPartial: (text) => {
-                emitThrottledPartial(controlSessionId, text, false);
+                if (activeAbortController === abortController && !abortController.signal.aborted) {
+                    emitThrottledPartial(controlSessionId, text, false);
+                }
             },
             onFinal: (text) => {
-                emitThrottledPartial(controlSessionId, text, true);
+                if (activeAbortController === abortController && !abortController.signal.aborted) {
+                    emitThrottledPartial(controlSessionId, text, true);
+                }
             },
             onEndpoint: () => {
                 audioStarted = true;
@@ -681,6 +692,7 @@ export function createLocalVoiceCaptureOwner(
     ): Promise<Readonly<{ finalText: string; failed: boolean }>> => {
         if (isCurrent()) activeCaptureStarted = false;
         const result = await controller.stop();
+        if (isCurrent()) clearPartialTranscript();
         if ('error' in result) {
             if (isCurrent()) {
                 await failActiveCapture(result.error);
@@ -1114,6 +1126,7 @@ export function createLocalVoiceCaptureOwner(
             clearMicPlateauWatchdog();
             armActiveMicPlateauWatchdog = null;
             captureLifecycleGeneration += 1;
+            clearPartialTranscript();
             const captureStart = pendingCaptureStart;
             if (pendingCaptureStart === captureStart) pendingCaptureStart = null;
             if (activeAbortController) {

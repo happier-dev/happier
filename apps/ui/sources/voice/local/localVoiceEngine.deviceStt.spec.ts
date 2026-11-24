@@ -81,6 +81,33 @@ describe('local voice engine device STT (experimental)', () => {
         }
     }, 180_000);
 
+    it('publishes a push-to-talk partial to the existing transcript readout before Send', async () => {
+        await configureDuplexDeviceSpeech(false);
+        const engine = await loadLocalVoiceEngineWithCompatState();
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const { act } = await import('react-test-renderer');
+        const { useVoiceSurfaceConversationState } = await import('@/components/voice/surface/useVoiceSurfaceConversationState');
+        const transcript = await renderHook(() => useVoiceSurfaceConversationState({
+            providerId: 'local_direct', activeControlSessionId: 's1', surfaceSessionId: null,
+            transcriptEnabled: true, voiceSettings: null, unboundTranscriptSessionId: 's1',
+        }));
+        try {
+            await act(async () => { await engine.toggleLocalVoiceTurn('s1'); });
+            await act(async () => {
+                emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: 'what are my', confidence: 0.9 }] });
+            });
+            expect(transcript.getCurrent().transcriptEntries).toMatchObject([
+                { kind: 'user', text: 'what are my', transcriptState: 'partial', announce: false },
+            ]);
+            expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+            await act(async () => { await engine.stopLocalVoiceSession(); });
+            expect(transcript.getCurrent().transcriptEntries).toEqual([]);
+        } finally {
+            await transcript.unmount();
+            await engine.stopLocalVoiceSession();
+        }
+    }, 180_000);
+
     it('rearms hands-free capture when the submitted coding turn is cancelled remotely without a reply', async () => {
         const storage = await configureDuplexDeviceSpeech(true);
         speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));

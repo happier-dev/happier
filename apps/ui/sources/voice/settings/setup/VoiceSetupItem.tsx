@@ -270,10 +270,10 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
         surfaceSessionId: null,
         transcriptEnabled: props.voice.live,
         voiceSettings,
+        unboundTranscriptSessionId: props.voice.targetSessionAddress?.sessionId,
     });
-    // A provider that streams its transcript lights words as they are recognized; a direct Session
-    // has no separate Voice conversation, so its turn shows once the recognized words are queued in
-    // the target Session.
+    // Streaming input arrives through the transcript owner. Pending and stored
+    // Session rows carry the spoken input and answer after capture settles.
     const conversation = props.voice.conversationSessionAddress ?? props.voice.targetSessionAddress ?? null;
     const { messages } = useVoiceSetupConversationMessages(conversation);
     const { messages: pending } = useSessionPendingMessages(conversation?.sessionId ?? '');

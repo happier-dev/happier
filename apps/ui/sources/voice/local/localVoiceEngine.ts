@@ -66,7 +66,11 @@ import {
 } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
-import { persistVoiceConversationSpokenAssistantText } from '@/voice/transcript/voiceConversationTranscript';
+import {
+  clearLocalVoiceCapturePartial,
+  persistVoiceConversationSpokenAssistantText,
+  projectLocalVoiceCapturePartial,
+} from '@/voice/transcript/voiceConversationTranscript';
 import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcript/voiceTurnInterruption';
 import { createTtsPlaybackClock } from '@/voice/output/ttsPlaybackTiming';
 import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
@@ -154,6 +158,11 @@ const localVoiceCaptureOwner = createLocalVoiceCaptureOwner({
   onSpeechCandidateFalseAlarm: ({ controlSessionId }) => {
     bargeInController.cancelUserSpeechCandidate({ sessionId: controlSessionId });
   },
+  onPartialTranscript: ({ controlSessionId, transcript }) => {
+    const carrier = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
+    projectLocalVoiceCapturePartial(carrier?.conversationSessionId ?? controlSessionId, transcript);
+  },
+  onPartialTranscriptCleared: clearLocalVoiceCapturePartial,
   // Continuous mic amplitude stays in the runtime-owned level store. The UI
   // bridges this channel to Reanimated without importing component code here.
   onLevel: (level) => {

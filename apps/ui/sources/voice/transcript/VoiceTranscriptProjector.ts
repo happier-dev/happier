@@ -468,6 +468,9 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
     const EMPTY_CANONICAL_ITEMS: readonly CanonicalVoiceTranscriptItem[] = Object.freeze([]);
     const canonicalProjectors = new Map<string, ReturnType<typeof createCanonicalVoiceTranscriptProjector>>();
     const canonicalSnapshots = new Map<string, readonly CanonicalVoiceTranscriptItem[]>();
+    // The local runtime has one admitted microphone. Its draft overlays the
+    // same transcript snapshot and never passes through durable finalization.
+    let localCapture: Readonly<{ sessionId: string; item: CanonicalVoiceTranscriptItem }> | null = null;
     const canonicalListeners = new Map<string, Set<() => void>>();
     const canonicalSourceByConversation = new Map<string, RealtimeConversationTurnSource>();
     const canonicalAttemptByConversation = new Map<string, CanonicalVoiceTranscriptAttempt>();
@@ -555,8 +558,12 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
 
     const publishCanonicalSnapshot = (conversationSessionId: string): void => {
         const projector = canonicalProjectors.get(conversationSessionId);
-        const next = projector?.snapshot() ?? EMPTY_CANONICAL_ITEMS;
-        canonicalSnapshots.set(conversationSessionId, next);
+        const canonical = projector?.snapshot() ?? EMPTY_CANONICAL_ITEMS;
+        const next = localCapture?.sessionId === conversationSessionId
+            ? Object.freeze([...canonical, localCapture.item])
+            : canonical;
+        if (next === EMPTY_CANONICAL_ITEMS) canonicalSnapshots.delete(conversationSessionId);
+        else canonicalSnapshots.set(conversationSessionId, next);
         for (const listener of canonicalListeners.get(conversationSessionId) ?? []) listener();
     };
 
@@ -747,6 +754,23 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             if (!admitted) return false;
             admittedCanonicalPersistenceEvents.delete(admission);
             return admitted.projector.releaseAdmittedPersistenceEvent(admitted.canonicalAdmission);
+        },
+        setLocalCapturePartial: (sessionId: string, text: string): void => {
+            const previousSessionId = localCapture?.sessionId;
+            if (previousSessionId === sessionId && localCapture?.item.text === text) return;
+            localCapture = { sessionId, item: {
+                epoch: 0, attemptIdentity: 'local-capture', itemId: 'input', role: 'user',
+                text, final: false, corrected: false, revision: 1,
+                firstSequence: 0, lastSequence: 0, provenance: 'live', announce: 'none',
+            } };
+            if (previousSessionId && previousSessionId !== sessionId) publishCanonicalSnapshot(previousSessionId);
+            publishCanonicalSnapshot(sessionId);
+        },
+        clearLocalCapturePartial: (): void => {
+            const previousSessionId = localCapture?.sessionId;
+            if (!previousSessionId) return;
+            localCapture = null;
+            publishCanonicalSnapshot(previousSessionId);
         },
         beginCanonicalAttempt: (conversationSessionId: string): CanonicalVoiceTranscriptAttempt => {
             const attempt = getCanonicalProjector(conversationSessionId).beginAttempt();

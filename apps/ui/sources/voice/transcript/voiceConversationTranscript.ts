@@ -160,6 +160,14 @@ export async function settleAdmittedCanonicalVoiceTranscriptPersistence(params: 
     });
 }
 
+export function projectLocalVoiceCapturePartial(sessionId: string, text: string): void {
+    projector.setLocalCapturePartial(sessionId, text);
+}
+
+export function clearLocalVoiceCapturePartial(): void {
+    projector.clearLocalCapturePartial();
+}
+
 export function readCanonicalVoiceTranscriptSnapshot(
     conversationSessionIdValue: string,
 ): readonly CanonicalVoiceTranscriptItem[] {
