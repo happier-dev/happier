@@ -280,7 +280,15 @@ async function openBrokeredSessionTeamCredentialProviderBinding(
   }), input.signal).catch((error: unknown) => {
     input.signal.throwIfAborted();
     if (error instanceof IrohNativeOperationError) {
-      throw new SessionTeamCredentialLaunchUnavailableError('broker_unavailable', 'binding', error);
+      throw new SessionTeamCredentialLaunchUnavailableError('broker_unavailable', 'binding', {
+        failureCause: {
+          phase: 'providers.team_credential.tunnel_start',
+          errorClass: 'Error',
+          errorCode: null,
+          nativeErrorCode: error.nativeCode,
+          httpStatus: null,
+        },
+      });
     }
     throw error;
   });

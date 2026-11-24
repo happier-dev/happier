@@ -809,10 +809,15 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   if (metadata === 'tunnel start failed') {
     const refusal = await openThroughRunner().then(() => null, (error: unknown) => error);
     expect(boundary.responseStatus).toBe(200);
-    expect(boundary.responseBody).toMatchObject({ ok: false, error: { code: 'broker_unavailable' } });
+    const tunnelFailure = { phase: 'providers.team_credential.tunnel_start',
+      errorClass: 'Error', errorCode: null, nativeErrorCode: 'transport-unavailable', httpStatus: null };
+    expect(boundary.responseBody).toMatchObject({ ok: false, error: {
+      code: 'broker_unavailable', failureCause: tunnelFailure,
+    } });
     expect(refusal).toMatchObject({ code: 'broker_unavailable' });
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal }))
-      .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
+      .toMatchObject({ source: 'team_credential', code: 'broker_unavailable',
+        failureCause: { actionCause: tunnelFailure } });
     expect(brokerOpens).toBe(1);
     await expect(openThroughRunner()).resolves.toMatchObject({ kind: 'provider_broker.binding', status: 'opened' });
     expect(brokerOpens).toBe(2);

@@ -2583,6 +2583,8 @@ Session-owned Runs.
 In 0.3 development source, a native tunnel-start failure during Team model
 binding open returns the retryable `broker_unavailable` cause. Check the Team
 credential broker connection, then retry the Session with the same model.
+The Session runtime issue carries the native error code under the
+`providers.team_credential.tunnel_start` phase.
 If Home has no usable endpoint for the Machine running the Session, broker
 admission carries `initiator_endpoint_missing` in its existing failure detail.
 The Session prompts the person to check that Machine's connection and retry.
