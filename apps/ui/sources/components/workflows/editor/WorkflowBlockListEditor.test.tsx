@@ -1256,6 +1256,33 @@ describe('workflow block list editor', () => {
         });
     });
 
+    it('authors the native Session launch target as one structured Workflow operand', async () => {
+        const harness = await loadHarness();
+        const { SESSION_SPAWN_NEW_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const draft = buildDraft(harness, [
+            { kind: 'action', id: 'spawn', actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: {} },
+        ]);
+        const changes: Array<ReturnType<typeof buildDraft>> = [];
+        const onChange = (next: ReturnType<typeof buildDraft>) => changes.push(next);
+        const screen = await renderList(harness, { draft, selectedBlockId: 'spawn', onChange });
+        const fieldId = 'workflow-editor-action-spawn-field-executionTarget';
+        await screen.pressByTestIdAsync(`${fieldId}-set`);
+        await screen.unmount();
+
+        const executionTarget = { serverId: MACHINE_COMPOSER_SCOPE.serverId, machineId: 'machine-1' };
+        for (const [key, value] of Object.entries(executionTarget)) {
+            const bound = await renderList(harness, { draft: changes.at(-1)!, selectedBlockId: 'spawn', onChange });
+            const editor = bound.findAllByTestId(`${fieldId}-literal:executionTarget.${key}`)
+                .find(node => typeof node.props.onChangeText === 'function');
+            await act(async () => { invokeTestInstanceHandler(editor, 'onChangeText', value, key); });
+            await bound.unmount();
+        }
+        expect(changes.at(-1)?.blocks[0]).toMatchObject({
+            actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
+            input: { executionTarget: { kind: 'literal', value: executionTarget } },
+        });
+    });
+
     /**
      * Plan 03's ordered roster replaces engineIds, retaining each participant's
      * per-selection input through the Action's canonical JSON field.

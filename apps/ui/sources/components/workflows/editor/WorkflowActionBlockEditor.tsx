@@ -53,17 +53,27 @@ type ActionFieldRow = Readonly<{
     required: boolean;
     /** The canonical hint, when the Action declares one: it draws a literal with its own widget. */
     hint: EffectiveActionInputField | null;
+    nestedFields?: readonly EffectiveActionInputField[];
 }>;
 
 /**
- * One row per field of the Action's input: every declared top-level field, then
- * any field already bound that the declaration no longer lists (kept visible,
- * never dropped).
+ * One row per top-level binding. Required nested controls edit their parent
+ * literal together when the Action has no separate control for that parent.
+ * Previously bound input without a current declaration stays visible.
  */
 function resolveActionFieldRows(fields: readonly EffectiveActionInputField[], input: WorkflowActionLeafV1['input']): readonly ActionFieldRow[] {
     const rows: ActionFieldRow[] = [];
     const seen = new Set<string>();
+    const nested = new Map<string, EffectiveActionInputField[]>();
     for (const field of fields) {
+        const dot = field.path.indexOf('.');
+        if (dot !== -1) {
+            const root = field.path.slice(0, dot);
+            const group = nested.get(root) ?? [];
+            group.push(field);
+            nested.set(root, group);
+            continue;
+        }
         if (seen.has(field.path)) continue;
         seen.add(field.path);
         rows.push({
@@ -73,6 +83,11 @@ function resolveActionFieldRows(fields: readonly EffectiveActionInputField[], in
             required: field.required === true,
             hint: { ...field, title: formatWorkflowFieldLabel(field.path, field.title) },
         });
+    }
+    for (const [key, group] of nested) {
+        if (seen.has(key) || group.some(field => field.widget === 'secret') || !group.some(field => field.required)) continue;
+        seen.add(key);
+        rows.push({ key, label: formatWorkflowFieldLabel(key), required: true, hint: null, nestedFields: group });
     }
     for (const key of Object.keys(input)) {
         if (seen.has(key)) continue;
@@ -120,9 +135,17 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const editable = props.editable !== false;
     const catalog = useWorkflowActionCatalog(props.composerScope);
     const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs, { authored: true }), [block.actionId, catalog.specs]);
-    const requests = React.useMemo(() => spec === null ? [] : readWorkflowActionFieldRequests({ blocks: [block] }, [spec])
-        .requests.filter(({ field }) => !field.path.includes('.')), [block, spec]);
-    const rows = React.useMemo(() => resolveActionFieldRows(requests.map(({ field }) => field), block.input), [block.input, requests]);
+    const { requests, rows } = React.useMemo(() => {
+        const fields = spec === null ? [] : readWorkflowActionFieldRequests({ blocks: [block] }, [spec]).requests;
+        const rows = resolveActionFieldRows(fields.map(({ field }) => field), block.input);
+        const offeredOptions = new Set(rows.flatMap(row => {
+            if (!row.nestedFields) return [row.key];
+            if (!props.selected || block.input[row.key]?.kind !== 'literal') return [];
+            return row.nestedFields.filter(field => field.widget === 'select' || field.widget === 'multiselect' || field.inputType)
+                .map(field => field.path);
+        }));
+        return { requests: fields.filter(({ field }) => offeredOptions.has(field.path)), rows };
+    }, [block, spec, props.selected]);
     const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, sessionId: catalog.sessionId, serverId: catalog.serverId,
         enabled: editable && spec !== null && spec.projectionError === undefined,
         requests });
@@ -200,22 +223,28 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                     ? undefined : { kind: 'literal', value: next as Extract<WorkflowValueReference, { kind: 'literal' }>['value'] });
                 // The field's own control for a literal. Unset, a field with a declared default reads that default as its
                 // value; a chosen value never does, so one whose choices are still loading never reads as the default.
-                const literalField = (readsDefault: boolean) => row.hint === null || row.hint.widget === 'json' ? undefined : (value: unknown, onChange: (next: unknown) => void) => (
-                    <ActionInputFields
-                        // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5): a
-                        // typed field asks for a value; a choice keeps its select's own "Choose…" rather than "Type…".
-                        fields={[readsDefault && unsetLabel !== undefined ? { ...row.hint!, placeholder: unsetLabel }
-                            : row.hint!.placeholder !== undefined || row.hint!.widget === 'select' || row.hint!.widget === 'multiselect'
-                                ? row.hint!
-                                : { ...row.hint!, placeholder: t('workflows.condition.literalPlaceholder') }]}
-                        input={{ [row.key]: value }}
-                        editable={editable}
-                        frame="none"
-                        resolveFieldOptions={resolveFieldOptions}
-                        onPatch={(patch) => onChange(patch[row.key])}
-                        resolveFieldTestID={() => `${fieldId}-literal`}
-                    />
-                );
+                const literalField = (readsDefault: boolean) => {
+                    const hint = row.hint;
+                    const fields = row.nestedFields ?? (hint === null || hint.widget === 'json' ? undefined : [
+                        readsDefault && unsetLabel !== undefined ? { ...hint, placeholder: unsetLabel }
+                            : hint.placeholder !== undefined || hint.widget === 'select' || hint.widget === 'multiselect'
+                                ? hint : { ...hint, placeholder: t('workflows.condition.literalPlaceholder') },
+                    ]);
+                    if (!fields) return undefined;
+                    return (value: unknown, onChange: (next: unknown) => void) => (
+                        <ActionInputFields
+                            // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5): a
+                            // typed field asks for a value; a choice keeps its select's own "Choose…" rather than "Type…".
+                            fields={fields}
+                            input={{ [row.key]: value }}
+                            editable={editable}
+                            frame={row.nestedFields === undefined ? 'none' : 'field'}
+                            resolveFieldOptions={resolveFieldOptions}
+                            onPatch={(patch) => onChange(patch[row.key])}
+                            resolveFieldTestID={field => row.nestedFields === undefined ? `${fieldId}-literal` : `${fieldId}-literal:${field.path}`}
+                        />
+                    );
+                };
                 const defaultLiteral = unsetLabel === undefined ? undefined : literalField(true);
                 const chosenLiteral = literalField(false);
                 return (
@@ -244,7 +273,11 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                             return formatActionInputFieldChoice(row.hint, value, resolveFieldOptions);
                         }}
                         // A declared default is already a value: pressing it opens its field rather than binding an empty one.
-                        onSet={() => { if (unsetLabel === undefined) setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
+                        onSet={() => {
+                            if (unsetLabel === undefined) setBinding(row.key, row.nestedFields === undefined
+                                ? initialActionFieldLiteral(row.hint) : { kind: 'literal', value: {} });
+                            props.onSelect();
+                        }}
                         editorOwnsLabel={typed}
                         renderEditor={() => binding === undefined ? defaultLiteral === undefined ? null : (
                             // Unset, the field reads its default as its value; choosing one binds it.
