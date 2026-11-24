@@ -2777,7 +2777,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             const { openActionOperationDetail } = await import('@/components/inbox/actionOperations/openActionOperationDetail');
             throwIfAborted(signal);
             accountContext?.assertCurrent();
-            openActionOperationDetail({ serverId: address.serverId, operationId: address.operationId });
+            openActionOperationDetail({ serverId: address.serverId, snapshot: address.operation });
           },
           copyOutput: async output => {
             throwIfAborted(signal);

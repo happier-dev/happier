@@ -100,6 +100,39 @@ describe('openActionOperationDetail', () => {
         expect(actionOperationStore.getSnapshot().operationsByKey.get(JSON.stringify(['home-a', 'cold-failure']))?.snapshot.result).toEqual(full.result);
     });
 
+    it('opens the exact Worker terminal from an authorized Output Open without a cached operation or a second read', async () => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+        const serverId = await homes.addHome({ name: 'Worker Home', serverUrl: 'https://worker.test', accountId: 'requester' });
+        const operation = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'worker-script', revision: 3, actionId: 'projects.script.run', state: 'succeeded',
+            scope: { accountId: 'requester', machineId: 'shared-worker' }, title: 'Run a project script',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'script', serverId, machineId: 'shared-worker',
+                workspaceRefId: 'worker-copy', cwd: '/shared/worker-copy', terminalId: 'retained-terminal', exitCode: 0 },
+        });
+        operationRpc.mockImplementation(async request => {
+            if (typeof request === 'object' && request && 'method' in request && request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+                return { kind: 'found', operation };
+            }
+            throw new Error('Unexpected transport request while opening output');
+        });
+        const screen = await renderScreen(React.createElement(AppPaneProvider, null,
+            React.createElement(ModalProvider, null, React.createElement(ObserveModals))));
+        await act(async () => {
+            const result = await createDefaultActionExecutor().execute('projects.execution.output.open', {
+                serverId, machineId: 'shared-worker', operationId: operation.operationId,
+            }, { surface: 'ui', authority: 'present_user', serverId });
+            expect(result).toEqual({ ok: true, result: { kind: 'opened' } });
+            await vi.dynamicImportSettled();
+        });
+        expect(screen.getTextContent()).toContain('/shared/worker-copy');
+        expect(screen.findByTestId('project-command-output')).toBeTruthy();
+        expect(operationRpc.mock.calls.filter(([request]) => typeof request === 'object' && request
+            && 'method' in request && request.method === ACTION_OPERATION_RPC_METHODS_V2.get)).toHaveLength(1);
+    });
+
     it('does not open detail for an unqualified legacy operation', async () => {
         const { openActionOperationDetail } = await import('./openActionOperationDetail');
         await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));

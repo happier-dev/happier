@@ -5,7 +5,7 @@ import { actionOperationSelectors } from '@/sync/domains/actionOperations/action
 import { refreshActionOperationSnapshot } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import type { ActionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
+import type { ActionOperationAddress, QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
@@ -20,8 +20,13 @@ function ActionOperationDetail(props: React.ComponentProps<typeof DetailContent>
 }
 
 /** Canonical imperative entrypoint for launcher receipt binding and Inbox row reopen. */
-export function openActionOperationDetail(address: ActionOperationAddress): void {
+export function openActionOperationDetail(target: ActionOperationAddress | Pick<QualifiedActionOperation, 'serverId' | 'snapshot'>): void {
+    const hasOwnerSnapshot = 'snapshot' in target;
+    const address = hasOwnerSnapshot ? { serverId: target.serverId, operationId: target.snapshot.operationId } : target;
     if (!address.serverId?.trim()) return;
+    if (hasOwnerSnapshot) {
+        actionOperationStore.mergeSnapshots({ serverId: address.serverId, snapshots: [target.snapshot], snapshotComplete: true });
+    }
     Modal.show({
         component: ActionOperationDetail,
         props: address,
@@ -29,6 +34,7 @@ export function openActionOperationDetail(address: ActionOperationAddress): void
         accessibilityLabel: t('inbox.actionOperations.detailAccessibilityLabel'),
     });
     actionOperationStore.markTerminalSeen(address);
+    if (hasOwnerSnapshot) return;
     const operation = actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address);
     if (operation) {
         // Activity keeps a result-free summary; Details reads the retained owner result.
