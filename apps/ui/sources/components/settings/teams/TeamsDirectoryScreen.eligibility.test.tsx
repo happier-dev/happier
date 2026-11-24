@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -31,6 +33,10 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // Import the real screen at collection, after the boundaries: a cold import inside a test body can outlast it.
 const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { storage } = await import('@/sync/domains/state/storage');
+const { readHomeShownUnavailable } = await import('@/components/navigation/connectionStatus/HomeReachabilityGate');
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
@@ -65,6 +71,51 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 describe('TeamsDirectoryScreen Team-creation eligibility', () => {
+    it('releases the focused directory when its Home becomes unavailable and stays gone on return', async () => {
+        const launch = startTestLaunchCurtain();
+        const answer = createDeferred<void>();
+        const serverUrl = 'https://teams-launch.example';
+        const home = await harness.addHome({ name: 'Studio', serverUrl, teamsEnabled: true });
+        await harness.selectHomes([home]);
+        harness.answer(home, TEAMS_LIST_PATH, {
+            body: { items: [], nextCursor: null },
+            respondAfter: answer.promise,
+        });
+        const previousHome = getActiveServerSnapshot();
+        const { endpointStatus, endpointReason, socketStatus, syncError } = storage.getState();
+        publishAppliedActiveServerSnapshot({ ...previousHome, serverId: home, serverUrl });
+        storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
+        const page = (show: boolean) => <>{show && <TeamsDirectoryScreen />}<CurtainProbe /></>;
+        const screen = await renderScreen(page(true));
+        const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('teams-directory-loading')).not.toBeNull());
+            expect(readHomeShownUnavailable(home)).toBe(false);
+            launch.releaseShell();
+            await launch.paint();
+            expect(curtain()).toBe('up');
+
+            await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
+            expect(readHomeShownUnavailable(home)).toBe(true);
+            await launch.paint();
+            expect(curtain()).toBe('leaving');
+            await act(async () => { launch.finish(); });
+
+            await screen.update(page(false));
+            await act(async () => { storage.setState({ endpointStatus: 'online' }); });
+            await screen.update(page(true));
+            await vi.waitFor(() => expect(screen.findByTestId('teams-directory-loading')).not.toBeNull());
+            await launch.paint();
+            expect(curtain()).toBe('gone');
+        } finally {
+            await screen.unmount();
+            answer.resolve();
+            storage.setState({ endpointStatus, endpointReason, socketStatus, syncError });
+            publishAppliedActiveServerSnapshot(previousHome, false);
+            launch.dispose();
+        }
+    });
+
     it('continues a connected-account Share with Team intent into that Team create route', async () => {
         const home = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'member-a', teamsEnabled: true,

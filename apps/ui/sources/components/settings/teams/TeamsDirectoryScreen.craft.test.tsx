@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { collectRenderedTestIds, flushHookEffects, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -95,29 +96,31 @@ afterEach(async () => {
 });
 
 describe('TeamsDirectoryScreen craft', () => {
-    it('keeps the cold launch covered until the selected Team can take over the directory', async () => {
-        const { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } = await import('@/boot/launchCurtain');
-        document.documentElement.classList.add('launch-planet');
-        const releaseBoot = holdLaunchCurtain();
-        directoryWidth = 1440;
+    it('keeps a cold directory covered until its first list draws', async () => {
+        const launch = startTestLaunchCurtain();
+        const answer = createDeferred<void>();
         const home = await memberHome(1);
+        harness.answer(home, TEAMS_LIST_PATH, {
+            body: { items: [teamSummaryFixture({ id: 'team-0' })], nextCursor: null },
+            respondAfter: answer.promise,
+        });
         const screen = await renderDirectory();
-        function CurtainProbe() {
-            return React.createElement('CurtainProbe', { state: useLaunchCurtainState() });
-        }
         const probe = await renderScreen(<CurtainProbe />);
         const curtain = () => probe.root.findByType('CurtainProbe').props.state;
         try {
-            await vi.waitFor(() => expect(sdkRedirect).toHaveBeenCalledWith(`/settings/teams/${home}/team-0`));
-            releaseBoot();
-            await flushHookEffects({ cycles: 1, frames: 3 });
+            await vi.waitFor(() => expect(screen.findByTestId('teams-directory-loading')).not.toBeNull());
+            launch.releaseShell();
+            await launch.paint();
             expect(curtain()).toBe('up');
-            await screen.unmount();
-            await flushHookEffects({ cycles: 1, frames: 3 });
+            answer.resolve();
+            await vi.waitFor(() => expect(screen.findByTestId(`teams-row:${home}:team-0`)).not.toBeNull());
+            await launch.paint();
             expect(curtain()).toBe('leaving');
         } finally {
-            releaseBoot();
-            finishLaunchCurtain();
+            await screen.unmount();
+            await probe.unmount();
+            answer.resolve();
+            launch.dispose();
         }
     });
 
@@ -142,7 +145,7 @@ describe('TeamsDirectoryScreen craft', () => {
         await harness.selectHomes([home]);
         const pending: { answer: () => void } = { answer: () => undefined };
         harness.answer(home, TEAMS_LIST_PATH, {
-            body: { items: [], nextCursor: null },
+            body: { items: [teamSummaryFixture({ id: 'team-0' })], nextCursor: null },
             respondAfter: new Promise<void>((resolve) => { pending.answer = resolve; }),
         });
         directoryWidth = 1440;
@@ -153,6 +156,7 @@ describe('TeamsDirectoryScreen craft', () => {
         expect(ids).toContain('teams-directory-header');
         expect(ids).not.toContain('teams-directory-loading');
         pending.answer();
+        await vi.waitFor(() => expect(sdkRedirect).toHaveBeenCalledWith(`/settings/teams/${home}/team-0`));
     });
 
     it('beside the rail, never calls a Home that failed to answer "No Teams yet"', async () => {

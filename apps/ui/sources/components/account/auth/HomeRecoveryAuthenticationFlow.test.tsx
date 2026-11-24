@@ -10,7 +10,10 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
-import { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } from '@/boot/launchCurtain';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
+import { readHomeShownUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { storage } from '@/sync/domains/state/storage';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { adoptHomeProfile, upsertServerProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -76,35 +79,54 @@ function renderRecovery(profileRef: string) {
 }
 
 describe('HomeRecoveryAuthenticationFlow', () => {
-    it('hands the launch curtain from boot to the addressed Home recovery until its authentication methods present', async () => {
+    it('releases the pending recovery when its own Home becomes unavailable and stays gone on return', async () => {
+        const launch = startTestLaunchCurtain();
         const entry = createDeferred<void>();
-        const { selected } = await createRecoveryHome(entry.promise);
-        document.documentElement.classList.add('launch-planet');
-        const releaseBoot = holdLaunchCurtain();
-        function CurtainProbe() {
-            return React.createElement('Curtain', { state: useLaunchCurtainState() });
-        }
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
-            <HomeRecoveryAuthenticationFlow profileRef={selected.id} returnTo="/" onAuthenticated={vi.fn()} onBack={vi.fn()} />
+        const { selected, focused } = await createRecoveryHome(entry.promise);
+        const { endpointStatus, endpointReason, socketStatus, syncError } = storage.getState();
+        publishAppliedActiveServerSnapshot(focused);
+        storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
+        const page = (show: boolean) => <InjectedAuthProvider credentials={null}>
+            {show && <HomeRecoveryAuthenticationFlow profileRef={selected.id} returnTo="/" onAuthenticated={vi.fn()} onBack={vi.fn()} />}
             <CurtainProbe />
-        </InjectedAuthProvider>);
-        const paint = () => act(async () => {
-            for (let i = 0; i < 3; i++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-        });
-        const curtain = () => screen.root.findByType('Curtain').props.state;
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(page(true));
+        const curtain = () => screen.root.findByType('CurtainProbe').props.state;
         try {
-            releaseBoot();
             expect(screen.findByTestId('home-recovery-authentication-loading-line')).not.toBeNull();
-            await paint();
+            launch.releaseShell();
+            await launch.paint();
             expect(curtain()).toBe('up');
+
+            await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
+            expect(readHomeShownUnavailable(focused.serverId)).toBe(true);
+            expect(readHomeShownUnavailable(selected.id)).toBe(false);
+            await launch.paint();
+            expect(curtain()).toBe('up');
+
+            await act(async () => {
+                publishAppliedActiveServerSnapshot({ ...focused, serverId: selected.id, serverUrl: selected.serverUrl });
+            });
+            expect(readHomeShownUnavailable(selected.id)).toBe(true);
+            await launch.paint();
+            expect(curtain()).toBe('leaving');
+            expect(screen.findByTestId('home-recovery-authentication-loading-line')).not.toBeNull();
+            await act(async () => { launch.finish(); });
+
+            await screen.update(page(false));
+            await act(async () => { storage.setState({ endpointStatus: 'online' }); });
+            await screen.update(page(true));
+            expect(screen.findByTestId('home-recovery-authentication-loading-line')).not.toBeNull();
+            await launch.paint();
+            expect(curtain()).toBe('gone');
             entry.resolve();
             await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
-            await paint();
-            expect(curtain()).toBe('leaving');
         } finally {
             entry.resolve();
             await screen.unmount();
-            finishLaunchCurtain();
+            storage.setState({ endpointStatus, endpointReason, socketStatus, syncError });
+            publishAppliedActiveServerSnapshot(focused, false);
+            launch.dispose();
         }
     });
 

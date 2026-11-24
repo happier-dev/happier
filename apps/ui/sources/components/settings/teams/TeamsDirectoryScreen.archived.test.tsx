@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -29,6 +30,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
+const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
@@ -61,6 +63,37 @@ beforeEach(async () => {
 });
 
 afterEach(() => standardCleanup());
+
+it('lets the launch curtain leave while a visible secondary Teams directory is still loading', async () => {
+    const launch = startTestLaunchCurtain();
+    const answer = createDeferred<void>();
+    const home = await harness.addHome({ name: 'Studio', serverUrl: 'https://teams-secondary.example', teamsEnabled: true });
+    await harness.selectHomes([home]);
+    harness.answer(home, TEAMS_LIST_PATH, {
+        body: { items: [teamSummaryFixture({ id: 'team-0' })], nextCursor: null },
+        respondAfter: answer.promise,
+    });
+    const screen = await renderScreen(<>
+        <DestinationInstanceHost tabId="teams-secondary" ref={{ kind: 'settings', params: { pageId: 'teams' } }}
+            pathname="/settings/teams" focused={false} visible
+            navigation={{ push: routerPush, replace: vi.fn(), back: vi.fn() }}>
+            <TeamsDirectoryScreen />
+        </DestinationInstanceHost>
+        <CurtainProbe />
+    </>);
+    const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+    try {
+        await vi.waitFor(() => expect(screen.findByTestId('teams-directory-loading')).not.toBeNull());
+        launch.releaseShell();
+        await launch.paint();
+        expect(curtain()).toBe('leaving');
+        expect(screen.findByTestId('teams-directory-loading')).not.toBeNull();
+    } finally {
+        await screen.unmount();
+        answer.resolve();
+        launch.dispose();
+    }
+});
 
 /**
  * Opening the archive declares demand for its separate directory sequence. The active list never

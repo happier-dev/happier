@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AccountCredentialJourney } from './AccountCredentialJourney';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -34,7 +34,7 @@ export function HomeRecoveryAuthenticationFlow(props: HomeRecoveryAuthentication
 function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlowProps): React.ReactElement {
     const profile = getServerProfileById(props.profileRef);
     const catalog = useExactSavedHomeAuthenticationCatalog(profile);
-    useLaunchCurtainHold(catalog.state === 'loading');
+    useRouteLaunchCurtainHold(catalog.state === 'loading', profile?.id);
     const homeLabel = profile ? resolveHomeDisplayLabel(profile, profile.id) : null;
     // One signed-out step (lab direction A "Sign in to … again"): the Home it recovers above the heading, then its
     // ways in; a Home that cannot answer says so in the same frame.

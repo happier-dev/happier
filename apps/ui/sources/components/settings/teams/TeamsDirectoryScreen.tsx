@@ -1,13 +1,12 @@
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -137,7 +136,7 @@ export const TeamsDirectoryScreen = React.memo(function TeamsDirectoryScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams();
     const sourceHint = React.useMemo(() => readTeamCredentialSourceHint(params), [params]);
-    useLaunchCurtainHold(view === 'pending');
+    useRouteLaunchCurtainHold(view === 'pending', sourceHint?.serverId);
 
     React.useEffect(() => {
         navigation.setOptions({ title: t('teams.title') });
@@ -159,9 +158,8 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
     const landing = props.sourceHint || waiting
         ? null
         : resolveTeamsCollectionLanding(active.rows, readLastVisitedTeamsCollectionTeam());
-    const presented = useLayoutPresentationActive();
     // The renderless index redirect still owns the pane until the selected Team takes over.
-    useLaunchCurtainHold(presented && (waiting || landing !== null));
+    useRouteLaunchCurtainHold(waiting || landing !== null, props.sourceHint?.serverId);
 
     if (props.sourceHint) {
         // Sharing a credential: the rail beside this page is the choice.
@@ -211,7 +209,7 @@ const TeamsDirectoryPage = React.memo(function TeamsDirectoryPage(props: Readonl
     const collection = useTeamsCollection({ sourceHint, query });
     const active = collection.active;
     const waiting = active.kind === 'loading' && active.unavailableHomes.every(home => home.reason === 'loading');
-    useLaunchCurtainHold(waiting);
+    useRouteLaunchCurtainHold(waiting, sourceHint?.serverId);
 
     const openTeam = React.useCallback(
         (address: TeamAddress) => {
