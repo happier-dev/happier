@@ -37,18 +37,37 @@ describe('local capture background lifecycle', () => {
    })]);
    expect(bound, 'OTLP binds while SQLite commit is held').toEqual(expect.objectContaining({ endpoint: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/) }));
    expect(fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees'))).toHaveLength(0);
+   const exportLogs = (...messages: string[]) => fetch(`${bound!.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: messages.map(stringValue =>
+     ({ timeUnixNano: '1700000000000000000', body: { stringValue } })) }] }] }) });
+   expect((await exportLogs('busy writer')).status).toBe(200);
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 1, reason: 'store_busy' });
    held.release();
    await runtime.ingest.settled();
-   const response = await fetch(`${bound!.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: ['first', 'second'].map(stringValue =>
-     ({ timeUnixNano: '1700000000000000000', body: { stringValue } })) }] }] }) });
+   runtime.ingest.offer([{ id: 'next', worktree: 'other', kind: 'log', source: 'otlp', at: 2 }]);
+   await runtime.ingest.settled();
+   await runtime.removeWorktree('/physical/first');
+   expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toEqual([]);
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 0, reason: null });
+   const indexedBefore = fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees')).length;
+   const response = await exportLogs('first', 'second');
    expect(response.status).toBe(200);
    await runtime.ingest.settled();
    expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toHaveLength(2);
-   expect(fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees'))).toHaveLength(1);
+   expect(fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees'))).toHaveLength(indexedBefore + 1);
    await runtime.removeWorktree('/physical/first');
    expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toEqual([]);
-   expect(await runtime.store.list({ worktree: 'other', limit: 10 })).toHaveLength(1);
+   expect(await runtime.store.list({ worktree: 'other', limit: 10 })).toHaveLength(2);
+   held = fixture.holdNextCommit();
+   runtime.ingest.offer([{ id: 'third', worktree: 'other', kind: 'log', source: 'otlp', at: 3 }]);
+   await held.entered;
+   expect((await exportLogs('removed before flush')).status).toBe(200);
+   const removed = runtime.removeWorktree('/physical/first');
+   held.release();
+   await removed;
+   runtime.ingest.offer([{ id: 'fourth', worktree: 'other', kind: 'log', source: 'otlp', at: 4 }]);
+   await runtime.ingest.settled();
+   expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toEqual([]);
   } finally {
    held?.release();
    if (capture) await capture.then(lease => lease.release(), () => {});

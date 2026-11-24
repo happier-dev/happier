@@ -1,29 +1,38 @@
 import type { CaptureEvent } from './capture.js';
 
 export type CaptureCoverage = Readonly<{ lostObservations: number; reason: string | null }>;
+type WorktreeIdentity = Pick<CaptureEvent, 'physicalRootIdentity'>;
+type PartitionCoverage = Readonly<{ coverage: CaptureCoverage }> & WorktreeIdentity;
+type ObservationLoss = Readonly<{ count: number }> & WorktreeIdentity;
 /** One persistence batch, no replay queue and no awaited store call on the wire relay. */
 export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<void>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
  let pending: Promise<void> | null = null;
  let failure: string | null = null;
  let lostObservations = 0;
  let reason: string | null = null;
- const partitions = new Map<string, CaptureCoverage>();
+ const partitions = new Map<string, PartitionCoverage>();
  const dirtyPartitions = new Set<string>();
  const coverage = (partition?: string): CaptureCoverage => partition === undefined
   ? { lostObservations, reason }
-  : { ...partitions.get(partition) ?? { lostObservations: 0, reason: null } };
- function lose(counts: ReadonlyMap<string, number>, cause: string) {
-  for (const [partition, count] of counts) {
+  : { ...partitions.get(partition)?.coverage ?? { lostObservations: 0, reason: null } };
+ function lose(counts: ReadonlyMap<string, ObservationLoss>, cause: string) {
+  for (const [partition, { count, physicalRootIdentity }] of counts) {
+   const previous = partitions.get(partition);
    lostObservations += count;
-   partitions.set(partition, { lostObservations: (partitions.get(partition)?.lostObservations ?? 0) + count, reason: cause });
+   partitions.set(partition, { physicalRootIdentity: physicalRootIdentity ?? previous?.physicalRootIdentity,
+    coverage: { lostObservations: (previous?.coverage.lostObservations ?? 0) + count, reason: cause } });
    dirtyPartitions.add(partition);
   }
   reason = cause;
   publish(coverage(), [...counts.keys()]);
  }
  function loseEvents(events: readonly CaptureEvent[], cause: string) {
-  const counts = new Map<string, number>();
-  for (const event of events) counts.set(event.worktree, (counts.get(event.worktree) ?? 0) + 1);
+  const counts = new Map<string, ObservationLoss>();
+  for (const event of events) {
+   const previous = counts.get(event.worktree);
+   counts.set(event.worktree, { count: (previous?.count ?? 0) + 1,
+    physicalRootIdentity: event.physicalRootIdentity ?? previous?.physicalRootIdentity });
+  }
   lose(counts, cause);
  }
  async function persist(events: readonly CaptureEvent[]): Promise<{ accepted: true } | { accepted: false; code: string }> {
@@ -31,7 +40,8 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
   if (failure) { loseEvents(events, failure); return { accepted: false, code: failure }; }
   const snapshots = [...dirtyPartitions].map(partition => ({ partition, snapshot: partitions.get(partition)! }));
   const at = Date.now();
-  const markers: CaptureEvent[] = snapshots.map(({ partition, snapshot }) => ({ id: 'coverage', worktree: partition, kind: 'coverage', source: 'capture', at, detail: snapshot }));
+  const markers: CaptureEvent[] = snapshots.map(({ partition, snapshot }) => ({ id: 'coverage', worktree: partition, kind: 'coverage', source: 'capture', at,
+   physicalRootIdentity: snapshot.physicalRootIdentity, detail: snapshot.coverage }));
   try {
    await write(markers.length ? [...events, ...markers] : events);
    // A loss arriving while this batch commits belongs to the next snapshot.
@@ -54,15 +64,20 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    return true;
   },
   coverage,
-  recordLoss(partition: string, cause: string, count = 1) { lose(new Map([[partition, count]]), cause); },
+  recordLoss(partition: string, cause: string, count = 1, physicalRootIdentity?: string) {
+   lose(new Map([[partition, { count, physicalRootIdentity }]]), cause);
+  },
+  pendingWorktreePartitions(physicalRoot: string): string[] {
+   return [...dirtyPartitions].filter(partition => partitions.get(partition)?.physicalRootIdentity === physicalRoot);
+  },
   /** Called after the owner's successful scoped clear, with its pre-clear snapshot. */
   clearCoverage(partition: string, previousLostCount: number) {
    const current = partitions.get(partition);
    if (!current || !previousLostCount) return;
-   const remaining = current.lostObservations - previousLostCount;
+   const remaining = current.coverage.lostObservations - previousLostCount;
    lostObservations -= previousLostCount;
    if (remaining) {
-    partitions.set(partition, { lostObservations: remaining, reason: current.reason });
+    partitions.set(partition, { ...current, coverage: { ...current.coverage, lostObservations: remaining } });
     dirtyPartitions.add(partition);
    } else {
     partitions.delete(partition);
@@ -83,8 +98,8 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    reason = lostObservations ? 'incomplete_interval' : null;
    const changed: string[] = [];
    for (const [partition, previous] of partitions) {
-    if (previous.reason === 'incomplete_interval') continue;
-    partitions.set(partition, { ...previous, reason: 'incomplete_interval' });
+    if (previous.coverage.reason === 'incomplete_interval') continue;
+    partitions.set(partition, { ...previous, coverage: { ...previous.coverage, reason: 'incomplete_interval' } });
     dirtyPartitions.add(partition);
     changed.push(partition);
    }

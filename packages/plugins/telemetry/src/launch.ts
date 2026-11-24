@@ -24,7 +24,7 @@ async function acquireProxy(runtime:CaptureRuntime,context:LocalPartition,offer:
  if(!pending){
   pending=startPostgresProxy({listenHost:'127.0.0.1',listenPort:offer.assignedPort,upstream:offer.upstream,
    onObservation:observation=>runtime.observeWire(observation,context),
-   onCoverage:coverage=>{ if(coverage.reason !== 'cancel') runtime.recordCoverage(partition,coverage.reason); },
+   onCoverage:coverage=>{ if(coverage.reason !== 'cancel') runtime.recordCoverage(partition,coverage.reason,context.physicalRootIdentity); },
   }).then(proxy=>({proxy,users:new Set<symbol>(),recorders:new Set<symbol>()}));
   active.set(key,pending);
   void pending.catch(()=>{if(active.get(key)===pending)active.delete(key);});

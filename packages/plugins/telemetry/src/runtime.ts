@@ -69,16 +69,19 @@ export function createCaptureRuntime(input: {
   async removeWorktree(physicalRoot: string) {
    // Removal already settled; this identity must never be resolved against the filesystem again.
    await ingest.exclusive(async () => {
-    const partitions = await store.worktreePartitions(physicalRoot);
+    const persistedPartitions = await store.worktreePartitions(physicalRoot);
+    const partitions = new Set([...persistedPartitions, ...ingest.pendingWorktreePartitions(physicalRoot)]);
     for (const partition of partitions) {
      await store.clear(partition);
      ingest.clearCoverage(partition, ingest.coverage(partition).lostObservations);
      await store.forgetWorktree(partition);
     }
-    if (partitions.length) ingest.retry();
+    if (partitions.size) ingest.retry();
    });
   },
-  recordCoverage(partition: string, reason: string) { ingest.recordLoss(partition, reason); },
+  recordCoverage(partition: string, reason: string, physicalRootIdentity?: string) {
+   ingest.recordLoss(partition, reason, 1, physicalRootIdentity);
+  },
   observeWire(observation: WireObservation, { partition, physicalRootIdentity }: CapturePartition) {
    if (observation.kind === 'transaction') {
     ingest.offer([{ id: observation.id, worktree: partition, kind: 'transaction', source: 'wire', connectionId: observation.connectionId,
@@ -115,7 +118,7 @@ export function createCaptureRuntime(input: {
     },
     withWriter: options.admit ? operation => ingest.exclusive(operation) : undefined,
     async onBatch(batch, context) {
-     if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords);
+     if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
      const events = normalizeBatch(batch, context);
      if (options.admit) {
       const result = await ingest.write(events);
