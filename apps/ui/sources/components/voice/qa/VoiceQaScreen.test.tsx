@@ -2,7 +2,13 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import React from 'react';
 import 'fake-indexeddb/auto';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
+import {
+  SESSION_CONSUMPTION_REPLACE_EVENT,
+  SessionConsumptionReplaceAckV1Schema,
+  SessionConsumptionReplaceV1Schema,
+} from '@happier-dev/protocol/sessions';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import renderer, { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,12 +36,20 @@ import {
   createSessionListRenderableSessionFixture,
   createSessionMessagesFixture,
   createMachineFixture,
+  createHydratedPlainMachineFixture,
   createDeferred,
   waitForTestEvent,
 } from '@/dev/testkit';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import {
+  configureConnectedServerSocketBoundary,
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
@@ -88,13 +102,14 @@ const uploadedRecording = new File([recordingBytes], 'recording.wav', { type: 'a
 const transcribeRequests = () => daemonRpcRequests.filter(request => request.method === 'daemon.voiceInference.stt.transcribe');
 
 installDisconnectedServerSocketBoundary(socket => {
-  socket.connect = vi.fn<typeof socket.connect>(() => {
-    socket.connected = true;
-    for (const listener of socket.listeners('connect')) listener();
-    return socket;
-  });
+  configureConnectedServerSocketBoundary(socket);
   socket.timeout = vi.fn<typeof socket.timeout>(() => socket);
   socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, rawPayload) => {
+    if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+      return SessionConsumptionReplaceAckV1Schema.parse({
+        ok: true, ...SessionConsumptionReplaceV1Schema.parse(rawPayload),
+      });
+    }
     if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
     const request = rawPayload as Readonly<{ method: string; params: Record<string, unknown> }>;
     const separator = request.method.indexOf(':');
@@ -135,7 +150,10 @@ async function prepareDaemonAudioQa(allowedPorts: number[] = []) {
     if (path === '/health') return Response.json({ status: 'ok' });
     if (path === '/v1/features') {
       const features = createRootLayoutFeaturesResponse({
-        features: { voice: { enabled: true } },
+        features: {
+          execution: { runs: { enabled: true } },
+          voice: { enabled: true, agent: { enabled: true }, daemonInference: { enabled: true } },
+        },
         capabilities: { session: { ...DEFAULT_SESSION_CAPABILITIES, pendingInput: { protocolVersion: 4 } } },
       });
       features.features.machines.liveStream.serverRouted.enabled = true;
@@ -173,7 +191,10 @@ async function prepareDaemonAudioQa(allowedPorts: number[] = []) {
       return Response.json({ pending, discarded: [], pendingCount: pending.length, pendingVersion: 1 });
     }
     if (/^\/v2\/sessions\/[^/]+\/messages$/u.test(path)) return Response.json({ messages: [], hasMore: false });
+    if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'voice-qa-account' }));
     if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+    const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(path);
+    if (currentness) return currentness;
     if (path === '/v2/account/settings') return Response.json({ version: 1,
       content: { t: 'plain', v: storage.getState().settings } });
     if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
@@ -181,7 +202,7 @@ async function prepareDaemonAudioQa(allowedPorts: number[] = []) {
     if (path.startsWith('/v1/machines/')) return Response.json({ machine: createPlainMachineRowFixture({
       id: decodeURIComponent(path.slice('/v1/machines/'.length)), accountId: 'voice-qa-account',
     }) });
-    return new Response('{}', { status: 404 });
+    return createEmptyAccountBootstrapHttpResponse(path, init) ?? new Response('{}', { status: 404 });
   };
   const sessionReadResponse = createSessionReadBatchFetchBoundary(answerRequest);
   account = await restoreServerAccountForTest({
@@ -425,6 +446,7 @@ describe('VoiceQaScreen', () => {
     await prepareDaemonAudioQa([39001]);
     const serverId = account!.home.id;
     const machine = createMachineFixture({ id: 'qa-voice-machine', activeAt: Date.now(), daemonState: { httpPort: 39001 } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'voice-qa-account' }, [machine]);
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
       voice: { ...storage.getState().settings.voice, executionMachine: { mode: 'fixed', machineId: machine.id } },
     }, storage.getState().settings));
@@ -434,7 +456,10 @@ describe('VoiceQaScreen', () => {
     const snapshot = () => JSON.parse(String(screen.findByTestId('voiceQa.media.snapshot')!.props.children));
     expect(snapshot()).toMatchObject({ executionMachineId: machine.id, machineControlPortAuthorized: true });
     await act(async () => {
-      storage.setState({ machines: { [machine.id]: { ...machine, daemonState: null } }, machineListByServerId: { [serverId]: [machine] } });
+      await publishMachineInventoryForTest({ serverId, accountId: 'voice-qa-account' }, [
+        { ...machine, daemonState: null, daemonStateVersion: machine.daemonStateVersion + 1 },
+      ]);
+      storage.setState({ machineListByServerId: { [serverId]: [machine] } });
     });
     expect(snapshot().machineControlPortAuthorized).toBe(false);
   });
@@ -722,7 +747,7 @@ describe('VoiceQaScreen', () => {
                 serverId: getActiveServerSnapshot().serverId,
                 metadata: {
                   ...emptySessionMetadata,
-                    summaryText: 'Session QA Voice Matrix',
+                    summary: { text: 'Session QA Voice Matrix' },
                 },
             }),
             hidden_voice_conversation: createSessionFixture({
@@ -781,7 +806,7 @@ describe('VoiceQaScreen', () => {
           presence: 1,
           metadata: {
             ...emptySessionMetadata,
-            summaryText: 'Raw private target summary',
+            summary: { text: 'Raw private target summary' },
             path: '/Users/alice/raw-private-target',
           },
         }),
@@ -801,7 +826,7 @@ describe('VoiceQaScreen', () => {
           id: targetSessionId,
           metadata: {
             ...emptySessionMetadata,
-            summaryText: 'Preferred private target summary',
+            summary: { text: 'Preferred private target summary' },
             path: '/Users/alice/preferred-private-target',
           },
         }),
@@ -854,7 +879,7 @@ describe('VoiceQaScreen', () => {
             metadata: {
               ...emptySessionMetadata,
               name: 'Updated offline target label',
-              summaryText: 'Updated preferred target summary',
+              summary: { text: 'Updated preferred target summary' },
               path: '/Users/alice/updated-private-target',
             },
           },
@@ -864,7 +889,7 @@ describe('VoiceQaScreen', () => {
             metadata: {
               ...emptySessionMetadata,
               name: 'Updated runtime label',
-              summaryText: 'Updated preferred runtime summary',
+              summary: { text: 'Updated preferred runtime summary' },
             },
           },
         } },
@@ -1438,9 +1463,11 @@ describe('VoiceQaScreen', () => {
     await prepareDaemonAudioQa();
     let resolveTranscription!: (value: unknown) => void;
     heldTranscription = new Promise(resolve => { resolveTranscription = resolve; });
-    storage.getState().applyMachines([createMachineFixture({
-      id: 'qa-configured-machine', activeAt: Date.now(),
-    })]);
+    await publishMachineInventoryForTest({ serverId: account!.home.id, accountId: 'voice-qa-account' }, [
+      createHydratedPlainMachineFixture({
+        id: 'qa-configured-machine', accountId: 'voice-qa-account', machine: { activeAt: Date.now() },
+      }),
+    ]);
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({
       ...storage.getState().settings.voice,
       executionMachine: { mode: 'fixed', machineId: 'qa-configured-machine', autoMachineId: null },
@@ -1466,11 +1493,20 @@ describe('VoiceQaScreen', () => {
         },
       });
     });
-    await act(async () => {
+    act(() => {
       transcribeButton.props.onPress();
-      await transcriptionStarted.promise;
-      expect(transcribeRequests()).toHaveLength(1);
     });
+    await Promise.race([
+      transcriptionStarted.promise,
+      waitForTestEvent(tree.subscribe,
+        () => tree.find(node => node.props.testID === 'voiceQa.recordedAudio.status').props.children.at(-1),
+        status => status !== 'ready' && status !== 'running',
+      ).then(status => {
+        const result = tree.find(node => node.props.testID === 'voiceQa.recordedAudio.result').props.children;
+        throw new Error(`Configured transcription settled before daemon dispatch (${status}): ${result}`);
+      }),
+    ]);
+    expect(transcribeRequests()).toHaveLength(1);
     const primedSettings = storage.getState().settings;
     expect(readLocalConversationVoiceSettings(primedSettings.voice).stt.localNeural).toMatchObject({
       assetId: 'sherpa-onnx-stt-en-v1',
