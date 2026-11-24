@@ -13,6 +13,7 @@ import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSecti
 import type { VerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ActionOperationCancellation } from '@/daemon/actionOperations/actionOperationTypes';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
+import type { readDeploymentArchiveRpcAdmission } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import { admitExternalActionRequesterInvocationAttributionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
@@ -35,6 +36,8 @@ export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterCont
     operationReview?: RpcLocalActionContext['operationReview'];
     /** In-process external-operation authority; not accepted from RPC input. */
     externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
+    /** Finite archive admission attached by the receiving RPC registrar. */
+    deploymentArchiveAdmission?: NonNullable<Awaited<ReturnType<typeof readDeploymentArchiveRpcAdmission>>>;
 }>;
 
 /** Transport projection of an already admitted Action context; it creates no authority. */

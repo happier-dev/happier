@@ -309,9 +309,13 @@ resolveServerFeaturesSnapshot?: () =>
         }
         observedServerIdentityId = origin.serverIdentityId;
         const binding = context.externalActionExecutionAuthorization.binding;
+        const archiveAdmission = context.deploymentArchiveAdmission;
+        if (archiveAdmission && actionSignal?.aborted) {
+          return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        }
         const movePacket = context.workspaceSyncSourceExecution;
         // The one cross-Machine child owner names the family of this signed packet's child.
-        const childMethod = movePacket ? getActionSpec(actionId).bindings?.rpcMethod : undefined;
+        const childMethod = !archiveAdmission && movePacket ? getActionSpec(actionId).bindings?.rpcMethod : undefined;
         const childFamily = movePacket && childMethod && movePacket.method === `${params.machineId}:${childMethod}`
           ? readReviewedMachineRpcChildFamilyV1({ binding, effectActionId: actionId, method: childMethod,
             target: context.machineAdmission, reviewedChild: movePacket.externalActionExecution.reviewedChild }) : null;
@@ -337,7 +341,7 @@ resolveServerFeaturesSnapshot?: () =>
         if (setupChild && movePacket && !admittedMoveChild) {
           return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
         }
-        if (binding.machineId !== params.machineId && !admittedMoveChild) {
+        if (binding.machineId !== params.machineId && !archiveAdmission && !admittedMoveChild) {
           const installation = readInstallationIdentityIfExistsSync();
           const target = context.externalActionTarget;
           if (!installation || !binding.sessionActionOrigin || !binding.sessionActionSource
