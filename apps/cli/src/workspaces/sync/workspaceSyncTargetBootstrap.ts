@@ -340,6 +340,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   contentOnly?: true;
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
+  nativeCopyOwner?: WorkspaceSyncNativeCopyOwner;
   materializationDirectory: string;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
   /** Restart cleanup probe: do nothing unless the finite receipt exists. */
@@ -348,7 +349,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
 }>, dependencies: Pick<WorkspaceSyncTargetBootstrapDependencies, 'rehydrateMaterializationFromReceiptPath'> = {}): Promise<WorkspaceSyncTargetBootstrapResult | null> {
   const contentSelection = input.contentOnly ? 'all_files' : input.contentSelection;
   const receiptPath = workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
-  const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
+  const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole, input.nativeCopyOwner);
   if (input.requireMaterializationReceipt
     && !(await lstat(receiptPath).catch(() => null))?.isFile()) return null;
   const requested = normalize(resolve(input.rootPath));
@@ -425,8 +426,10 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
           policyDigest: input.policyDigest,
         } as const;
     const persistedReady = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
-    exactReady = readyFact !== null && persistedReady !== null && matchesWorkspaceSyncFinalReadyFact(persistedReady,
-      { ...readyFact, ...(input.requesterCopyCustody ? { requesterCopyCustody: input.requesterCopyCustody } : {}) });
+    exactReady = readyFact !== null && persistedReady !== null && (input.nativeCopyOwner && persistedReady.v === 3
+      ? matchesWorkspaceSyncNativeCopyReadyFact(persistedReady, input.nativeCopyOwner, readyFact)
+      : matchesWorkspaceSyncFinalReadyFact(persistedReady,
+        { ...readyFact, ...(input.requesterCopyCustody ? { requesterCopyCustody: input.requesterCopyCustody } : {}) }));
     if (materializationCustody && !exactReady) {
       await materializationCustody.abort();
       materializationSettled = true;

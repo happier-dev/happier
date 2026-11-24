@@ -1070,6 +1070,16 @@ export function createWorkspaceSyncTargetAuthority(
     return resolution.ref;
   };
 
+  const projectSourceWriterTargetContext = (context: RpcHandlerContext | undefined): RpcHandlerContext | undefined => {
+    const writerTarget = context?.workspaceSyncSourceWriterTargetRouting
+      ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(context.workspaceSyncSourceWriterTargetRouting) : undefined;
+    return writerTarget && !context?.workspaceSyncTargetRouting
+      && writerTarget.target.targetMachineId === localMachineId && context?.machineAdmission
+      ? { ...context, workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ ...writerTarget.target,
+          targetContext: { ...writerTarget.source.sourceContext, machineAdmission: context.machineAdmission } }) }
+      : context;
+  };
+
   const readTargetRouting = async (
     context: RpcHandlerContext | undefined,
     phase: 'preflight' | 'prepare' | 'release',
@@ -1576,6 +1586,8 @@ export function createWorkspaceSyncTargetAuthority(
         relationshipId: operation.operationId,
         endpointRole: 'beta',
         targetWorkspaceRefId: input.targetWorkspace.id,
+        ...(dependencies.localManagedTarget && dependencies.localAccountId && isManagedWorkspaceRefV2(input.targetWorkspace)
+          ? { nativeCopyOwner: { accountId: dependencies.localAccountId, target: input.targetWorkspace } } : {}),
         policyDigest: operation.contentPolicy.policyDigest,
         contentSelection: operation.contentPolicy.selection,
         ...(operation.contentPolicy.contentOnly ? { contentOnly: true as const } : {}),
@@ -2715,8 +2727,9 @@ export function createWorkspaceSyncTargetAuthority(
       if (request.serverId !== localServerId) {
         throw authorityError('target_unavailable', 'Handoff target placement does not match this daemon');
       }
-      const nativeRouting = context?.workspaceSyncTargetRouting?.targetManaged
-        ? await readTargetRouting(context, 'preflight') : undefined;
+      const admittedContext = projectSourceWriterTargetContext(context);
+      const nativeRouting = admittedContext?.workspaceSyncTargetRouting?.targetManaged
+        ? await readTargetRouting(admittedContext, 'preflight') : undefined;
       if (nativeRouting?.targetManaged) {
         if (nativeRouting.operationId !== request.operationId || nativeRouting.targetMachineId !== request.machineId
           || nativeRouting.targetRootPath !== request.targetPath) {
@@ -3168,11 +3181,7 @@ export function createWorkspaceSyncTargetAuthority(
         ], relationships: [normalRelationship], organizations: [], rows: [], graphRevision: 'absent',
           loadedAtMs: 0, scopeKey: context!.callerInputAuthorization!.binding.accountId };
       }
-      const admittedContext = writerTarget && !context?.workspaceSyncTargetRouting
-        && writerTarget.target.targetMachineId === localMachineId && context?.machineAdmission
-        ? { ...context, workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ ...writerTarget.target,
-            targetContext: { ...writerTarget.source.sourceContext, machineAdmission: context.machineAdmission } }) }
-        : context;
+      const admittedContext = projectSourceWriterTargetContext(context);
       const targetRouting = admitted?.targetRouting ?? await readTargetRouting(admittedContext, 'prepare');
       const sourceWriterTargetRouting = admitted?.sourceWriterTargetRouting ?? await readSourceWriterTargetRouting(context, 'prepare', targetRouting);
       let admittedTarget: Awaited<ReturnType<typeof bindReplacementTarget>> | undefined;
