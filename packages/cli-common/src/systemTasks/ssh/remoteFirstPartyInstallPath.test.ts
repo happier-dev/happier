@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import {
   buildRemoteFirstPartyPromotionCommand,
@@ -14,6 +15,37 @@ import {
 } from './remoteFirstPartyInstallPath.js';
 
 describe('remote first-party install layout', () => {
+  it('carries the inventory exit and redacted stderr through the native failure projection', async () => {
+    const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '3.0.0' });
+    const secret = 'inventory-secret-that-must-not-leave-the-controller';
+    const runRemoteText = vi.fn(async () => ({ status: 73, stdout: '',
+      stderr: `inventory input was unavailable\nAuthorization: Bearer ${secret}` }));
+    const failure: unknown = await pruneRemoteFirstPartyVersions({ layout, runRemoteText }).catch(error => error);
+    expect(failure).toMatchObject({ code: 'remote_version_command_failed', details: { kind: 'managedNative', nativeCause: {
+      localCause: 'native_command_failed', command: 'run', exitCode: 73,
+      failureCause: { phase: 'remote_install.version_inventory' }, stderr: expect.stringContaining('inventory input was unavailable'),
+    } } });
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(String(failure)).not.toContain(secret);
+    const actionFailure = normalizeActionExecutorThrownError(failure, 'machines.managed.acquire');
+    expect(actionFailure).toMatchObject({ errorCode: 'remote_version_command_failed', details: { kind: 'managedNative',
+      nativeCause: { exitCode: 73, stderr: expect.stringContaining('inventory input was unavailable') } } });
+    expect(JSON.stringify(actionFailure)).not.toContain(secret);
+    expect(runRemoteText).toHaveBeenCalledOnce();
+  });
+
+  it.skipIf(process.platform === 'win32')('inventories a fresh install and refuses a symlinked versions directory', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-remote-version-inventory-'));
+    try {
+      const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '3.0.0', remoteHomeDir: home });
+      const inventory = () => promisify(execFile)('/bin/sh', ['-c', buildRemoteFirstPartyVersionInventoryCommand(layout)]);
+      await expect(inventory()).resolves.toMatchObject({ stdout: 'current=\nprevious=\n' });
+      await mkdir(layout.installRoot, { recursive: true });
+      await symlink(home, layout.versionsDir);
+      await expect(inventory()).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('versions directory is a symbolic link') });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it.skipIf(process.platform === 'win32').each([true, false])('retains remote versions, warning only when lsof is unavailable: %s', async (unavailable) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-remote-retention-warning-'));
     const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '3.0.0', remoteHomeDir: home });
@@ -29,7 +61,7 @@ describe('remote first-party install layout', () => {
       await pruneRemoteFirstPartyVersions({ layout, runRemoteText: async command => {
         const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, PATH: `${tools}:${process.env.PATH}`,
           active_path: join(layout.versionsDir, '1.0.0', 'support.so') } });
-        return { status: 0, stdout: result.stdout };
+        return { status: 0, stdout: result.stdout, stderr: result.stderr };
       } });
       if (unavailable) {
         expect(warning).toHaveBeenCalledOnce();

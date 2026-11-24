@@ -1,4 +1,6 @@
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
 import { resolveRetainedVersionIds } from '../../firstPartyRuntime/retentionPolicy.js';
 import { FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS } from '../../firstPartyRuntime/versionUse.js';
@@ -153,7 +155,7 @@ export function buildRemoteFirstPartyVersionInventoryCommand(layout: RemoteFirst
   const versions = quoteRemotePathWithHomeExpansion(layout.versionsDir);
   return [
     'set -eu',
-    `test ! -L ${versions}`,
+    `test ! -L ${versions} || { printf '%s\\n' 'The versions directory is a symbolic link.' >&2; exit 1; }`,
     `current_target="$(readlink ${quoteRemotePathWithHomeExpansion(layout.currentPath)} || true)"`,
     `previous_target="$(readlink ${quoteRemotePathWithHomeExpansion(layout.previousPath)} || true)"`,
     'printf "current=%s\\nprevious=%s\\n" "${current_target##*/}" "${previous_target##*/}"',
@@ -201,17 +203,35 @@ export function buildRemoteFirstPartyRetentionCommand(params: Readonly<{
   ].join('\n');
 }
 
+function assertRemoteVersionCommandSucceeded(
+  phase: 'inventory' | 'retention',
+  result: Readonly<{ status: number; stderr: string }>,
+): void {
+  if (result.status === 0) return;
+  const code = 'remote_version_command_failed';
+  const output = redactBugReportSensitiveText(result.stderr.trim());
+  const stderr = output.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1);
+  throw new SystemTaskExecutionError(code, `Remote version ${phase} failed (exit ${result.status}).`, {
+    details: { kind: 'managedNative', nativeCause: {
+      localCause: 'native_command_failed', command: 'run', exitCode: result.status,
+      failureCause: { phase: `remote_install.version_${phase}`, errorClass: 'Error', errorCode: code, httpStatus: null },
+      ...(stderr ? { stderr } : {}),
+      ...(stderr.length < output.length ? { stderrTruncated: true as const } : {}),
+    } },
+  });
+}
+
 export async function pruneRemoteFirstPartyVersions(params: Readonly<{
   layout: RemoteFirstPartyInstallLayout;
-  runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string }>>;
+  runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
   onWarning?: (message: string) => void;
 }>): Promise<void> {
   const inventory = await params.runRemoteText(buildRemoteFirstPartyVersionInventoryCommand(params.layout));
-  if (inventory.status !== 0) throw new Error('Remote version inventory failed.');
+  assertRemoteVersionCommandSucceeded('inventory', inventory);
   const command = buildRemoteFirstPartyRetentionCommand({ layout: params.layout, inventory: inventory.stdout });
   if (!command) return;
   const result = await params.runRemoteText(command);
-  if (result.status !== 0) throw new Error('Remote version retention failed.');
+  assertRemoteVersionCommandSucceeded('retention', result);
   if (result.stdout.split('\n').includes(RETENTION_OBSERVATION_UNAVAILABLE)) {
     warnFirstPartyRetentionObservationUnavailable(params.onWarning);
   }
