@@ -58,6 +58,8 @@ export function VoiceDictationSettingsScreen() {
         >
           <SettingsPageHeader
             description={t('settingsVoice.pages.dictation.description')}
+            // Which machine Voice runs on is this page's first fact: the chip stays in the page on phones too.
+            actionsPlacement="page"
             actions={(
               <View testID="settings.voice.section.executionMachine" onLayout={onExecutionMachineSectionLayout}>
                 <VoiceExecutionMachineSection

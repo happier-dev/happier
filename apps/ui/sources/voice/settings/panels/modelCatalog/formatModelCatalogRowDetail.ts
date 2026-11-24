@@ -64,19 +64,23 @@ export function formatModelCatalogRowValue(row: ModelCatalogRow): string {
 }
 
 /**
- * What the model covers and, until it is on the machine, costs to fetch: its languages and its download. Each fact the catalog
- * does not carry reads as unknown; archive bytes are the download, never disk or memory.
+ * What the model covers and its size: the languages the catalog lists (left out when it lists none),
+ * then the download until the model is on the machine, or the model's size once it is. Archive bytes
+ * are the download; loaded artifact bytes, when reported, are the installed size.
  */
 export function formatModelCatalogRowFacts(row: ModelCatalogRow): string {
     const languages = row.languages === null || row.languages.length === 0
-        ? t('settingsVoice.local.models.languagesUnknown')
+        ? null
         : row.languages.length <= 2
             ? row.languages.map((code) => getLanguageDisplayNameForCode(code)).join(', ')
             : t('settingsVoice.local.models.languageCount', { count: row.languages.length });
-    // Once the model is on the machine there is nothing left to fetch: the row says only what it covers.
-    if (LOADED_STATES.has(row.state)) return languages;
+    if (LOADED_STATES.has(row.state)) {
+        const bytes = row.loadedArtifactBytes ?? row.archiveBytes;
+        const size = typeof bytes === 'number' ? formatHappierDataBytes(bytes, { kind: 'storage' }) : null;
+        return [languages, size].filter(Boolean).join(' · ');
+    }
     const size = typeof row.archiveBytes === 'number'
         ? t('settingsVoice.local.models.downloadSize', { size: formatHappierDataBytes(row.archiveBytes, { kind: 'storage' }) })
         : t('settingsVoice.local.models.downloadSizeUnknown');
-    return `${languages} · ${size}`;
+    return [languages, size].filter(Boolean).join(' · ');
 }

@@ -12108,7 +12108,7 @@ settingsSession: {
             localNeuralTts: {
                 provider: {
                     title: '本機神經（測試版）',
-                    subtitle: "Web 上使用你機器上的神經 TTS；支援的平台可使用裝置端模型包。",
+                    subtitle: "自然的語音回覆，在你自己的機器上生成。",
                     detail: '本機神經',
                 },
             },

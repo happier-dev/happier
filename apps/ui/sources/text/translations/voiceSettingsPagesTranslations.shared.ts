@@ -66,6 +66,7 @@ export type VoiceSettingsPagesCopy = Readonly<{
       pathVoiceComputer: string;
       pathReplyText: string;
       staysLocal: string;
+      viaEngines: (params: { engines: string }) => string;
       agentAccount: string;
       audioRowTitle: string;
       readsRowTitle: string;
@@ -328,6 +329,7 @@ export const en: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'Your Voice computer',
       pathReplyText: 'Reply text',
       staysLocal: 'Never leaves your computers',
+      viaEngines: ({ engines }) => `via ${engines}`,
       agentAccount: 'Uses that agent’s own account',
       audioRowTitle: 'Your audio',
       readsRowTitle: 'What it reads',

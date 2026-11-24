@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
-import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceExecutionChoice } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionChoice';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceSttPurpose, useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
@@ -32,7 +32,7 @@ export function LocalNeuralSttSettings(props: {
   return (
     <>
       <SettingAnchor setting={settings.sttExecution}>
-      <DaemonVoiceInferenceExecutionDropdown
+      <DaemonVoiceInferenceExecutionChoice
         execution={execution}
         setExecution={(execution) => props.setCfg({
           ...props.cfg,
@@ -42,7 +42,6 @@ export function LocalNeuralSttSettings(props: {
             execution,
           },
         })}
-        popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
       </SettingAnchor>

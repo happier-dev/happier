@@ -33,6 +33,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 // Load the real settings owner during collection; a cold graph import is not playback behavior.
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { Slider } = await import('@/components/ui/forms/Slider');
 const { SelectedDaemonModelPackRow } = await import('@/voice/settings/panels/modelCatalog/DaemonModelPackRow');
 const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
 const { localNeuralTtsPreviewController } = await import('./providers/localNeural/previewLocalNeuralTts');
@@ -275,12 +276,11 @@ describe('LocalNeuralTtsSettings (native)', () => {
       setKokoro={setKokoro}
       networkTimeoutMs={1000}
     />);
-    const speed = tree.root.findAll((node) => node.props.itemTrigger?.title === t('settingsVoice.local.kokoro.speed.title')
-      && typeof node.props.onSelect === 'function')[0];
-    expect(speed).toBeDefined();
-    expect(speed!.props.selectedId).toBe('1');
+    const speed = tree.root.findByType(Slider);
+    expect(speed.props.value).toBe(1);
     expect(setKokoro).not.toHaveBeenCalled();
-    await act(async () => { speed!.props.onSelect('1.2'); });
+    await act(async () => { speed.props.onValueChange(1.2); });
+    expect(setKokoro).toHaveBeenCalledTimes(1);
     expect(setKokoro).toHaveBeenCalledWith({ ...cfgKokoro, speed: 1.2 });
   });
 

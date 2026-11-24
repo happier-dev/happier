@@ -5,7 +5,7 @@ import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import type { VoiceSettingsPipeline, VoiceSettingsPipelineStep } from '@/voice/settings/projectVoiceSettingsPipeline';
 
 import type { VoiceReadinessTone } from './VoiceReadinessGlyph';
-import { resolveVoiceProviderReadinessPresentation } from '../panels/voiceProviderReadinessPresentation';
+import { isVoiceReadinessCouldNotCheck, resolveVoiceProviderReadinessPresentation } from '../panels/voiceProviderReadinessPresentation';
 
 /** Resolves the dynamic keys a readiness fact carries (its reason and recovery action). */
 type Translate = (key: string, params?: { service: string }) => string;
@@ -113,12 +113,13 @@ export function resolveVoicePipelineWhere(step: VoiceSettingsPipelineStep): Read
     }
 }
 
+
 function presentReadiness(readiness: VoiceRoleReadiness, translate: Translate, progress: number | null, service: string): VoicePipelineStepPresentation['readiness'] {
     const tone = resolveVoiceReadinessTone(readiness);
-    if (!tone || tone === 'ready' || tone === 'unknown') return null;
+    if (!tone || tone === 'ready' || (tone === 'unknown' && !isVoiceReadinessCouldNotCheck(readiness))) return null;
     const copy = resolveVoiceProviderReadinessPresentation(readiness, translate, service);
     return {
-        tone,
+        tone: tone === 'unknown' ? 'waiting' : tone,
         message: copy.summary,
         recoveryAction: readiness.recoveryAction === 'none' ? null : readiness.recoveryAction,
         actionLabel: copy.action,
@@ -150,18 +151,30 @@ export function presentVoicePipeline(
         };
     });
     const serviceFact = cardReadiness ? presentReadiness(cardReadiness, translate, null, serviceTitle ?? pipeline.steps[0]?.engine.title ?? t('voicePresence.title')) : null;
-    // One message per state: a step that already says the service's fact keeps it, the card line is not repeated.
-    const card = serviceFact && steps.some((step) => step.readiness?.message === serviceFact.message
-        && step.readiness.recoveryAction === serviceFact.recoveryAction) ? null : serviceFact;
     const needYou = steps.filter((step) => step.readiness?.tone === 'blocked').length;
     const toSetUp = steps.some((step) => step.readiness?.tone === 'needs_setup');
+    // One cause, one line: when every step says the same thing (their one machine is offline), the card
+    // says it once and the steps stay quiet.
+    const stepFacts = steps.map((step) => step.readiness);
+    const shared = stepFacts.length > 1 && stepFacts.every((fact) => fact && fact.progress === null
+        && fact.message === stepFacts[0]!.message && fact.recoveryAction === stepFacts[0]!.recoveryAction) ? stepFacts[0]! : null;
+    const shownSteps = shared ? steps.map((step) => ({ ...step, readiness: null })) : steps;
+    // One message per state: a step that already says the service's fact keeps it, the card line is not repeated.
+    const card = shared ?? (serviceFact && steps.some((step) => step.readiness?.message === serviceFact.message
+        && step.readiness.recoveryAction === serviceFact.recoveryAction) ? null : serviceFact);
     const overallReadiness = cardReadiness ?? pipeline.readiness;
     const overall = resolveVoiceReadinessTone(overallReadiness);
     const activity = overallReadiness ? resolveVoiceProviderReadinessPresentation(overallReadiness, translate,
         serviceTitle, { resolving: pipeline.credentialResolving === true }) : null;
     const tone: VoiceReadinessTone = activity?.checking ? 'working' : needYou > 0 || overall === 'blocked'
         ? 'blocked' : toSetUp ? 'needs_setup' : overall ?? 'unknown';
-    const statusWord = activity?.checking ? activity.summary : serviceFact
+    // Every fact still open is a check that could not complete: the page says that once, not "Needs setup".
+    const open = [overallReadiness, ...pipeline.steps.map((step) => step.readiness)]
+        .filter((fact): fact is VoiceRoleReadiness => Boolean(fact) && fact!.status !== 'ready');
+    const couldNotCheck = open.length > 0 && open.every(isVoiceReadinessCouldNotCheck);
+    const statusWord = activity?.checking ? activity.summary
+        : couldNotCheck ? t('voice.readiness.short.cantCheck')
+        : serviceFact
         ? serviceFact.tone === 'blocked'
             ? t('settingsVoice.pages.pipeline.needsYou')
             : serviceFact.tone === 'needs_setup'
@@ -182,5 +195,5 @@ export function presentVoicePipeline(
                     : overall === 'waiting'
                         ? t('settingsVoice.pages.pipeline.waiting')
                         : t('settingsVoice.pages.pipeline.notChecked');
-    return { tone, statusWord, steps, card };
+    return { tone, statusWord, steps: shownSteps, card };
 }

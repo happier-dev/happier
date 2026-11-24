@@ -14847,7 +14847,7 @@ settingsSession: {
       localNeuralTts: {
         provider: {
           title: "Neural local (bêta)",
-          subtitle: "TTS neural sur tes machines pour le web, avec des packs de modèles sur l’appareil là où c’est pris en charge.",
+          subtitle: "Des réponses à la voix naturelle, générées sur tes propres machines.",
           detail: "Neural local",
         },
       },

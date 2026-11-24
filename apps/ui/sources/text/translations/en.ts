@@ -17111,7 +17111,7 @@ const enSettingsVoice = {
       setOnAccount: 'Saved to your account',
       notSetOnAccount: 'Not saved to your account',
       setOnMachineOverride: ({ machine }: { machine: string }) =>
-        `Using an account credential override for ${machine}`,
+        `Your account key · on ${machine}`,
       notSetWithFallback: ({ machine }: { machine: string }) =>
         `Not set for ${machine}; an account credential will be used when available`,
       plainStorageTitle: 'Save API key without end-to-end encryption?',
@@ -17771,8 +17771,7 @@ const enSettingsVoice = {
     localNeuralTts: {
       provider: {
         title: 'Local neural (beta)',
-        subtitle:
-          "Neural speech on your machines for web, with on-device model packs where supported.",
+        subtitle: "Natural-sounding replies, spoken on your own machines.",
         detail: 'Local neural',
       },
     },

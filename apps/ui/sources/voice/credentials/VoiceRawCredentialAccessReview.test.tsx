@@ -324,7 +324,7 @@ describe('VoiceRawCredentialAccessReview', () => {
       screen.tree.pressByTestId('raw-access-sheet-grant');
       await granted.promise;
     });
-    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBe(true));
+    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.detail).toBe(t('common.applied')));
 
     await act(async () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
@@ -369,7 +369,8 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => { await listed.promise; });
     expect(actions.list).toHaveBeenCalled();
     await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.loading).toBe(false));
-    expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBe(true);
+    // Granted access is a state, not a failure: the title stays ink and "Applied" sits in the meta column.
+    expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBeFalsy();
     expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.detail)
       .toBe(t('common.applied'));
     expect(client.request).not.toHaveBeenCalled();
@@ -409,7 +410,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     );
 
     await act(async () => { await listed.promise; });
-    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBe(true));
+    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.detail).toBe(t('common.applied')));
     await act(async () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
     });

@@ -1,42 +1,53 @@
 import * as React from 'react';
 
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { t } from '@/text';
+import { Slider } from '@/components/ui/forms/Slider';
+import { Item } from '@/components/ui/lists/Item';
+import { getPreferredLanguage, t } from '@/text';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
-/** Neural playback uses the same supported speed choice on device and daemon execution. */
+const MIN_SPEED = 0.5;
+const MAX_SPEED = 2;
+const SPEED_STEP = 0.1;
+
+function formatSpeed(speed: number): string {
+    return `${new Intl.NumberFormat(getPreferredLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(speed)}×`;
+}
+
+/**
+ * Neural playback speed on device and daemon execution: the shared slider, read as "1.0×". A drag
+ * previews the value and commits once, on release.
+ */
 export function LocalNeuralTtsSpeedItem(props: Readonly<{
     speed: number;
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    onSelect: (speed: number | null) => void;
-    popoverBoundaryRef?: React.ComponentProps<typeof DropdownMenu>['popoverBoundaryRef'];
+    onSelect: (speed: number) => void;
 }>) {
+    const [preview, setPreview] = React.useState<number | undefined>(undefined);
+    const title = t(VOICE_CONVERSATIONS_SETTINGS.settings.ttsSpeed.titleKey);
     return (
         <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsSpeed}>
-            <DropdownMenu
-                open={props.open}
-                onOpenChange={props.onOpenChange}
-                variant="selectable"
-                search={false}
-                selectedId={String(props.speed)}
-                showCategoryTitles={false}
-                matchTriggerWidth
-                connectToTrigger
-                rowKind="item"
-                popoverBoundaryRef={props.popoverBoundaryRef}
-                itemTrigger={{
-                    title: t(VOICE_CONVERSATIONS_SETTINGS.settings.ttsSpeed.titleKey),
-                    subtitle: t('settingsVoice.local.kokoro.speed.subtitle'),
-                    showSelectedSubtitle: false,
-                }}
-                items={[0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 2].map((speed) => ({ id: String(speed), title: String(speed) }))}
-                onSelect={(id) => {
-                    const parsed = Number(id);
-                    props.onSelect(Number.isFinite(parsed) ? parsed : null);
-                    props.onOpenChange(false);
-                }}
+            <Item
+                testID="settings.voice.localNeuralTts.speed-row"
+                title={title}
+                // The value leads the description, as the Pets size slider reads, so it stays beside the label on phones.
+                subtitle={`${formatSpeed(preview ?? props.speed)} · ${t('settingsVoice.local.kokoro.speed.subtitle')}`}
+                showChevron={false}
+                // The settings row's inline slider (as Pets and Appearance draw it); phones move it beneath the label.
+                accessoryLayout="adaptive"
+                rightElement={(
+                    <Slider
+                        testID="settings.voice.localNeuralTts.speed"
+                        accessibilityLabel={title}
+                        min={MIN_SPEED}
+                        max={MAX_SPEED}
+                        step={SPEED_STEP}
+                        trackWidth={180}
+                        value={props.speed}
+                        formatValueText={formatSpeed}
+                        onValuePreview={setPreview}
+                        onValueChange={props.onSelect}
+                    />
+                )}
             />
         </SettingAnchor>
     );

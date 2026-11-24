@@ -5,7 +5,7 @@ import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTt
 import { t } from '@/text';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
-import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceExecutionChoice } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionChoice';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
@@ -22,7 +22,7 @@ export function LocalNeuralTtsSettings(props: {
     popoverBoundaryRef?: React.RefObject<any> | null;
     daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
-    const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'speed'>(null);
+    const [openMenu, setOpenMenu] = React.useState<null | 'voiceId'>(null);
 
     const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
         requestedExecution: props.cfgKokoro.execution,
@@ -62,10 +62,9 @@ export function LocalNeuralTtsSettings(props: {
     return (
         <>
             <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsExecution}>
-            <DaemonVoiceInferenceExecutionDropdown
+            <DaemonVoiceInferenceExecutionChoice
                 execution={execution}
                 setExecution={(nextExecution) => applyKokoroUpdate({ execution: nextExecution })}
-                popoverBoundaryRef={props.popoverBoundaryRef}
                 allowDeviceSelection={executionPolicy.allowDeviceSelection}
             />
             </SettingAnchor>
@@ -111,10 +110,7 @@ export function LocalNeuralTtsSettings(props: {
             </SettingAnchor>
 
             <LocalNeuralTtsSpeedItem
-                open={openMenu === 'speed'}
-                onOpenChange={(next) => setOpenMenu(next ? 'speed' : null)}
                 speed={effectiveSpeed}
-                popoverBoundaryRef={props.popoverBoundaryRef}
                 onSelect={(speed) => applyKokoroUpdate({ speed })}
             />
         </>

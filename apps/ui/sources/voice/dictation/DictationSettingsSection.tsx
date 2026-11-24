@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol/voice/realtime/capabilities';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { LANGUAGES } from '@/constants/Languages';
+import { getLanguageDisplayNameForCode, LANGUAGES } from '@/constants/Languages';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -26,7 +26,7 @@ import {
 import { useSetting } from '@/sync/domains/state/storage';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
-import { t, tLoose } from '@/text';
+import { getPreferredLanguage, t, tLoose } from '@/text';
 import {
   getLocalSttProviderSpec,
   useLocalSttProviderSpecs,
@@ -366,10 +366,12 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
               accessibilityRole="radio"
               webRole="radio"
               selected={selected}
+              // The check marks the choice; a filled band would read as hover.
+              selectedFill={false}
               disabled={!option.selectable}
               pressableRef={selected ? providerControlRef : undefined}
-              // An engine that is ready says so in the meta column (lab D); the chosen one carries the check.
-              detail={!selected && engineTone === 'ready' ? t('settingsVoice.pages.pipeline.ready') : undefined}
+              // An engine that is ready says so in the meta column (lab D), chosen or not; the chosen one adds the check.
+              detail={engineTone === 'ready' ? t('settingsVoice.pages.pipeline.ready') : undefined}
               rightElement={selected ? <Icon name="check-circle" size={22} color={theme.colors.text.primary} /> : null}
               showChevron={false}
               onPress={() => selectEngine(option.id)}
@@ -415,6 +417,18 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
                   <Icon name="sparkle" size={20} color={theme.colors.text.secondary} />
                 ),
               },
+              // A stored tag outside the list (a base tag like "en", written by another surface or an
+              // Action) is still the choice: it reads by its name, never as "Choose…".
+              ...(dictation.language && !LANGUAGES.some((language) => language.code === dictation.language)
+                ? [{
+                    id: dictation.language,
+                    title: getLanguageDisplayNameForCode(dictation.language, getPreferredLanguage()),
+                    subtitle: dictation.language,
+                    icon: (
+                      <Icon name="translate" size={20} color={theme.colors.text.secondary} />
+                    ),
+                  }]
+                : []),
               ...LANGUAGES.flatMap((language) => typeof language.code === 'string' && language.code
                 ? [{
                     id: language.code,

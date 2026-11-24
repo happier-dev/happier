@@ -18049,7 +18049,7 @@ const voiceLocalCredentialTranslations = { ru: defineVoiceLocalCredential({
     voiceCredential: {
       setOnAccount: 'Сохранено в вашем аккаунте',
       notSetOnAccount: 'Не сохранено в вашем аккаунте',
-      setOnMachineOverride: ({ machine }) => `Используется переопределение учётных данных аккаунта для ${machine}`,
+      setOnMachineOverride: ({ machine }) => `Ключ вашего аккаунта · на ${machine}`,
       notSetWithFallback: ({ machine }) => `Не задано для ${machine}; при наличии будут использованы учётные данные аккаунта`,
       plainStorageTitle: 'Сохранить ключ API без сквозного шифрования?',
       plainStorageBody: 'В этом аккаунте настройки хранятся без сквозного шифрования. Если сохранить этот ключ API, его открытый текст будет виден серверу.',
@@ -18318,7 +18318,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
       notInstalled: 'Не установлено',
       unavailableHere: 'Здесь недоступно',
       needsUpdate: 'Нужно обновление',
-      cantCheck: 'Ещё не проверено',
+      cantCheck: 'Не удалось проверить',
       machineUnreachable: 'Машина недоступна',
       sessionUnavailable: 'Сессия недоступна',
       audioBlocked: 'Звук заблокирован',
@@ -18333,6 +18333,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
       install_model: 'Установить модель',
       switch_provider: 'Выбрать другого провайдера',
       open_features: 'Открыть функции',
+      check_again: 'Проверить снова',
     },
   }) } as const;
 
@@ -18578,6 +18579,7 @@ const ru: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'Ваш компьютер Voice',
       pathReplyText: 'Текст ответа',
       staysLocal: 'Никогда не покидает ваши компьютеры',
+      viaEngines: ({ engines }) => `через ${engines}`,
       agentAccount: 'Использует собственный аккаунт этого агента',
       audioRowTitle: 'Ваш звук',
       readsRowTitle: 'Что читает',

@@ -400,6 +400,25 @@ describe('DictationSettingsSection', () => {
     }
   });
 
+  it('names a stored base language tag ("en") instead of reading as nothing chosen', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<DictationSettingsSection
+        voice={{ ...voiceSettingsDefaults, dictation: { ...voiceSettingsDefaults.dictation, language: 'en' } }}
+        setVoice={vi.fn()}
+        executionMachineId={null}
+        localAvailability={localAvailability}
+      />);
+      registerStandardCleanupTarget(tree);
+    });
+    const languageMenu = tree.root.findAllByType(DropdownMenu).find((node) =>
+      Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'automatic'));
+    const selected = languageMenu?.props.items.find((item: { id: string }) => item.id === languageMenu.props.selectedId);
+    expect(selected?.title).toMatch(/English/);
+  });
+
   it('renders only the explicitly selected provider details and checks readiness passively', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const voice = {

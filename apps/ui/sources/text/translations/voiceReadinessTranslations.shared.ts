@@ -85,6 +85,7 @@ export type VoiceReadinessCopy = {
     install_model: string;
     switch_provider: string;
     open_features: string;
+    check_again: string;
   };
 };
 
@@ -163,7 +164,7 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
       notInstalled: 'Not installed',
       unavailableHere: 'Not available here',
       needsUpdate: 'Needs an update',
-      cantCheck: 'Not checked yet',
+      cantCheck: 'Couldn’t check',
       machineUnreachable: 'Machine unreachable',
       sessionUnavailable: 'Session unavailable',
       audioBlocked: 'Audio blocked',
@@ -178,5 +179,6 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
       install_model: 'Install a model',
       switch_provider: 'Choose another provider',
       open_features: 'Open Features',
+      check_again: 'Check again',
     },
   }) } as const;

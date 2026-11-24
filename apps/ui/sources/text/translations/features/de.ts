@@ -17955,7 +17955,7 @@ const voiceReadinessTranslations = { de: defineVoiceReadinessTranslation({
       notInstalled: 'Nicht installiert',
       unavailableHere: 'Hier nicht verfügbar',
       needsUpdate: 'Update nötig',
-      cantCheck: 'Noch nicht geprüft',
+      cantCheck: 'Prüfung nicht möglich',
       machineUnreachable: 'Rechner nicht erreichbar',
       sessionUnavailable: 'Session nicht verfügbar',
       audioBlocked: 'Audio blockiert',
@@ -17970,6 +17970,7 @@ const voiceReadinessTranslations = { de: defineVoiceReadinessTranslation({
       install_model: 'Ein Modell installieren',
       switch_provider: 'Einen anderen Provider wählen',
       open_features: 'Funktionen öffnen',
+      check_again: 'Erneut prüfen',
     },
   }) } as const;
 
@@ -18047,6 +18048,7 @@ const de: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'Dein Voice-Computer',
       pathReplyText: 'Antworttext',
       staysLocal: 'Verlässt deine Computer nie',
+      viaEngines: ({ engines }) => `über ${engines}`,
       agentAccount: 'Nutzt das eigene Konto dieses Agenten',
       audioRowTitle: 'Dein Audio',
       readsRowTitle: 'Was es liest',

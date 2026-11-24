@@ -5,6 +5,15 @@ import { tLoose } from '@/text';
 import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } from './voiceProviderReadinessPresentation';
 
 describe('resolveVoiceProviderReadinessPresentation', () => {
+  it('says a check that could not complete once, with Check again as its one remedy', () => {
+    const presentation = resolveVoiceProviderReadinessPresentation({
+      status: 'unavailable', code: 'runtime_unknown', reasonKey: 'voice.readiness.runtime_unknown', recoveryAction: 'retry',
+    }, translateVoiceReadiness);
+    expect(presentation.short).toBe(tLoose('voice.readiness.short.cantCheck'));
+    expect(presentation.action).toBe(tLoose('voice.readiness.actions.check_again'));
+    expect(presentation.short).not.toBe(tLoose('settingsVoice.pages.pipeline.notChecked'));
+  });
+
   const translate = (key: string) => key;
 
   it('uses the Voice fallback in the Start setup label without a service name', () => {

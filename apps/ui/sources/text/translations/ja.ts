@@ -15254,7 +15254,7 @@ settingsSession: {
       localNeuralTts: {
         provider: {
           title: "ローカルニューラル（ベータ）",
-          subtitle: "Web ではお使いのマシンでニューラル TTS を実行し、対応環境では端末内モデルパックも使えます。",
+          subtitle: "自然な声の返答を、お使いのマシン上で生成します。",
           detail: "ローカルニューラル",
         },
       },

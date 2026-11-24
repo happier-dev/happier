@@ -73,7 +73,8 @@ function reachNote(reach: Reach): string | null {
 }
 
 function withEngines(reach: Reach, names: readonly string[]): string | null {
-  const engines = names.length > 0 ? `(${Array.from(new Set(names)).join(', ')})` : null;
+  // "via Google Gemini (audio)": an engine name may carry its own parentheses, so the list never adds more.
+  const engines = names.length > 0 ? t('settingsVoice.pages.privacy.viaEngines', { engines: Array.from(new Set(names)).join(', ') }) : null;
   return joinHappierFacts(engines, reachNote(reach)) || null;
 }
 

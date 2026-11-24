@@ -155,7 +155,9 @@ export function projectVoiceReadinessRequirement(
   if (fact === 'incompatible') {
     return result(role, providerId, 'incompatible', `${requirement}_incompatible`, RECOVERY_BY_REQUIREMENT[requirement]);
   }
-  return result(role, providerId, 'unavailable', `${requirement}_unknown`, requirement === 'execution_machine' ? 'retry' : RECOVERY_BY_REQUIREMENT[requirement]);
+  // A machine-side fact that could not be observed is checked again; switching provider does not answer it.
+  return result(role, providerId, 'unavailable', `${requirement}_unknown`,
+    requirement === 'execution_machine' || requirement === 'runtime' || requirement === 'model' ? 'retry' : RECOVERY_BY_REQUIREMENT[requirement]);
 }
 
 /** Settings and Start share the Machine requirement for plugin-delivered adapters. */
@@ -281,7 +283,7 @@ export function resolveVoicePassiveSetupReadiness(
   const readiness = resolveVoiceRoleReadinessInternal(input, true);
   return input.passiveSetupUnavailable
     && readiness.code === 'runtime_unknown'
-    && readiness.recoveryAction === 'switch_provider'
+    && readiness.recoveryAction === 'retry'
     ? Object.freeze({ ...readiness, recoveryAction: 'none' as const })
     : readiness;
 }

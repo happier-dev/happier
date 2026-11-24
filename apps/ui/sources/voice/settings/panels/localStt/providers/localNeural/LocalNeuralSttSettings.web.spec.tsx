@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { t } from '@/text';
-import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceExecutionChoice } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionChoice';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 const route = vi.hoisted(() => ({ pathname: '/' }));
@@ -66,10 +67,10 @@ describe('LocalNeuralSttSettings (web)', () => {
             />,
         );
 
-        const execution = tree.root.findByType(DaemonVoiceInferenceExecutionDropdown);
-        const dropdown = execution.findByType(DropdownMenu);
-        expect(dropdown.props.selectedId).toBe('auto');
-        expect(dropdown.props.items.map((item: { id: string }) => item.id)).toEqual(['auto', 'daemon']);
+        // Two or three short places to run: a segmented choice, all visible (B3).
+        const segmented = tree.root.findByType(DaemonVoiceInferenceExecutionChoice).findByType(SegmentedChoiceItem);
+        expect(segmented.props.value).toBe('auto');
+        expect(segmented.props.options.map((option: { id: string }) => option.id)).toEqual(['auto', 'daemon']);
         const daemonModelSection = tree.root.findAllByType(SelectedDaemonModelPackRow);
         expect(daemonModelSection).toHaveLength(1);
         expect(daemonModelSection[0]?.props.packId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
@@ -94,10 +95,10 @@ describe('LocalNeuralSttSettings (web)', () => {
             />,
         );
 
-        const executionDropdown = tree.root.findByType(DaemonVoiceInferenceExecutionDropdown);
+        const executionDropdown = tree.root.findByType(DaemonVoiceInferenceExecutionChoice);
         expect(executionDropdown.props.execution).toBe('device');
         expect(executionDropdown.props.allowDeviceSelection).toBe(false);
-        expect(executionDropdown.findByType(DropdownMenu).props.selectedId).toBe('daemon');
+        expect(executionDropdown.findByType(SegmentedChoiceItem).props.value).toBe('daemon');
         expect(tree.root.findAllByType(SelectedDaemonModelPackRow)).toHaveLength(1);
     });
 });

@@ -229,7 +229,8 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       connectedPurposes: null, platform: 'web', local, localInput, executionMachineId,
       voiceAgentAvailability: 'available', voiceAgentRuntime: runtime,
     });
-    expect(facts.thinkReadiness).toMatchObject({ code: `runtime_${runtime}`, recoveryAction: 'switch_provider' });
+    // A runtime that could not be checked is checked again; an incompatible one needs another provider.
+    expect(facts.thinkReadiness).toMatchObject({ code: `runtime_${runtime}`, recoveryAction: runtime === 'unknown' ? 'retry' : 'switch_provider' });
     expect(facts.runtime).toBe(runtime);
     expect(facts.speechReadiness).toMatchObject({ hear: { status: 'ready' }, speak: { status: 'ready' } });
   });

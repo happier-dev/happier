@@ -54,9 +54,9 @@ describe('formatModelCatalogRowDetail', () => {
 });
 
 describe('formatModelCatalogRowFacts', () => {
-    it('says unknown languages and size as unknown instead of omitting or guessing them', () => {
+    it('leaves out languages the catalog does not list, and still says an unknown download size', () => {
         const facts = formatModelCatalogRowFacts(row({ languages: null, archiveBytes: null }));
-        expect(facts).toBe('Languages not listed · Download size unknown');
+        expect(facts).toBe('Download size unknown');
     });
 
     it('names one or two languages and counts longer lists, with the archive size as a download', () => {
@@ -66,12 +66,14 @@ describe('formatModelCatalogRowFacts', () => {
             .toBe('5 languages · Download size unknown');
     });
 
-    it('drops the download once the model is on the machine, so an installed row says only what it covers', () => {
+    it('says what an installed model covers and its size, never a download', () => {
         for (const state of ['installed', 'ready', 'warming', 'evicted'] as const) {
             expect(formatModelCatalogRowFacts(row({ state, languages: ['en'], archiveBytes: null }))).toBe('English');
         }
-        expect(formatModelCatalogRowFacts(row({ state: 'installed', languages: null, archiveBytes: 487_170_055 })))
-            .toBe('Languages not listed');
+        expect(formatModelCatalogRowFacts(row({ state: 'installed', languages: null, archiveBytes: 82_000_000 })))
+            .toBe('82 MB');
+        expect(formatModelCatalogRowFacts(row({ state: 'ready', languages: ['en'], archiveBytes: 1, loadedArtifactBytes: 82_000_000 })))
+            .toBe('English · 82 MB');
         expect(formatModelCatalogRowFacts(row({ state: 'error', languages: ['en'], archiveBytes: null })))
             .toBe('English · Download size unknown');
     });

@@ -42,6 +42,17 @@ function resolveVoiceReadinessShort(code: string): VoiceReadinessShort {
   return 'unavailableHere';
 }
 
+/**
+ * A check that ran and could not observe its fact (a runtime, a model, the machine): one fact for every
+ * consumer, said "Couldn't check" with Check again as its one remedy, never "not checked yet" or
+ * "choose another provider".
+ */
+export function isVoiceReadinessCouldNotCheck(
+  readiness: Pick<VoiceRoleReadiness, 'status' | 'reasonKey' | 'recoveryAction'>,
+): boolean {
+  return readiness.status === 'unavailable' && readiness.recoveryAction === 'retry' && readiness.reasonKey.endsWith('_unknown');
+}
+
 export function resolveVoiceProviderReadinessPresentation(
   readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction' | 'selectedAgent'>,
   translate: (key: string, params?: { service: string }) => string,
@@ -67,7 +78,12 @@ export function resolveVoiceProviderReadinessPresentation(
       ? t('voiceSurface.setUpAgent', { agent: readiness.selectedAgent.title }) : readiness.recoveryAction === 'none'
       ? null
       : translate(readiness.recoveryAction === 'enable_voice_agent' ? 'voice.readiness.actions.open_features'
-        : readiness.recoveryAction === 'retry' ? 'common.retry' : `voice.readiness.actions.${readiness.recoveryAction}`),
-    short: translate(`voice.readiness.short.${readiness.selectedAgent?.needsSignIn ? 'needsSetup' : resolveVoiceReadinessShort(readiness.code)}`),
+        // A check that could not complete is checked again; any other Retry stays Retry.
+        : readiness.recoveryAction === 'retry' ? isVoiceReadinessCouldNotCheck(readiness) ? 'voice.readiness.actions.check_again' : 'common.retry'
+        : `voice.readiness.actions.${readiness.recoveryAction}`),
+    // Device speech still being asked about has not been checked yet; any other unknown is a check that could not complete.
+    short: isVoiceReadinessCouldNotCheck(readiness) ? translate('voice.readiness.short.cantCheck')
+      : readiness.code === 'device_stt_availability_unknown' ? translate('settingsVoice.pages.pipeline.notChecked')
+      : translate(`voice.readiness.short.${readiness.selectedAgent?.needsSignIn ? 'needsSetup' : resolveVoiceReadinessShort(readiness.code)}`),
   };
 }

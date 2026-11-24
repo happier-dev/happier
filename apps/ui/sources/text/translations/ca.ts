@@ -14036,7 +14036,7 @@ settingsSession: {
             localNeuralTts: {
                 provider: {
                     title: 'Neural local (beta)',
-                    subtitle: "TTS neural a les teves màquines al web, amb paquets de model al dispositiu quan sigui compatible.",
+                    subtitle: "Respostes amb veu natural, generades a les teves màquines.",
                     detail: 'Neural local',
                 },
             },

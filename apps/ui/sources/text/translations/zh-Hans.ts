@@ -14490,7 +14490,7 @@ settingsSession: {
       localNeuralTts: {
         provider: {
           title: "本地神经（测试版）",
-          subtitle: "Web 上使用你机器上的神经 TTS；在支持的平台可使用设备端模型包。",
+          subtitle: "自然的语音回复，在你自己的机器上生成。",
           detail: "本地神经",
         },
       },

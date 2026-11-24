@@ -17899,7 +17899,7 @@ const voiceLocalCredentialTranslations = { 'zh-Hans': defineVoiceLocalCredential
     voiceCredential: {
       setOnAccount: '已保存到你的账户',
       notSetOnAccount: '未保存到你的账户',
-      setOnMachineOverride: ({ machine }) => `正在为 ${machine} 使用账户凭据覆盖`,
+      setOnMachineOverride: ({ machine }) => `你的账户密钥 · 在 ${machine} 上`,
       notSetWithFallback: ({ machine }) => `未为 ${machine} 设置；可用时将使用账户凭据`,
       plainStorageTitle: '在没有端到端加密的情况下保存 API 密钥？',
       plainStorageBody: '此账户在保存设置时不使用端到端加密。保存此 API 密钥会让其明文对服务器可见。',
@@ -18168,7 +18168,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
       notInstalled: '未安装',
       unavailableHere: '此处不可用',
       needsUpdate: '需要更新',
-      cantCheck: '尚未检查',
+      cantCheck: '无法检查',
       machineUnreachable: '无法连接机器',
       sessionUnavailable: '会话不可用',
       audioBlocked: '音频被阻止',
@@ -18183,6 +18183,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
       install_model: '安装模型',
       switch_provider: '选择其他提供商',
       open_features: '打开功能',
+      check_again: '重新检查',
     },
   }) } as const;
 
@@ -18428,6 +18429,7 @@ const zhHans: VoiceSettingsPagesCopy = {
       pathVoiceComputer: '你的 Voice 电脑',
       pathReplyText: '回复文本',
       staysLocal: '绝不会离开你的电脑',
+      viaEngines: ({ engines }) => `通过 ${engines}`,
       agentAccount: '使用该智能体自己的账户',
       audioRowTitle: '你的音频',
       readsRowTitle: '它读取什么',

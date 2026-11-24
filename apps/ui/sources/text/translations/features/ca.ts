@@ -18038,7 +18038,7 @@ const voiceLocalCredentialTranslations = { ca: defineVoiceLocalCredential({
     voiceCredential: {
       setOnAccount: 'Desada al teu compte',
       notSetOnAccount: 'No desada al teu compte',
-      setOnMachineOverride: ({ machine }) => `S’utilitza una substitució de credencial del compte per a ${machine}`,
+      setOnMachineOverride: ({ machine }) => `La clau del teu compte · a ${machine}`,
       notSetWithFallback: ({ machine }) => `No definida per a ${machine}; s’utilitzarà una credencial del compte quan estigui disponible`,
       plainStorageTitle: 'Vols desar la clau de l’API sense xifratge d’extrem a extrem?',
       plainStorageBody: 'Aquest compte desa la configuració sense xifratge d’extrem a extrem. Si deses aquesta clau de l’API, el seu text en clar serà visible per al servidor.',
@@ -18307,7 +18307,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
       notInstalled: 'No instal·lat',
       unavailableHere: 'No disponible aquí',
       needsUpdate: 'Cal actualitzar',
-      cantCheck: 'Encara sense comprovar',
+      cantCheck: 'No s’ha pogut comprovar',
       machineUnreachable: 'Màquina inaccessible',
       sessionUnavailable: 'Sessió no disponible',
       audioBlocked: 'Àudio bloquejat',
@@ -18322,6 +18322,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
       install_model: 'Instal·lar un model',
       switch_provider: 'Triar un altre proveïdor',
       open_features: 'Obre Funcions',
+      check_again: 'Torna a comprovar',
     },
   }) } as const;
 
@@ -18567,6 +18568,7 @@ const ca: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'El teu ordinador de Voice',
       pathReplyText: 'Text de la resposta',
       staysLocal: 'Mai no surt dels teus ordinadors',
+      viaEngines: ({ engines }) => `amb ${engines}`,
       agentAccount: 'Fa servir el compte propi d’aquest agent',
       audioRowTitle: 'El teu àudio',
       readsRowTitle: 'Què llegeix',

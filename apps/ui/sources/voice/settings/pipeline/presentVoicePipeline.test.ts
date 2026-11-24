@@ -83,6 +83,27 @@ describe('presentVoicePipeline', () => {
         expect(presented.statusWord).toBe(t('voice.readiness.short.needsSetup'));
     });
 
+    it('reads a runtime check that came back unavailable as the same could-not-check fact, not as setup', () => {
+        const unavailable: VoiceRoleReadiness = { ...readiness('unavailable', 'runtime_unavailable', 'retry'), reasonKey: 'voice.readiness.runtime_unknown' };
+        const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
+            { ...hear, readiness: null }, { ...think, readiness: unavailable }, { ...speak, readiness: null },
+        ] });
+        const presented = presentVoicePipeline(pipeline, translate, unavailable, 'Local voice');
+        expect(presented.statusWord).toBe(t('voice.readiness.short.cantCheck'));
+        expect(presented.steps[1]?.readiness).toMatchObject({ actionLabel: 'voice.readiness.actions.check_again' });
+    });
+
+    it('says one cause shared by every step once, on the card, not under each step', () => {
+        const offline = readiness('unavailable', 'execution_machine_incompatible', 'select_execution_machine');
+        const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
+            { ...hear, readiness: offline }, { ...think, readiness: offline }, { ...speak, readiness: offline },
+        ] });
+        const presented = presentVoicePipeline(pipeline, translate, offline, 'Local voice');
+        expect(presented.steps.every((step) => step.readiness === null)).toBe(true);
+        expect(presented.card).toMatchObject({ message: 'voice.readiness.execution_machine_incompatible', recoveryAction: 'select_execution_machine' });
+        expect(presented.tone).toBe('waiting');
+    });
+
     it('keeps a service-level fact no step carries', () => {
         const fact = readiness('needs_setup', 'runtime_missing', 'switch_provider');
         const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
@@ -92,18 +113,21 @@ describe('presentVoicePipeline', () => {
         expect(presentVoicePipeline(pipeline, translate, fact, 'Local voice').card).toMatchObject({ recoveryAction: 'switch_provider' });
     });
 
-    it.each(['runtime_unknown', 'model_unknown', 'credential_unknown'])(
-        'presents an unobserved %s as unchecked without asking the person to repair it', (code) => {
-            const fact = readiness('unavailable', code, 'switch_provider');
+    it.each(['runtime_unknown', 'model_unknown'])(
+        'says a %s check could not complete, with Check again, once on the card', (code) => {
+            const fact = readiness('unavailable', code, 'retry');
             const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
                 { ...hear, readiness: null },
                 { ...think, readiness: fact },
                 { ...speak, readiness: null },
             ] });
             const presented = presentVoicePipeline(pipeline, translate, fact, 'Local voice');
-            expect(presented.tone).toBe('unknown');
-            expect(presented.statusWord).toBe(t('settingsVoice.pages.pipeline.notChecked'));
-            expect(presented.steps.every(step => step.readiness === null)).toBe(true);
+            expect(presented.statusWord).toBe(t('voice.readiness.short.cantCheck'));
+            expect(presented.statusWord).not.toBe(t('settingsVoice.pages.pipeline.notChecked'));
+            // One message per state: the step carries the fact and its remedy, the card does not repeat it.
+            expect(presented.steps[1]?.readiness).toMatchObject({
+                recoveryAction: 'retry', actionLabel: 'voice.readiness.actions.check_again',
+            });
             expect(presented.card).toBeNull();
         },
     );
@@ -116,22 +140,22 @@ describe('presentVoicePipeline', () => {
         const presented = presentVoicePipeline(pipeline, translate, fact, 'Local voice');
         expect(presented.tone).toBe('waiting');
         expect(presented.steps[0]?.readiness).toMatchObject({
-            tone: 'waiting', recoveryAction: 'retry', actionLabel: 'common.retry',
+            tone: 'waiting', recoveryAction: 'retry', actionLabel: 'voice.readiness.actions.check_again',
         });
         expect(presented.card).toBeNull();
     });
 
-    it('keeps an unobserved service prerequisite unknown even when all observed steps are ready', () => {
+    it('says a service prerequisite it could not check even when all observed steps are ready', () => {
         const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
             { ...hear, readiness: readiness('ready', 'ready') },
             { ...think, readiness: readiness('ready', 'ready') },
             { ...speak, readiness: readiness('ready', 'ready') },
         ] });
         const presented = presentVoicePipeline(pipeline, translate,
-            readiness('unavailable', 'runtime_unknown', 'switch_provider'), 'Local voice');
-        expect(presented.tone).toBe('unknown');
-        expect(presented.statusWord).toBe(t('settingsVoice.pages.pipeline.notChecked'));
-        expect(presented.card).toBeNull();
+            readiness('unavailable', 'runtime_unknown', 'retry'), 'Local voice');
+        expect(presented.tone).not.toBe('ready');
+        expect(presented.statusWord).toBe(t('voice.readiness.short.cantCheck'));
+        expect(presented.card).toMatchObject({ recoveryAction: 'retry', actionLabel: 'voice.readiness.actions.check_again' });
     });
 
     it('never calls an unchecked pipeline ready', () => {

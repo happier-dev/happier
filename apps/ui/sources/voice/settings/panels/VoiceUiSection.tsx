@@ -67,13 +67,6 @@ export function VoiceUiSection(props: {
 
   return (
     <>
-      {props.setVoiceHoldToTalkEnabled && (
-        <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.input}>
-          <ItemGroup title={t('voicePresence.howYouTalk')}>
-            <HoldToTalkSetting enabled={props.voiceHoldToTalkEnabled === true} onChange={props.setVoiceHoldToTalkEnabled} />
-          </ItemGroup>
-        </SettingSection>
-      )}
       <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.surface}>
         <ItemGroup
           title={t('settingsVoice.pages.advanced.onScreenTitle')}
@@ -146,7 +139,14 @@ export function VoiceUiSection(props: {
           />
         </ItemGroup>
       </SettingSection>
-
+      {/* Hold to talk is rarer (and often unavailable here): after what Voice shows on screen. */}
+      {props.setVoiceHoldToTalkEnabled && (
+        <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.input}>
+          <ItemGroup title={t('voicePresence.howYouTalk')}>
+            <HoldToTalkSetting enabled={props.voiceHoldToTalkEnabled === true} onChange={props.setVoiceHoldToTalkEnabled} />
+          </ItemGroup>
+        </SettingSection>
+      )}
     </>
   );
 }

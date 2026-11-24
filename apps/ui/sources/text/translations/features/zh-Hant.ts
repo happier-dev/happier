@@ -17899,7 +17899,7 @@ const voiceLocalCredentialTranslations = { 'zh-Hant': defineVoiceLocalCredential
     voiceCredential: {
       setOnAccount: '已儲存到你的帳戶',
       notSetOnAccount: '未儲存到你的帳戶',
-      setOnMachineOverride: ({ machine }) => `正在為 ${machine} 使用帳戶憑證覆寫`,
+      setOnMachineOverride: ({ machine }) => `你的帳戶金鑰 · 在 ${machine} 上`,
       notSetWithFallback: ({ machine }) => `未為 ${machine} 設定；可用時將使用帳戶憑證`,
       plainStorageTitle: '在沒有端對端加密的情況下儲存 API 金鑰？',
       plainStorageBody: '此帳戶儲存設定時不使用端對端加密。儲存此 API 金鑰會讓其明文對伺服器可見。',
@@ -18168,7 +18168,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
       notInstalled: '未安裝',
       unavailableHere: '此處無法使用',
       needsUpdate: '需要更新',
-      cantCheck: '尚未檢查',
+      cantCheck: '無法檢查',
       machineUnreachable: '無法連線機器',
       sessionUnavailable: '工作階段無法使用',
       audioBlocked: '音訊遭封鎖',
@@ -18183,6 +18183,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
       install_model: '安裝模型',
       switch_provider: '選擇其他提供者',
       open_features: '開啟功能',
+      check_again: '重新檢查',
     },
   }) } as const;
 
@@ -18428,6 +18429,7 @@ const zhHant: VoiceSettingsPagesCopy = {
       pathVoiceComputer: '你的 Voice 電腦',
       pathReplyText: '回覆文字',
       staysLocal: '絕不會離開你的電腦',
+      viaEngines: ({ engines }) => `透過 ${engines}`,
       agentAccount: '使用該代理自己的帳戶',
       audioRowTitle: '你的音訊',
       readsRowTitle: '它讀取什麼',

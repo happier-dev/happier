@@ -299,7 +299,6 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
             : t('settingsVoice.externalCredentials.reviewRequired')}
         loading={!unavailable && (!inspection || !grantStateReady || busy)}
         disabled={unavailable || !inspection || !grantStateReady || busy}
-        destructive={isGranted}
         onPress={onPress}
       />
       {inspection && pendingRequest ? (

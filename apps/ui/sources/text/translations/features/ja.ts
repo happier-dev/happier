@@ -17959,7 +17959,7 @@ const voiceLocalCredentialTranslations = { ja: defineVoiceLocalCredential({
     voiceCredential: {
       setOnAccount: 'アカウントに保存済み',
       notSetOnAccount: 'アカウントに未保存',
-      setOnMachineOverride: ({ machine }) => `${machine} ではアカウントの認証情報による上書きを使用しています`,
+      setOnMachineOverride: ({ machine }) => `アカウントのキー · ${machine} 上`,
       notSetWithFallback: ({ machine }) => `${machine} には未設定です。利用できる場合はアカウントの認証情報を使用します`,
       plainStorageTitle: 'エンドツーエンド暗号化なしで API キーを保存しますか？',
       plainStorageBody: 'このアカウントは設定をエンドツーエンド暗号化せずに保存します。この API キーを保存すると、平文がサーバーから見える状態になります。',
@@ -18228,7 +18228,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
       notInstalled: '未インストール',
       unavailableHere: 'ここでは利用不可',
       needsUpdate: '更新が必要',
-      cantCheck: 'まだ確認していません',
+      cantCheck: '確認できませんでした',
       machineUnreachable: 'マシンに接続できません',
       sessionUnavailable: 'セッションを利用できません',
       audioBlocked: '音声がブロックされています',
@@ -18243,6 +18243,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
       install_model: 'モデルをインストール',
       switch_provider: '別のプロバイダーを選択',
       open_features: '機能を開く',
+      check_again: '再確認',
     },
   }) } as const;
 
@@ -18488,6 +18489,7 @@ const ja: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'Voice コンピューター',
       pathReplyText: '返信のテキスト',
       staysLocal: 'コンピューターの外には出ません',
+      viaEngines: ({ engines }) => `${engines} 経由`,
       agentAccount: 'そのエージェント自身のアカウントを使用します',
       audioRowTitle: '音声',
       readsRowTitle: '読み取る内容',

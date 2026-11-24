@@ -19,7 +19,7 @@ import { useLocalNeuralModelPackState } from '@/voice/settings/panels/localTts/u
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { getSherpaSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
-import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceExecutionChoice } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionChoice';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { LocalNeuralSttLanguageItem } from './LocalNeuralSttLanguageItem';
@@ -82,10 +82,9 @@ export function LocalNeuralSttSettings(props: {
   return (
     <>
       <SettingAnchor setting={settings.sttExecution}>
-      <DaemonVoiceInferenceExecutionDropdown
+      <DaemonVoiceInferenceExecutionChoice
         execution={executionPolicy.selectableExecution}
         setExecution={(execution) => setLocalNeural({ execution })}
-        popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
       </SettingAnchor>

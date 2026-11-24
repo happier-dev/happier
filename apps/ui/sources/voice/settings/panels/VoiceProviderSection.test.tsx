@@ -2281,7 +2281,8 @@ describe('VoiceProviderSection', () => {
             const gallery = screen.tree.findAllByType(VoiceServiceGallery)[0]!;
             const selected = (gallery.props.tiles as readonly VoiceServiceTile[]).find(tile => tile.selected)!;
             const card = screen.tree.findAllByType(VoicePipelineCard)[0]!;
-            expect(card.props.status.text).toBe(t('settingsVoice.pages.pipeline.notChecked'));
+            // A runtime fact the check could not observe reads the same on the card and its tile (B1).
+            expect(card.props.status.text).toBe(t('voice.readiness.short.cantCheck'));
             expect(selected.status?.text).toBe(card.props.status.text);
             expect(selected.status?.tone).toBe(card.props.status.tone);
             await screen.update(<VoiceProviderSection {...props} localAvailability={{ ...props.localAvailability,

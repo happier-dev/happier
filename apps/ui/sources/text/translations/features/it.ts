@@ -18024,7 +18024,7 @@ const voiceLocalCredentialTranslations = { it: defineVoiceLocalCredential({
     voiceCredential: {
       setOnAccount: 'Salvata nel tuo account',
       notSetOnAccount: 'Non salvata nel tuo account',
-      setOnMachineOverride: ({ machine }) => `Per ${machine} è in uso una sostituzione della credenziale dell’account`,
+      setOnMachineOverride: ({ machine }) => `La chiave del tuo account · su ${machine}`,
       notSetWithFallback: ({ machine }) => `Non impostata per ${machine}; quando disponibile verrà usata una credenziale dell’account`,
       plainStorageTitle: 'Salvare la chiave API senza crittografia end-to-end?',
       plainStorageBody: 'Questo account archivia le impostazioni senza crittografia end-to-end. Salvando questa chiave API il suo testo in chiaro sarà visibile al server.',
@@ -18293,7 +18293,7 @@ const voiceReadinessTranslations = { it: defineVoiceReadinessTranslation({
       notInstalled: 'Non installato',
       unavailableHere: 'Non disponibile qui',
       needsUpdate: 'Serve un aggiornamento',
-      cantCheck: 'Non ancora verificato',
+      cantCheck: 'Impossibile controllare',
       machineUnreachable: 'Macchina non raggiungibile',
       sessionUnavailable: 'Sessione non disponibile',
       audioBlocked: 'Audio bloccato',
@@ -18308,6 +18308,7 @@ const voiceReadinessTranslations = { it: defineVoiceReadinessTranslation({
       install_model: 'Installa un modello',
       switch_provider: 'Scegli un altro provider',
       open_features: 'Apri Funzionalità',
+      check_again: 'Controlla di nuovo',
     },
   }) } as const;
 
@@ -18553,6 +18554,7 @@ const it: VoiceSettingsPagesCopy = {
       pathVoiceComputer: 'Il tuo computer Voice',
       pathReplyText: 'Testo della risposta',
       staysLocal: 'Non lascia mai i tuoi computer',
+      viaEngines: ({ engines }) => `tramite ${engines}`,
       agentAccount: 'Usa l’account di quell’agente',
       audioRowTitle: 'Il tuo audio',
       readsRowTitle: 'Cosa legge',

@@ -14803,7 +14803,7 @@ settingsSession: {
       localNeuralTts: {
         provider: {
           title: "Lokalny neuronowy (beta)",
-          subtitle: "Neuronowe TTS na Twoich maszynach w przeglądarce, z pakietami modelu na urządzeniu tam, gdzie są obsługiwane.",
+          subtitle: "Naturalnie brzmiące odpowiedzi, generowane na Twoich maszynach.",
           detail: "Lokalny neuronowy",
         },
       },

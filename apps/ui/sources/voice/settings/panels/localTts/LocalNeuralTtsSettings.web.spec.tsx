@@ -36,7 +36,9 @@ vi.mock('react-native-unistyles', async () =>
 vi.mock('@expo/vector-icons', async () =>
     (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-const { DaemonVoiceInferenceExecutionDropdown } = await import('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown');
+const { Slider } = await import('@/components/ui/forms/Slider');
+const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+const { DaemonVoiceInferenceExecutionChoice } = await import('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionChoice');
 const { SelectedDaemonModelPackRow } = await import('@/voice/settings/panels/modelCatalog/DaemonModelPackRow');
 const { DaemonVoiceModelCatalogProvider } = await import('@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext');
 const { useDaemonVoiceModelCatalogState } = await import('@/voice/settings/panels/modelCatalog/useDaemonVoiceModelCatalogState');
@@ -74,12 +76,14 @@ describe('LocalNeuralTtsSettings (web)', () => {
             setKokoro={setKokoro}
             networkTimeoutMs={15_000}
         />);
-        const speed = tree.root.findAllByType(DropdownMenu).find((node) =>
-            node.props.itemTrigger?.title === t('settingsVoice.local.kokoro.speed.title'));
-        expect(speed).toBeDefined();
-        expect(speed!.props.selectedId).toBe('1');
+        // Speed is the shared slider; a drag previews and commits once, on release (B2).
+        const speed = tree.root.findByType(Slider);
+        expect(speed.props.value).toBe(1);
         expect(setKokoro).not.toHaveBeenCalled();
-        await act(async () => { speed!.props.onSelect('1.2'); });
+        await act(async () => { speed.props.onValuePreview?.(1.1); });
+        expect(setKokoro).not.toHaveBeenCalled();
+        await act(async () => { speed.props.onValueChange(1.2); });
+        expect(setKokoro).toHaveBeenCalledTimes(1);
         expect(setKokoro).toHaveBeenCalledWith({ ...cfgKokoro, speed: 1.2 });
     });
 
@@ -93,10 +97,10 @@ describe('LocalNeuralTtsSettings (web)', () => {
             popoverBoundaryRef: null,
         }));
 
-        const executionDropdown = tree.root.findByType(DaemonVoiceInferenceExecutionDropdown);
+        const executionDropdown = tree.root.findByType(DaemonVoiceInferenceExecutionChoice);
         expect(executionDropdown.props.execution).toBe('device');
         expect(executionDropdown.props.allowDeviceSelection).toBe(false);
-        expect(executionDropdown.findByType(DropdownMenu).props.selectedId).toBe('daemon');
+        expect(executionDropdown.findByType(SegmentedChoiceItem).props.value).toBe('daemon');
 
         const daemonModelSections = tree.root.findAllByType(SelectedDaemonModelPackRow);
         expect(daemonModelSections).toHaveLength(1);
@@ -128,10 +132,10 @@ describe('LocalNeuralTtsSettings (web)', () => {
 
         const dropdowns = tree.root.findAllByType(DropdownMenu).filter((node) =>
             node.props.itemTrigger?.title !== t('settingsVoice.local.daemonInference.execution.title'));
-        expect(dropdowns).toHaveLength(2);
+        expect(dropdowns).toHaveLength(1);
         expect(dropdowns[0]?.props.itemTrigger?.title).toBe(t('settingsVoice.local.kokoro.voice.titleWeb'));
         expect(dropdowns[0]?.props.itemTrigger?.subtitle).toBe(t('settingsVoice.local.kokoro.voice.subtitleWeb'));
-        expect(dropdowns[1]?.props.itemTrigger?.title).toBe(t('settingsVoice.local.kokoro.speed.title'));
+        expect(tree.root.findAllByType(Slider)).toHaveLength(1);
         expect(voiceMenu().props.selectedId).toBe('bright');
         expect(setKokoro).not.toHaveBeenCalled();
         await act(async () => { voiceMenu().props.onSelect('calm'); });

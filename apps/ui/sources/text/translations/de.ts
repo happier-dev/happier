@@ -14467,7 +14467,7 @@ settingsSession: {
             voiceCredential: {
                 setOnAccount: 'In deinem Konto gespeichert',
                 notSetOnAccount: 'Nicht in deinem Konto gespeichert',
-                setOnMachineOverride: ({ machine }: { machine: string }) => `Nutzt einen Konto-Override für die Zugangsdaten von ${machine}`,
+                setOnMachineOverride: ({ machine }: { machine: string }) => `Dein Kontoschlüssel · auf ${machine}`,
                 notSetWithFallback: ({ machine }: { machine: string }) => `Nicht gesetzt für ${machine}; es werden Konto-Zugangsdaten genutzt, sobald welche verfügbar sind`,
                 plainStorageTitle: 'API-Key ohne Ende-zu-Ende-Verschlüsselung speichern?',
                 plainStorageBody: 'Dieses Konto speichert Einstellungen ohne Ende-zu-Ende-Verschlüsselung. Wenn du diesen API-Key speicherst, ist sein Klartext für den Server sichtbar.',
@@ -15028,7 +15028,7 @@ settingsSession: {
             localNeuralTts: {
                 provider: {
                     title: 'Lokal neuronal (Beta)',
-                    subtitle: "Neuronale Sprachausgabe auf deinen Rechnern im Web, mit Modellpaketen auf dem Gerät, wo unterstützt.",
+                    subtitle: "Natürlich klingende Antworten, gesprochen auf deinen eigenen Rechnern.",
                     detail: 'Lokal neuronal',
                 },
             },
