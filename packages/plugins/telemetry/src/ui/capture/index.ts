@@ -27,7 +27,7 @@ export {
   projectCaptureEndpoints,
   type CaptureEndpointView,
 } from './model.js';
-export { projectWaterfall, requestLabelOf, slowestSteps } from '../traceWaterfall.js';
+export { projectWaterfall, requestLabelOf, requestRouteOf, slowestSteps } from '../traceWaterfall.js';
 /** The metric vocabulary the Telemetry widgets read, shared with the Environment's Metrics view. */
 export {
   formatTelemetryMetric,

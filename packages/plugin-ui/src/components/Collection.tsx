@@ -549,6 +549,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    * a null key means the pane is closed. Existing detailHeader renderers remain valid without this hook.
    */
   useDetailHeader?: (key: HappierCollectionKey | null) => CollectionDetailHeader | undefined;
+  /**
+   * The list a pushed detail returns to, by name, when the Collection carries no `title` ("‹ Traces"): the pushed
+   * band's way back says where it goes instead of a bare Back glyph beside the page's own (lab dbCapture-tracep).
+   */
+  detailBackLabel?: string;
   /** Pane minima (the caller's readable measures at the reader's text size) and the split preference. */
   minListWidth: number;
   minDetailWidth: number;
@@ -3557,7 +3562,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         mode="pushed" itemKey={openKey} readHeader={props.detailHeader} useHeader={props.useDetailHeader}
         onClose={close} placement={placement}
         // The way back reads as this page's name, the page it returns to (lab merged-detail-pr phone "‹ PRs & Issues").
-        {...(props.title === undefined ? {} : { backLabel: props.title })}
+        {...((props.title ?? props.detailBackLabel) === undefined ? {} : { backLabel: props.title ?? props.detailBackLabel })}
         {...(props.detailTestID === undefined ? {} : { testID: props.detailTestID })}
       />
     </CollectionDetailHeadingFocusContext.Provider>

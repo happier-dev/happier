@@ -42,6 +42,8 @@ export type IntervalTimelineInterval = Readonly<{
   depth?: number;
   /** `layout="rows"`: the row's kind mark before its label (a query's database glyph), drawn as given. */
   glyph?: ReactNode;
+  /** `layout="rows"`: a quiet word before the label, in its face (a request's method before its route). */
+  labelLead?: string;
   /** `layout="rows"`: the label names code (a SQL statement, a function), set in the code face. */
   identifier?: boolean;
   /** Exact domain wording for interaction only; axis, rows and selection readout retain their formatter. */
@@ -220,9 +222,10 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   };
   const hasIntervals = props.intervals.some(interval => interval.kind !== 'point');
   const lanesLayout = props.layout === 'lanes';
-  const rowValues = (interval: IntervalTimelineInterval) => [...(lanesLayout ? [interval.lane ?? ''] : []), interval.label, format(interval.start, interval.startLabel),
+  const fullLabel = (interval: IntervalTimelineInterval) => interval.labelLead ? `${interval.labelLead} ${interval.label}` : interval.label;
+  const rowValues = (interval: IntervalTimelineInterval) => [...(lanesLayout ? [interval.lane ?? ''] : []), fullLabel(interval), format(interval.start, interval.startLabel),
     ...(hasIntervals ? [interval.kind === 'point' ? '' : format(interval.end, interval.endLabel)] : []), interval.annotation ?? ''];
-  const describe = (interval: IntervalTimelineInterval) => [interval.label, interval.flag, lanesLayout ? interval.lane : null, `${startLabel}: ${format(interval.start, interval.startLabel)}`,
+  const describe = (interval: IntervalTimelineInterval) => [fullLabel(interval), interval.flag, lanesLayout ? interval.lane : null, `${startLabel}: ${format(interval.start, interval.startLabel)}`,
     interval.kind === 'point' ? null : `${endLabel}: ${format(interval.end, interval.endLabel)}`, interval.value, interval.annotation, props.basis].filter(Boolean).join(', ');
   const selected = props.intervals.find((interval) => interval.id === selectedId);
   const width = props.geometry?.width ?? measuredWidth;
@@ -393,7 +396,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                 {/* Pointer: the target covers the whole track over the ink, one per run. */}
                 {touchTrack ? null : <View style={{ ...place, top: 0, height: trackHeight }}>
                   <ChartDatum testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}
-                    datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
+                    datum={interval.datum ?? { label: fullLabel(interval), value: describe(interval), color }}
                     renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
                   accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
                   accessible={interval.datum?.keyboard !== false} tabIndex={interval.datum?.keyboard === false ? -1 : 0}
@@ -418,7 +421,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
             {interval.glyph ? <View aria-hidden importantForAccessibility="no-hide-descendants" style={{ flexShrink: 0 }}>{interval.glyph}</View> : null}
             <HappierText style={{ ...(sideLabels ? text.body : text.caption), flexShrink: 1,
               ...(interval.identifier && props.theme.typography?.code?.fontFamily ? { fontFamily: props.theme.typography.code.fontFamily } : {}) }}
-              numberOfLines={1}>{interval.label}</HappierText>
+              numberOfLines={1}>{interval.labelLead ? <HappierText style={{ color: props.theme.colors.mutedText }}>{`${interval.labelLead} `}</HappierText> : null}{interval.label}</HappierText>
             {interval.flag ? <HappierText testID={props.testID ? `${props.testID}-flag-${interval.id}` : undefined}
               style={{ ...text.captionStrong, color: props.theme.statusText?.danger ?? props.theme.colors.danger, flexShrink: 0 }}>{interval.flag}</HappierText> : null}
             {!sideLabels && interval.value ? <HappierText style={{ ...text.caption, marginLeft: 'auto', flexShrink: 0 }} tabularNumbers>{interval.value}</HappierText> : null}
@@ -450,7 +453,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
             {valueCell}
           </View>;
         return <ChartDatum key={interval.id} testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}
-          datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
+          datum={interval.datum ?? { label: fullLabel(interval), value: describe(interval), color }}
           renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
           accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
           accessible={interval.datum?.keyboard !== false} tabIndex={interval.datum?.keyboard === false ? -1 : 0}

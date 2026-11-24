@@ -181,7 +181,10 @@ export function CapturedRequestWaterfall({
               row.spanId === flag.spanId;
             return {
               id: row.id,
-              label: rowLabel(row),
+              // A request reads as the shared route cell: its method quiet, its route in identifier type.
+              ...(row.route
+                ? { label: row.route.route, labelLead: row.route.method, identifier: true }
+                : { label: rowLabel(row) }),
               depth: row.depth,
               start: row.start,
               end: row.end,

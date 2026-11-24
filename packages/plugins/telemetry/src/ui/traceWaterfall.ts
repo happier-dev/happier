@@ -28,6 +28,8 @@ export type WaterfallRowV1 = Readonly<{
     kind: DatabaseCaptureRepeatedQueryV1['kind'];
   }>;
   failed: boolean;
+  /** The request's route, when this row is a request to one: drawn as the shared method + route cell. */
+  route?: Readonly<{ method: string; route: string }>;
 }>;
 
 export type WaterfallV1 = Readonly<{
@@ -40,6 +42,18 @@ export type WaterfallV1 = Readonly<{
 const timed = (summary: DatabaseCaptureSummaryV1) =>
   (summary.kind === 'span' || summary.kind === 'query') &&
   typeof summary.durationMs === 'number';
+
+/**
+ * A request's route in its two parts (the quiet method, then the route in identifier type), as every capture surface
+ * draws it: list rows, the request's title and its waterfall. A record with no route names itself by its label.
+ */
+export function requestRouteOf(
+  summary: DatabaseCaptureSummaryV1,
+): Readonly<{ method: string | null; route: string }> {
+  return summary.endpointMethod && summary.endpointRoute
+    ? { method: summary.endpointMethod, route: summary.endpointRoute }
+    : { method: null, route: requestLabelOf(summary) };
+}
 
 export function requestLabelOf(summary: DatabaseCaptureSummaryV1): string {
   if (summary.endpointMethod && summary.endpointRoute)
@@ -113,6 +127,9 @@ export function projectWaterfall(
         ? { repeated: { count: group.repetitionCount, kind: group.kind } }
         : {}),
       failed: (item.httpStatusCode ?? 0) >= 500 || item.outcome === 'error',
+      ...(item.endpointMethod && item.endpointRoute
+        ? { route: { method: item.endpointMethod, route: item.endpointRoute } }
+        : {}),
     });
     const next =
       item.spanId && item.kind === 'span'

@@ -28,12 +28,14 @@ const LOG_LINE_RHYTHM = Object.freeze({ paddingVertical: HAPPIER_SPACE_STEPS.s2 
 /** About one monospaced digit at the code size, so a gutter of n characters holds n digits. */
 const LOG_LINE_GUTTER_CHAR_PX = HAPPIER_SPACE_STEPS.s8;
 /**
- * The message always keeps at least half the line. The lead (gutter and prefix columns) narrows instead, and a
- * column that no longer fits beside the others moves under them, so a long source column (a service name) never
- * squeezes the message into one character a line or splits the clock.
+ * The lead (gutter and prefix columns) keeps its words together on its line. The message wants at least half the
+ * line beside it; where the lead leaves less (a phone), the message moves under the whole lead at the full width,
+ * so a source column (a service name) is never orphaned on a line of its own and the message is never squeezed.
  */
 const LOG_LINE_LEAD: HappierStyleProp = Object.freeze({ flexShrink: 1, minWidth: 0 });
-const LOG_LINE_MESSAGE: HappierStyleProp = Object.freeze({ flexBasis: 0, minWidth: '50%' });
+const LOG_LINE_MESSAGE: HappierStyleProp = Object.freeze({ flexBasis: '50%', minWidth: 0 });
+/** A message moved under its lead stays with it: one small step, not the column gap. */
+const LOG_LINE_WRAPPED: HappierStyleProp = Object.freeze({ rowGap: HAPPIER_SPACE_STEPS.s2 });
 
 /**
  * One log row, the same in every log: a muted tabular gutter, the source's own columns, then the message,
@@ -41,7 +43,8 @@ const LOG_LINE_MESSAGE: HappierStyleProp = Object.freeze({ flexBasis: 0, minWidt
  */
 export function LogLine({ gutter, prefix, prefixTestID, message, testID, messageTestID, style }: LogLineProps): ReactElement {
   return (
-    <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} testID={testID} style={[LOG_LINE_RHYTHM, style]}>
+    <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} wrap testID={testID}
+      style={[LOG_LINE_RHYTHM, LOG_LINE_WRAPPED, style]}>
       {(gutter !== undefined || prefix !== undefined) && (
         <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} wrap testID={prefixTestID} style={LOG_LINE_LEAD}>
           {gutter && (

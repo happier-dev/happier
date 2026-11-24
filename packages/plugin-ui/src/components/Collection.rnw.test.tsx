@@ -431,6 +431,7 @@ type HarnessOptions = Readonly<{
   renderDetail?: CollectionProps<Entry>['renderDetail'];
   title?: CollectionProps<Entry>['title'];
   titleKind?: CollectionProps<Entry>['titleKind'];
+  detailBackLabel?: CollectionProps<Entry>['detailBackLabel'];
   listWidthPx?: number;
   onListWidthCommit?: (widthPx: number) => void;
   resizeKey?: string;
@@ -516,6 +517,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.footer === undefined ? {} : { footer: props.footer })}
       {...(props.title === undefined ? {} : { title: props.title })}
       {...(props.titleKind === undefined ? {} : { titleKind: props.titleKind })}
+      {...(props.detailBackLabel === undefined ? {} : { detailBackLabel: props.detailBackLabel })}
       testID="collection"
       listTestID="collection-list"
       detailTestID="collection-detail"
@@ -1787,6 +1789,24 @@ describe('Collection table', () => {
     await view.setOpen(null);
     expect(document.activeElement).toBe(view.query('row:c'));
     view.unmount();
+  });
+
+  // DBW review R5 M2: a pushed detail's way back names the list it returns to, not a bare Back glyph.
+  it('names the list a pushed detail returns to', async () => {
+    const view = mount({ detailBackLabel: 'Traces', renderDetail: (key) => <Text testID={`detail:${key}`} value={`Detail ${key}`} /> });
+    try {
+      view.measure(390);
+      act(() => { view.query('row:b')!.click(); });
+      await view.setOpen('b');
+      expect(view.query('detail:b')).not.toBeNull();
+      const back = [...document.querySelectorAll<HTMLElement>('[role="button"], button')]
+        .find((node) => node.textContent === 'Traces');
+      expect(back).toBeDefined();
+      act(() => { back!.click(); });
+      expect(view.openChanges.at(-1)).toBeNull();
+    } finally {
+      view.unmount();
+    }
   });
 
   it('focuses a public PageHeader when the detail is inline', async () => {

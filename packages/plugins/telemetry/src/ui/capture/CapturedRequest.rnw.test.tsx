@@ -121,7 +121,7 @@ describe('a captured request', () => {
     expect(fill!.style.width).toBe('75%');
   });
 
-  it('sets a waterfall’s SQL rows in the code face, led by the database mark', async () => {
+  it('sets a waterfall’s SQL rows in the code face, led by the database mark, and its request as the route cell', async () => {
     await mount(() => (
       <CapturedRequestWaterfall
         trace={trace}
@@ -136,13 +136,12 @@ describe('a captured request', () => {
         node.style.fontFamily !== '',
     );
     expect(label).toBeDefined();
-    const request = [
-      ...document.querySelectorAll<HTMLElement>('div, span'),
-    ].find(
-      (node) =>
-        node.childElementCount === 0 && node.textContent === 'POST /checkout',
-    )!;
-    expect(request.style.fontFamily).toBe('');
+    // The request row is the shared route cell (DBW review R5 M3): its route in the code face, its method quiet.
+    const route = [...document.querySelectorAll<HTMLElement>('div, span')].find(
+      (node) => node.textContent === 'POST /checkout' && node.style.fontFamily !== '',
+    );
+    expect(route).toBeDefined();
+    expect([...route!.querySelectorAll<HTMLElement>('span, div')].some((node) => node.textContent === 'POST ')).toBe(true);
   });
 
   it('hangs a wrapped log message under itself, not under the line’s clock', async () => {

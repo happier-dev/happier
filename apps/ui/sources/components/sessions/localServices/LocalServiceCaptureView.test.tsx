@@ -252,7 +252,7 @@ describe('LocalServiceCaptureView', () => {
     }
   });
 
-  it('is the one place that turns capture off and clears it: its menu retries after a gap, turns the Project switch off and clears this checkout', async () => {
+  it('is the one place that turns capture off and clears it: its menu turns the Project switch off and clears this checkout (Retry stays on the gaps line)', async () => {
     let enabled = true;
     const { invoke, calls } = machine((call) => {
       if (call.actionId.endsWith('/capture/configure')) {
@@ -269,9 +269,10 @@ describe('LocalServiceCaptureView', () => {
     try {
       await screen.pressByTestIdAsync('capture-menu');
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
-      await screen.pressByTestIdAsync('capture-menu.retry');
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
-      await settle();
+      // The gaps line carries Retry; the menu does not repeat it.
+      expect(screen.findByTestId('capture-menu.retry')).toBeNull();
+      await screen.pressByTestIdAsync('capture-menu');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
 
       await screen.pressByTestIdAsync('capture-menu');
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
@@ -287,7 +288,6 @@ describe('LocalServiceCaptureView', () => {
       await settle();
       const project = { serverId: 'home', machineId: 'laptop', projectId: 'billing-api' };
       expect(calls.filter((call) => call.actionId.endsWith('/capture/configure')).map((call) => call.input)).toEqual([
-        { project, enabled: true, retry: true },
         { project, enabled: false },
       ]);
       // Off again: the view says what capture would show and offers its one switch; no menu while off.
@@ -382,6 +382,30 @@ describe('LocalServiceCaptureView', () => {
     } finally { await screen.unmount(); }
   });
 
+  // DBW review R5 M2: the time window stands over the list, never over one request pushed on a phone.
+  it('keeps the time window over the Traces list and drops it over a request pushed on a phone', async () => {
+    const at = Date.now();
+    const item = { id: 't1', worktree: 'checkout-main', kind: 'span', source: 'otlp', at, traceId: 'trace-t1', spanId: 't1',
+      durationMs: 40, serviceName: 'web', endpointMethod: 'GET', endpointRoute: '/invoices/:id', httpStatusCode: 200 };
+    const { invoke } = machine((call) => {
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      if (call.actionId.endsWith('/capture/trace/get'))
+        return { ok: true, source, traceId: 'trace-t1', summaries: [], repeatedQueries: [], slowChildSpans: [], logCorrelations: [] };
+      return { ok: true, source, items: [item] };
+    });
+    const screen = await renderScreen(view(invoke, 'traces'));
+    try {
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces', { width: 358, height: 800 });
+      await settle();
+      expect(screen.findByTestId('capture-window:hour')).not.toBeNull();
+      await screen.pressByTestIdAsync('telemetry.capture.trace.t1');
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
+      expect(screen.findByTestId('capture-window:hour')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   // DBW review R4 #7: gaps are said once, in the person's terms, with Retry beside them.
   it('says capture has gaps once, without the store code, and retries from that line', async () => {
     const { invoke, calls } = machine((call) => {
@@ -426,6 +450,9 @@ describe('LocalServiceCaptureView', () => {
       : { ok: true, source, items: [{
           serviceName: 'web', method: 'GET', route: '/api/invoices', requestCount: 38, errorCount: 9,
           errorRate: 9 / 38, totalDurationMs: 38 * 22, databaseTimeMs: 38 * 5,
+        }, {
+          serviceName: 'web', method: 'GET', route: '/invoices/:id', requestCount: 1, errorCount: 0,
+          errorRate: 0, totalDurationMs: 198, databaseTimeMs: 150,
         }] });
     const screen = await renderScreen(view(invoke, 'endpoints'));
     try {
@@ -434,6 +461,9 @@ describe('LocalServiceCaptureView', () => {
       await settle();
       const text = screen.getTextContent();
       expect(text).toMatch(/38 requests · 9 failed · 22\s?ms · 23% in database/);
+      // DBW review R5 M6: one request is "1 request".
+      expect(text).toMatch(/(^|[^0-9])1 request · /);
+      expect(text).not.toMatch(/(^|[^0-9])1 requests/);
     } finally { await screen.unmount(); }
   });
 });

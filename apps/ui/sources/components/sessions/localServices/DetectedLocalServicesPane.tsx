@@ -462,9 +462,13 @@ type DetectedLocalServicesPaneProps = Readonly<{
  */
 export function DetectedLocalServicesPane(props: DetectedLocalServicesPaneProps): React.ReactElement {
     const credentialScope = useServerCredentialAccountScopeBinding(props.serverId);
+    const body = <DetectedLocalServicesPaneBody {...props} />;
     return (
         <ServerCredentialAccountScopeBindingProvider serverId={props.serverId ?? null} state={credentialScope}>
-            <DetectedLocalServicesPaneBody {...props} />
+            {/* A page that offers capture views (Endpoints, Traces, Logs: data across the pane, a list beside its
+                detail) stands in the dashboard column on every tab, so the title and tabs never move when the
+                person switches between Servers and a capture view (lab dbCapture). */}
+            {props.presentation === 'page' && props.viewTabs ? <PageColumnProvider value="dashboard">{body}</PageColumnProvider> : body}
         </ServerCredentialAccountScopeBindingProvider>
     );
 }
@@ -743,10 +747,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         props.publicPreviewState, props.previewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
 
     const page = props.presentation === 'page';
-    // A capture view (Endpoints, Traces, Logs) is data compared across the pane and a list beside its detail: it takes
-    // the dashboard column, its title with it (lab dbCapture). Servers keeps the page's own column (lab dbFind-devservers).
-    const captureColumn = props.viewBody ? 'dashboard' as const : undefined;
-    const columnMaxWidth = useLayoutMaxWidth(captureColumn);
+    const columnMaxWidth = useLayoutMaxWidth();
     // The page opens on its own name, as the Project's other pages do (lab dbCapture). The phone page is titled by
     // its cockpit header and leads straight into the list (lab PAGEp).
     const pageHeader = page && !phone ? (
@@ -791,13 +792,11 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     if (props.viewBody) {
         return (
             <ScrollView testID={`${testID}-view`} style={styles.root} contentContainerStyle={styles.stateScrollContent}>
-                <PageColumnProvider value="dashboard">
-                    <ConstrainedScreenContent>
-                        {pageHeader}
-                        {scopeBar}
-                        {props.viewBody}
-                    </ConstrainedScreenContent>
-                </PageColumnProvider>
+                <ConstrainedScreenContent>
+                    {pageHeader}
+                    {scopeBar}
+                    {props.viewBody}
+                </ConstrainedScreenContent>
             </ScrollView>
         );
     }

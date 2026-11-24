@@ -38,7 +38,7 @@ import {
   projectCaptureEndpoints,
   type CaptureEndpointView,
 } from './model.js';
-import { requestLabelOf } from '../traceWaterfall.js';
+import { requestLabelOf, requestRouteOf } from '../traceWaterfall.js';
 import { CapturedLogLines, type CapturedLogBodyReader } from './CapturedRequest.js';
 import { formatTelemetryMetric } from '../widgets/telemetryWidgetModel.js';
 
@@ -58,10 +58,6 @@ function routeTitleSlots<Item>(
   return { title: (item) => parts(item).route, titleLead: (item) => parts(item).method, titleIdentifier: true };
 }
 
-const requestRoute = (item: DatabaseCaptureSummaryV1) =>
-  item.endpointMethod && item.endpointRoute
-    ? { method: item.endpointMethod, route: item.endpointRoute }
-    : { method: null, route: requestLabelOf(item) };
 
 /**
  * A list whose rows open beside it (lab dbCapture-traces): the chosen row's detail stands beside the list where both
@@ -103,23 +99,21 @@ function MoreButton(
   );
 }
 
-/** The time at a row's end: tabular, never truncated. */
+/** The time at a row's end: tabular, never truncated. A failed row leads it with its status ("500 · 18 ms", lab). */
 function TimeMeta(
   props: Readonly<{
     ms: number | null | undefined;
     locale: string;
     failed?: boolean;
+    status?: number | null;
   }>,
 ) {
+  const time = props.ms === null || props.ms === undefined ? '—' : formatHappierDuration(props.ms, props.locale);
   return (
     <Text
       variant="meta"
       tone={props.failed ? 'danger' : 'secondary'}
-      value={
-        props.ms === null || props.ms === undefined
-          ? '—'
-          : formatHappierDuration(props.ms, props.locale)
-      }
+      value={props.failed && props.status != null ? `${props.status} · ${time}` : time}
     />
   );
 }
@@ -157,6 +151,8 @@ function CaptureList<Item>(
      */
     tableMinWidth?: number;
     detail?: CaptureListDetail<Item>;
+    /** Controls over the rows (a time window): beside the list, and gone while one row's detail is the page. */
+    header?: React.ReactNode;
   }>,
 ) {
   const { items, keyOf, onOpen, detail } = props;
@@ -206,10 +202,13 @@ function CaptureList<Item>(
         {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
         empty={<Text tone="secondary" value={props.empty} />}
         scroll="page"
+        {...(props.header === undefined ? {} : { header: props.header })}
         {...(detail
           ? {
               // The rows and the chosen one's detail share the page (lab dbCapture-traces: a short list, a wide detail).
               detail: 'auto' as const,
+              // A pushed detail returns to this list by name ("‹ Traces"), not a bare Back beside the page's own.
+              detailBackLabel: props.label,
               detailOpenIntent: picked === null ? ('landing' as const) : ('explicit' as const),
               renderDetail,
               minListWidth: CAPTURE_SPLIT.minListWidthPx,
@@ -229,16 +228,24 @@ function CaptureList<Item>(
   );
 }
 
+/** A route failed in this window: the one decision its Error rate cell and its phone line both speak from. */
+const endpointFailing = (view: CaptureEndpointView) => view.endpoint.errorCount > 0;
+
+/** "1 request" / "38 requests". */
+function requestCount(count: number, locale: string, text: PluginTranslate): string {
+  return count === 1
+    ? text('plugins.telemetry.capture.requestsCount.one', '1 request')
+    : text('plugins.telemetry.capture.requestsCount', '{count} requests', { count: formatHappierDataValue(count, locale) });
+}
+
 /**
  * The phone's second line, the figures the table's columns hold (lab dbCapture-endpointsp): "38 requests · 9 failed ·
  * 22 ms · 24% in database". A failed count is the only part that speaks, and only when there is one.
  */
 function endpointPhoneFacts(view: CaptureEndpointView, locale: string, text: PluginTranslate): string {
   return [
-    text('plugins.telemetry.capture.requestsCount', '{count} requests', {
-      count: formatHappierDataValue(view.endpoint.requestCount, locale),
-    }),
-    view.endpoint.errorCount > 0
+    requestCount(view.endpoint.requestCount, locale, text),
+    endpointFailing(view)
       ? text('plugins.telemetry.capture.failed', '{count} failed', {
           count: formatHappierDataValue(view.endpoint.errorCount, locale),
         })
@@ -293,11 +300,11 @@ export function CaptureEndpoints(
         align: 'end',
         render: (view) => (
           <Stack gap="none" align="flex-end">
-            <Text variant="body" value={share(view.errorRate, locale)} />
-            {view.endpoint.errorCount > 0 ? (
+            <Text variant="body" {...(endpointFailing(view) ? { tone: 'danger' as const } : {})} value={share(view.errorRate, locale)} />
+            {endpointFailing(view) ? (
               <Text
                 variant="meta"
-                tone="secondary"
+                tone="danger"
                 value={text('plugins.telemetry.capture.failed', '{count} failed', {
                   count: formatHappierDataValue(view.endpoint.errorCount, locale),
                 })}
@@ -336,7 +343,7 @@ export function CaptureEndpoints(
         layout?.fieldColumns === false ? (
           <Text
             variant="meta"
-            tone={view.endpoint.errorCount > 0 ? 'danger' : 'secondary'}
+            tone={endpointFailing(view) ? 'danger' : 'secondary'}
             numberOfLines={1}
             value={endpointPhoneFacts(view, locale, text)}
           />
@@ -396,6 +403,8 @@ export function CaptureTraces(
     loading: boolean;
     locale: string;
     more?: CapturePageMore | null;
+    /** Controls over the rows (the time window), which give way while a request's detail is the page. */
+    header?: React.ReactNode;
   }> &
     (
       | Readonly<{ onOpen: (request: DatabaseCaptureSummaryV1) => void; detail?: undefined }>
@@ -412,13 +421,10 @@ export function CaptureTraces(
       minute: '2-digit',
       second: '2-digit',
     });
-    // A healthy status stays quiet (lab dbCapture-traces): only a failed request names its status.
+    // A healthy status stays quiet (lab dbCapture-traces): a failed request names its status in the row's rose end.
     const facts = (item: DatabaseCaptureSummaryV1) =>
       [
         item.serviceName || null,
-        item.httpStatusCode === null || item.httpStatusCode === undefined || !captureSummaryFailed(item)
-          ? null
-          : String(item.httpStatusCode),
         time.format(item.at),
       ]
         .filter((part): part is string => part !== null)
@@ -426,18 +432,21 @@ export function CaptureTraces(
     return {
       glyph: () => null,
       loadingGlyph: false,
-      ...routeTitleSlots(requestRoute),
+      ...routeTitleSlots(requestRouteOf),
       byline: facts,
-      // A failed request says so once, in the failure tone, beside its time.
+      // A failed request says so once, in the failure tone, its status before its time ("500 · 18 ms").
       titleMeta: (item) => (
         <TimeMeta
           ms={item.durationMs}
           locale={locale}
           failed={captureSummaryFailed(item)}
+          status={item.httpStatusCode ?? null}
         />
       ),
       titleMetaAlign: 'row',
-      accessibilityLabel: (item) => `${requestLabelOf(item)}, ${facts(item)}`,
+      accessibilityLabel: (item) => [requestLabelOf(item), facts(item),
+        captureSummaryFailed(item) && item.httpStatusCode != null ? String(item.httpStatusCode) : null]
+        .filter((part): part is string => part !== null).join(', '),
       testID: (item) => `telemetry.capture.trace.${item.id}`,
       columnTitles: {
         title: text('plugins.telemetry.capture.request', 'Request'),
@@ -457,6 +466,7 @@ export function CaptureTraces(
         'No requests in this window',
       )}
       {...(props.detail ? { detail: props.detail } : { onOpen: props.onOpen })}
+      {...(props.header === undefined ? {} : { header: props.header })}
       more={props.more ?? null}
     />
   );
@@ -562,7 +572,8 @@ export function CaptureLogs(
   }
   return (
     <Stack gap="medium">
-      <ItemGroup testID="telemetry.capture.logs.card">
+      {/* One sheet of lines (lab dbCapture-logs): an untitled group draws no chrome unless it asks for its sheet. */}
+      <ItemGroup testID="telemetry.capture.logs.card" surface="sheet">
         <CapturedLogLines logs={props.items} locale={props.locale} readBody={props.readBody} showService
           testIDPrefix="telemetry.capture" />
       </ItemGroup>

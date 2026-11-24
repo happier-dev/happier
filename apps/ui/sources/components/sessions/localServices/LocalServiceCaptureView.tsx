@@ -231,6 +231,48 @@ export function LocalServiceCaptureView(
       : gaps === null && !restartRequired && enabled
         ? t('deploymentTelemetry.local.on')
         : null;
+  // The time window and "…" stand over the rows. Over Traces they are its list's header, so they give way while one
+  // request's detail is the page on a phone: a window does not apply to a single request (lab dbCapture-tracep).
+  const tracesShown = status?.kind === 'ready' && enabled === true && !(failed && data === null)
+    && !(data !== null && data.items.length === 0 && !state.reading) && data?.list === 'traces';
+  const windowBar = (
+    <View style={styles.bar}>
+      <Text
+        variant="meta"
+        numberOfLines={1}
+        testID={`${testID}-status`}
+        style={styles.facts}
+      >
+        {statusText}
+      </Text>
+      <View style={styles.barEnd}>
+        <SegmentedTabBar<WindowId>
+          role="radiogroup"
+          accessibilityLabel={t('deploymentTelemetry.window.label')}
+          testIDPrefix={`${testID}-window`}
+          segmentSizing="content"
+          activeTabId={windowId}
+          tabs={[
+            {
+              id: 'quarter',
+              label: t('deploymentTelemetry.local.window.quarter'),
+            },
+            {
+              id: 'hour',
+              label: t('deploymentTelemetry.local.window.hour'),
+            },
+            { id: 'day', label: t('deploymentTelemetry.local.window.day') },
+          ]}
+          onSelectTab={(id) => {
+            setWindowId(id);
+            setOpenTraceId(null);
+          }}
+        />
+        {/* Retry lives on the gaps line while it shows; the menu keeps the rare moves. */}
+        <TelemetryMenu onRetry={null} onTurnOff={turnOff} onClear={clear} testID={`${testID}-menu`} />
+      </View>
+    </View>
+  );
   const body =
     status === null ? (
       <SurfaceStateCard
@@ -307,6 +349,7 @@ export function LocalServiceCaptureView(
         loading={state.reading}
         locale={locale}
         detail={traceDetail}
+        header={windowBar}
         more={
           data.nextCursor ? { onPress: more, busy: state.loadingMore } : null
         }
@@ -373,44 +416,7 @@ export function LocalServiceCaptureView(
             action={{ label: t('common.retry'), onPress: retry }}
           />
         ) : null}
-        {enabled ? (
-          <View style={styles.bar}>
-            <Text
-              variant="meta"
-              numberOfLines={1}
-              testID={`${testID}-status`}
-              style={styles.facts}
-            >
-              {statusText}
-            </Text>
-            <View style={styles.barEnd}>
-              <SegmentedTabBar<WindowId>
-                role="radiogroup"
-                accessibilityLabel={t('deploymentTelemetry.window.label')}
-                testIDPrefix={`${testID}-window`}
-                segmentSizing="content"
-                activeTabId={windowId}
-                tabs={[
-                  {
-                    id: 'quarter',
-                    label: t('deploymentTelemetry.local.window.quarter'),
-                  },
-                  {
-                    id: 'hour',
-                    label: t('deploymentTelemetry.local.window.hour'),
-                  },
-                  { id: 'day', label: t('deploymentTelemetry.local.window.day') },
-                ]}
-                onSelectTab={(id) => {
-                  setWindowId(id);
-                  setOpenTraceId(null);
-                }}
-              />
-              <TelemetryMenu onRetry={coverageReason ? retryCapture : null} onTurnOff={turnOff} onClear={clear}
-                testID={`${testID}-menu`} />
-            </View>
-          </View>
-        ) : null}
+        {enabled && !tracesShown ? windowBar : null}
       </View>
       <CoreCollectionScope>{body}</CoreCollectionScope>
     </View>
