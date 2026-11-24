@@ -332,7 +332,7 @@ describe('VoiceHistoryScreen', () => {
       if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
       if (path === `/v2/sessions/${unopened.id}`) return Response.json(createPlainSessionByIdResponseFixture(unopened));
       if (path === `/v1/sessions/${session.id}/turns`) return Response.json(buildSessionTurnsProjectionV1({
-        sessionId: session.id, latestTurnId: null, updatedAt: 1, turns: [] }));
+        sessionId: session.id, updatedAt: 1, turns: [] }));
       if (path.endsWith('/messages')) {
         bodyReads.push(path);
         return Response.json({ messages: [{ id: 'lazy-turn', localId: null, seq: 1, createdAt: 1, messageRole: 'agent',
