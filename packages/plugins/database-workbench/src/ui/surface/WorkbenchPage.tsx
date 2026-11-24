@@ -9,6 +9,7 @@ import {
   LoadingState,
   PageHeader,
   Stack,
+  Text,
   defineUiSurface,
   useHappierPageChrome,
   usePluginTranslation,
@@ -143,16 +144,19 @@ function LinkedWorkbenchPage({ context, target, place, root }: Readonly<{
     />
   );
   return <MountedWorkbenchPage context={context} place={place} root={root}
-    launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client} />;
+    launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client}
+    connectionNotice={linked.connection === 'standalone'
+      ? translate('plugins.database.connectionReuseUnavailable', 'Connection reuse is unavailable') : undefined} />;
 }
 
-function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly<{
+function MountedWorkbenchPage({ context, launch, place, root, client, connectionNotice }: Readonly<{
   context: RenderContext;
   launch: WorkbenchLaunchInput | null;
   place: WorkbenchPlace;
   /** No place in the address: the database's root, which a phone shows as the rail. */
   root: boolean;
   client?: WorkbenchClient;
+  connectionNotice?: string;
 }>) {
   const translate = usePluginTranslation();
   const descriptor = launch?.descriptor;
@@ -206,6 +210,7 @@ function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly
   }
   return (
     <WorkbenchProvider instance={instance}>
+      {connectionNotice ? <Text tone="secondary" value={connectionNotice} /> : null}
       <WorkbenchLayout targetKey={targetKey} scope={launch.scope} root={root} />
     </WorkbenchProvider>
   );

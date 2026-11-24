@@ -19,6 +19,8 @@ import { createHostWorkbenchClient } from './hostClient.js';
 import { workbenchTargetKey, createWorkbenchInstance } from '../workbench.js';
 import { createDatabaseConnectionResourceRuntime } from '../../resources.js';
 import { openManualDatabaseConnection } from '../../connection.js';
+import { databaseOperationActions } from '../../operationActions.js';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 
 const adapter: PluginUiSemanticSurfaceAdapter<null> = { async mount() { return {
   async snapshot() { return { revision: 1, nodes: [] }; }, async update() {}, async invoke() {}, async dispose() {},
@@ -72,6 +74,36 @@ it('preserves demand admission refusal without reconnecting through an ordinary 
     release();
     await fixture.dispose();
   }
+});
+
+it('relays the exact Environment describe and read without a subscription when the watch transport is absent', async () => {
+  const descriptor = { ...createDatabaseDescriptorV1Fixture(), target: {
+    kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+    deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'selected',
+  } } as const satisfies DatabaseDescriptorV1;
+  const executeAction = vi.fn<NonNullable<PluginUiTestkitHostHandlers['executeAction']>>(async ({ action, input }) => {
+    expect(input).toMatchObject({ target: descriptor.target });
+    expect(input).not.toHaveProperty('subscriptionId');
+    switch (action) {
+      case databaseActionLocalIdV1(databaseOperationActions.describe.id):
+        return projectNativeJsonValueForTransport({ ok: true, operation: 'describe', descriptor });
+      case databaseActionLocalIdV1(databaseOperationActions['schemas.list'].id):
+        return { ok: true, operation: 'schemas.list', schemas: [{ name: 'selected' }], completeness: { complete: true } };
+      default: throw new Error('Unexpected Action');
+    }
+  });
+  const fixture = await createHostFixture('absent-environment-watch', {
+    executeAction,
+    async watchResource() { throw new PluginError({ code: 'plugin_resource_transport_unavailable' }); },
+  });
+  const client = createHostWorkbenchClient(fixture.context.hostApi, { pageLocation: true, pageTarget: descriptor.target });
+  try {
+    const signal = new AbortController().signal;
+    await expect(client.describe(descriptor.target, signal)).resolves.toEqual({ descriptor, connection: 'standalone' });
+    await expect(client.operation({ operation: 'schemas.list', target: descriptor.target }, signal))
+      .resolves.toMatchObject({ ok: true, schemas: [{ name: 'selected' }] });
+    expect(executeAction).toHaveBeenCalledTimes(2);
+  } finally { client.dispose(); await fixture.dispose(); }
 });
 
 it('shares one admitted demand when the same target arrives in a different property order', async () => {

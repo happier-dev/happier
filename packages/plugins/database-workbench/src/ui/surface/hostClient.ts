@@ -14,7 +14,7 @@ import {
     type DatabaseTargetV1,
     type DatabaseTargetsListResultV1,
 } from '@happier-dev/plugin-sdk/database';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -38,11 +38,13 @@ export function createHostWorkbenchClient(
   hostApi: PluginUiHostApi,
   options: HostOptions,
 ): WorkbenchClient & Readonly<{
-  describe(target: DatabaseTargetV1): Promise<DatabaseDescriptorV1>;
+  describe(target: DatabaseTargetV1, signal: AbortSignal): Promise<Readonly<{
+    descriptor: DatabaseDescriptorV1; connection: 'watch' | 'standalone';
+  }>>;
   dispose(): void;
 }> {
   const listeners = new Set<Parameters<WorkbenchClient['subscribeOwnWrites']>[0]>();
-  const demands = new Map<string, Readonly<{ ready: Promise<DatabaseDemandSnapshotV1>; subscriptionId(): string; dispose(): void }>>();
+  const demands = new Map<string, Readonly<{ ready: Promise<DatabaseDemandSnapshotV1 | null>; subscriptionId(): string; dispose(): void }>>();
   function demand(target: DatabaseTargetV1) {
     const targetKey = workbenchTargetKey(target);
     const held = demands.get(targetKey);
@@ -50,9 +52,9 @@ export function createHostWorkbenchClient(
     const input = projectNativeJsonValueForTransport({ operation: 'describe', target });
     let subscriptionId: string;
     let previous: DatabaseDemandSnapshotV1 | undefined;
-    let resolveReady!: (snapshot: DatabaseDemandSnapshotV1) => void;
+    let resolveReady!: (snapshot: DatabaseDemandSnapshotV1 | null) => void;
     let rejectReady!: (error: unknown) => void;
-    const ready = new Promise<DatabaseDemandSnapshotV1>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    const ready = new Promise<DatabaseDemandSnapshotV1 | null>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     let admission: ReturnType<PluginUiHostApi['watchResource']>;
     const store = createPluginUiResourceStore({ client: {
       watchResource(resource, listener, requestOptions) {
@@ -61,7 +63,16 @@ export function createHostWorkbenchClient(
           subscriptionId = handle.subscriptionId;
           changed();
           return handle;
-        }, error => { rejectReady(error); throw error; });
+        }, error => {
+          if ('environment' in target && isPluginError(error)
+            && (error.code === 'plugin_resource_transport_unavailable' || error.code === 'plugin_resource_transport_not_supported')) {
+            // The watch could not be established. The Action relay still admits every standalone request.
+            resolveReady(null);
+          } else {
+            rejectReady(error);
+          }
+          throw error;
+        });
         return admission;
       },
       async readResource(resource, requestOptions) {
@@ -115,6 +126,16 @@ export function createHostWorkbenchClient(
     for (const held of demands.values()) held.dispose();
     demands.clear();
   }
+  async function executeOperation(input: Parameters<WorkbenchClient['operation']>[0], signal: AbortSignal, subscriptionId?: string) {
+    signal.throwIfAborted();
+    const result = await hostApi.executeAction(
+      databaseActionLocalIdV1(databaseOperationActions[input.operation].id),
+      projectNativeJsonValueForTransport(subscriptionId === undefined ? input : { ...input, subscriptionId }),
+      { signal },
+    );
+    // The SDK admitted the result against DatabaseOperationResultV1ProtocolSchema.
+    return result as unknown as DatabaseOperationResultV1;
+  }
   return {
     dispose,
     releaseReadDemand(target) {
@@ -123,8 +144,14 @@ export function createHostWorkbenchClient(
       demands.delete(targetKey);
       held?.dispose();
     },
-    async describe(target) {
-      return (await demand(target).ready).descriptor;
+    async describe(target, signal) {
+      const snapshot = await demand(target).ready;
+      signal.throwIfAborted();
+      if (snapshot) return { descriptor: snapshot.descriptor, connection: 'watch' };
+      const result = await executeOperation({ operation: 'describe', target }, signal);
+      if (!result.ok) throw new PluginError({ code: result.code });
+      if (result.operation !== 'describe') throw new PluginError({ code: 'plugin_resource_result_invalid' });
+      return { descriptor: result.descriptor, connection: 'standalone' };
     },
     machineDisplayName: (request, options) => hostApi.readMachineDisplayName(request, options),
     async targets(input, signal) {
@@ -138,15 +165,8 @@ export function createHostWorkbenchClient(
     },
     async operation(input, signal) {
       const held = demand(input.target);
-      await held.ready;
-      signal.throwIfAborted();
-      const result = await hostApi.executeAction(
-        databaseActionLocalIdV1(databaseOperationActions[input.operation].id),
-        projectNativeJsonValueForTransport({ ...input, subscriptionId: held.subscriptionId() }),
-        { signal },
-      );
-      // The SDK admitted the result against DatabaseOperationResultV1ProtocolSchema.
-      return result as unknown as DatabaseOperationResultV1;
+      const snapshot = await held.ready;
+      return executeOperation(input, signal, snapshot ? held.subscriptionId() : undefined);
     },
     async access(target, signal) {
       const result = await hostApi.executeAction(

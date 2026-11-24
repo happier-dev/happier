@@ -310,7 +310,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
             expect(daemon.nextSignals[0]!.aborted).toBe(true);
             await expect(handlers.watchResource({ requestId: 'withdrawn-machine-watch', method: 'watchResource',
                 payload: { subscriptionId: 'withdrawn-machine-watch', resource: 'status' } })).resolves.toMatchObject({
-                code: 'unavailable', diagnostics: ['plugin_resource_transport_unavailable'],
+                code: 'plugin_resource_transport_unavailable', diagnostics: ['plugin_resource_transport_unavailable'],
             });
             progress?.(content(DIGEST_A));
             expect(events).toEqual([

@@ -115,7 +115,8 @@ export function useWorkbenchMount(
 }
 
 type LinkedWorkbenchFailure = { status: 'unavailable'; error: unknown };
-type LinkedWorkbenchReady = { status: 'ready'; descriptor: DatabaseDescriptorV1; client: WorkbenchClient };
+type LinkedWorkbenchReady = Awaited<ReturnType<ReturnType<typeof createHostWorkbenchClient>['describe']>>
+  & { status: 'ready'; client: WorkbenchClient };
 
 type LinkedWorkbench =
   | { status: 'loading' }
@@ -136,9 +137,10 @@ export function useLinkedWorkbench(context: RenderContext, target: DatabaseTarge
   React.useEffect(() => {
     const client = createHostWorkbenchClient(hostApi, { pageLocation: true, pageTarget: target });
     let active = true;
-    void client.describe(target).then(
-      descriptor => {
-        if (active) setSettled({ hostApi, targetKey, attempt, result: { status: 'ready', descriptor, client } });
+    const request = new AbortController();
+    void client.describe(target, request.signal).then(
+      description => {
+        if (active) setSettled({ hostApi, targetKey, attempt, result: { status: 'ready', ...description, client } });
       },
       error => {
         if (active) setSettled({ hostApi, targetKey, attempt, result: { status: 'unavailable', error } });
@@ -146,6 +148,7 @@ export function useLinkedWorkbench(context: RenderContext, target: DatabaseTarge
     );
     return () => {
       active = false;
+      request.abort();
       client.dispose();
     };
     // The target key keeps the same demand when only the relation changes.

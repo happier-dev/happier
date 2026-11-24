@@ -233,9 +233,6 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if ((hostReference.success || readAuthority.success) && parsed.data.input !== undefined) {
                 return errorPayload('invalid_payload', 'plugin_resource_request_invalid');
             }
-            if (!readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
-                return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
-            }
             if (hostReference.success && input.hostResourceStore) {
                 const { subscriptionId } = parsed.data;
                 hostWatches.get(subscriptionId)?.();
@@ -294,11 +291,6 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (reference.pluginId !== input.pluginId) {
                 return errorPayload('unavailable', 'plugin_resource_not_found');
             }
-            // One issued watch retains its admitted owner across awaits. A
-            // committed binding update may retire it, never redirect it.
-            const admittedOwner = owner;
-            if (!admittedOwner || (input.isDaemonAvailable?.() === false && (readAuthority.success
-                || resource?.store?.requiresMachine?.(reference) !== false))) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
             if (input.isCurrent?.() === false) {
                 return errorPayload('unavailable', 'plugin_surface_retired');
             }
@@ -306,6 +298,17 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             const signal = mergedSignal.signal;
             try {
                 if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
+                if (!readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
+                    return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
+                }
+                // One issued watch retains its owner across awaits. A binding
+                // update can retire it, never redirect it.
+                const admittedOwner = owner;
+                if (!admittedOwner
+                    || (input.isDaemonAvailable?.() === false && (readAuthority.success
+                        || resource?.store?.requiresMachine?.(reference) !== false))) {
+                    return createPluginSurfaceHostApiError('plugin_resource_transport_unavailable', ['plugin_resource_transport_unavailable']);
+                }
                 const subscriptionId = parsed.data.subscriptionId;
                 const opened = await admittedOwner.open({
                     subscriptionId,
