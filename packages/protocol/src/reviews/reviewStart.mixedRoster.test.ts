@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { ReviewStartInputSchema } from './reviewStart.js';
+import { ReviewStartInputSchema, reviewReviewerIdentitiesForStartV1 } from './reviewStart.js';
 
 describe('ordered Review reviewer admission', () => {
+  it('retains each engine member runner and account through Action JSON admission and identity projection', () => {
+    const reviewers = [
+      { kind: 'engine', engineId: 'roborev',
+        runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        modelSelection: { agentTargetKey: 'backend:codex', providerConnectionId: 'provider-a', modelId: 'codex-review-model' },
+        connectedServices: { selectedAccount: 'codex-account' } },
+      { kind: 'engine', engineId: 'roborev',
+        runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        modelSelection: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'claude-review-model' },
+        connectedServices: { selectedAccount: 'claude-account' } },
+    ];
+    const parsed = ReviewStartInputSchema.parse(JSON.parse(JSON.stringify({ reviewers, instructions: 'Review.' })));
+    expect(parsed.reviewers).toEqual(reviewers);
+    expect(reviewReviewerIdentitiesForStartV1(parsed).reviewerAgentIds).toEqual({
+      'step-1-reviewer-1': 'happier.agent.codex/codex',
+      'step-1-reviewer-2': 'happier.agent.claude/claude',
+    });
+    expect(ReviewStartInputSchema.safeParse({ reviewers: [{ ...reviewers[0],
+      runnerAgentTarget: { ...reviewers[0].runnerAgentTarget, command: 'private override' },
+    }], instructions: 'Review.' }).success).toBe(false);
+    expect(ReviewStartInputSchema.safeParse({ reviewers: [{ kind: 'engine', engineId: 'roborev',
+      runnerAgentTarget: 'codex',
+    }], instructions: 'Review.' }).success).toBe(false);
+  });
+
   it('keeps additive launch metadata as JSON and refuses non-JSON reviewer launch values', () => {
     const selection = { kind: 'engine', engineId: 'codex', sessionConfigOptionOverrides: {
       v: 1, updatedAt: 1, overrides: {}, futureMetadata: { values: ['preserved', null] },

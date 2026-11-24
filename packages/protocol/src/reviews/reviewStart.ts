@@ -21,6 +21,7 @@ import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -55,6 +56,7 @@ export const REVIEW_SCM_SCOPE_INPUT_KEY = 'scmReviewScope';
 export const ReviewEngineReviewerSelectionV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('engine'),
   engineId: ReviewEngineIdSchema,
+  runnerAgentTarget: z.optional(AgentExecutionTargetV1Schema),
   includeSessionTranscript: z.optional(z.boolean()),
   options: z.optional(ReviewEngineInputSchema),
   modelId: ExecutionRunStartRequestBaseSchema.shape.modelId,
@@ -147,8 +149,9 @@ export function reviewReviewerIdentitiesForStartV1(input: Pick<ReviewStartInput,
   const reviewerAgentIds: Record<string, string> = {};
   for (const { reviewer, id } of reviewExecutableRosterForStartV1(input)) {
     const sessionIdentity = reviewer.kind === 'session' ? readSessionIdentity?.(reviewer) : undefined;
-    const agentId = reviewer.kind === 'model' ? buildQualifiedPluginContributionKey(reviewer.launch.agentTarget.identity)
-      : sessionIdentity?.agentId;
+    const agentTarget = reviewer.kind === 'model' ? reviewer.launch.agentTarget
+      : reviewer.kind === 'engine' ? reviewer.runnerAgentTarget : undefined;
+    const agentId = agentTarget ? buildQualifiedPluginContributionKey(agentTarget.identity) : sessionIdentity?.agentId;
     const name = reviewer.kind === 'engine'
       ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
         ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
