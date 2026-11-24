@@ -192,7 +192,8 @@ export async function preflightWorkspaceDestinationReplacement(
             ...(options.signal ? { signal: options.signal } : {}),
         });
         const refusal = readError(raw);
-        if (refusal) return { type: 'error', result: { ok: false, errorCode: refusal.errorCode, error: refusal.errorMessage } };
+        if (refusal) return { type: 'error', result: { ok: false, errorCode: refusal.errorCode, error: refusal.errorMessage,
+            ...(refusal.failureCause === undefined ? {} : { failureCause: refusal.failureCause }) } };
         const parsed = HandoffTargetReplacementPreflightResultV1Schema.safeParse(raw);
         return parsed.success ? parsed.data : { type: 'error', result: { ok: false,
             errorCode: 'invalid_response', error: 'Workspace target returned an invalid preflight response' } };
@@ -202,8 +203,10 @@ export async function preflightWorkspaceDestinationReplacement(
             return { type: 'error', result: { ok: false, errorCode: 'workspace_sync_update_required',
                 error: 'Workspace target preflight requires a newer daemon' } };
         }
-        const errorCode = readRpcErrorCode(error) ?? 'target_unavailable';
-        return { type: 'error', result: { ok: false, errorCode, error: error instanceof Error ? error.message : errorCode } };
+        const refusal = readError(error);
+        const errorCode = refusal?.errorCode ?? readRpcErrorCode(error) ?? 'target_unavailable';
+        return { type: 'error', result: { ok: false, errorCode, error: refusal?.errorMessage ?? (error instanceof Error ? error.message : errorCode),
+            ...(refusal?.failureCause === undefined ? {} : { failureCause: refusal.failureCause }) } };
     }
 }
 
