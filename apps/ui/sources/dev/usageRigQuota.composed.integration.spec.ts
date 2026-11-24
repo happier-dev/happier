@@ -253,7 +253,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         app.addHook('onSend', (request, reply, payload, done) => {
             const url = new URL(request.url, 'http://usage-rig.test');
             if (request.method === 'GET' && typeof payload === 'string' && (url.pathname === '/v1/features'
-                || url.pathname === '/v1/account/profile' || url.pathname === CONNECTED_PRESENTATION_ROWS_ROUTE_V1
+                || url.pathname === '/v1/account/profile' || url.pathname === '/v1/account/encryption'
+                || url.pathname === CONNECTED_PRESENTATION_ROWS_ROUTE_V1
                 || url.pathname === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1)) {
                 metadataTraffic.push({ path: url.pathname, bytes: Buffer.byteLength(payload) });
             }
@@ -553,6 +554,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 await cell(`Provider wake ${tick}`, async () => {
                     if (!plansEntry) throw new Error('Plans entry is missing');
                     const begin = traffic.length;
+                    const metadataBegin = metadataTraffic.length;
                     const changed = records[0]!;
                     const changesBeforeWake = quotaChanges.length;
                     const { sync } = await import('../sync/sync');
@@ -646,11 +648,15 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     console.info('quota-rig settled history', JSON.stringify({ tick, traffic: summarizeTraffic(clientHistoryReads),
                         siblings: reads(siblingReads), settled: reads(settledReads) }));
                     expect({ siblings: reads(siblingReads), settled: reads(settledReads) }).toEqual({ siblings: [], settled: [] });
+                    const qualificationReads = traffic.slice(begin).filter(row => row.method === 'GET'
+                        && row.purpose !== 'connected-accounts:usage-persistence');
                     expect({
                         currentDayBodies: clientHistoryReads.filter(row => row.kind === 'summary' && row.days?.some(day => day.dayStartAtMs === today)).length,
-                        sourceResolutions: traffic.slice(begin).filter(row => row.method === 'GET' && row.path.endsWith('/sources/resolve')).length,
+                        sourceResolutions: qualificationReads.filter(row => row.path.endsWith('/sources/resolve')).length,
+                        headRecords: qualificationReads.filter(row => row.path.endsWith('/record')).map(row => row.recordId),
+                        encryptionModeReads: metadataTraffic.slice(metadataBegin).filter(row => row.path === '/v1/account/encryption').length,
                         suffixBodies: clientHistoryReads.filter(row => row.kind === 'exact' && row.history?.terminalFrames === 1).length,
-                    }).toEqual({ currentDayBodies: 1, sourceResolutions: 1, suffixBodies: 1 });
+                    }).toEqual({ currentDayBodies: 1, sourceResolutions: 0, headRecords: [changed.write.recordId], encryptionModeReads: 0, suffixBodies: 1 });
                     if (tick === WAKE_COUNT) {
                         expect(changesPages.slice(changePageStart)).toEqual(expect.arrayContaining([
                             { after: before, count: pageLimit - 1, full: true, recordIds: undefined },
@@ -1103,7 +1109,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         expect(prunedExact.readiness).toMatchObject({ status: 'waiting', reason: 'witness_unavailable' });
     }, 30_000);
 
-    it('reuses the cold Projections admission across actual initial-cursor capture', async () => {
+    it('reuses the cold Projections admission across initial-cursor capture and accounting-only catch-up', async () => {
         const webStorage = installLocalStorageMock();
         const releaseCursor = createDeferred<void>();
         onTestFinished(() => { releaseCursor.resolve(); webStorage.restore(); });
@@ -1143,13 +1149,14 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const { serverId } = accountLifetime.scope;
         installUsageDescriptors(accountLifetime, [PROVIDERS[0]]);
         await getServerFeaturesSnapshot({ serverId, force: true });
-        const homeEvents: Array<Pick<HomeAccountChangeEvent, 'source' | 'entityIds' | 'usageQueryAffects'>> = [];
-        const stopObserving = subscribeHomeAccountChange(({ source, entityIds, usageQueryAffects }) => {
-            homeEvents.push({ source, entityIds, usageQueryAffects });
+        const homeEvents: Array<Pick<HomeAccountChangeEvent, 'source' | 'entityIds' | 'usageQueryAffects' | 'feedPageConsumed'>> = [];
+        const stopObserving = subscribeHomeAccountChange(({ source, entityIds, usageQueryAffects, feedPageConsumed }) => {
+            homeEvents.push({ source, entityIds, usageQueryAffects, feedPageConsumed });
         }, { serverIds: [serverId], reconnect: 'refresh' });
         const store = getUsageQueryResourceStore(context);
         try {
-            const measure = async (period: 'year' | '30days', trigger: () => void, usageQueryAffects?: false) => {
+            const measure = async (period: 'year' | '30days' | 'all', trigger: () => void,
+                expected: { usageQueryAffects?: false; feedPageConsumed?: true } = {}) => {
                 const begin = traffic.length;
                 const firstEvent = homeEvents.length;
                 const hold = { started: false, release: createDeferred<void>() };
@@ -1162,7 +1169,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     expect(cursorHeld).toBe(true);
                     trigger();
                     await expect.poll(() => homeEvents.slice(firstEvent).some(event => event.source === undefined
-                        && event.entityIds === undefined && event.usageQueryAffects === usageQueryAffects), { timeout: 20_000 }).toBe(true);
+                        && event.entityIds === undefined && event.usageQueryAffects === expected.usageQueryAffects
+                        && event.feedPageConsumed === expected.feedPageConsumed), { timeout: 20_000 }).toBe(true);
                     hold.release.resolve();
                     await expect.poll(() => entry.getSnapshot().pending, { timeout: 20_000 }).toBe('idle');
                     const value = decodeUsageQueryResource(entry.getSnapshot().value!);
@@ -1172,9 +1180,12 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     return reads.length;
                 } finally { hold.release.resolve(); heldHistory = undefined; release(); }
             };
-            expect(await measure('year', releaseCursor.resolve, false)).toBe(1);
-            // The previous bootstrap producer emitted the same unqualified wake.
+            expect(await measure('year', releaseCursor.resolve, { usageQueryAffects: false })).toBe(1);
+            // Recovery with no evidence about what changed must still read again.
             expect(await measure('30days', () => publishHomeAccountChange(serverId))).toBe(2);
+            expect(await measure('all', () => publishHomeAccountChange(serverId, undefined, {
+                usageAccountingAffects: true, feedPageConsumed: true,
+            }), { feedPageConsumed: true })).toBe(1);
         } finally { stopObserving(); retireConnectedAccountDescriptorProjection(accountLifetime); }
     }, 90_000);
 

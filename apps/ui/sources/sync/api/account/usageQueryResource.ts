@@ -2304,6 +2304,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const readInputs = [usageQueriesReadAllowance(queries) ? resourceInputs : quotaFreeResourceInputs,
             ...(queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence)
                 ? [sessionEvidenceInputs] : []), ...queries.map(query => {
+                // Preserve the per-query position without making quota-only
+                // admissions depend on the accounting feed's input revisions.
+                if (!query.includeAccounting) return lifetime;
                 const key = accountingInputKey(query);
                 let input = accountingInputs.get(key);
                 if (!input) { input = { query, identity: {} }; accountingInputs.set(key, input); }
