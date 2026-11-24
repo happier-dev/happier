@@ -11,10 +11,11 @@ export function openLocalServiceTerminal(
     : Promise.resolve(null);
 }
 
-/** The declaration selects a log source; the retained occurrence binds its native generation. */
+/** Retained native generation and, when supplied by its launcher, the exact serving checkout. */
 export type LocalServiceLogOccurrence = Readonly<{
   machineId: string;
   serviceId: string;
   expectedGeneration: string;
   name: string;
+  workspace?: LocalServiceLaunchTarget['workspace'];
 }>;

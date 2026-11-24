@@ -2,7 +2,13 @@ import * as React from 'react';
 import { createHash } from 'node:crypto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_RESOURCE_REF_V1,
+    DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+} from '@happier-dev/database-protocol';
 import type { MachineServiceRowV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -14,6 +20,9 @@ import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppR
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { buildLocalServiceInventoryState } from '@/dev/testkit/fixtures/localServices';
 import type { ItemRowActionsProps } from '@/components/ui/lists/ItemRowActions';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { TelemetryCaptureInvoke } from '@/components/projects/deployments/telemetryCaptureReads';
 import { t } from '@/text';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
@@ -29,13 +38,24 @@ const { LocalServicesSurfaceHost } = await import('@/components/sessions/localSe
 const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
+const { TelemetryCaptureInvokeContext } = await import('@/components/projects/deployments/telemetryCaptureReads');
+const HOME_IDENTITY = 'srv_service_logs';
+const WORKTREE = {
+    machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo', projectId: 'accepted-project',
+};
 let serverId: string;
 beforeEach(async () => {
     await homes.reset();
     await initializeRealAppRuntimeForTests();
     installHomeGovernanceBoundaries(homes);
     serverId = await homes.addHome({ name: 'Service logs', serverUrl: 'https://service-logs.test',
-        serverIdentityId: 'srv_service_logs', accountId: 'account', currentAccount: true, active: true, localServicesEnabled: true });
+        serverIdentityId: HOME_IDENTITY, accountId: 'account', currentAccount: true, active: true, localServicesEnabled: true });
+    homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
+        body: createPlainProjectAccountRowListFixture({ workspaceRefs: [{
+            id: WORKTREE.workspaceId, serverId, machineId: WORKTREE.machineId,
+            rootPath: WORKTREE.rootPath, createdAtMs: 1, projectKey: WORKTREE.projectId,
+        }] }),
+    });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     const credentials = await TokenStorage.getCredentialsForServerUrl('https://service-logs.test', { serverId });
@@ -205,6 +225,64 @@ describe('Machine service shared log viewer', () => {
                 target: { machine: { serverIdentityId: 'srv_service_logs', machineId: 'machine' } } });
         } finally { await screen.unmount(); }
     });
+
+    it.each(['selected checkout', 'missing checkout', 'different checkout'] as const)(
+        'uses Worktree OTLP demand only for the selected occurrence with an exact serving checkout (%s)',
+        async (occurrenceScope) => {
+            const scope = { serverId: HOME_IDENTITY, accountId: 'account' };
+            const { machineId, workspaceId, rootPath, projectId } = WORKTREE;
+            const workspace = { serverId, machineId, workspaceId, rootPath };
+            const source = { kind: 'worktree', serverId: HOME_IDENTITY, machineId, projectId, workspaceId };
+            const sourceWorkspace = occurrenceScope === 'selected checkout' ? workspace
+                : occurrenceScope === 'different checkout' ? { ...workspace, rootPath: '/repo/sibling' }
+                : undefined;
+            const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+                v: 1, machineId: workspace.machineId, updatedAt: 1, targets: [{
+                    id: 'service', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'generation-a' },
+                    machineId: workspace.machineId, workspaceId: workspace.workspaceId, cwd: workspace.rootPath,
+                    ...(sourceWorkspace ? { workspace: sourceWorkspace } : {}),
+                    declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'worker' } },
+                    title: 'Worker', confidence: 'high', state: 'available', serviceState: 'running', actions: ['manage'],
+                }],
+            });
+            const { pluginId, contributionId } = DATABASE_CAPTURE_RESOURCE_REF_V1;
+            const projection: PluginUiProjectionModel = {
+                ...EMPTY_PLUGIN_UI_PROJECTION,
+                resourcesById: { [`${pluginId}/${contributionId}`]: {
+                    id: contributionId, pluginId, resourceKind: 'config', scope: 'surface',
+                } },
+            };
+            const invoke = vi.fn<TelemetryCaptureInvoke>(async (request) => request.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
+                ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, enabled: true }
+                : { ok: true, source, items: [] });
+            const screen = await renderScreen(
+                <TelemetryCaptureInvokeContext.Provider value={invoke}>
+                    <LocalServicesSurfaceHost machineId={workspace.machineId} serverId={serverId}
+                        workspaceRoot={workspace.rootPath} workspaceRefId={workspace.workspaceId}
+                        inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                        launcherState={launcherState} pluginUiProjection={projection} testID="workspace-services" />
+                </TelemetryCaptureInvokeContext.Provider>,
+            );
+            try {
+                await vi.waitFor(() => expect(screen.findByTestId('workspace-services-view:logs')).not.toBeNull());
+                expect(invoke).not.toHaveBeenCalled();
+                const shownLogsAction = () => screen.findAllByType(ItemRowActions).flatMap(menu => (menu.props as ItemRowActionsProps).actions)
+                    .find(action => action.id === 'show-logs');
+                await vi.waitFor(() => expect(shownLogsAction()).toBeDefined());
+                await act(async () => { shownLogsAction()?.onPress?.(); });
+                expect(screen.findHostByTestId('workspace-services-logs')).not.toBeNull();
+                if (occurrenceScope === 'selected checkout') {
+                    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+                        scope, collectorMachineId: workspace.machineId, actionId: DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
+                        input: expect.objectContaining({ source }),
+                    })));
+                } else {
+                    await flushHookEffects();
+                    expect(invoke).not.toHaveBeenCalled();
+                }
+            } finally { await screen.unmount(); }
+        },
+    );
 
     it.each(['machine', 'workspace'] as const)('%s logs retain admitted redacted lines through follow, pause, resume and a source change, then release hidden demand', async surface => {
         const actionId = 'machines.services.logs.read';

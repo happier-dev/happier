@@ -125,7 +125,7 @@ export function resolveLocalServiceEntryActions(
     showTerminal: row.target.terminalView && handlers.onShowServiceTerminal ? row.target : null,
     showLogs: row.target.sourceClass?.kind === 'managed_service' && handlers.onShowServiceLogs
       ? { machineId: row.target.machineId, serviceId: row.target.id,
-          expectedGeneration: row.target.sourceClass.managedServiceId, name: row.target.title }
+          expectedGeneration: row.target.sourceClass.managedServiceId, name: row.target.title, workspace: row.target.workspace }
       : null,
     start:
       primary?.kind === 'start' && handlers.onStartLauncherTarget

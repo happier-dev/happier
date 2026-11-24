@@ -30,6 +30,8 @@ import { useLocalServicePresentationFeatures } from './useLocalServicePublicPrev
 import { WorktreePortsLine } from './WorktreePortsLine';
 import { useProjectCommandOutputHostScope } from '@/components/inbox/actionOperations/projectCommandOutputHost';
 import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/database-protocol';
+import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useProjectContext } from '@/components/projects/useProjectContext';
 import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
@@ -163,6 +165,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const [view, setView] = React.useState<LocalServicesViewId>('servers');
     const shownView: LocalServicesViewId = worktree ? view : 'servers';
     const lifetime = useActiveServerAccountScopeLifetime();
+    const captureLifetime = lifetime && serverId && lifetime.scope.serverId === projectContext.scope.serverId ? lifetime : null;
     const presented = useLayoutPresentationActive();
     const viewTabs = worktree ? (
         <SegmentedTabBar<LocalServicesViewId>
@@ -180,7 +183,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const showServers = React.useCallback(() => setView('servers'), []);
     const viewBody = worktree && shownView !== 'servers' ? (
         <LocalServiceCaptureView
-            lifetime={lifetime && serverId && lifetime.scope.serverId === serverId ? lifetime : null}
+            lifetime={captureLifetime}
             worktree={worktree}
             view={shownView}
             active={presented}
@@ -205,6 +208,12 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             testID={`${props.testID}-plugin-stack`}
         />
     );
+
+    const logOccurrence = entryActions.logOccurrence;
+    const servingCheckout = logOccurrence?.workspace;
+    const capture = worktree && captureLifetime && checkout && servingCheckout
+        && resolveWorkspaceRefByAddress([checkout], servingCheckout).kind === 'resolved'
+        ? { lifetime: captureLifetime, worktree } : null;
 
     return (<>
         <DetectedLocalServicesPane
@@ -236,10 +245,11 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             testID={props.testID}
             footer={pluginStack}
         />
-        {serverId && entryActions.logOccurrence ? (
+        {serverId && logOccurrence ? (
             <LocalServiceLogsCompanion
                 serverId={serverId}
-                occurrence={entryActions.logOccurrence}
+                occurrence={logOccurrence}
+                capture={capture}
                 onClose={entryActions.dismissServiceLogs}
                 testID={`${props.testID}-logs`}
             />
@@ -247,23 +257,35 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     </>);
 }
 
-function LocalServiceLogsCompanion({ serverId, occurrence, onClose, testID }: Readonly<{
+function LocalServiceLogsCompanion({ serverId, occurrence, capture, onClose, testID }: Readonly<{
     serverId: string;
     occurrence: LocalServiceLogOccurrence;
+    capture: Readonly<{ lifetime: ServerAccountScopeLifetime; worktree: LocalServiceCaptureWorktree }> | null;
     onClose: () => void;
     testID: string;
 }>): React.ReactElement {
     const presented = useLayoutPresentationActive();
     const machine = useMachinePresenceSummary(serverId, presented ? occurrence.machineId : null);
+    const machineName = machine.sentenceName ?? t('machine.thisMachineInSentence');
     return (
         <DetailCompanionPane open title={t('machineServices.logs.title')} subtitle={occurrence.name}
             onClose={onClose} testID={testID}>
             <ServiceOccurrenceLogs
                 {...occurrence}
                 serverId={serverId}
-                machineName={machine.sentenceName ?? t('machine.thisMachineInSentence')}
+                machineName={machineName}
                 active={presented}
             />
+            {capture ? (
+                <LocalServiceCaptureView
+                    {...capture}
+                    view="logs"
+                    active={presented}
+                    machineName={machineName}
+                    onShowServers={onClose}
+                    testID={`${testID}-capture`}
+                />
+            ) : null}
         </DetailCompanionPane>
     );
 }
