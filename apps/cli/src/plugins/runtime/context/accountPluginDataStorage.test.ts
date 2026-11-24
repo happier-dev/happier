@@ -243,6 +243,20 @@ function bindHost(params: Readonly<{
 }
 
 describe('Account plugin Data storage host', () => {
+    it('preserves a terminal Collection update refusal with a Machine recovery step', async () => {
+        const account = bindHost({
+            get: async url => url.endsWith('/v1/plugins/data/get')
+                ? { status: 409, data: { error: 'collection_update_required' } }
+                : { status: 200, data: { mode: 'plain', updatedAt: 1 } },
+            post: async () => { throw new Error('Expected a Collection read'); },
+        });
+        await expect(account.collection(collectionDefinition).get('retained')).rejects.toMatchObject({
+            code: 'collection_update_required',
+            retryable: false,
+            message: expect.stringContaining('Update Happier on this Machine'),
+        });
+    });
+
     it.each([plainCredentials, encryptedCredentials])('reads stored union rows with branch-local schemas on $token', async credentials => {
         const definition = {
             ...collectionDefinition,

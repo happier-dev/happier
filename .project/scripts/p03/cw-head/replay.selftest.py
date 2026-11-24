@@ -149,9 +149,13 @@ def test_projection_producers_land_current_outputs():
         manifest = "packages/plugins/test/src/manifest.ts"
         account = "packages/plugins/test/src/accountDefinition.ts"
         approvals = "packages/protocol/src/approvals/approvalRequestV2.ts"
+        action_result = "packages/protocol/src/actions/actionExecutionResult.ts"
         dto = "packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts"
         declaration = "apps/cli/assets/bundled-plugin-manifests/declarations/test.summary.json"
         bundled = "apps/cli/assets/bundled-plugin-manifests/test.json"
+        peer = "apps/cli/assets/bundled-plugin-manifests/peer.json"
+        stale_peer = "apps/cli/assets/bundled-plugin-manifests/unrelated.json"
+        peer_asset = lambda version: f'{{"contributes":{{"accountCollections":[{{"id":"state","schemaVersion":{version}}}]}}}}\n'
 
         def write(path, text):
             target = repo / path
@@ -166,6 +170,10 @@ for (const [producer, projection] of [[{titles!r}, {declaration!r}], [{account!r
   mkdirSync(dirname(out), {{ recursive: true }});
   writeFileSync(out, readFileSync(producer, 'utf8').match(/= (\d+);/)[1] + '\n');
 }}
+const peerVersion = Number(readFileSync({action_result!r}, 'utf8').match(/= (\d+);/)[1]);
+const peerAsset = JSON.stringify({{ contributes: {{ accountCollections: [{{ id: 'state', schemaVersion: peerVersion }}] }} }}) + '\n';
+writeFileSync(join(process.argv.at(-1), {peer!r}), peerAsset);
+writeFileSync(join(process.argv.at(-1), {stale_peer!r}), '{{"displayName":"Unrelated change"}}\n');
 ''')
         write("packages/plugin-sdk/scripts/generateActionTypeMap.mjs", rf'''
 import {{ readFileSync }} from 'node:fs';
@@ -178,8 +186,10 @@ export const prepareActionTypeMap = () => ({{ outputs: new Map([[resolve({dto!r}
         write("packages/protocol/src/plugins/manifest/ingest.ts", "export const ingestPluginManifestV2 = () => ({ ok: true });\n")
         write("packages/plugin-sdk/src/manifest.ts", "export const parsePluginManifest = () => ({ ok: true });\n")
         write(manifest, 'export { value } from "./accountDefinition";\n')
-        for path in (titles, account, approvals, dto, declaration, bundled):
+        for path in (titles, account, approvals, action_result, dto, declaration, bundled):
             write(path, "export const value = 0;\n" if path.endswith(".ts") else '0\n')
+        write(peer, peer_asset(0))
+        write(stale_peer, '{}\n')
         git("add", ".")
         git("commit", "-qm", "fixture base")
         for producer in (titles, account, approvals):
@@ -194,6 +204,13 @@ export const prepareActionTypeMap = () => ({{ outputs: new Map([[resolve({dto!r}
         assert result.returncode == 0, result.stdout + result.stderr
         for path in (dto, declaration, bundled):
             assert git("show", f"HEAD:{path}") == ("export const value = 1;\n" if path == dto else "1\n"), path
+        write(action_result, "export const value = 1;\n")
+        patch.write_text(git("diff", "--binary", "--full-index", "HEAD", "--", action_result))
+        result = subprocess.run(["bash", str(WRAPPER), str(msg), "-", str(patch)],
+                                cwd=repo, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert git("show", f"HEAD:{peer}") == peer_asset(1), "stale Collection from shared Action result schema"
+        assert git("show", f"HEAD:{stale_peer}") == '{}\n', "unrelated manifest drift must stay outside the packet"
         print("PASS projection producers")
 
 

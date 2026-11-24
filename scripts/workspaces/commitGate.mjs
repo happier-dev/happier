@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { bundledPluginManifestAssetRelativePath } from '../../apps/cli/scripts/build-owned/bundledPlugins/manifestAssetPath.mjs';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests } from './commitPluginManifests.mjs';
@@ -126,6 +127,9 @@ function packetProjectionInputs(git, packet) {
   return {
     plugins,
     fieldTitles: paths.includes('packages/protocol/src/actions/schemaInputHints.ts'),
+    // Bundled Collection schemas embed the shared Action result declaration.
+    // Re-evaluate those manifests even when no plugin-local source changed.
+    collectionContracts: paths.includes('packages/protocol/src/actions/actionExecutionResult.ts'),
     approvals: paths.some(path => /^packages\/protocol\/src\/(?:approvals\/[^/]+|actions\/specs\/approvals)\.ts$/u.test(path)
       && !/\.(?:test|spec|d)\.ts$/u.test(path)),
   };
@@ -204,7 +208,7 @@ async function composeReplayedPacket({ git, packet, head, regenerate, projection
     }
     const replayedTree = writeTree();
     const cliConflict = conflicts.some(path => path !== APPROVAL_DTO_PATH);
-    const cli = cliConflict || projections.fieldTitles || projections.plugins.size > 0;
+    const cli = cliConflict || projections.fieldTitles || projections.collectionContracts || projections.plugins.size > 0;
     const approvals = projections.approvals || conflicts.includes(APPROVAL_DTO_PATH);
     const projected = cli || approvals;
     if (projected) {
@@ -228,11 +232,22 @@ async function composeReplayedPacket({ git, packet, head, regenerate, projection
       if (missing.length) throw new Error(`canonical generator did not emit projections: ${missing.join(', ')}`);
       const tracked = new Map(gitIndex(['ls-tree', '-r', '-z', replayedTree, '--', CLI_PROJECTION_ROOT, APPROVAL_DTO_PATH])
         .split('\0').filter(Boolean).map(record => [record.slice(record.indexOf('\t') + 1), record.split(' ', 1)[0]]));
+      const plugins = new Set(projections.plugins);
+      if (projections.collectionContracts) {
+        for (const [path, outputFile] of emitted) {
+          if (dirname(path) !== manifestAssetRoot || !path.endsWith('.json')) continue;
+          const previous = tracked.has(path)
+            ? JSON.parse(gitIndex(['show', `${replayedTree}:${path}`]))?.contributes?.accountCollections ?? []
+            : [];
+          const next = JSON.parse(readFileSync(outputFile, 'utf8'))?.contributes?.accountCollections ?? [];
+          if (!isDeepStrictEqual(previous, next)) plugins.add(path.slice(manifestAssetRoot.length + 1, -5));
+        }
+      }
       const selected = path => {
         if (required.has(path)) return true;
         if (cliConflict && tracked.has(path) && cliProjectionOwned(git, replayedTree, path)) return true;
         if (projections.fieldTitles && tracked.has(path) && path.startsWith(`${manifestAssetRoot}/declarations/`)) return true;
-        for (const plugin of projections.plugins) {
+        for (const plugin of plugins) {
           if (path === `${CLI_PROJECTION_ROOT}/${bundledPluginManifestAssetRelativePath(plugin)}`
             || path.startsWith(`${manifestAssetRoot}/declarations/${plugin}.`)) return true;
         }
@@ -264,7 +279,8 @@ async function composeReplayedPacket({ git, packet, head, regenerate, projection
 }
 
 function composePacketAgainstHead({ git, head, headTree = head, packet, regenerate, projections, replayScratchRoot, ...projection }) {
-  return headTree === packet.base && !projections.approvals && !projections.fieldTitles && !projections.plugins.size
+  return headTree === packet.base && !projections.approvals && !projections.fieldTitles
+    && !projections.collectionContracts && !projections.plugins.size
     ? packet
     : composeReplayedPacket({ git, packet, head, headTree, regenerate, projections, scratchRoot: replayScratchRoot, ...projection });
 }

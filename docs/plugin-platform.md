@@ -7219,6 +7219,9 @@ required Collection refuses its reader. It omits the connections list because
 an unreadable list is not empty. The Channels presentation owner consumes that
 state to render “Update Happier on this Machine” without a Retry action; the
 Resource does not claim which application version is required.
+When an Account Data Action receives the same refusal from Home, the daemon
+preserves its terminal code and tells the person to update Happier on the
+Machine serving the Action before trying again.
 The Session Collection membership observer likewise retires after this refusal.
 Discord and Slack settle the same typed refusal from core reconciliation,
 ingress and transport-fact Actions, stop their existing workers, and do not

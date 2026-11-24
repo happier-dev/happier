@@ -503,6 +503,9 @@ function parseCollectionError(
             }).success)) {
         return writerRefusal;
     }
+    if (parsed.data.error === 'collection_update_required') {
+        return dataError(parsed.data.error, 'Update Happier on this Machine, then try again.');
+    }
     const details = parsed.data.error === 'collection_relation_restricted'
         ? normalizeStrictJsonValue({
             dependentCount: parsed.data.dependentCount,

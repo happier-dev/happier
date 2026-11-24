@@ -414,27 +414,46 @@ it.each(['channel-state', 'channel-deliveries'])('adopts the observed retained %
     expect(target.migrations).toContainEqual({ id: 'channel-state-v19-to-v20', fromSchemaVersion: 19, toSchemaVersion: 20 });
 });
 
-it('publishes the V6 delivery reader and promotes a stored V5 row through a real Account Collection read', async () => {
+it.each([
+    { id: 'channel-deliveries', version: 5 },
+    { id: 'channel-state', version: 24 },
+])('promotes a stored V$version $id row on Collection demand', async ({ id, version }) => {
     const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
         new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
     )));
     const manifest = PluginManifestV2Schema.parse(CHANNELS_MANIFEST);
-    const declaration = manifest.contributes.accountCollections!.find(item => item.id === 'channel-deliveries')!;
-    const readerDeclaration = bundled.contributes.accountCollections!.find(item => item.id === declaration.id)!;
+    const declaration = manifest.contributes.accountCollections!.find(item => item.id === id)!;
+    const readerDeclaration = id === 'channel-state'
+        ? declaration
+        : bundled.contributes.accountCollections!.find(item => item.id === id)!;
     const target = normalizePluginAccountCollectionContractV1({ pluginId: manifest.id, contribution: declaration });
     const reader = normalizePluginAccountCollectionContractV1({ pluginId: bundled.id, contribution: readerDeclaration });
 
     const retained = JSON.parse(readFileSync(new URL(
         '../../../../../../packages/plugins/channels/src/testkit/fixtures/channelContractsV19V5.json', import.meta.url,
     ), 'utf8'));
-    const source = retained.contracts.map((contract: unknown) =>
-        PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract }).contract)
-        .find((contract: typeof target) => contract.collectionId === declaration.id)!;
-    expect(source.schemaVersion).toBe(5);
+    const source = id === 'channel-state'
+        ? normalizePluginAccountCollectionContractV1({ pluginId: manifest.id, contribution: JSON.parse(readFileSync(new URL(
+            '../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV24.json', import.meta.url,
+        ), 'utf8')).collection })
+        : retained.contracts.map((contract: unknown) =>
+            PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract }).contract)
+            .find((contract: typeof target) => contract.collectionId === id)!;
+    expect(source.schemaVersion).toBe(version);
+    if (id === 'channel-state') expect(source.contractDigest).toBe('5EY3qVdZqSlCS_M08QWkvHIIhCYdvSvT437gTs6KSQY');
     const { pluginId: _sourcePluginId, collectionId: sourceCollectionId, contractDigest: _sourceDigest,
         ...sourceDefinition } = source;
     const sourceDeclaration = PluginAccountCollectionContributionV1Schema.parse({ ...sourceDefinition, id: sourceCollectionId });
-    const value = { id: 'a'.repeat(43), 'record-kind': 'outward-delivery', v: 1,
+    const value = id === 'channel-state' ? {
+        id: 'binding-retained', v: 1, 'record-kind': 'binding', 'connection-id': 'connection-1',
+        'binding-id': 'binding-retained', 'created-at': 1, 'updated-at': 23,
+        payload: { endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
+            target: { kind: 'session', sessionId: 'session-1', policy: { deliveryMode: 'repliesOnly',
+                permissionCeiling: 'read-only', approvals: { kind: 'off' }, newSession: { kind: 'off' } } },
+            allowedPrincipalIds: ['person-1'], allowBotSenders: false, inputMode: 'allAllowedMessages',
+            inboundDebounceMs: 0, linkPreviewPolicy: 'suppress', senderFeedback: 'off', authorityEpoch: 1,
+            enabled: true, deletionState: 'none' },
+    } satisfies Readonly<Record<string, JsonValue>> : { id: 'a'.repeat(43), 'record-kind': 'outward-delivery', v: 1,
         'connection-id': 'connection-1', 'binding-id': 'binding-1', terminal: true, attention: false,
         'created-at': 100, 'updated-at': 100,
         payload: { source: { kind: 'sessionProjection', sessionId: 'session-1', semanticItemId: 'semantic-1' },
@@ -448,7 +467,7 @@ it('publishes the V6 delivery reader and promotes a stored V5 row through a real
     const encoded = encodePluginCollectionLogicalValueV1({ contract: source,
         isValidLogicalValue: candidate => isValidPluginJsonSchemaValue(sourceValidator, candidate),
         value, encryptionMode: 'plain', material: null, randomBytes: length => new Uint8Array(length).fill(4) });
-    if (encoded.status !== 'encoded') throw new Error(`Stored V5 row is invalid: ${encoded.reason}`);
+    if (encoded.status !== 'encoded') throw new Error(`Stored V${version} row is invalid: ${encoded.reason}`);
     let stored = { rowId: encoded.rowId, revision: 22, content: encoded.content, projection: encoded.projection };
     let promoted = false;
     let staged = false;
@@ -456,7 +475,7 @@ it('publishes the V6 delivery reader and promotes a stored V5 row through a real
         schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest });
     const host = createAccountPluginDataStorageHost({
         contracts: [reader], readCredentials: async () => credentials, isCurrentAccount: () => true,
-        resolveAccountScopeKey: () => 'delivery-v5-upgrade', resolveBaseUrl: () => 'https://data.example.test',
+        resolveAccountScopeKey: () => `${id}-v${version}-upgrade`, resolveBaseUrl: () => 'https://data.example.test',
         resolveAccountEncryptionCurrentness: currentEncryption,
         resolveReleaseLessDeclaration: id => id === manifest.id ? manifest : null,
         resolveReleaseLessCollectionMigrations: async () => channelsMigrations,
@@ -490,22 +509,22 @@ it('publishes the V6 delivery reader and promotes a stored V5 row through a real
                     return { status: 200, data: { results: [{ status: 'staged' }] } };
                 }
                 expect(url).toMatch(/\/get$/);
-                expect(promoted).toBe(true);
                 expect(request.readerContext).toEqual(ref(reader));
+                if (!promoted) return { status: 409, data: { error: 'collection_update_required' } };
                 return { status: 200, data: { row: stored, absenceEpoch: 0 } };
             } },
     });
-    const account = host.bind({ pluginId: manifest.id, occurrenceId: 'delivery-upgrade-reader',
+    const account = host.bind({ pluginId: manifest.id, occurrenceId: `${id}-upgrade-reader`,
         signal: new AbortController().signal, isOccurrenceCurrent: () => true });
     if (!account) throw new Error('Expected bound Collection');
-    // The reader's runtime collection never migrates in this delivery-upgrade read.
+    // Candidate preparation uses the declaring runtime, not the reader's callbacks.
     const readerCollection = { ...readerDeclaration, migrations: readerDeclaration.migrations.map(migration => ({ ...migration,
         migrate: (): never => { throw new Error('Reader fixture never migrates'); } })) };
     await expect(account.collection(readerCollection).get(value.id)).resolves.toEqual({
         rowId: value.id, revision: 22, value,
     });
     expect(reader).toEqual(target);
-    expect(reader.schemaVersion).toBe(6);
+    expect(reader.schemaVersion).toBe(version + 1);
     expect(promoted).toBe(true);
 });
 
