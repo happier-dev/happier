@@ -156,6 +156,37 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await coordinator.stopRefreshLoopIfIdle();
     });
 
+    it("retries a registration Redis rejected, without taking another socket's route", async () => {
+        const method = "machine-1:spawn-happy-session";
+        const otherMethod = "machine-1:stop-session";
+        const ownedMethods = new Set([method, otherMethod]);
+        const coordinator = createCoordinator("socket-a", ownedMethods);
+        // A key of the wrong type makes the registration's HSET fail.
+        for (const m of [method, otherMethod]) {
+            await getRedisClient().set(`rpc:${userId}:${m}`, "not-a-hash");
+            await expect(coordinator.registerMethod(m)).rejects.toThrow();
+        }
+        coordinator.startRefreshLoopIfNeeded();
+
+        // The first route is simply missing by the next refresh; the second now belongs to another socket.
+        await getRedisClient().del(`rpc:${userId}:${method}`);
+        await getRedisClient().del(`rpc:${userId}:${otherMethod}`);
+        await createCoordinator("socket-b", new Set()).registerMethod(otherMethod);
+        await runRefreshTick();
+        await getRedisClient().ping();
+
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-a");
+        expect(await coordinator.lookupSocketId(userId, otherMethod)).toBe("socket-b");
+
+        // Once registered, the route is refreshed and restored like any other.
+        await coordinator.removeSocketRegistration(userId, method, "socket-a");
+        await runRefreshTick();
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-a");
+
+        ownedMethods.clear();
+        await coordinator.stopRefreshLoopIfIdle();
+    });
+
     it("reports a refresh that Redis rejects", async () => {
         const method = "machine-1:spawn-happy-session";
         const ownedMethods = new Set([method]);

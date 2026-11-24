@@ -10,8 +10,14 @@ const DEL_IF_SOCKET_ID_SCRIPT =
 // Writes this socket's mapping for a method and returns when it registered, on the Redis clock in
 // microseconds, so sockets on different instances can tell which registration is newer.
 // registeredBy names the socket the time belongs to: an older server's plain HSET can hand the
-// mapping to another socket and leave this time behind.
+// mapping to another socket and leave this time behind. With ARGV[5] = '1' (a retry after a
+// registration Redis rejected) it writes only if the mapping is missing or already this socket's,
+// and returns nil when another socket owns it.
 const REGISTER_SCRIPT = [
+    "if ARGV[5] == '1' then",
+    "local owner = redis.call('HGET', KEYS[1], 'socketId')",
+    "if owner and owner ~= ARGV[2] then return false end",
+    "end",
     "local t = redis.call('TIME')",
     "local at = t[1] .. string.format('%06d', t[2])",
     "redis.call('HSET', KEYS[1], 'instanceId', ARGV[1], 'socketId', ARGV[2], 'updatedAt', ARGV[3], 'registeredAt', at, 'registeredBy', ARGV[2])",
@@ -73,24 +79,51 @@ export function createRpcRedisRegistryCoordinator(params: {
             if (ownedMethods.size === 0) return;
             const now = Date.now().toString();
             const ttl = redisRegistryTtlSeconds.toString();
-            const claims = [...ownedMethods].flatMap((method) => {
-                if (pendingRegistrations.has(method)) return [];
+            const owned = [...ownedMethods].filter((method) => !pendingRegistrations.has(method));
+            const claims = owned.flatMap((method) => {
                 const registeredAt = registeredAtByMethod.get(method);
                 return registeredAt ? [{ method, registeredAt }] : [];
             });
-            void Promise.all(
-                claims.map(({ method, registeredAt }) =>
-                    redis
-                        .eval(REFRESH_OR_RESTORE_SCRIPT, 1, `rpc:${userId}:${method}`, socketId, now, instanceId, ttl, registeredAt)
-                        .then(
-                            (result) => ({ method, registeredAt, result, error: null }),
-                            (error: unknown) => ({ method, registeredAt, result: null, error }),
-                        ),
+            // An owned method with no registration time had its registration rejected by Redis (the
+            // write may still have landed). Register it again, without taking another socket's route.
+            const retries = owned.filter((method) => !registeredAtByMethod.has(method));
+            const retried = Promise.all(
+                retries.map((method) =>
+                    register(method, { keepOtherOwner: true }).then(
+                        (registered) => ({ method, registered, error: null }),
+                        (error: unknown) => ({ method, registered: false, error }),
+                    ),
                 ),
-            ).then((outcomes) => {
+            );
+            void Promise.all([
+                Promise.all(
+                    claims.map(({ method, registeredAt }) =>
+                        redis
+                            .eval(REFRESH_OR_RESTORE_SCRIPT, 1, `rpc:${userId}:${method}`, socketId, now, instanceId, ttl, registeredAt)
+                            .then(
+                                (result) => ({ method, registeredAt, result, error: null }),
+                                (error: unknown) => ({ method, registeredAt, result: null, error }),
+                            ),
+                    ),
+                ),
+                retried,
+            ]).then(([outcomes, retryOutcomes]) => {
                 const restored: string[] = [];
                 const failed: string[] = [];
                 let firstError: unknown = null;
+                for (const retry of retryOutcomes) {
+                    if (retry.error !== null) {
+                        failed.push(retry.method);
+                        firstError ??= retry.error;
+                    } else if (
+                        !retry.registered
+                        && !pendingRegistrations.has(retry.method)
+                        && !registeredAtByMethod.has(retry.method)
+                    ) {
+                        // Another socket registered the method meanwhile: it owns the route.
+                        ownedMethods.delete(retry.method);
+                    }
+                }
                 for (const outcome of outcomes) {
                     if (outcome.error !== null) {
                         failed.push(outcome.method);
@@ -136,6 +169,11 @@ export function createRpcRedisRegistryCoordinator(params: {
 
     async function registerMethod(method: string): Promise<void> {
         if (!config.enabled) return;
+        await register(method, { keepOtherOwner: false });
+    }
+
+    // Returns false when keepOtherOwner left another socket's mapping in place.
+    async function register(method: string, options: { keepOtherOwner: boolean }): Promise<boolean> {
         const redis = getRedisClient();
         const key = `rpc:${userId}:${method}`;
         const now = Date.now().toString();
@@ -150,8 +188,11 @@ export function createRpcRedisRegistryCoordinator(params: {
                 socketId,
                 now,
                 redisRegistryTtlSeconds.toString(),
+                options.keepOtherOwner ? "1" : "0",
             );
+            if (registeredAt === null) return false;
             registeredAtByMethod.set(method, String(registeredAt));
+            return true;
         } finally {
             const remaining = (pendingRegistrations.get(method) ?? 1) - 1;
             if (remaining > 0) pendingRegistrations.set(method, remaining);
