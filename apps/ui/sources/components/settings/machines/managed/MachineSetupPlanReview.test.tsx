@@ -112,6 +112,24 @@ const row = (screen: Screen, testID: string) =>
   )[0]?.props as { title: string; subtitle?: string; detail?: string } | undefined;
 
 describe('MachineSetupPlanReview', () => {
+  it.each([false, true])('discloses an admitted Agent install beside its native changes (native: %s)', async (withNative) => {
+    const { t } = await import('@/text');
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'vps', targets: [{
+      ...target('vps'),
+      sources: [{ kind: 'accountPresetOpaque', presetId: 'team-preset', presetRevision: 1, contentEncryptionMode: 'plain' },
+        { kind: 'direct', setup: {} }],
+      recipePlans: withNative ? [{ sourceIndex: 0, itemIndex: 1, plan: reviewPlan('vps', [
+        { id: 'package', kind: 'package', manager: 'apt', packages: [{ name: 'curl' }] },
+      ]) }] : [],
+      appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: 'machines.agents.install',
+        input: { machineId: 'vps', agentId: 'codex', intent: withNative ? 'update' : 'install', waitForTerminal: true } }],
+    }] });
+    const screen = await renderScreen(<MachineSetupPlanReview testID="review"
+      prepared={{ ok: true, input, facts: [] }} nameOf={id => names[id] ?? id} />);
+    expect(row(screen, 'review.agent.vps.0.0')).toMatchObject({ title: 'Codex', detail: t(withNative ? 'common.update' : 'common.install') });
+    expect(row(screen, 'review.target.vps')?.detail).toBe(t('machinePresets.setup.review.changes', { count: withNative ? 2 : 1 }));
+    await screen.unmount();
+  });
   it('shows the Plan administrator prerequisite and disables Apply in its shared review footer', async () => {
     const { MachineSetupReviewFooter } = await import('./MachineSetupPlanReview');
     const { MachineSetupPlanReviewV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');

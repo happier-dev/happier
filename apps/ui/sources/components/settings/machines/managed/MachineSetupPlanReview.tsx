@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -14,6 +15,7 @@ import { resolveHomeDisplayLabelForServerIdentity, resolveHomeDisplayNameForServ
 import { t } from '@/text';
 import { readMachineSetupAppIdentityV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { machineSetupSourceApplyOriginKeyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { z } from 'zod/mini';
 import { MachineSetupPlanUnavailableTargetV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -84,6 +86,16 @@ export function MachineSetupPlanReview(
     (machineId) => factsOf(machineId)?.review?.downtime ?? 'unreported',
   );
   const single = targets.length === 1;
+  // These are the exact admitted Agent effects, even when the native recipe Plan has no changes.
+  const agentsByTarget = new Map(targets.map((target) => [target,
+    'recipePlans' in target ? (target.appChildren ?? []).flatMap((child) =>
+      child.actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+        ? [{ key: `${target.machineId}.${child.sourceIndex}.${child.itemIndex}`, machineId: target.machineId,
+            name: resolveAgentCatalogTitle(child.input.agentId), intent: child.input.intent }]
+        : [],
+    ) : [],
+  ] as const));
+  const agents = [...agentsByTarget.values()].flat();
   const apps = targets.flatMap((target) =>
     'recipePlans' in target
       ? reviewApps(
@@ -164,7 +176,7 @@ export function MachineSetupPlanReview(
     <>
       <ItemGroup title={t('machinePresets.setup.review.machines')}>
         {targets.map((target) => {
-          // A new app deploys too, so the Machine isn't "already set up" while one waits. What each change is
+          // An Agent installs and a new app deploys too, so the Machine isn't "already set up" while one waits. What each change is
           // reads under Changes, by kind.
           const count =
             countMachineSetupTargetChanges(
@@ -172,7 +184,7 @@ export function MachineSetupPlanReview(
               prepared.sourcePresentations?.find((entry) =>
                 entry.homeId === target.homeId && entry.machineId === target.machineId,
               )?.sources,
-            ) +
+            ) + (agentsByTarget.get(target)?.length ?? 0) +
             ('recipePlans' in target ? factsOf(target.machineId)?.review?.apps ?? [] : []).filter(
               (app) => app.kind === 'new',
             ).length;
@@ -282,6 +294,22 @@ export function MachineSetupPlanReview(
               testID={`${props.testID}.changes.${group.kind}`}
               nameOf={nameOf}
               targetCount={targets.length}
+            />
+          ))}
+        </ItemGroup>
+      ) : null}
+      {agents.length ? (
+        <ItemGroup title={t('settingsAgents.title')}>
+          {agents.map((agent) => (
+            <Item
+              key={agent.key}
+              testID={`${props.testID}.agent.${agent.key}`}
+              title={agent.name}
+              {...(!single ? { subtitle: nameOf(agent.machineId) } : {})}
+              icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+              detail={agent.intent === 'update' ? t('common.update') : t('common.install')}
+              mode="info"
+              showChevron={false}
             />
           ))}
         </ItemGroup>
