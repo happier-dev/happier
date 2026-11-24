@@ -124,6 +124,27 @@ describe.skipIf(!binaries)('PostgreSQL stats against a real engine', () => {
         expect(size).toMatchObject({ status: 'available', group: 'size' });
         if (size.status === 'available' && size.group === 'size') expect(BigInt(size.data.bytes)).toBeGreaterThan(0n);
     });
+    it('uses one set query per selected group with one thousand unrelated relations', () => {
+        psql(`DO $$
+            BEGIN
+                FOR schema_number IN 1..10 LOOP
+                    EXECUTE format('CREATE SCHEMA %I', 'inventory_' || schema_number);
+                    FOR relation_number IN 1..100 LOOP
+                        EXECUTE format('CREATE TABLE %I.%I(id integer)',
+                            'inventory_' || schema_number, 'table_' || relation_number);
+                    END LOOP;
+                END LOOP;
+            END $$;`);
+        expect(psql(`SELECT count(*) FROM pg_tables WHERE schemaname ~ '^inventory_[0-9]+$'`).trim()).toBe('1000');
+
+        const relation = { schema: 'selected', name: 'items' };
+        expect(execute(compilePostgresqlStatsV1({ kind: 'stats.read', group: 'tables', selection: {
+            schema: relation.schema, page: { rows: 1 },
+        } }))).toMatchObject({ status: 'available', group: 'tables', data: [{ relation }], completeness: { complete: true } });
+        expect(execute(compilePostgresqlStatsV1({ kind: 'stats.read', group: 'indexes', selection: {
+            relation, page: { rows: 1 },
+        } }))).toMatchObject({ status: 'available', group: 'indexes', data: [{ relation, name: 'items_pkey' }], completeness: { complete: true } });
+    });
     it('reads custom-schema statement evidence and sanitizes query text, with activity on the same database', () => {
         const statements = execute(compilePostgresqlStatsV1({ kind: 'stats.read', group: 'statements', selection: { page: { rows: 100 }, order: 'calls' } },
             { pgStatStatements: { schema: 'custom stats', version: '1.10' } }));
