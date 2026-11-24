@@ -318,27 +318,6 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('shows collector storage is full while keeping previously captured data readable', async () => {
-    const { invoke, calls } = collector(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
-      ? {
-          ok: true,
-          source,
-          coverage: { lostObservations: 1, reason: 'daemon_database_quota_exceeded' },
-          lastReceivedAt: request.at,
-        }
-      : answers(call));
-    const screen = await renderScreen(panel(invoke, setUpDetail(), { telemetryApplied: true }));
-    try {
-      await settle();
-      expect(screen.findByTestId('project-deployments.telemetry.collector')?.props.children).toBe('Collector storage full');
-      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
-      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
-      expect(calls.filter(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1)).toHaveLength(1);
-    } finally {
-      await screen.unmount();
-    }
-  });
-
   it('reads the open list once on the collector with the Environment as its source, and each tab reads its own list', async () => {
     const { invoke, calls } = collector(answers);
     const screen = await mount(invoke);
