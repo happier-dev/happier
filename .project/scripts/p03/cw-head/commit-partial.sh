@@ -58,20 +58,6 @@ compose() { # head -> $commit, $expected
   commit=$(git commit-tree "$tree" -p "$head" -F "$msg")
   diff <(git diff --no-renames --name-only "$head" "$commit" | sort) <(echo "$expected") || { echo "unexpected paths"; exit 1; }
 }
-# A private-index commit of a file the shared index never tracked leaves that path staged as deleted in
-# the shared index (presence-deadline 23:59Z, stored_content_bytes 01:46Z migrations). Register only such
-# new paths, and only when the checkout bytes equal the committed blob; every other entry stays the lane's.
-register_new_paths() {
-  local f entry
-  while IFS= read -r f; do
-    [ -n "$f" ] && [ -e "$f" ] || continue
-    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 && continue
-    entry=$(git ls-tree "$commit" -- "$f") || continue
-    [ -n "$entry" ] && [ "$(git hash-object -- "$f")" = "$(printf '%s' "$entry" | awk '{print $3}')" ] || continue
-    git update-index --add --cacheinfo "$(printf '%s' "$entry" | awk '{print $1}')","$(printf '%s' "$entry" | awk '{print $3}')","$f" \
-      && echo "shared index: registered new path $f" || echo "shared index: could not register $f (realign it yourself)"
-  done <<< "$expected"
-}
 # The ref update leaves the checkout untouched. For a dirty file, check if its
 # current bytes would change when the landed delta is merged on its exact parent.
 checkout_has_landed_change() {
@@ -143,7 +129,6 @@ read -r verdict commit _ head < "$packetDir/verdict"
 [ "$verdict" = COMMITTED ]
 { git show --stat --format="%h %s" "$commit" | head -40 || true; }
 expected=$(git diff --no-renames --name-only "$head" "$commit")
-register_new_paths
 warn_checkout_drift
 if [ -n "${P03_COMMIT_KICK:-}" ]; then
   $P03_COMMIT_KICK || true

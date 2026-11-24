@@ -3,52 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { once } from 'node:events';
+import { syncPublishedIndex } from '../workspaces/commitSharedIndex.mjs';
 
 function gitAt(cwd, env) {
   return (...args) => execFileSync('git', ['--no-optional-locks', ...args], { cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-}
-
-// Git owns index.lock. Retry its atomic update only when that lock is occupied;
-// never remove another writer's lock, and prepare fresh HEAD records after waiting.
-async function syncSharedIndex(cwd, commit, paths) {
-  const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1' };
-  delete env.GIT_INDEX_FILE;
-  const git = gitAt(cwd, env);
-  const index = git('rev-parse', '--path-format=absolute', '--git-path', 'index').trim();
-  const watcher = fs.watch(path.dirname(index));
-  try {
-    for (;;) {
-      const controller = new AbortController();
-      const changed = once(watcher, 'change', { signal: controller.signal });
-      changed.catch(() => {});
-      try {
-        const head = git('rev-parse', 'HEAD').trim();
-        git('merge-base', '--is-ancestor', commit, head);
-        const selected = new Set(paths);
-        const entries = git('ls-tree', '-rz', head, '--', ...paths).split('\0')
-          .filter((entry) => selected.has(entry.slice(entry.indexOf('\t') + 1)));
-        const present = new Set(entries.map((entry) => entry.slice(entry.indexOf('\t') + 1)));
-        const records = entries.map((entry) => entry.replace(/^(\d+) \S+ (\w+)\t/, '$1 $2\t'));
-        for (const name of paths) {
-          if (!present.has(name)) records.push(`0 ${'0'.repeat(head.length)}\t${name}`);
-        }
-        execFileSync('git', ['update-index', '-z', '--index-info'], {
-          cwd, env, input: `${records.join('\0')}\0`, stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        return;
-      } catch (error) {
-        if (!error.stderr?.toString().includes('index.lock') || !error.stderr.toString().includes('File exists')) throw error;
-        console.error('Waiting for shared index lock');
-        // If it was released between Git's refusal and this observation, retry now.
-        if (fs.existsSync(`${index}.lock`)) await changed;
-      } finally {
-        controller.abort();
-      }
-    }
-  } finally {
-    watcher.close();
-  }
 }
 
 export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], messageFile, patchFile, syncCommit }) {
@@ -62,7 +20,11 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       const commit = git('rev-parse', '--verify', `${syncCommit}^{commit}`);
       const committed = gitAt(cwd, env)('diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', commit).split('\0').filter(Boolean);
       if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
-      if (committed.length) await syncSharedIndex(cwd, commit, committed);
+      if (committed.length) {
+        const base = git('rev-parse', '--verify', `${commit}^`);
+        const count = await syncPublishedIndex({ repo: cwd, base, commit });
+        console.error(`shared index: realigned ${count} entries`);
+      }
       return commit;
     }
     if (!messageFile || (!paths.length && !patchFile)) throw new Error('Provide a message file and exact paths or a patch');
@@ -88,7 +50,7 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     const message = fs.readFileSync(messageFile, 'utf8');
     const commitPacket = (base, tree) => gitAt(cwd, env)('commit-tree', tree, '-p', base, '-F', messageFile).trim();
     const candidate = commitPacket(packet.base, packet.tree);
-    const { commit, gate, head } = await finalizeGatedCommit({
+    const { commit, gate } = await finalizeGatedCommit({
       repo: cwd, packet, candidate, label: 'commitFromPrivateIndex', message,
       createCommit: ({ base, tree }) => base === packet.base && tree === packet.tree ? candidate : commitPacket(base, tree),
     });
@@ -96,12 +58,10 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       throw Object.assign(new Error(formatCommitGateIncomplete(gate)), { exitCode: COMMIT_GATE_EXIT.incomplete });
     }
     if (gate) throw new Error(formatCommitGateRefusal(gate));
-    console.error(`Committed ${commit}; synchronizing shared index`);
+    console.error(`Committed ${commit}`);
     // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
     const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
     console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
-    const landedPaths = gitAt(cwd, env)('diff', '--name-only', '--no-renames', '-z', head, commit).split('\0').filter(Boolean);
-    await syncSharedIndex(cwd, commit, landedPaths);
     return commit;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

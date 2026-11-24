@@ -49,6 +49,49 @@ test('syncs additions, deletions and unusual filenames without changing other st
   assert.equal(fs.existsSync(path.join(f.cwd, 'deleted')), false);
 });
 
+test('a private ref publication realigns only untouched index entries for the whole group', async t => {
+  const f = fixture(t);
+  const { withCommitLock } = await import('../workspaces/commitGate.mjs');
+  f.write('intent', '');
+  f.git('add', '--', 'intent');
+  f.git('commit', '-qm', 'test: empty prior file');
+  const base = f.git('rev-parse', 'HEAD').trim();
+  const git = (...args) => execFileSync('git', args, { cwd: f.cwd, encoding: 'utf8',
+    env: { ...process.env, GIT_INDEX_FILE: path.join(f.cwd, '.git', 'packet') } }).trim();
+  const added = 'added [file]\tname';
+  git('read-tree', base);
+  f.write('changed', 'committed\n');
+  f.write('unrelated', 'grouped\n');
+  f.write('intent', 'committed content\n');
+  f.write(added, 'new\n');
+  fs.unlinkSync(path.join(f.cwd, 'deleted'));
+  git('add', '--all', '--', 'changed', 'deleted', 'unrelated', 'intent', added);
+  const commit = git('commit-tree', git('write-tree'), '-p', base, '-m', 'test: group');
+  f.write('unrelated', 'foreign staging\n');
+  f.git('add', '--', 'unrelated');
+  f.write('changed', 'committed\nfollow-up disk edit\n');
+  f.git('rm', '--cached', '--', 'intent');
+  f.git('add', '-N', '--', 'intent');
+  const foreign = f.git('ls-files', '--stage', '-z', '--', 'unrelated');
+  await withCommitLock({ repo: f.cwd }, moveRef => moveRef({ head: base, commit, reason: 'test: private publication' }));
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
+  assert.equal(f.git('ls-files', '--stage', '-z', '--', 'unrelated'), foreign);
+  assert.equal(f.git('diff', '--cached', '--name-status', '--', 'intent'), 'D\tintent\n');
+  assert.equal(f.git('diff', '--cached', '--name-status', '--', 'changed', 'deleted', added), '');
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'changed'), 'utf8'), 'committed\nfollow-up disk edit\n');
+});
+
+test('the private-index CLI preserves foreign staging on a path it commits', async t => {
+  const f = fixture(t);
+  f.write('changed', 'foreign staging\n');
+  f.git('add', '--', 'changed');
+  const foreign = f.git('ls-files', '--stage', '-z', '--', 'changed');
+  f.write('changed', 'selected\n');
+  await commitFromPrivateIndex({ ...f, paths: ['changed'] });
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+  assert.equal(f.git('ls-files', '--stage', '-z', '--', 'changed'), foreign);
+});
+
 test('refuses missing local imports before landing and reports workspace imports in the exact post-commit tree', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
@@ -243,10 +286,19 @@ function relocated() {
 
 test('waits for an existing index.lock without deleting it', async (t) => {
   const f = fixture(t);
+  const index = path.join(f.cwd, '.git', 'index');
+  const staged = path.join(f.cwd, '.git', 'foreign-index');
+  fs.copyFileSync(index, staged);
+  f.write('changed', 'foreign staging\n');
+  const stageGit = (...args) => execFileSync('git', args, { cwd: f.cwd, encoding: 'utf8',
+    env: { ...process.env, GIT_INDEX_FILE: staged } });
+  stageGit('add', '--', 'changed');
+  const foreign = stageGit('ls-files', '--stage', '-z', '--', 'changed');
   f.write('changed', 'selected\n');
+  f.write('unrelated', 'also selected\n');
   const lock = path.join(f.cwd, '.git', 'index.lock');
   fs.writeFileSync(lock, 'other writer');
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', 'changed'], { cwd: f.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', 'changed', 'unrelated'], { cwd: f.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill(); });
   let stderr = '';
   child.stderr.on('data', (data) => { stderr += data; });
@@ -258,10 +310,14 @@ test('waits for an existing index.lock without deleting it', async (t) => {
   ]);
   assert.equal(fs.readFileSync(lock, 'utf8'), 'other writer');
   assert.equal(child.exitCode, null);
-  fs.unlinkSync(lock); // Only the fixture's owner releases its own lock.
+  // Finish the concurrent Git writer's already-locked update.
+  fs.copyFileSync(staged, lock);
+  fs.renameSync(lock, index);
   const [code] = await closed;
   assert.equal(code, 0, stderr);
-  assert.equal(f.git('diff', '--cached', '--name-status', '--', 'changed'), '');
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+  assert.equal(f.git('ls-files', '--stage', '-z', '--', 'changed'), foreign);
+  assert.equal(f.git('diff', '--cached', '--name-status', '--', 'unrelated'), '');
 });
 
 test('partial patches preserve excluded work and recovery synchronizes without a second commit', async (t) => {

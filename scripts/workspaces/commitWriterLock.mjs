@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, 
   writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { gitIn } from './commitProducerClosure.mjs';
+import { syncPublishedIndex } from './commitSharedIndex.mjs';
 
 export function commitGateLockPath(repo) {
   const common = gitIn(repo)(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
@@ -31,15 +32,37 @@ function openTicket(dir) {
 /** The record exists only while this admitted writer is waiting or landing. Its
  * flock releases if the process dies, even if the pathname survives the writer.
  */
-export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate', arrival, packet, plan,
-  onPublishedHold, restoresHead }, run) {
+export async function withCommitLock(options, run) {
+  const { repo, ref = 'HEAD' } = options;
   const git = gitIn(repo);
+  const checkout = git(['rev-parse', '--symbolic-full-name', 'HEAD']).trim();
+  const scopeRef = ref === 'HEAD' ? checkout : git(['rev-parse', '--symbolic-full-name', ref]).trim();
+  const updatesCheckout = checkout === scopeRef && git(['rev-parse', '--is-bare-repository']).trim() === 'false';
+  let published;
+  const moveRef = ({ commit, head, reason }) => {
+    git(['update-ref', '-m', reason, ref, commit, head]);
+    if (updatesCheckout) published = { commit, base: head };
+  };
+  try {
+    return await withOrderedCommitLock({ ...options, ref, git, scopeRef, moveRef }, run);
+  } finally {
+    if (published) {
+      try {
+        const count = await syncPublishedIndex({ repo, checkout, ...published });
+        if (count) console.error(`shared index: realigned ${count} entries`);
+      } catch (error) {
+        console.error(`WARNING HSTACK_SHARED_INDEX_SYNC_FAILED after ${published.commit}: ${error.message}`);
+      }
+    }
+  }
+}
+
+async function withOrderedCommitLock({ repo, ref, git, scopeRef, moveRef, label = 'commit-gate', arrival, packet, plan,
+  onPublishedHold, restoresHead }, run) {
   const currentHead = () => git(['rev-parse', '--verify', ref]).trim();
-  const moveRef = ({ commit, head, reason }) => git(['update-ref', '-m', reason, ref, commit, head]);
   const withoutLock = async () => await run(moveRef, plan && await plan(currentHead()));
   if (process.platform === 'win32') return await withoutLock();
 
-  const scopeRef = git(['rev-parse', '--symbolic-full-name', ref]).trim();
   const path = commitGateLockPath(repo);
   const queue = `${path}.writers`;
   mkdirSync(queue, { recursive: true, mode: 0o700 });
