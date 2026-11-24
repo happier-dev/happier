@@ -501,7 +501,7 @@ function DomainAddForm(
   const linkedZone = needsZone ? principal?.kind === 'account' && principal.target.kind === 'account'
     && props.provider?.providerIdentity ? { credentialRef: principal.target.account, accountId: props.provider.providerIdentity.providerAccountId } : null : undefined;
   const needsSelection = !provider && (props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare');
-  const { selection: ingress, zone, fields: ingressFields, advancedFields: ingressAdvanced } = useDeploymentDomainIngressFields({
+  const { selection: ingress, zone, fields: ingressFields, advancedFields: ingressAdvanced, prerequisite: ingressPrerequisite } = useDeploymentDomainIngressFields({
     hostname: host, committedHostname, busy: props.busy, inspect: props.inspect, enabled: needsSelection || needsZone, linkedZone,
   });
   const containerPort = Number(port);
@@ -624,7 +624,7 @@ function DomainAddForm(
           </>
         ) : null}
         {ingressFields}
-        {!provider ? <>
+        {!provider && !ingressPrerequisite ? <>
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem label={t('projects.deployments.domainFieldService')} style={props.phone ? undefined : styles.routeService}>
             {props.services.length > 0 ? (

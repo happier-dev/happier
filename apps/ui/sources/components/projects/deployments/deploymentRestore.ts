@@ -153,8 +153,9 @@ export function deploymentBackupCaptureChoices(input: Readonly<{
     return { snapshotId, takenAtMs, kind: 'scheduled', copyFrom,
       ...(source && source.kind === entry.source?.kind ? { backupSource: source } : {}),
       restore: run ? {
+      // An Environment-wide list holds every source's snapshots: each restores into its own service.
       backup: { deploymentId: input.deploymentId, restoreBackupId: snapshotId, takenAtMs,
-        service: input.service, database: input.database, versionLabel: null },
+        service: source?.service ?? input.service, database: input.database, versionLabel: null },
       operands: { ...input.target, deploymentId: input.deploymentId,
         source: { kind: 'repository', snapshotId, backupOperationId: run } },
     } : null };

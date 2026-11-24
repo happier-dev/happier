@@ -456,17 +456,16 @@ export function AllDeploymentsGroups(
   );
 }
 
-/** The Apps rows that need the person (the readiness owner's tone), rose only when one of them failed. */
+/**
+ * The Apps rows that need the person (the readiness owner's tone). "Needs you" is amber's word (R15-D9): a failed
+ * row says Failed in rose on its own row, so the count never borrows rose.
+ */
 function countAppsNeedYou(items: readonly EnvironmentItem[]): ServicesViewNeedYou {
   let count = 0;
-  let tone: ServicesViewNeedYou['tone'] = 'warning';
   for (const item of items) {
-    const state = deploymentEnvironmentRowState(item);
-    if (!state?.tone) continue;
-    count += 1;
-    if (state.tone === 'danger') tone = 'danger';
+    if (deploymentEnvironmentRowState(item)?.tone) count += 1;
   }
-  return { count, tone };
+  return { count, tone: 'warning' };
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
@@ -487,7 +486,7 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, to
     accountTotal ? t('projects.deployments.services.countEnvironmentsTotal', { count: total })
       : items.length === 0 ? null
         : t(paged ? 'projects.deployments.services.countEnvironmentsAtLeast' : 'projects.deployments.services.countEnvironments', counted),
-    // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you"): amber, rose on a failure.
+    // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you"): amber.
     needYou.count > 0 ? { text: t('projects.deployments.services.needYou', { count: needYou.count }), tone: needYou.tone } : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
   ];

@@ -18,6 +18,11 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
     isCurrent: () => boolean;
     /** The control that opened it; without one the sheet centres. */
     anchor?: PopoverAnchor;
+    /**
+     * What the secret is for ("Repository password"): the sheet's title, true whether it lists saved secrets or opens on
+     * the form for a new one. Without it the sheet says it uses a saved secret.
+     */
+    title?: string;
 }>): Promise<SharedSavedSecretReferenceSelectionV1 | null> {
     if (input.signal.aborted || !input.accountLifetime.isCurrent() || !input.isCurrent()) return Promise.resolve(null);
     return new Promise(resolve => {
@@ -54,7 +59,7 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
             },
             chrome: {
                 ...createAnchoredPickerChrome({
-                    title: t('connectedServicesSettings.manualUseSavedSecret'),
+                    title: input.title ?? t('connectedServicesSettings.manualUseSavedSecret'),
                     testID: 'saved-secret-picker-sheet',
                     anchor: input.anchor,
                 }),

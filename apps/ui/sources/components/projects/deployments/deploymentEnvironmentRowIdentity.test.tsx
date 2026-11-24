@@ -101,9 +101,10 @@ it('D11: a live health arrival changes only that row\'s state, from the one stat
   }
   const screen = await renderScreen(<Producer />);
   try {
-    expect(screen.getTextContent()).toContain('Add health check');
+    // R15-D1: no health check is said once, on the Overview; the rows stay quiet.
+    expect(screen.getTextContent()).not.toContain('Add health check');
     expect(screen.getTextContent()).not.toContain(t('projects.deployments.stateUnverifiedShort'));
-    expect(rows.find(row => row.environmentId === 'db')?.state?.tone).toBe('warning');
+    expect(rows.find(row => row.environmentId === 'db')?.state).toBeNull();
     renders.clear();
     // Live health says the database is down while its receipt is unchanged: that row reads Down, nothing else renders.
     items = items.map(item => item.environment.id === 'db'

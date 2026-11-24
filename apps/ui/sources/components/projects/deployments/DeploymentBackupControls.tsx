@@ -66,12 +66,14 @@ import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storag
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
-import { deploymentActionRefusalRemedy, deploymentWorkStatus } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentBackupCredentialLabel as credentialLabel, deploymentWorkStatus } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
   deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
   type DeploymentBackupKeepField as KeepField } from './deploymentBackupRetention';
 import { useBackupPathCapacity, BackupPathCapacityReview } from './DeploymentBackupCapacity';
+import { useSavedSecretCatalogName } from '@/components/secrets/useSavedSecretCatalog';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 export { retentionFromDraft } from './deploymentBackupRetention';
 
 const noop = () => {};
@@ -437,15 +439,6 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
 }
 
 type CredentialRole = DeploymentBackupConfigurationV1['credentialBindings'][number]['role'];
-const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'credentialSecretAccessKey'
-  | 'credentialRepositoryPassword' | 'credentialSessionToken' | 'credentialSshPrivateKey'>> = {
-  accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
-  repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken', sshPrivateKey: 'credentialSshPrivateKey',
-};
-/** A credential role in words ("Repository password"), never its key. */
-function credentialLabel(role: string): string {
-  return t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`);
-}
 /** A search seed for the Store, not an identity: it only finds the plugins that add backup storage. */
 const STORE_BACKUP_QUERY = 'backup';
 const BACKUP_DESTINATION_SECTIONS = Object.freeze(['familiesById.backupDestinations']);
@@ -698,7 +691,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     if (!props.lifetime) return;
     const controller = new AbortController();
     const selection = await presentSavedSecretReferencePicker({ accountLifetime: props.lifetime, signal: controller.signal,
-      isCurrent: () => props.lifetime?.isCurrent() === true });
+      isCurrent: () => props.lifetime?.isCurrent() === true, title: credentialLabel(role) });
     if (selection) { setBindings(current => [...current.filter(binding => binding.role !== role), {
       purpose: 'backupDestination', configKey: 'destination', role,
       source: { kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision } }]); setResult(null); }
@@ -709,10 +702,12 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     {intent ? null : <SectionActionButton testID={`${id}.test`} title={t('projects.deployments.settingsSections.destinationTest')}
       disabled={!complete || locked} onPress={() => submit('test')} />}
     {/* Creating a repository is offered only once Test found none there, so a mistyped place is never initialized. */}
-    {intent || !repositoryMissing ? null : <SectionActionButton testID={`${id}.initialize`} title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
-      disabled={!complete || locked} onPress={() => submit('initializeAndSave')} />}
-    <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
-      disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />
+    {/* When Test found no repository there, creating one and saving is the sheet's one way forward (R15-D3). */}
+    {!intent && repositoryMissing ? <RoundButton testID={`${id}.initialize`} size="normal"
+      title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
+      disabled={!complete || locked} loading={busy} onPress={() => submit('initializeAndSave')} />
+      : <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
+        disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />}
   </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent, repositoryMissing, incompleteReason]);
   const chrome = React.useMemo(() => ({ kind: 'card' as const, footer }), [footer]);
   useModalCardChrome(setChrome, chrome);
@@ -767,6 +762,9 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     </> : <ActionInputFields fields={configFields} input={fields} editable={!locked} busy={busy}
       resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
       onPatch={patch => { setFields(current => ({ ...current, ...patch })); setResult(null); }} />}
+    {/* What Test found reads under the place it tested, where the person is looking (R15-D3). */}
+    <DeploymentBackupConfigurationResult result={result} machine={pathCapacity.machineName || props.machine} testID={id}
+      capacity={result?.review?.capacity ? pathCapacity.capacity : undefined} />
     {props.sourceChoices.length ? <ItemGroup title={t('projects.deployments.backupSources')}>
       {props.sourceChoices.map(choice => <Item key={choice.sourceId} testID={`${id}.source.${choice.sourceId}`}
         title={choice.kind === 'dump' ? t('projects.deployments.backupSourceDump', { service: choice.service })
@@ -789,20 +787,33 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
       detail={props.defaults.values.backupSchedule ? formatAutomationScheduleLabel({ schedule: props.defaults.values.backupSchedule })
         : t('projects.deployments.settingsSections.scheduleOff')}
       subtitle={sourceWord(props.defaults.sources.backupSchedule)} /> : null}
-    {anotherMachine ? null : <ItemGroup header="none">{destination.definition.credentialRoles.map(({ role, optional }) => <Item key={role}
-      testID={`${id}.role.${role}`} title={credentialLabel(role)}
-      subtitle={bindings.some(binding => binding.role === role) || (!intent && props.detail.content.bindings.some(binding => binding.purpose === 'backupDestination' && binding.role === role))
-        ? t('projects.deployments.settingsSections.credentialSet') : t(`projects.deployments.settingsSections.${optional ? 'setupRoleOptional' : 'setupRoleRequired'}`)}
-      mode="info" rightElement={props.lifetime ? <SectionActionButton testID={`${id}.role.${role}.choose`}
-        title={t('projects.deployments.settingsSections.credentialChoose')} disabled={locked} onPress={() => { void chooseSecret(role); }} /> : undefined} />)}</ItemGroup>}
-    <DeploymentBackupConfigurationResult result={result} machine={pathCapacity.machineName || props.machine} testID={id}
-      capacity={result?.review?.capacity ? pathCapacity.capacity : undefined} />
+    {anotherMachine ? null : <ItemGroup header="none">{destination.definition.credentialRoles.map(({ role, optional }) => (
+      <BackupCredentialRoleItem key={role} testID={`${id}.role.${role}`} role={role} optional={optional}
+        chosenRef={bindings.find(binding => binding.role === role)?.source.ref ?? null}
+        alreadyBound={!intent && props.detail.content.bindings.some(binding => binding.purpose === 'backupDestination' && binding.role === role)}
+        scope={props.lifetime?.scope ?? null} locked={locked}
+        onChoose={props.lifetime ? () => { void chooseSecret(role); } : null} />))}</ItemGroup>}
     {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
       reason={failedReceiverLabel ? [failedReceiverLabel, receiverReason].filter(Boolean).join(' · ') : receiverReason ?? undefined} diagnosticCode={refused.code} /> : null}
     {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner controller={scheduleChange.banner}
       machine={props.machine} copy="setting" /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
+}
+
+/** A credential role's row: the chosen Saved Secret by its name (R15-D3: "Saved Secret chosen" named nothing). */
+function BackupCredentialRoleItem(props: Readonly<{
+  testID: string; role: CredentialRole; optional: boolean | undefined; chosenRef: string | null; alreadyBound: boolean;
+  scope: AccountSettingsScope | null; locked: boolean; onChoose: (() => void) | null;
+  /** What an unbound role says on a saved configuration; a new setup says whether the role is required. */
+  missingLabel?: string;
+}>) {
+  const name = useSavedSecretCatalogName(props.chosenRef, props.scope);
+  return <Item testID={props.testID} title={credentialLabel(props.role)} mode="info"
+    subtitle={name.name ?? (props.chosenRef || props.alreadyBound ? t('projects.deployments.settingsSections.credentialSet')
+      : props.missingLabel ?? t(`projects.deployments.settingsSections.${props.optional ? 'setupRoleOptional' : 'setupRoleRequired'}`))}
+    rightElement={props.onChoose ? <SectionActionButton testID={`${props.testID}.choose`}
+      title={t('projects.deployments.settingsSections.credentialChoose')} disabled={props.locked} onPress={props.onChoose} /> : undefined} />;
 }
 
 /** The typed Configure result is shared by first setup and edits of a saved configuration. */
@@ -838,13 +849,11 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
 }>) {
   const change = useDeploymentChangePress(props.review, props.onChanged);
   const { actions, lifetime } = props;
-  const bound = (role: CredentialRole) => props.detail.content.bindings.some((binding) =>
-    binding.purpose === 'backupDestination' && binding.configKey === 'destination' && binding.role === role);
   const choose = async (role: CredentialRole) => {
     if (!actions || !lifetime) return;
     const controller = new AbortController();
     const selection = await presentSavedSecretReferencePicker({ accountLifetime: lifetime, signal: controller.signal,
-      isCurrent: () => lifetime.isCurrent() });
+      isCurrent: () => lifetime.isCurrent(), title: credentialLabel(role) });
     if (!selection) return;
     await change.press(() => actions.setBindings({ environmentId: props.detail.environment.id,
       expectedRevision: props.detail.environment.revision, remove: [],
@@ -853,22 +862,17 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
   };
   return (
     <>
-      {props.configuration.credentialBindings.map(({ role }) => (
-        <Item
-          key={role}
-          testID={`${props.testID}.credential.${role}`}
-          title={credentialLabel(role)}
-          subtitle={bound(role)
-            ? t('projects.deployments.settingsSections.credentialSet')
-            : t('projects.deployments.settingsSections.credentialMissing')}
-          mode="info"
-          rightElement={actions && lifetime ? (
-            <SectionActionButton testID={`${props.testID}.credential.${role}.choose`}
-              title={t('projects.deployments.settingsSections.credentialChoose')}
-              disabled={change.running} onPress={() => { void choose(role); }} />
-          ) : undefined}
-        />
-      ))}
+      {props.configuration.credentialBindings.map(({ role }) => {
+        const bound = props.detail.content.bindings.find((binding) =>
+          binding.purpose === 'backupDestination' && binding.configKey === 'destination' && binding.role === role);
+        return (
+          <BackupCredentialRoleItem key={role} testID={`${props.testID}.credential.${role}`} role={role} optional={false}
+            chosenRef={bound?.source.kind === 'secret' ? bound.source.ref : null} alreadyBound={bound !== undefined}
+            missingLabel={t('projects.deployments.settingsSections.credentialMissing')}
+            scope={lifetime?.scope ?? null} locked={change.running}
+            onChoose={actions && lifetime ? () => { void choose(role); } : null} />
+        );
+      })}
       {change.outcome && props.review ? <DeployOutcomeBanner controller={change.banner}
         machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
     </>

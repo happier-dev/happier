@@ -44,11 +44,12 @@ export function BackupPathCapacityReview(props: Readonly<{ capacity?: StoragePat
   // A read that couldn't say goes through the page's failure line: the sentence names where, the code stays behind Details.
   if (capacity.status !== 'known') return <SurfaceStateCard testID={`${props.testID}.capacity`} size="line" kind="unavailable"
     title={t('projects.deployments.settingsSections.setupCapacityUnknown')}
-    reason={`${props.machine} · ${capacity.path}`} diagnosticCode={capacity.reason} />;
+    // The directory is the field right above; the line names only the Machine whose disk it is.
+    reason={props.machine} diagnosticCode={capacity.reason} />;
   return <Item testID={`${props.testID}.capacity`} mode="info"
     title={t('projects.deployments.settingsSections.setupCapacityKnown')}
     detail={formatMachineBytes(capacity.freeBytes, 'storage')}
-    // A volume labelled by its own mount path ("/") names it once.
-    subtitle={[...new Set([props.machine, capacity.volume?.label,
-      capacity.volume?.mountPath ?? capacity.path, formatAsOfTime(capacity.observedAt)].filter(Boolean))].join(' · ')} />;
+    // Which disk: the Machine, then the volume's own name or a mount other than the root one ("/" says nothing, R15-D9).
+    subtitle={[...new Set([props.machine, capacity.volume?.label, capacity.volume?.mountPath, formatAsOfTime(capacity.observedAt)]
+      .filter(name => name && name !== '/'))].join(' · ')} />;
 }

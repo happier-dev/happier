@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -270,10 +270,10 @@ function describeReviewFields(
       : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
         : t('projects.deployments.review.replacesNothing');
   const rows = [
-    ...field('environment', t('projects.deployments.review.environment'), !promotion && !revision ? environment?.name : null),
     // A promotion replaces what the destination serves: that note belongs to the Destination, not to the version (R12-D4).
     ...field('destination', t('projects.deployments.promotion.destination'), promotion ? environment?.name : null,
       { note: promotion ? replacesNote : undefined }),
+    ...field('environment', t('projects.deployments.review.environment'), !promotion ? environment?.name : null),
     // What it replaces finishes the version's line (lab d3: "Replaces #38 · b81e0d4"); alone it keeps its own row.
     ...(reviewedVersion ? field('version', t('projects.deployments.review.version'), revisionText(reviewedVersion), {
       note: promotion ? undefined : replacesNote,
@@ -383,6 +383,24 @@ export function describeDeploymentReviewDecision(
       : rollback ? t('projects.deployments.review.approveRollback', vars)
         : t('projects.deployments.review.approveDeploy', vars),
   };
+}
+
+/**
+ * A backup setup review is titled by what that press does (R15-D3): a Test saves nothing, so it never reads as
+ * "Configure deployment backups". The consequence sentence stays the Action's own summary.
+ */
+export function describeDeploymentBackupConfigureDecision(
+  actionId: string | null,
+  input: unknown,
+): Readonly<{ title: string; approve: string }> | null {
+  if (actionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) return null;
+  switch (readRecord(input).intent) {
+    case 'test': return { title: t('projects.deployments.review.decisionBackupTest'), approve: t('projects.deployments.review.approveBackupTest') };
+    case 'initializeAndSave': return { title: t('projects.deployments.review.decisionBackupInitialize'),
+      approve: t('projects.deployments.review.approveBackupInitialize') };
+    case 'save': return { title: t('projects.deployments.review.decisionBackupSave'), approve: t('projects.deployments.review.approveBackupSave') };
+    default: return null;
+  }
 }
 
 export function useDeploymentReviewDecision(

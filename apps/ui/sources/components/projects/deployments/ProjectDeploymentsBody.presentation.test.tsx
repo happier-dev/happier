@@ -101,8 +101,9 @@ describe('Environment detail in a split pane', () => {
             </AppShellColumnContext.Provider>
         </AccountNoticeInvestigationBoundary>);
         try {
-            expect(screen.findByTestId('project-deployments.layout')).toBeNull();
+            // The detail keeps one host at every width (R15-D10); beside the app's column that host draws no list.
             expect(screen.findByTestId('project-deployments.rail')).toBeNull();
+            expect(screen.findByTestId('project-deployments.environment')).not.toBeNull();
         } finally { await screen.unmount(); controller.retire(); }
     });
 
@@ -139,7 +140,8 @@ describe('Environment detail in a split pane', () => {
         }
     });
 
-    it.each(['outcome_unknown', 'running_unverified', 'failed'] as const)('uses the shared needs-you treatment for a troubled Environment (%s), and removes it when the receipt recovers', async (trouble) => {
+    // A version running without a health check is not trouble here: the Overview's Health says it once (R15-D1).
+    it.each(['outcome_unknown', 'failed'] as const)('uses the shared needs-you treatment for a troubled Environment (%s), and removes it when the receipt recovers', async (trouble) => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const previousLocalSettings = storage.getState().localSettings;
         storage.getState().applyLocalSettings({ sessionListNeedsYouHighlight: 'accent' });

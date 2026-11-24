@@ -406,11 +406,11 @@ function DeploymentRestoreSheet(
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
           <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.restoreChooseLead', { name: props.name })}</Text>
-          {uploadForm}
+          {/* The repository's own backups lead, newest first; a file from elsewhere is the rarer way in (R15-D3). */}
           <ItemGroup testID="project-deployments.restore.choices" title={t('projects.deployments.restoreChooseTitle')}>
             {choices.status === 'loading' ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.loading" size="line" kind="loading"
-                title={t('projects.deployments.loading')} />
+                title={t('common.loading')} />
             ) : choices.status === 'failed' ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.failed" size="line" kind="error"
                 title={t('projects.deployments.restoreChooseFailed')}
@@ -443,6 +443,7 @@ function DeploymentRestoreSheet(
               );
             })}
           </ItemGroup>
+          {uploadForm}
           {setChrome ? null : footer}
         </View>
       </ListPresentationProvider>

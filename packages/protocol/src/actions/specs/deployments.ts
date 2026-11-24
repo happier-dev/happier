@@ -389,7 +389,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
           : intent === 'markNotNeeded' ? 'Records that this Environment has nothing to back up.'
           : 'Saves where this Environment’s backups go.';
       },
-      technicalInputPaths: ['serverId', 'environmentId', 'expectedRevision', 'configuration'] } } : {}),
+      // The press's own title says which setup action it is; the chosen defaults and credential bindings are the
+      // configuration's plumbing (plugin ids, roles, saved-secret refs), never the decision (R15-D3).
+      technicalInputPaths: ['serverId', 'environmentId', 'expectedRevision', 'intent', 'configuration', 'explicit',
+        'backupBindings', 'destinationSetup'] } } : {}),
     inputHints,
     ...(isDeploymentTargetLinkActionIdV1(id) || backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },

@@ -521,7 +521,10 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         {platformSource === null ? <View ref={revealHost('backups')} collapsable={false}>
           <BackupRows {...props} testID={section('backups')} />
         </View> : null}
-        {previewAvailability === 'preview' || previewAvailability === 'needsRepository' || props.lifetime || detail.content.previewTemplate ? (
+        {/* A stored definition's Move to repository row (above) already says previews need a repository and leads
+            there: one cause, said once, with its way forward (R15-D8). */}
+        {!(previewAvailability === 'needsRepository' && detail.content.definition.kind === 'stored' && editing?.actions.moveToRepository && props.lifetime)
+          && (previewAvailability === 'preview' || previewAvailability === 'needsRepository' || props.lifetime || detail.content.previewTemplate) ? (
           <View ref={revealHost('previews')} collapsable={false}>
           <ItemGroup
             testID={section('previews')}

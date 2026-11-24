@@ -4,7 +4,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { t } from '@/text';
-import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentSettledStateLabel } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -61,9 +61,14 @@ describe('data cleanup receipt presentation', () => {
     });
 });
 
-it('marks a version running without a health check amber in the rail, like an unknown outcome', () => {
-    expect(deploymentRailState('running_unverified')?.tone).toBe('warning');
+it('R15-D1: a version running without a health check is quiet in every list and history row; the Overview says it once', () => {
+    expect(deploymentRailState('running_unverified')).toBeNull();
     expect(deploymentRailState('running')?.tone).toBeNull();
+    expect(deploymentHistoryLead(createDeploymentReceiptHeaderV1({ state: 'running_unverified' }), null)).toBeNull();
+    expect(deploymentEnvironmentRowState({ currentDeployment: { state: 'running_unverified' } })).toBeNull();
+    // A list's quiet State word says it was deployed, never "Running, not verified" beside an Overview that says Passing.
+    expect(deploymentSettledStateLabel('running_unverified')).toBe(deploymentStateLabel('succeeded'));
+    expect(deploymentRailState('outcome_unknown')?.tone).toBe('warning');
 });
 
 describe('receipt titles name the operation the receipt records', () => {
@@ -128,6 +133,15 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
         expect(deploymentEnvironmentAttention({ ...calm, latest: failed })).toEqual({ kind: 'latestFailed', deploymentId: 'd-failed' });
         expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-run', state: 'queued' }, health: { status: 'down' } }))
             .toEqual({ kind: 'deploying', deploymentId: 'd-run' });
+    });
+
+    it('R15-D6: a press that ran and left a failed receipt is that failure, said the same way before and after a reload', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, refused: true, refusedDeploymentId: 'd-failed', latest: failed }))
+            .toEqual({ kind: 'latestFailed', deploymentId: 'd-failed' });
+        // A refusal with no receipt of its own (or about another one) still speaks as the press's refusal.
+        expect(deploymentEnvironmentAttention({ ...calm, refused: true, latest: failed })?.kind).toBe('actionRefused');
+        expect(deploymentEnvironmentAttention({ ...calm, refused: true, refusedDeploymentId: 'd-other', latest: failed })?.kind)
+            .toBe('actionRefused');
     });
 
     it('a newer catalog release is the quietest notice: it shows only when nothing else does', () => {

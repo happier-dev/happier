@@ -17,7 +17,7 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import { storage } from '@/sync/domains/state/storageStore';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { ApprovalReviewFacts, type ApprovalReviewFactsInput } from './ApprovalReviewFacts';
-import { describeDeploymentReviewDecision, readDeploymentReviewApproval, readSoleDeploymentReviewMachineId } from './DeploymentReviewApprovalFacts';
+import { describeDeploymentBackupConfigureDecision, describeDeploymentReviewDecision, readDeploymentReviewApproval, readSoleDeploymentReviewMachineId } from './DeploymentReviewApprovalFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
 export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'> & Readonly<{
@@ -156,8 +156,9 @@ export function confirmActionReview(
   const deployment = isDeploymentRolloutActionIdV1(input.actionId) ? readDeploymentReviewApproval(input) : null;
   const machineId = readSoleDeploymentReviewMachineId(deployment);
   const machine = machineId ? resolveServerScopedMachine(storage.getState(), input.serverId, machineId) : null;
-  const decision = describeDeploymentReviewDecision(deployment, input.actionId, machine ? getMachineSentenceName(machine) : null);
-  const summary = decision?.description ?? input.summary;
+  const decision = describeDeploymentReviewDecision(deployment, input.actionId, machine ? getMachineSentenceName(machine) : null)
+    ?? describeDeploymentBackupConfigureDecision(input.actionId, input.actionArgs);
+  const summary = (decision && 'description' in decision ? decision.description : null) ?? input.summary;
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const settle = (confirmed: boolean) => {

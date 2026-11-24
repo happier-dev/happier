@@ -679,10 +679,11 @@ const ProjectDeploymentsPage = React.memo(
                   // An agent proposes its files as a pull request: without a repository, the row says what it needs (R14-D9).
                   subtitle={t(preparable ? 'projects.deployments.preparation.askAgentBody' : 'projects.deployments.preparation.noRepository')}
                   subtitleLines={0} showChevron={false} accessoryLayout={phone ? 'stacked' : 'adaptive'}
-                  rightElement={<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
+                  // Both ways open a pull request: without a repository they cannot succeed, so the row only says why (R15-D8).
+                  rightElement={preparable ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" emphasis="secondary" />
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" emphasis="plain" />
-                  </View>} />
+                  </View> : undefined} />
               </ItemGroup>
             ) : preparation ? (
               <ItemGroup header="none" surface="none">
@@ -693,13 +694,8 @@ const ProjectDeploymentsPage = React.memo(
         </View>
       );
     }
-    if (besideList) {
-      return (
-        <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
-          {detail}
-        </View>
-      );
-    }
+    // One host for the detail whether the app's own column lists the Environments (besideList) or this page does: a
+    // window that crosses that width keeps the open draft or review mounted instead of starting it over (R15-D10).
     return (
       <View
         testID="project-deployments"
@@ -708,12 +704,13 @@ const ProjectDeploymentsPage = React.memo(
           minHeight: 0,
           }}
       >
-        {props.header}
+        {besideList ? null : props.header}
         <HappierListDetailLayout
           testID="project-deployments.layout"
           listTestID="project-deployments.list-pane"
           detailTestID="project-deployments.detail-pane"
-          minListWidth={COLLECTION_RAIL_MIN_WIDTH_PX * scale}
+          // Beside the app's column the page is the detail alone: no width fits a second list.
+          minListWidth={besideList ? Number.POSITIVE_INFINITY : COLLECTION_RAIL_MIN_WIDTH_PX * scale}
           minDetailWidth={DEPLOYMENTS_DETAIL_MIN_WIDTH_PX * scale}
           listWidthPx={
             railWidth.widthPx ??
@@ -732,7 +729,7 @@ const ProjectDeploymentsPage = React.memo(
             borderRightWidth: 1,
             borderRightColor: theme.colors.border.default,
           }}
-          list={(layout) => (
+          list={besideList ? null : (layout) => (
             <>
               {props.workspaceRef != null ? <LandOnFirstEnvironment
                 key={`${props.serverId}:${props.accountId}:${props.sourceId}`}

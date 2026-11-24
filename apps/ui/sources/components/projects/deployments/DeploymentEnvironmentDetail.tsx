@@ -143,9 +143,9 @@ import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets, type D
 import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import type { PlatformInspectOutcome } from './platformTargetLink';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
-import { showDeploymentRestoreSheet, type DeploymentRestoreSheetInput } from './DeploymentRestoreSheet';
+import { showDeploymentRestoreSheet, type DeploymentRestoreChoice, type DeploymentRestoreSheetInput } from './DeploymentRestoreSheet';
 import { deploymentDataTargetOperands, isDeploymentEnvironmentSettingsSectionV1 } from '@happier-dev/deployments';
-import { deploymentRestoreOperands, retainedBackupFromSummary } from './deploymentRestore';
+import { deploymentBackupCaptureChoices, deploymentRestoreOperands, retainedBackupFromSummary } from './deploymentRestore';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { useDeploymentEnvironmentDeletion } from './useDeploymentEnvironmentDeletion';
 import {
@@ -847,11 +847,24 @@ export const DeploymentEnvironmentDetail = React.memo(
         onNavigate: destination => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}),
       }) : null;
-    const openRestore = restoreAction && (retainedBackup && restoreOperands || uploadTarget) ? () => {
+    // The repository's own backups lead the sheet, newest first, as the Database page lists them (R15-D3: a backup
+    // made a minute earlier was missing and only an upload was offered).
+    const backupConfigRevision = detail.content.backup && 'configRevision' in detail.content.backup
+      ? detail.content.backup.configRevision : null;
+    const loadRestoreChoices = previewActions && restoreTarget && activeId && backupConfigRevision !== null
+      ? async (): Promise<readonly DeploymentRestoreChoice[]> => deploymentBackupCaptureChoices({
+        inventory: await previewActions.backupInventory({ ...restoreTarget, deploymentId: activeId, configRevision: backupConfigRevision }),
+        target: restoreTarget, deploymentId: activeId, sourceId: null, service: retainedBackup?.service ?? '',
+        database: retainedBackup?.database ?? '', backupSources,
+        retainedChoice: retainedBackup && restoreOperands ? { snapshotId: retainedBackup.restoreBackupId,
+          takenAtMs: retainedBackup.takenAtMs, kind: 'beforeMigration', restore: { backup: retainedBackup, operands: restoreOperands } } : null,
+      }) : null;
+    const openRestore = restoreAction && (retainedBackup && restoreOperands || uploadTarget || loadRestoreChoices) ? () => {
       showDeploymentRestoreSheet({
         serverId: detail.environment.serverId,
         name: detail.content.name,
-        machine: machineName(restoreOperands?.machineId ?? uploadTarget!.operands.machineId),
+        machine: machineName(restoreOperands?.machineId ?? uploadTarget?.operands.machineId ?? restoreTarget!.machineId),
+        ...(loadRestoreChoices ? { loadChoices: loadRestoreChoices } : {}),
         ...(retainedBackup && restoreOperands ? { backup: retainedBackup, operands: restoreOperands } : {}),
         ...(uploadTarget ? { uploadTarget } : {}),
         restore: (input, operation) => restoreAction(input, operation),
@@ -929,6 +942,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       noTarget: availability.kind === 'noTarget',
       controller: overview ? detail.controller ?? null : null,
       refused: outcome?.kind === 'refused',
+      refusedDeploymentId: outcome?.kind === 'refused'
+        ? DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId ?? null : null,
       reviewPending,
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
@@ -1019,14 +1034,24 @@ export const DeploymentEnvironmentDetail = React.memo(
               machineId={runtime?.source.kind === 'plugin' || machineIds.length !== 1 ? null : machineIds[0]} />
           ) : null;
         case 'latestFailed': {
+          // One failure, one banner (R15-D6): right after the press and after a reload it reads the same, with the
+          // cause's own fix when the receipt names one, else the receipt.
           const failedId = attention.deploymentId;
+          const failure = latest?.failure ?? null;
+          const cause = failure ? readDeploymentRefusalRecovery(failure.code, failure) : null;
+          const fix = cause && banner.openRecovery && cause.nextAction.destination !== 'logs'
+            && cause.nextAction.destination !== 'deploy' ? cause.nextAction : null;
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.latestFailed"
               tone="danger"
-              title={t('projects.deployments.overviewStatus.latestFailedTitle')}
-              description={latest ? deploymentHistoryLead(latest, latest.failure)?.text : undefined}
-              action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(failedId) }}
+              title={latest?.operation === 'rollback' ? t('projects.deployments.rollbackFailedTitle')
+                : latest?.operation === 'deploy' ? t('projects.deployments.deployFailedTitle')
+                  : t('projects.deployments.overviewStatus.latestFailedTitle')}
+              description={latest ? deploymentHistoryLead(latest, failure)?.text : undefined}
+              action={fix ? { label: fix.label, onPress: () => banner.openRecovery?.(fix.destination,
+                fix.openProject ? { openProject: fix.openProject } : { deploymentId: failedId }) }
+                : { label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(failedId) }}
             />
           );
         }
@@ -1087,7 +1112,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <AttentionBanner
               testID="project-deployments.environment.serving.notice.running_unverified"
               tone={servingNotice.tone}
-              title={deploymentEnvironmentVerificationLabel(runtime, 'full')}
+              title={deploymentEnvironmentVerificationLabel(runtime)}
               description={servingNotice.text}
             />
           ) : null;

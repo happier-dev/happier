@@ -122,7 +122,7 @@ function DeploymentDispositionSheet(
   }, [choice, props.reviewVolumes, volumeReview, volumeError]);
   const volumesReady = !props.reviewVolumes || volumeReview !== null;
   const volumesConfirmed = volumeReview?.every(volume => volumeChoices[volume.name] !== 'delete'
-    || confirmations[volume.name] === volume.name) ?? true;
+    || confirmations[volume.name] === volumeDisplayName(volume.name)) ?? true;
   const [refused, setRefused] = React.useState<Extract<DeploymentEnvironmentDeletionOutcome, { kind: 'refused' }> | null>(null);
   const blocked = DeploymentActionFailureV1Schema.safeParse(refused?.failure?.details);
   const blockedId = blocked.success && blocked.data.error === 'deployment_in_progress' ? blocked.data.deploymentId : null;
@@ -165,7 +165,9 @@ function DeploymentDispositionSheet(
     setRefused(null);
     const outcome = await run(choice, choice === 'remove' && volumeReview ? volumeReview.map(volume =>
       volumeChoices[volume.name] === 'delete'
-        ? { name: volume.name, disposition: 'delete', confirmation: confirmations[volume.name] }
+        // The person types the volume's own name (R15-D9: never Compose's 70-character project prefix); having typed
+        // it, the request carries the exact volume it confirmed.
+        ? { name: volume.name, disposition: 'delete', confirmation: volume.name }
         : { name: volume.name, disposition: 'keep' }) : undefined);
     setBusy(false);
     if (outcome.kind === 'deleted' || outcome.kind === 'unlinked') {
@@ -397,10 +399,10 @@ function DeploymentDispositionSheet(
             value={volumeChoices[volume.name] ?? 'keep'}
             options={[{ id: 'keep', label: t('common.keep') }, { id: 'delete', label: t('common.delete') }]}
             onChange={next => setVolumeChoices(previous => ({ ...previous, [volume.name]: next }))} />
-          {volumeChoices[volume.name] === 'delete' ? <Item title={t('projects.deployments.volumeConfirmation', { name: volume.name })}
+          {volumeChoices[volume.name] === 'delete' ? <Item title={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
             accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
               testID={`project-deployments.disposition.volume.${volume.name}.confirmation`}
-              accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volume.name })}
+              accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
               value={confirmations[volume.name] ?? ''} editable={!busy} monospace
               onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
         </React.Fragment>)}

@@ -48,9 +48,13 @@ export function renderDeploymentCreationDefaultsRows(
     testID: string;
     /** A Machine a row above already names (the Review's runs row): its builder and controller rows are not said again. */
     namedMachineId?: string | null;
+    /** A copy's chosen values came from the Environment it copies: they read "Copied", not "You chose this" (R14-D9). */
+    copied?: boolean;
   }>,
 ): React.ReactElement {
-  const { values, sources } = props.defaults;
+  const { values } = props.defaults;
+  const { sources } = props.defaults;
+  const word = (from: DefaultSource | undefined) => props.copied && from === 'explicit' ? t('common.copied') : sourceWord(from);
   const said = (machineId: string | undefined, source: DefaultSource | undefined) =>
     source === 'explicit' || (machineId !== undefined && machineId === props.namedMachineId);
   return (
@@ -62,7 +66,7 @@ export function renderDeploymentCreationDefaultsRows(
           title={t('projects.deployments.creationReview.buildsOn', {
             machine: props.machineName(values.buildMachineId),
           })}
-          subtitle={sourceWord(sources.buildMachineId)}
+          subtitle={word(sources.buildMachineId)}
         />
       ) : null}
       {values.controllerMachineId && !said(values.controllerMachineId, sources.controllerMachineId) ? (
@@ -72,7 +76,7 @@ export function renderDeploymentCreationDefaultsRows(
           title={t('projects.deployments.creationReview.deploysFrom', {
             machine: props.machineName(values.controllerMachineId),
           })}
-          subtitle={sourceWord(sources.controllerMachineId)}
+          subtitle={word(sources.controllerMachineId)}
         />
       ) : null}
       <Item
@@ -81,7 +85,7 @@ export function renderDeploymentCreationDefaultsRows(
         title={t('projects.deployments.creationReview.keepsPrevious', {
           count: values.retainPreviousDeployments,
         })}
-        subtitle={sourceWord(sources.retainPreviousDeployments)}
+        subtitle={word(sources.retainPreviousDeployments)}
       />
     </>
   );

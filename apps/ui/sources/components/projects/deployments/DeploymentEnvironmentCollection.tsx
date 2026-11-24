@@ -28,7 +28,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { selectDeploymentSingleDataMachineV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel, deploymentEnvironmentRowState } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentSettledStateLabel, deploymentEnvironmentRowState } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentStepCaption } from './DeploymentStepStrip';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -267,7 +267,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       state: latest,
       // The State column: the state that speaks, else the latest deploy's own settled word, quiet; never deployed says so,
       // quietly, in the word its filter uses (PAGE-ACCEPT-176 R12-D8: it read "—").
-      stateWord: latest ?? { tone: 'quiet' as const, text: currentDeployment ? deploymentStateLabel(currentDeployment.state)
+      stateWord: latest ?? { tone: 'quiet' as const, text: currentDeployment ? deploymentSettledStateLabel(currentDeployment.state)
         : t('projects.deployments.services.filterNotDeployed') },
       steps,
       stepCaption: steps ? deploymentStepCaption(steps) : null,

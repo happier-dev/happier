@@ -133,7 +133,7 @@ export const previewEditorCopy = {
 
 /** English fallback for restore snapshot and upload review, pending translation review. */
 export const restoreExtendedCopy = {
-  uploadTitle: 'Restore a local backup', upload: 'Choose backup file', uploading: 'Uploading backup…',
+  uploadTitle: 'From a file', upload: 'Choose backup file', uploading: 'Uploading backup…',
   uploadBody: 'Upload the backup to this Machine, then check its contents before replacing data.',
   uploadDatabasePlaceholder: 'Database name',
   uploaded: 'Uploaded backup', volume: 'Named volume', snapshot: 'Take a Machine snapshot first',
@@ -366,7 +366,7 @@ export const deploymentSettingsTranslations = {
     destinationTest: 'Test',
     destinationReachable: 'Reachable · tested just now',
     destinationRepositoryMissing:
-      'No backups found there · check the bucket and prefix',
+      'No backup repository there yet · create one to start keeping backups',
     destinationNativeFailed:
       "The destination didn't answer · check its address",
     destinationLocked: 'Another backup is using it · Retry when it finishes',

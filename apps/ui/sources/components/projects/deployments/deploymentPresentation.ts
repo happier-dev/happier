@@ -99,6 +99,17 @@ export function deploymentStepWorkStatus(step: DeploymentStepV1): WorkStatusPres
   return resolveWorkStatusTone({ kind: 'deployment', facts: { state: step.state, word: step.label } });
 }
 
+const BACKUP_CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'credentialSecretAccessKey'
+  | 'credentialRepositoryPassword' | 'credentialSessionToken' | 'credentialSshPrivateKey'>> = {
+  accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
+  repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken', sshPrivateKey: 'credentialSshPrivateKey',
+};
+
+/** A backup credential role by its name ("Repository password"), never its key, wherever a role is said. */
+export function deploymentBackupCredentialLabel(role: string): string {
+  return t(`projects.deployments.settingsSections.${BACKUP_CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`);
+}
+
 export function deploymentStateLabel(state: ReceiptState): string {
   switch (state) {
     case 'queued':
@@ -308,8 +319,8 @@ export function deploymentStateNotice(
 /**
  * One Environment's state in every list of Environments (rail, Projects tree, Services, chooser, counts), the
  * Environment page's attention order in small (D11): a failed, unknown or working latest attempt speaks first;
- * then live health, which says Down or Degraded over a settled receipt; "Running, not verified" only while no live
- * health has verified it. One rule, so a list never disagrees with the page.
+ * then live health, which says Down or Degraded over a settled receipt. A version with no health check is quiet
+ * here: the Overview's Health says it once, with its action (R15-D1). One rule, so a list never disagrees with the page.
  */
 export function deploymentEnvironmentRowState(item: Readonly<{
   currentDeployment?: Pick<DeploymentReceiptHeaderV1, 'state'> | null;
@@ -321,12 +332,12 @@ export function deploymentEnvironmentRowState(item: Readonly<{
   const health = item.healthAggregate?.status;
   if (health === 'down') return { tone: 'danger', text: t('projects.deployments.healthDown') };
   if (health === 'degraded') return { tone: 'warning', text: t('projects.deployments.healthDegraded') };
-  if (state === 'running_unverified') {
-    return deploymentEnvironmentVerificationPending(state, health)
-      ? { tone: 'warning', text: deploymentEnvironmentVerificationLabel(item.runtimeTargetLink, 'short') }
-      : null;
-  }
   return state ? deploymentRailState(state) : null;
+}
+
+/** A list's quiet State word for a settled deploy: a version running without a health check was still deployed. */
+export function deploymentSettledStateLabel(state: ReceiptState): string {
+  return deploymentStateLabel(deploymentSettledReceiptState(state));
 }
 
 export function deploymentEnvironmentVerificationPending(
@@ -338,12 +349,11 @@ export function deploymentEnvironmentVerificationPending(
 
 export function deploymentEnvironmentVerificationLabel(
   runtime: Pick<NonNullable<DeploymentEnvironmentReadDetailV1['runtimeTargetLink']>, 'source' | 'targetKind'> | null | undefined,
-  length: 'short' | 'full',
 ): string {
   if (runtime?.source.kind === 'host' && runtime.targetKind === 'ownServer') {
     return t('projects.deployments.overviewStatus.addComposeHealthCheck');
   }
-  return length === 'short' ? t('projects.deployments.stateUnverifiedShort') : deploymentStateLabel('running_unverified');
+  return deploymentStateLabel('running_unverified');
 }
 
 /**
@@ -356,16 +366,15 @@ export function deploymentRailState(
   switch (state) {
     case 'failed':
       return { tone: 'danger', text: deploymentStateLabel(state) };
-    // Running without a health check needs the person (lab d1 rail `unverified`): amber, like an unknown outcome.
-    // A row's end is narrow (a column row keeps its name first): the amber states say their short word there, so
+    // A row's end is narrow (a column row keeps its name first): an unknown outcome says its short word there, so
     // neither the word nor the name is cut ("Runnin…", PAGE-ACCEPT-176 R2-D13); the page keeps the full label.
     case 'outcome_unknown':
       return { tone: 'warning', text: t('projects.deployments.stateUnknownShort') };
-    case 'running_unverified':
-      return { tone: 'warning', text: t('projects.deployments.stateUnverifiedShort') };
     case 'queued':
     case 'running':
       return { tone: null, text: deploymentStateLabel(state) };
+    // Health is the Environment's one fact (its Overview); a version without a health check is no trouble in a row.
+    case 'running_unverified':
     case 'succeeded':
     case 'cancelled':
       return null;
@@ -484,6 +493,8 @@ export type DeploymentEnvironmentAttentionFacts = Readonly<{
   controller: Readonly<{ state: 'available' | 'paused' | 'unknown' }> | null;
   /** The person's last Deploy press was refused. */
   refused: boolean;
+  /** The receipt that refused press ran and left, when it got that far: the latest failure then speaks for it. */
+  refusedDeploymentId?: string | null;
   /** The person's last press is held for review. */
   reviewPending: boolean;
   /** The newest receipt in the Environment's history. */
@@ -500,7 +511,9 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   if (facts.machineReinstalled) return { kind: 'machineReinstalled' };
   if (facts.noTarget) return { kind: 'noTarget' };
   if (facts.controller?.state === 'paused') return { kind: 'controllerPaused' };
-  if (facts.refused) return { kind: 'actionRefused' };
+  // A press that ran and failed is the latest failure itself: one banner, the same before and after a reload (R15-D6).
+  const refusalIsLatestFailure = facts.latest?.state === 'failed' && facts.refusedDeploymentId === facts.latest.id;
+  if (facts.refused && !refusalIsLatestFailure) return { kind: 'actionRefused' };
   if (facts.latest?.state === 'failed') return { kind: 'latestFailed', deploymentId: facts.latest.id };
   if (facts.reviewPending) return { kind: 'approvalWaiting' };
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };

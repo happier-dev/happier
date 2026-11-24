@@ -247,7 +247,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
   </> : null;
-  return { advancedFields, selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
+  // Until Cloudflare is connected nothing below can be filled: the prerequisite and its one action stand alone (R15-D9).
+  const prerequisite = props.enabled && props.linkedZone === undefined && needsConnect;
+  return { advancedFields, prerequisite, selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
     dns: props.enabled && dns.success ? dns.data : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
       {props.linkedZone === undefined ? <>
@@ -274,6 +276,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         disabled={props.busy}
       />}
       </> : null}
+      {prerequisite ? null : <>
       {props.dnsRecordsOnly ? <FieldItem label={t('projects.deployments.domainDnsTtl')}>
         <FieldTextInput testID={`${id}.ttl`} value={ttl} onChangeText={setTtl}
           accessibilityLabel={t('projects.deployments.domainDnsTtl')} keyboardType="number-pad" editable={!props.busy} />
@@ -319,6 +322,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       ) : !zonesOnly && currentTunnels?.kind === 'unavailable' && reading !== 'tunnels' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
         title={currentTunnels.remedy} diagnosticCode={currentTunnels.reason} diagnosticDetail={currentTunnels.diagnosticDetail}
         action={{ label: t('common.retry'), testID: `${id}.tunnels.retry`, onPress: () => { void inspect('tunnels'); } }} /> : null}
+      </>}
     </View>
   ) : null };
 }

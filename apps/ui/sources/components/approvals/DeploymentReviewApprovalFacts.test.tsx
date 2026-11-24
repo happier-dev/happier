@@ -45,6 +45,17 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it('R15-D3: a backup setup review is titled by what that press does, not by the Action\'s generic name', async () => {
+    const { describeDeploymentBackupConfigureDecision } = await import('./DeploymentReviewApprovalFacts');
+    const { t } = await import('@/text');
+    const id = 'deployments.backups.configure';
+    expect(describeDeploymentBackupConfigureDecision(id, { intent: 'test' })).toEqual({
+      title: t('projects.deployments.review.decisionBackupTest'), approve: t('projects.deployments.review.approveBackupTest') });
+    expect(describeDeploymentBackupConfigureDecision(id, { intent: 'initializeAndSave' })?.title)
+      .toBe(t('projects.deployments.review.decisionBackupInitialize'));
+    expect(describeDeploymentBackupConfigureDecision(id, { intent: 'save' })?.approve).toBe(t('projects.deployments.review.approveBackupSave'));
+    expect(describeDeploymentBackupConfigureDecision('deployments.deploy', { intent: 'test' })).toBeNull();
+  });
   it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {
     const preview = { actionId: 'deployments.targets.link', hostReviewedContent: { summary: 'Create service checkout-api.',
       deploymentReview: { summary: 'Create service checkout-api.', platformCreate: { platformName: 'Railway', resourceName: 'checkout-api',

@@ -409,13 +409,15 @@ export const DeploymentReceiptDetail = React.memo(
       health: currentHealth,
       state: deployment.state,
       retainPolicy: environmentValue?.content.retainPreviousDeployments,
+      // The failure card names the version that serves again; a second "Previous version" beside it would disagree.
+      restoredSaid: deployment.state === 'failed' && restored,
     });
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
     // Without one, Investigate leads and Deploy again stays quiet (K12-6).
     const recoveryLeads = rollbackTarget !== null || retryRollbackTo !== null;
     const bannerRollbackId = pressAttention ? null : rollbackTarget?.deploymentId ?? retryRollbackTo;
-    const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
     // A narrow banner stacks its ways forward; the split controls stack with them at the same width.
+    // The cause's own fix leads when the receipt names one (R15-D7); Investigate is then the quiet way to find out more.
     const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => (
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? []}
@@ -423,7 +425,7 @@ export const DeploymentReceiptDetail = React.memo(
         catalogOutcome={investigation.catalogOutcome}
         onRetry={investigation.retryCatalog}
         compact={phone || stacked}
-        emphasis={investigateEmphasis}
+        emphasis={recoveryLeads || recoveryNext !== null ? 'secondary' : 'primary'}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
       />
     );
@@ -452,7 +454,9 @@ export const DeploymentReceiptDetail = React.memo(
     ];
     // One Machine reads as one list of steps; several Machines each get their own section, in rollout order.
     const perMachine = content.machineResults.length > 1;
-    const rollbackButton = retainedTarget && rollback && retainedTarget.deploymentId !== bannerRollbackId ? (
+    // A failure that put the previous version back needs no rollback from its header: an older release is History's.
+    const restoredAfterFailure = deployment.state === 'failed' && restored;
+    const rollbackButton = retainedTarget && rollback && retainedTarget.deploymentId !== bannerRollbackId && !restoredAfterFailure ? (
       <RoundButton
         testID="project-deployments.receipt.rollback"
         display="inverted"
@@ -504,7 +508,7 @@ export const DeploymentReceiptDetail = React.memo(
     // A failed deploy's notice offers its recovery choices on this, its one page; when the failure card already leads
     // with the rollback they would repeat, the card's own button is that choice.
     // A notice that offers its own rollback replaces the header's: one Roll back per page (R14-D5).
-    const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads
+    const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads && !restoredAfterFailure
       ? <DeploymentNoticeRecoveryChoices scope={props.controller?.scope ?? null} environmentId={environmentId}
           deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" fallback={rollbackButton} onReview={review.request} /> : null;
     const headerRecovery = noticeRecovery ?? rollbackButton;
@@ -628,7 +632,7 @@ export const DeploymentReceiptDetail = React.memo(
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: () => rollBack(retryRollbackTo),
-                } : recoveryNext ?? againAction}
+                } : recoveryNext ? { ...recoveryNext, display: 'default' } : againAction}
                 // Recovery leads when there is one; finding out why is the way forward beside it.
                 control={investigateControl}
                 // One way forward leads (lab envFail: Investigate, then the cause's fix, then a quiet Deploy again):
@@ -912,8 +916,7 @@ function failureConsequence(
   }
   if (facts.restoration.kind === 'outcome_unknown') return t('projects.deployments.failureRestoreUnknown');
   if (facts.restoration.kind === 'succeeded') {
-    if (facts.restoration.health === 'unverified') return [t('projects.deployments.restoredPrevious'), sha,
-      t('projects.deployments.stateUnverified')].filter(Boolean).join(' · ');
+    // What serves now is the Environment's Health to say; the card says only which version came back.
     return sha ? t('projects.deployments.failureRestored', { sha }) : t('projects.deployments.restoredPrevious');
   }
   const phase = facts.failure?.phase;
@@ -941,6 +944,7 @@ function receiptFacts(input: Readonly<{
   state: Parameters<typeof deploymentHealthFact>[1];
   /** How many earlier releases the Environment keeps; unknown until its read answers. */
   retainPolicy: number | undefined;
+  restoredSaid: boolean;
 }>): FactStripFact[] {
   const list: FactStripFact[] = [];
   if (input.serving) {
@@ -952,7 +956,7 @@ function receiptFacts(input: Readonly<{
     }
   }
   const target = input.facts.previousVersion;
-  if (target !== undefined) {
+  if (target !== undefined && !input.restoredSaid) {
     list.push({ key: 'previous', testID: 'project-deployments.receipt.facts.previous',
       label: t('projects.deployments.factPrevious'),
       value: target ? deploymentRevisionLabel(target.revision) : t('projects.deployments.factFirstDeploy') });

@@ -13,6 +13,7 @@ import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditP
 import { renderDeploymentCreationDefaultsRows } from '@/components/projects/deployments/DeploymentCreationDefaultsRows';
 import { MACHINE_DEPLOYMENT_ROLES, machineServiceDisplayName } from '@/components/machines/services/machineServicesPresentation';
 import { deployersLabel } from '@/components/projects/deployments/DeploymentDeployerFields';
+import { deploymentBackupCredentialLabel } from '@/components/projects/deployments/deploymentPresentation';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
@@ -229,7 +230,7 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   const controller = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.controllerMachineId ?? null);
   const machineName = (id: string) => (id === review.creationDefaults.values.buildMachineId ? builder : controller) ?? t('approvals.machineNotKnown');
   const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults`,
-    namedMachineId: plan?.runs ? plan.runsOn.machineId : null });
+    namedMachineId: plan?.runs ? plan.runsOn.machineId : null, copied: review.copy !== undefined });
   const runsOn = plan?.runsOn;
   // How many versions are kept is said once, by its defaults row (PAGE-ACCEPT-176 R13-D8).
   const copyIncluded = (review.copy?.included ?? []).filter(value => !(value.startsWith('retainPreviousDeployments:copy')
@@ -317,6 +318,10 @@ function deploymentCopyReviewLabel(value: string): string {
     const identity: unknown = JSON.parse(encoded);
     if (Array.isArray(identity) && identity.length === 3
       && (identity[0] === 'variable' || identity[0] === 'registry') && typeof identity[2] === 'string') return identity[2];
+    // A backup credential is named by its role ("Repository password"), never its stored identity (R15-D9).
+    if (Array.isArray(identity) && identity.length === 3 && identity[0] === 'backupDestination' && typeof identity[2] === 'string') {
+      return deploymentBackupCredentialLabel(identity[2]);
+    }
   } catch { /* Preserve facts from older or unrecognized review producers. */ }
   return value;
 }
