@@ -1,5 +1,6 @@
 import type { JsonValue, PluginConnectedAccountAuthenticationModeV2, QualifiedConnectedAccountCredentialPayloadV1 } from '@happier-dev/protocol';
 import { listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CANONICAL_CONNECTED_ACCOUNT_SECRET_CREDENTIAL_KEYS_V1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { readCredentialRedactionValues } from '../plugins/http/credentialRedactionValues.js';
 import { projectConnectedAccountConfiguredEndpoints } from './configuredOrigins.js';
 
@@ -7,7 +8,12 @@ type ConnectedAccountCredentialRedaction = Readonly<{
     observeSecret(value: string | null): string | null;
     readCredentialRedactionValue(key: string, value: string | null): string | null;
     readPublicValues(): readonly string[];
-    /** Every secret value this admitted pair exposed to the materializer, with its rendered variants. */
+    /**
+     * The real secret values of this admitted pair, with their rendered variants: credential keys the
+     * descriptor marks secret or the canonical credential shape holds secrets in, values read through
+     * Saved Secret custody, and configuration secrets. Never metadata (modes, ids, labels, expiry):
+     * a Session transcript masks every occurrence of what it registers.
+     */
     readSecretValues(): readonly string[];
 }>;
 
@@ -24,10 +30,18 @@ export function createConnectedAccountCredentialRedaction(input: Readonly<{
     });
     const endpointValues = new Set(endpoints.flatMap(endpoint => [endpoint.origin, endpoint.base]));
     const secretKeys = listConnectedAccountSecretCredentialKeysV1(input.mode);
+    const transcriptSecretKeys = new Set([...secretKeys.keys(), ...CANONICAL_CONNECTED_ACCOUNT_SECRET_CREDENTIAL_KEYS_V1]);
+    // Log redaction keeps every credential value; the secret set keeps only real secrets.
     const secrets = new Set<string>();
+    const realSecrets = new Set<string>();
+    const addVariants = (target: Set<string>, value: string) => {
+        for (const variant of readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })) target.add(variant);
+    };
+    /** A value read through Saved Secret custody (credential secretRefs or configuration secrets). */
     const observeSecret = (value: string | null): string | null => {
         if (value !== null) {
-            for (const variant of readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })) secrets.add(variant);
+            addVariants(secrets, value);
+            addVariants(realSecrets, value);
         }
         return value;
     };
@@ -36,7 +50,11 @@ export function createConnectedAccountCredentialRedaction(input: Readonly<{
         // facts. Held and declared secret fields retain their secret provenance.
         if (value !== null && endpointValues.has(value) && !secretKeys.has(key)
             && !Object.hasOwn(input.credential.secretRefs ?? {}, key)) return null;
-        return observeSecret(value);
+        if (value !== null) {
+            addVariants(secrets, value);
+            if (transcriptSecretKeys.has(key) || Object.hasOwn(input.credential.secretRefs ?? {}, key)) addVariants(realSecrets, value);
+        }
+        return value;
     };
     for (const [key, value] of Object.entries(input.credential.values)) readCredentialRedactionValue(key, value);
     for (const value of Object.values(input.configurationSecrets ?? {})) observeSecret(value);
@@ -56,6 +74,6 @@ export function createConnectedAccountCredentialRedaction(input: Readonly<{
         for (const value of endpointValues) collect(value);
         return Object.freeze([...values]);
     };
-    const readSecretValues = (): readonly string[] => Object.freeze([...secrets]);
+    const readSecretValues = (): readonly string[] => Object.freeze([...realSecrets]);
     return Object.freeze({ observeSecret, readCredentialRedactionValue, readPublicValues, readSecretValues });
 }

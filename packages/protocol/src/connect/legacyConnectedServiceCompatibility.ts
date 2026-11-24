@@ -564,6 +564,15 @@ function assertLegacyVisibleCredentialMatchesEmbeddedPayload(
     }
 }
 
+/**
+ * The credential keys that hold secret bytes in the host's canonical credential shapes: the OAuth
+ * tokens and the token-kind secret key `normalizeHistoricalLegacyCredentialPayload` writes. Every
+ * other key of those shapes (token type, scopes, expiry, provider identity) is metadata.
+ */
+export const CANONICAL_CONNECTED_ACCOUNT_SECRET_CREDENTIAL_KEYS_V1: readonly string[] = Object.freeze([
+    'accessToken', 'refreshToken', 'idToken', 'token', 'setupToken', 'apiKey',
+]);
+
 function normalizeHistoricalLegacyCredentialPayload(
     record: BuiltInLegacyStoredCredentialRecordV1,
     authenticationModeId: string,

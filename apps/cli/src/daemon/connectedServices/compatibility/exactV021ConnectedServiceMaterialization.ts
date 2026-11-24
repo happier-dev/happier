@@ -223,9 +223,11 @@ export async function materializeExactV021ConnectedServiceCredential(input: Read
       return credential.values[key] ?? null;
     },
   });
-  // The released record has no runtime configuration (refused above), so every credential value
-  // is secret, as the established owner classifies it.
-  input.observeMaterializationSecretValues?.([...new Set(Object.values(credential.values)
+  // Only the released record's token fields are secret; its other fields are metadata.
+  const recordSecrets = input.record.kind === 'oauth'
+    ? [input.record.oauth.accessToken, input.record.oauth.refreshToken, ...(input.record.oauth.idToken ? [input.record.oauth.idToken] : [])]
+    : [input.record.token.token];
+  input.observeMaterializationSecretValues?.([...new Set(recordSecrets
     .filter((value) => value.length > 0)
     .flatMap((value) => readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })))]);
 

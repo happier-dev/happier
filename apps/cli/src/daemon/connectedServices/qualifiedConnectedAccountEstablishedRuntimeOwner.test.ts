@@ -1,3 +1,5 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { redactTranscriptSecrets, registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
@@ -1566,6 +1568,12 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       },
     });
     expect(receipt.basis.isCurrent()).toBe(true);
+    // Only real secrets reach the Session transcript: an approval payload around them stays intact.
+    const approval = { nativeChoices: ['allow_once'], source: 'native_tool_approval_once', output: 'native echo access-1' };
+    expect(runAddedHostedSession({ environment: {}, workingDirectory: '/tmp/receipt', end: () => {} }, () => {
+      for (const value of receipt.basis.materializationSecretValues ?? []) registerSessionTranscriptSecret(value);
+      return redactTranscriptSecrets(approval);
+    })).toEqual({ ...approval, output: 'native echo [redacted]' });
     const replacement = await receipt.basis.prepareCredentialReplacement({
       set: { accessToken: 'access-rotated' },
       delete: [],
