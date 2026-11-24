@@ -11,6 +11,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { t } from '@/text';
 
@@ -303,12 +304,15 @@ export const ManagedControllerMoveList = React.memo(
                   ) : undefined
                 }
               />
+              {/* It belongs to the candidate row above it: the small inline toggle, not a section row of its own. */}
               {candidate.technicalDetails?.length ? (
-                <TechnicalDetailsDisclosure
-                  title={t('approvals.technicalDetails')}
-                  lines={candidate.technicalDetails}
-                  testID={`${props.testID}.${candidate.id}.technical-details`}
-                />
+                <ItemGroupRowPositionBoundary>
+                  <TechnicalDetailsDisclosure
+                    title={t('approvals.technicalDetails')}
+                    lines={candidate.technicalDetails}
+                    testID={`${props.testID}.${candidate.id}.technical-details`}
+                  />
+                </ItemGroupRowPositionBoundary>
               ) : null}
             </React.Fragment>
           );

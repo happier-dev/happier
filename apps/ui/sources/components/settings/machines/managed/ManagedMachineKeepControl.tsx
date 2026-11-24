@@ -21,6 +21,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
@@ -147,12 +148,15 @@ export const ManagedMachineKeepControl = React.memo(
 
 function keepTechnicalDetails(props: ManagedMachineKeepControlProps) {
   if (!props.unavailableDetails?.length) return null;
+  // It belongs to the Keep row above it: the small inline toggle, not a counted section row of its own.
   return (
-    <TechnicalDetailsDisclosure
-      title={t('approvals.technicalDetails')}
-      lines={props.unavailableDetails}
-      testID={`${props.testID}.technical-details`}
-    />
+    <ItemGroupRowPositionBoundary>
+      <TechnicalDetailsDisclosure
+        title={t('approvals.technicalDetails')}
+        lines={props.unavailableDetails}
+        testID={`${props.testID}.technical-details`}
+      />
+    </ItemGroupRowPositionBoundary>
   );
 }
 
