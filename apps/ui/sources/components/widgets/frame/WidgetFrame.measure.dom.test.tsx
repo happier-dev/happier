@@ -17,6 +17,12 @@ import { WidgetFrame } from './WidgetFrame';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { buildWidgetFrameStyleActions } from './widgetFrameMenu';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import { WidgetGroupFrame } from '@/components/widgets/group/WidgetGroupFrame';
+import { WidgetGroupMenuButton } from '@/components/widgets/group/WidgetGroupMenuButton';
+import type { WidgetGroupMenuInput } from '@/components/widgets/group/widgetGroupMenu';
+import { HubSectionMenu } from '@/components/hub/layout/HubSectionMenu';
+import type { HomeHubLayout } from '@/components/hub/layout/useHomeHubLayout';
+import { t } from '@/text';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,7 +34,7 @@ it('names widget options from each frame title and updates the name without remo
         {[title, 'Costs'].map((name, index) => <WidgetFrame key={index} testID={`named-frame-${index}`}
             frameStyle="card" placement="home" title={name} body={{ kind: 'content', children: 'Rows' }}
             menu={<div><ItemRowActions title="Fallback title" overflowOnly overflowTriggerTestID={`named-options-${index}`}
-                overflowTriggerAccessibilityLabel="Widget options" actions={[{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: () => {} }]} /></div>} />)}
+                actions={[{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: () => {} }]} /></div>} />)}
     </>;
     try {
         await act(async () => root.render(frames('Daily usage')));
@@ -38,6 +44,73 @@ it('names widget options from each frame title and updates the name without remo
         await act(async () => root.render(frames('Daily budget')));
         expect(container.querySelector('[data-testid="named-options-0"]')).toBe(trigger);
         expect(trigger.getAttribute('aria-label')).toBe('Options for Daily budget');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('distinguishes a named group from its same-titled widget and preserves the group bar name', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const title = 'Costs';
+    const input: WidgetGroupMenuInput = {
+        group: { kind: 'group', id: 'group', title, width: 'full', frameStyle: 'card', dividers: 'hairline',
+            children: [{ kind: 'widget', instance: { v: 1, id: 'costs', definition: { kind: 'builtin', id: 'usage_daily' }, bindings: {} } }] },
+        childTitle: () => title,
+        operations: { setWidth: vi.fn(), setFrame: vi.fn(), setDividers: vi.fn(), ungroup: vi.fn(), remove: vi.fn(), move: vi.fn(), create: vi.fn() },
+        showWidth: false, editInputs: undefined, onRename: undefined, onSave: undefined, onAddTo: undefined,
+    };
+    const layout = (customizing: boolean) => (
+        <WidgetGroupFrame testID="cost-group" placement="home" group={input.group} title={title}
+            accessibilityLabel={title} columns={1} customizing={customizing}
+            cells={[{ id: 'costs', columnSpan: 1, rowSpan: 1 }]}
+            menu={customizing ? null : <WidgetGroupMenuButton input={input} testID="cost-group-menu" />}
+            bar={customizing ? <WidgetGroupMenuButton input={input} testID="cost-group-bar" /> : null}
+            renderChild={() => <WidgetFrame testID="cost-card" placement="home" title={title} frameStyle="plain"
+                body={{ kind: 'content', children: 'Rows' }}
+                menu={<ItemRowActions title={title} overflowOnly overflowTriggerTestID="cost-card-options"
+                    actions={[{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: () => {} }]} />} />}
+        />
+    );
+    const triggerName = (id: string) => container.querySelector(`[data-testid="${id}"]`)?.getAttribute('aria-label');
+    try {
+        await act(async () => root.render(layout(false)));
+        const headerName = triggerName('cost-group-menu.trigger');
+        const widgetName = triggerName('cost-card-options');
+        await act(async () => root.render(layout(true)));
+        expect(headerName).toBe(triggerName('cost-group-bar.trigger'));
+        expect(headerName).toBe('Group options: Costs');
+        expect(widgetName).toBe('Options for Costs');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('preserves the built-in Home section menu name in its frame', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const section = { kind: 'builtin', id: 'automations', hidden: false, hideable: true } as const;
+    const title = t('homeWidgets.latestRunsTitle');
+    // The menu only reads the sections during render. The write ports are unused in this accessibility case.
+    const write = vi.fn(async () => {});
+    const layout: HomeHubLayout = {
+        order: [section.id], sections: [section], items: [], available: [], isDefault: true,
+        hiddenSetupStepCount: 0, status: 'ready', hasSnapshot: true, canCancelFailedIntent: false,
+        cancelFailedIntent: vi.fn(), projectMove: () => [section.id], retry: write, move: write, moveTo: write,
+        reorder: write, setHidden: write, setFrameStyle: write, showHiddenSetupSteps: write, reset: write,
+        addInstance: write, remove: write, rename: write, setInputs: write, setSize: write, setNetwork: write,
+        createGroup: write, ungroup: write, setGroup: write, setGroupInputs: write, moveItem: write,
+    };
+    try {
+        await act(async () => root.render(<WidgetFrame testID="automation-section" placement="home" frameStyle="card"
+            title={title} body={{ kind: 'content', children: 'Runs' }}
+            menu={<HubSectionMenu section={section} index={0} layout={layout} onCustomize={() => {}} />} />));
+        expect(container.querySelector('[data-testid="home-hub.automations.menuTrigger"]')?.getAttribute('aria-label'))
+            .toBe(`${t('settingsOverview.homeSectionOptions')}: ${title}`);
     } finally {
         await act(async () => root.unmount());
         container.remove();

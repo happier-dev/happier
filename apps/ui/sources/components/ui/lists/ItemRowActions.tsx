@@ -320,9 +320,9 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     }, [actionControlFrame, actionHitArea, iconSize, props, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
-        // The trigger names the row it acts on ("More actions for Work laptop"): among a list's many ⋯ buttons a
-        // bare "More actions" says nothing. A frame supplies the name for its own trigger.
-        const accessibilityLabel = nameFrameOptions?.(props.title) ?? props.overflowTriggerAccessibilityLabel
+        // A caller can name the object its menu governs. Otherwise a frame names its own trigger,
+        // and an ordinary row names the item it acts on.
+        const accessibilityLabel = props.overflowTriggerAccessibilityLabel ?? nameFrameOptions?.(props.title)
             ?? t('common.moreActionsFor', { title: props.title });
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
