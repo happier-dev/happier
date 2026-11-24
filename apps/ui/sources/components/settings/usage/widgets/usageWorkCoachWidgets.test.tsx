@@ -1881,6 +1881,31 @@ describe('Work and Coach widget bodies', () => {
       `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
   });
 
+  it('dates the Work links at the ledger total by their own read, older than the accounting beside them, until Refresh moves both (J-A35)', async () => {
+    const { readUsagePageFreshness } = await import('./usageBodyKit');
+    const linksAt = Date.UTC(2026, 10, 24, 13, 3);
+    const accountingAt = Date.UTC(2026, 10, 24, 14, 24);
+    const witness = evidence('s1', 't1', 2493);
+    const read = (workAsOfMs: number, readAtMs: number) => resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: readAtMs, readAtMs }],
+      work: [{ query, status: 'available', asOfMs: workAsOfMs, pullRequestReadSessions: ['s1', 's2'], evidence: [witness] }],
+      nowMs: readAtMs }, bundledUsageModelPriceCatalog).results[0]!;
+    const linksRead = (atMs: number) => t('usage.board.work.linksReadAt', { time: formatUsageObservedAt(atMs) });
+    // A usage event moved accounting on; Work was read earlier and was not reread.
+    const older = read(linksAt, accountingAt);
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={older} id="usage_project_ledger" testID="ledger" />);
+    const total = () => screen.findByTestId('ledger.conservation')?.props.accessibilityLabel ?? '';
+    expect.soft(total().toLowerCase()).toContain(linksRead(linksAt).toLowerCase());
+    expect.soft(screen.getTextContent().toLowerCase()).toContain(linksRead(linksAt).toLowerCase());
+    // The page's one freshness line keeps accounting's time and names Work's older read apart, never Work at T2.
+    expect.soft(readUsagePageFreshness([older])).toMatchObject({ asOfMs: accountingAt, olderSource: { source: 'work', asOfMs: linksAt } });
+    // Refresh reads both again: both move, and nothing is older any more.
+    const refreshedAt = Date.UTC(2026, 10, 24, 15, 0);
+    const refreshed = read(refreshedAt, refreshedAt);
+    await screen.update(<UsageProjectLedgerWidget {...props} slice={refreshed} id="usage_project_ledger" testID="ledger" />);
+    expect.soft(total().toLowerCase()).toContain(linksRead(refreshedAt).toLowerCase());
+    expect.soft(readUsagePageFreshness([refreshed]).olderSource).toBeNull();
+  });
   it('shows prior linked Work rows with an unknown merged figure during and after a failed refresh', async () => {
     const witness = evidence('s1', 't1', 2493);
     const accounting = [{ query, status: 'available' as const, value: slice.accounting! }];

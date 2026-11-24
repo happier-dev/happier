@@ -17737,6 +17737,7 @@ settingsSession: {
             workUnreadUnreachable: ({ formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} 件のセッションは接続できないマシン上にあります。これらのマシンに再び接続できるようになると、リンクが読み込まれます`,
             workUnreadUnreachableSome: "一部のセッションは接続できないマシン上にあります。これらのマシンに再び接続できるようになると、リンクが読み込まれます",
             workUnreadOther: ({ formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} セッションを読み込めませんでした`,
+            linksReadAt: ({ time }: { time: string }) => `リンク読み取り ${time}`,
             emptyTitle: "この期間の作業はありません",
             emptyReason: "どのマシンで実行したセッションもここに表示されます。",
             valueCaption: ({ count }: { count: string | number }) => `${count} セッション`,

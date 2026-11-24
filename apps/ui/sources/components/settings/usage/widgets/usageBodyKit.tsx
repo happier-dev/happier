@@ -802,6 +802,11 @@ function isUsageWorkSettledWithEvidence(source: UsageQuerySourceState): boolean 
   return source.source === 'work' && source.status === 'partial';
 }
 
+/** A settled Work answer whose Sessions failed retryably: its Retry sits at the ledger total, and the page publishes it. */
+export function readUsagePageWorkRetryable(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
+  return slices.some(slice => slice.sources.some(source => isUsageWorkSettledWithEvidence(source) && canRetryUsageCoverageFailure(source)));
+}
+
 export function readUsagePageWorkOffline(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
   return slices.some(slice => slice.sources.some(source => isUsageWorkOffline(source) && !isUsageWorkSettledWithEvidence(source)));
 }
@@ -1019,6 +1024,7 @@ export function readUsagePageFreshness(slices: readonly Pick<UsageQueryResultSli
   let retainedAccountingReadAtMs: number | null = null;
   let olderSource: { source: string; asOfMs: number } | null = null;
   let quotaAsOf: number | null = null;
+  let workAsOf: number | null = null;
   for (const slice of slices) {
     hasAccounting ||= slice.accounting !== undefined;
     for (const source of slice.sources) {
@@ -1035,6 +1041,8 @@ export function readUsagePageFreshness(slices: readonly Pick<UsageQueryResultSli
             olderSource = readUsageOldestAccountingObservation(slice.accounting) ?? olderSource;
           }
         }
+      } else if (source.source === 'work' && source.asOfMs !== undefined && source.status !== 'error' && source.status !== 'unknown') {
+        workAsOf = workAsOf === null ? source.asOfMs : Math.min(workAsOf, source.asOfMs);
       } else if ((source.source === 'quota' || source.source.startsWith('quota:')) && source.asOfMs !== undefined) {
         quotaAsOf = quotaAsOf === null ? source.asOfMs : Math.max(quotaAsOf, source.asOfMs);
       }
@@ -1047,6 +1055,10 @@ export function readUsagePageFreshness(slices: readonly Pick<UsageQueryResultSli
       }
     }
   }
+  // A usage event does not reread Work: links read in an earlier minute than the accounting shown are named apart in
+  // Details, so the page's one date never claims them (J-A35). The ledger total says their own time.
+  if (hasAccounting && accountingAsOf !== null && workAsOf !== null && Math.floor(workAsOf / 60_000) < Math.floor(accountingAsOf / 60_000)
+    && (olderSource === null || workAsOf < olderSource.asOfMs)) olderSource = { source: 'work', asOfMs: workAsOf };
   // Only a successful accounting read dates an accounting page. Older reads
   // and source observations remain separate facts for its Details.
   return { asOfMs: hasAccounting ? accountingAsOf : quotaAsOf, retainedAccountingReadAtMs, olderSource };

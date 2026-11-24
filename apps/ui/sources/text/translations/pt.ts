@@ -17566,6 +17566,7 @@ settingsSession: {
             workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} sessão está em uma máquina inacessível; os vínculos da sessão serão lidos quando for possível acessar essa máquina novamente` : `${formattedCount} sessões estão em máquinas inacessíveis; os vínculos dessas sessões serão lidos quando for possível acessar essas máquinas novamente`,
             workUnreadUnreachableSome: "Algumas sessões estão em máquinas inacessíveis; seus vínculos serão lidos quando for possível acessar essas máquinas novamente",
             workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} ${count === 1 ? 'sessão não pôde' : 'sessões não puderam'} ser lida${count === 1 ? '' : 's'}`,
+            linksReadAt: ({ time }: { time: string }) => `ligações lidas às ${time}`,
             emptyTitle: "Nenhum trabalho neste período",
             emptyReason: "As sessões de qualquer máquina aparecem aqui.",
             valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'sessão' : 'sessões'}`,

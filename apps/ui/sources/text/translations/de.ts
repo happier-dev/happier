@@ -17627,6 +17627,7 @@ settingsSession: {
             workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} Sitzung liegt auf einem nicht erreichbaren Rechner; ihre Verknüpfungen werden gelesen, sobald er wieder erreichbar ist` : `${formattedCount} Sitzungen liegen auf nicht erreichbaren Rechnern; ihre Verknüpfungen werden gelesen, sobald diese Rechner wieder erreichbar sind`,
             workUnreadUnreachableSome: "Einige Sitzungen liegen auf nicht erreichbaren Rechnern; ihre Verknüpfungen werden gelesen, sobald diese Rechner wieder erreichbar sind",
             workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} ${count === 1 ? 'Sitzung konnte' : 'Sitzungen konnten'} nicht gelesen werden`,
+            linksReadAt: ({ time }: { time: string }) => `Links gelesen um ${time}`,
             emptyTitle: "Keine Arbeit in diesem Zeitraum",
             emptyReason: "Sitzungen auf jedem Gerät erscheinen hier.",
             valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'Sitzung' : 'Sitzungen'}`,

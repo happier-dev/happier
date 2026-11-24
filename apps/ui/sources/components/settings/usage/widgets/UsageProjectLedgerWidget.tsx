@@ -8,6 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { t } from '@/text';
 import { usageMeterFill, usageSignatureAccent } from '../usageAccent';
 import { useUsageDrill } from '../usageDrill';
@@ -42,6 +44,7 @@ import {
   usageWorkPullRequestTitle,
   usageWorkShortCommit,
   usageWorkLinksNotice,
+  usageWorkLinksReadAt,
   usageWorkRetainedChangeLine,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
@@ -99,6 +102,15 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     (presentation?.geometry?.width ?? Number.POSITIVE_INFINITY) < 420;
   // Work links not read whole: still reading, settled with some Sessions unread, or failed (one decision, one wording).
   const linksNotice = usageWorkLinksNotice(props.slice);
+  const linksReadAt = usageWorkLinksReadAt(props.slice);
+  // The settled answer's retryable gap is reread from where it is said, the total, through the page model's own
+  // failed-only reread: the read the header's Retry ran before it went silent over settled Work (r226 #61 / J-B46).
+  const [retryingWork, setRetryingWork] = React.useState(false);
+  const { refresh } = props.model;
+  const pressRetryWork = React.useCallback(async () => {
+    setRetryingWork(true);
+    try { await refresh(undefined, { failedOnly: true }); } finally { setRetryingWork(false); }
+  }, [refresh]);
   if (!summary)
     return (
       <View style={styles.body}>
@@ -159,8 +171,11 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const noneLinked = !anyLinked && summary.allocated === 0 && summary.total !== null && summary.total > 0;
   const showAllocationParts = allocationRead && !noneLinked;
   // An unread or partly read set of links is said once, here at the total, with the owner's cause; never on a row.
-  const allocationStatus = !allocationRead ? [linksNotice.title, linksNotice.cause].filter(Boolean).join(' · ')
-    : noneLinked ? t('usage.board.work.noneLinked') : null;
+  const allocationStatus = !allocationRead ? [linksNotice.title, linksNotice.cause, linksReadAt].filter(Boolean).join(' · ')
+    : noneLinked ? [t('usage.board.work.noneLinked'), linksReadAt].filter(Boolean).join(' · ') : null;
+  // A read set of links still says when it was read, in the total's one quiet line (J-A35).
+  const totalNote = [linksReadAt, summary.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
+  const totalNoteText = totalNote ? `${totalNote.charAt(0).toLocaleUpperCase()}${totalNote.slice(1)}` : null;
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
   const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
@@ -503,6 +518,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         accessibilityLabel={[
           `${t('usage.board.work.allProjects')}: ${format(summary.total)}`,
           ...(allocationStatus ? [allocationStatus] : [
+            ...(linksReadAt ? [linksReadAt] : []),
             t('usage.board.work.conservation', {
               allocated: format(summary.allocated, summary.allocatedBasis),
               unallocated: format(summary.unallocated, summary.unallocatedBasis),
@@ -522,10 +538,23 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 <Text style={[styles.totalValue, title]}>{format(summary.total)}</Text>
               </View>
             ) : null}
-            <Text style={[styles.reasonLabel, caption]}>
-              {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
-                ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
-            </Text>
+            <View style={styles.statusLine}>
+              <Text style={[styles.reasonLabel, caption]}>
+                {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
+                  ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
+              </Text>
+              {/* The gap's own Retry ends its sentence: a quiet link, the spinner in its place while the reread runs. */}
+              {!allocationRead && linksNotice.retryLabel !== null ? (
+                <View style={styles.statusRetry}>
+                  {/* The press returns the reread, so the shared pressable is busy (announced, presses refused) until it settles. */}
+                  <View style={retryingWork ? styles.statusRetryHeld : null}>
+                    <TextLinkButton label={t('common.retry')} accessibilityLabel={linksNotice.retryLabel} tone="quiet"
+                      onPress={pressRetryWork} testID={`${props.testID}.workRetry`} />
+                  </View>
+                  {retryingWork ? <View style={styles.statusRetrySpinner}><ActivitySpinner size="small" /></View> : null}
+                </View>
+              ) : null}
+            </View>
           </>
         ) : (
           <>
@@ -533,7 +562,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               <Text style={[styles.totalLabel, title]}>{t('usage.board.work.allProjects')}</Text>
               <Text style={[styles.totalValue, title]}>{format(summary.total)}</Text>
             </View>
-            {summary.tokensFromParts ? <Text style={[styles.reasonLabel, caption]}>{t('usage.board.page.tokensFromParts')}</Text> : null}
+            {totalNoteText ? <Text style={[styles.reasonLabel, caption]}>{totalNoteText}</Text> : null}
             <View style={styles.line}>
               <Text style={[styles.partLabel, caption]}>{t('usage.board.work.linkedToPrs')}</Text>
               <Text style={[styles.partValue, caption]}>{format(summary.allocated, summary.allocatedBasis)}</Text>
@@ -613,6 +642,11 @@ const styles = StyleSheet.create((theme) => ({
     fontVariant: ['tabular-nums'],
   },
   reasonLabel: { ...Typography.default(), color: theme.colors.text.tertiary, flexShrink: 1 },
+  // The total's gap sentence and its Retry: the link ends the sentence and moves beneath it only when it cannot fit.
+  statusLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
+  statusRetry: { position: 'relative' },
+  statusRetryHeld: { opacity: 0 },
+  statusRetrySpinner: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'flex-start', justifyContent: 'center' },
   reasonValue: {
     ...Typography.default(),
     color: theme.colors.text.tertiary,

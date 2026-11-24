@@ -17829,6 +17829,7 @@ settingsSession: {
             workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} sessione si trova su una macchina non raggiungibile; i suoi collegamenti saranno letti quando la macchina sarà di nuovo raggiungibile` : `${formattedCount} sessioni si trovano su macchine non raggiungibili; i loro collegamenti saranno letti quando le macchine saranno di nuovo raggiungibili`,
             workUnreadUnreachableSome: "Alcune sessioni si trovano su macchine non raggiungibili; i loro collegamenti saranno letti quando le macchine saranno di nuovo raggiungibili",
             workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} ${count === 1 ? 'sessione non è stata letta' : 'sessioni non sono state lette'}`,
+            linksReadAt: ({ time }: { time: string }) => `link letti alle ${time}`,
             emptyTitle: "Nessun lavoro in questo periodo",
             emptyReason: "Le sessioni di qualsiasi macchina appaiono qui.",
             valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'sessione' : 'sessioni'}`,

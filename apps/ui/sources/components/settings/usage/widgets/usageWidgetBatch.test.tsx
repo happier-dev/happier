@@ -48,6 +48,7 @@ import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/compon
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { t } from '@/text';
 
 // Real Socket.IO serialization with the canonical cold external transport.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -1015,6 +1016,87 @@ describe('Usage page batch', () => {
       expect(daemonReads).toBeGreaterThan(beforeRecovery);
       expect(home.requests.filter(request => request.path === '/v2/usage/query')).toHaveLength(accountingReads);
       expect(screen.findAllByType(UsageOutcomesBody)).toHaveLength(1);
+    } finally { await screen.unmount(); }
+  });
+
+  it('rereads the Sessions whose Work links failed retryably from the Retry beside the ledger total, with the header silent (J-B46)', async () => {
+    const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
+      { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
+      { UsageProjectLedgerWidget }, { readUsagePageFailure }] = await Promise.all([
+      import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
+      import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'),
+      import('./UsageProjectLedgerWidget'), import('./usageBodyKit'),
+    ]);
+    const nowMs = Date.UTC(2026, 10, 7, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const machineId = 'ledger-retry-machine';
+    const [read, failing] = ['ledger-read-session', 'ledger-failing-session'];
+    let failingAnswers = false;
+    const requested: string[][] = [];
+    const witness = (sessionId: string, number: number) => ({ sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: String(number).repeat(40).slice(0, 40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number, title: `Linked ${number}`,
+        url: `https://github.com/owner/repo/pull/${number}`, baseBranch: 'main', headBranch: `feature-${number}`, state: 'merged' } });
+    // The daemon's answer is the boundary: one Session answers, the other fails retryably until it is read again.
+    installSessionActionRpcBoundary(request => {
+      const input = ScmWorkEvidenceReadRequestSchema.parse(request.params);
+      requested.push(input.sessions.map(session => session.sessionId));
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: input.sessions.map(session => session.sessionId === failing && !failingAnswers
+        ? { sessionId: session.sessionId, status: 'error', errorCode: 'scm_read_failed' }
+        : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true,
+          evidence: [witness(session.sessionId, session.sessionId === read ? 1 : 2)], branchEvidence: [] }) });
+    });
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-ledger-work-retry.test', accountId: 'account-a' }],
+      route: request => {
+        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [read, failing].map(sessionId => ({
+          id: `cost-${sessionId}`, observedAtMs: nowMs - 500, sessionId, turnId: 'turn', agentId: null, modelId: null, machineId: null,
+          projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost })) });
+        return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
+          ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+      } });
+    const server = home.homes.a!;
+    const accountScope = { serverId: server.id, accountId: 'account-a' };
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+    storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    storage.getState().applySessions([read, failing].map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id, active: true,
+      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a', machine: { activeAt: nowMs, presenceProtocolVersion: 1 } });
+    await publishMachineInventoryForTest(accountScope, [machine]);
+    const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs } };
+    let observed: UsageWidgetBodyModel | undefined;
+    const headerSaid: (string | null)[] = [];
+    function Ledger() {
+      const { model, query } = useUsageWidgetModel(input, 'usage_project_ledger');
+      observed = model;
+      if (model.slice) headerSaid.push(readUsagePageFailure([model.slice])?.reason ?? null);
+      return model.slice && query ? <UsageProjectLedgerWidget id="usage_project_ledger" model={model} slice={model.slice} query={query}
+        serverId={server.id} testID="ledger" /> : null;
+    }
+    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses}><Ledger /></UsageWidgetBatchProvider>
+    </InjectedAuthProvider>);
+    try {
+      await expect.poll(() => observed?.slice?.sources.find(source => source.source === 'work')).toMatchObject(
+        { status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } });
+      await expect.poll(() => observed?.pending).toBe(false);
+      expect(observed?.slice?.work?.outcomes.map(outcome => outcome.pullRequest.number)).toEqual([1]);
+      // The gap is said at the total, with its Retry beside it; never a second alert.
+      const retry = () => screen.findHostByTestId('ledger.workRetry');
+      await expect.poll(() => retry()).not.toBeNull();
+      expect(retry()?.props.accessibilityLabel).toContain(t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' }));
+      const before = requested.length;
+      failingAnswers = true;
+      await screen.pressByTestIdAsync('ledger.workRetry');
+      await expect.poll(() => observed?.slice?.work?.outcomes.map(outcome => outcome.pullRequest.number).sort(), { timeout: 5_000 }).toEqual([1, 2]);
+      // One Work read: the Machine's one request rereads the Session that failed.
+      expect(requested.slice(before)).toHaveLength(1);
+      expect(requested.slice(before)[0]).toContain(failing);
+      await expect.poll(() => retry()).toBeNull();
+      expect(headerSaid.every(reason => reason === null)).toBe(true);
     } finally { await screen.unmount(); }
   });
 

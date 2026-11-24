@@ -17102,6 +17102,7 @@ settingsSession: {
             workUnreadUnreachable: ({ formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} 个会话位于无法连接的机器上；重新连上这些机器后会读取会话的关联`,
             workUnreadUnreachableSome: "部分会话位于无法连接的机器上；重新连上这些机器后会读取会话的关联",
             workUnreadOther: ({ formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} 个会话无法读取`,
+            linksReadAt: ({ time }: { time: string }) => `链接读取于 ${time}`,
             emptyTitle: "本期没有工作",
             emptyReason: "在任何机器上运行的会话都会显示在这里。",
             valueCaption: ({ count }: { count: string | number }) => `${count} 个会话`,

@@ -80,7 +80,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, readUsagePageWorkRetryable, UsageScopeRefusalLine, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -408,7 +408,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     costBasisOptions,
     filterCommands,
     selectLayout: selectAreaLayout,
-    retryRead: facts.failure?.retryable && pageReadRetry ? pageReadRetry : undefined,
+    retryRead: (facts.failure?.retryable || facts.workRetryable) && pageReadRetry ? pageReadRetry : undefined,
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
     history: historyRead,
   });
@@ -565,6 +565,8 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       failure: readUsagePageFailure(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       workOffline: readUsagePageWorkOffline(slices),
+      // The header says nothing over settled Work; its retryable gap still publishes the page's Retry (J-B46).
+      workRetryable: readUsagePageWorkRetryable(slices),
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
       observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,

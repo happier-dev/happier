@@ -15,6 +15,8 @@ import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNa
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
+import { canRetryUsageCoverageFailure } from '@/sync/api/account/usageReadFailure';
+import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import type {
   UsageWorkIdentities,
   UsageWorkSessionPart,
@@ -46,21 +48,37 @@ export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedC
   }).join(' · ');
 }
 
-/** Present the Work owner's unread counts. The same partial result can also offer a Retry. */
-export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
+/**
+ * Present the Work owner's unread counts. A settled partial result whose Sessions failed retryably also names its
+ * Retry (`retryLabel`, the control's accessible name), said beside the gap; Sessions on unreachable Machines alone
+ * have none, since a reread cannot change them (acceptance r226 J-B46).
+ */
+export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null; retryLabel: string | null }> {
   const source = slice.sources.find(row => row.source === 'work');
   if (source?.status !== 'partial' || readUsageWorkOutcomesEvidence(slice, 'work') === 'observed') {
-    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+    return { title: t('usage.board.work.workUnavailableTitle'), cause: null, retryLabel: null };
   }
   const unread = source.unreadSessions ?? {};
   const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
   const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
+  const unreadOther = other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null;
   const cause = [
     unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
       : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
-    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
+    unreadOther,
   ].filter(Boolean).join(' · ');
-  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
+  const retryLabel = canRetryUsageCoverageFailure(source) ? [t('common.retry'), unreadOther].filter(Boolean).join(': ') : null;
+  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null, retryLabel };
+}
+
+/**
+ * When the Work answer on screen was read: its own as-of, never accounting's. A usage event does not reread Work, so
+ * the links can be older than the figures beside them; said always while a read Work answer is shown (J-A35).
+ */
+export function usageWorkLinksReadAt(slice: Pick<UsageQueryResultSlice, 'sources'>): string | null {
+  const source = slice.sources.find(row => row.source === 'work');
+  if (source?.asOfMs === undefined || source.status === 'error' || source.status === 'unknown' || source.status === 'not_loaded') return null;
+  return t('usage.board.work.linksReadAt', { time: formatUsageObservedAt(source.asOfMs) });
 }
 
 export function usageWorkBranchName(ref: string): string {

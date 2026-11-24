@@ -17332,6 +17332,7 @@ settingsSession: {
             workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} session se trouve sur une machine inaccessible ; ses liens seront lus dès que cette machine sera de nouveau accessible` : `${formattedCount} sessions se trouvent sur des machines inaccessibles ; leurs liens seront lus dès que ces machines seront de nouveau accessibles`,
             workUnreadUnreachableSome: "Certaines sessions se trouvent sur des machines inaccessibles ; leurs liens seront lus dès que ces machines seront de nouveau accessibles",
             workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} ${count === 1 ? "session n'a pas pu" : "sessions n'ont pas pu"} être lue${count === 1 ? '' : 's'}`,
+            linksReadAt: ({ time }: { time: string }) => `liens lus à ${time}`,
             emptyTitle: "Aucun travail sur cette période",
             emptyReason: "Les sessions de chaque machine apparaissent ici.",
             valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'session' : 'sessions'}`,

@@ -20922,6 +20922,7 @@ const enUsage = {
       workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} session is on a Machine that can't be reached; its links are read when that Machine can be reached again` : `${formattedCount} sessions are on Machines that can't be reached; their links are read when those Machines can be reached again`,
       workUnreadUnreachableSome: "Some sessions are on Machines that can't be reached; their links are read when those Machines can be reached again",
       workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `${formattedCount} ${count === 1 ? 'session' : 'sessions'} couldn't be read`,
+      linksReadAt: ({ time }: { time: string }) => `links read ${time}`,
       emptyTitle: "No work in this period",
       emptyReason: "Sessions you run on any machine show up here.",
       valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'session' : 'sessions'}`,

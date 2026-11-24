@@ -17405,6 +17405,7 @@ settingsSession: {
             workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} сессия находится на машине, с которой не удаётся связаться; её связи загрузятся, когда с машиной снова можно будет связаться` : `${formattedCount} ${plural({ count, one: 'сессия', few: 'сессии', many: 'сессий' })} на машинах, с которыми не удаётся связаться; связи загрузятся, когда с этими машинами снова можно будет связаться`,
             workUnreadUnreachableSome: "Некоторые сессии находятся на машинах, с которыми не удаётся связаться; связи загрузятся, когда с этими машинами снова можно будет связаться",
             workUnreadOther: ({ count, formattedCount }: { count: number; formattedCount: string }) => `Не удалось прочитать: ${formattedCount} ${plural({ count, one: 'сессия', few: 'сессии', many: 'сессий' })}`,
+            linksReadAt: ({ time }: { time: string }) => `ссылки прочитаны в ${time}`,
             emptyTitle: "За этот период работы нет",
             emptyReason: "Здесь появятся сессии с любой машины.",
             valueCaption: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), one: 'сессия', few: 'сессии', many: 'сессий' })}`,

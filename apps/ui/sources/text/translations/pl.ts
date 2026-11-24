@@ -17730,6 +17730,7 @@ settingsSession: {
         workUnreadUnreachable: ({ count, formattedCount }: { count: number; formattedCount: string }) => count === 1 ? `${formattedCount} sesja jest na maszynie, z którą nie można się połączyć; jej powiązania zostaną wczytane, gdy znów będzie można się z nią połączyć` : `Liczba sesji na maszynach, z którymi nie można się połączyć: ${formattedCount}; ich powiązania zostaną wczytane, gdy znów będzie można połączyć się z tymi maszynami`,
         workUnreadUnreachableSome: "Niektóre sesje są na maszynach, z którymi nie można się połączyć; ich powiązania zostaną wczytane, gdy znów będzie można połączyć się z tymi maszynami",
         workUnreadOther: ({ formattedCount }: { count: number; formattedCount: string }) => `Nie udało się wczytać sesji: ${formattedCount}`,
+        linksReadAt: ({ time }: { time: string }) => `linki odczytane o ${time}`,
         emptyTitle: "Brak pracy w tym okresie",
         emptyReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
         valueCaption: ({ count }: { count: string | number }) => `Sesje: ${count}`,
