@@ -109,6 +109,51 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await newer.stopRefreshLoopIfIdle();
     });
 
+    for (const replyLost of [true, false]) {
+        it(`keeps its claim when an older socket restores the route after a registration whose reply ${replyLost ? "was lost" : "arrived"}`, async () => {
+            const method = "machine-1:spawn-happy-session";
+            const ownedByA = new Set([method]);
+            const ownedByB = new Set([method]);
+            const a = createCoordinator("socket-a", ownedByA);
+            const b = createCoordinator("socket-b", ownedByB);
+            await a.registerMethod(method);
+            await b.registerMethod(method);
+
+            // A registers again, newer than B. Redis commits the write; with replyLost the reply never arrives.
+            const redis = getRedisClient();
+            if (replyLost) {
+                const realEval = redis.eval.bind(redis) as (...args: unknown[]) => Promise<unknown>;
+                const evalSpy = vi.spyOn(redis, "eval").mockImplementationOnce((async (...args: unknown[]) => {
+                    await realEval(...args);
+                    throw new Error("connection reset after the write");
+                }) as never);
+                await expect(a.registerMethod(method)).rejects.toThrow("connection reset after the write");
+                evalSpy.mockRestore();
+            } else {
+                await a.registerMethod(method);
+            }
+            expect(await a.lookupSocketId(userId, method)).toBe("socket-a");
+
+            // The route is deleted, and B (still claiming the method) restores it first in the next tick.
+            b.startRefreshLoopIfNeeded();
+            a.startRefreshLoopIfNeeded();
+            await a.removeSocketRegistration(userId, method, "socket-a");
+            await runRefreshTick();
+            expect(await a.lookupSocketId(userId, method)).toBe("socket-a");
+
+            // B has now seen the newer registration and stops claiming; A keeps the route.
+            await runRefreshTick();
+            await a.removeSocketRegistration(userId, method, "socket-a");
+            await runRefreshTick();
+            expect(await a.lookupSocketId(userId, method)).toBe("socket-a");
+
+            ownedByA.clear();
+            ownedByB.clear();
+            await a.stopRefreshLoopIfIdle();
+            await b.stopRefreshLoopIfIdle();
+        });
+    }
+
     it("leaves a mapping an older server wrote without a registration time, and restores once it is gone", async () => {
         const method = "machine-1:stop-session";
         const ownedMethods = new Set([method]);
