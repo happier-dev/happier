@@ -17,7 +17,7 @@ import type {
   HappierStyleProp,
 } from '../portableTypes.js';
 import { HappierSpinner } from '../feedback/Spinner.js';
-import { happierFocusRingStyle } from '../interaction/focusVisible.js';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
@@ -80,6 +80,11 @@ import { ListGridRow } from './ListGridRow.js';
  */
 /** The web List row supplies membership for arbitrary authored content. */
 export const HappierListItemMembershipContext = createContext(false);
+/**
+ * A table row whose selected cell draws the focus (the Collection's cell cursor): the row keeps its keyboard focus
+ * but not its own ring, so one ring says where the keys act.
+ */
+export const HappierListRowFocusDelegatedContext = createContext(false);
 
 export type HappierListProps = Readonly<{
   children?: ReactNode;
@@ -699,6 +704,7 @@ export function HappierListItem({
   accessibilityRowCount,
 }: HappierListItemProps) {
   const parentOwnsMembership = useContext(HappierListItemMembershipContext);
+  const focusDelegated = useContext(HappierListRowFocusDelegatedContext);
   // A middle ellipsis on the web is two runs (the web draws only a tail one); native uses the platform's mode.
   const titleMiddleRequested = titleEllipsizeMode === 'middle' && typeof title === 'string' && titleContent === undefined;
   const titleMiddle = titleMiddleRequested && Platform.OS === 'web' ? splitForWebMiddleEllipsis(title) : null;
@@ -1173,7 +1179,7 @@ export function HappierListItem({
         borderWidth: NAVIGATION_ROW_FOCUS_RING_WIDTH,
         borderColor: 'transparent',
         // Inset, like every list row: rows stack flush in a scrolling column that clips outside them.
-        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
+        ...(focusDelegated ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' })),
         backgroundColor: selected === true
           ? paintColor(navigationPalette?.navigationSelected ?? resolvedTheme.colors.elevatedSurface)
           : state.hovered && !state.disabled ? paintColor(navigationPalette?.navigationHover ?? 'transparent') : 'transparent',
@@ -1189,7 +1195,7 @@ export function HappierListItem({
         // Inset: the row spans its group, which clips anything drawn outside it.
         borderWidth: 1,
         borderColor: 'transparent',
-        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
+        ...(focusDelegated ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' })),
         opacity: state.disabled && !state.busy
           ? catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
@@ -1201,7 +1207,7 @@ export function HappierListItem({
         borderWidth: PLAIN_ROW_FOCUS_BAND_PX,
         borderColor: 'transparent',
         // Inset: the row spans its list, which clips anything drawn outside it.
-        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
+        ...(focusDelegated ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' })),
         borderRadius: catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.radius : resolvedTheme.radii.control,
         // Selection paints a soft control fill (never an accent bar); focus
         // paints only the ring above. They are separate axes, so a focused row

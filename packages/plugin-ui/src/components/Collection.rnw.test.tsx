@@ -714,6 +714,61 @@ describe('Collection table', () => {
     }
   });
 
+  it('draws the selected cell on the focused row and carries its column when the focus moves rows', async () => {
+    const onEdit = vi.fn(() => true);
+    const onSelect = vi.fn();
+    const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [
+      { key: 'subject', title: 'Subject', minWidth: 100, priority: 1, render: (item: Entry) => item.title },
+    ] };
+    const view = mount({
+      anatomy: anatomyWithField, detail: 'none', reducedMotion: true,
+      tableCells: { selected: null, onSelect, onEdit },
+    });
+    try {
+      view.measure(1200);
+      expect(view.container.querySelector('[data-testid$=":selected-cell"]')).toBeNull();
+      await view.update({ tableCells: { selected: { rowKey: 'a', columnKey: 'subject' }, onSelect, onEdit } });
+      const ringA = view.query('row:a:selected-cell');
+      expect(ringA).not.toBeNull();
+      expect(ringA!.closest('[data-testid="row:a"]')?.textContent).toContain('Retry idempotent payment intents');
+      act(() => {
+        const row = view.query('row:a')!;
+        row.focus();
+        row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      });
+      expect(view.query('row:a:selected-cell')).toBeNull();
+      expect(view.query('row:b:selected-cell')).not.toBeNull();
+      act(() => {
+        view.query('row:b')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+      });
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith({ rowKey: 'b', columnKey: 'subject' });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('draws its own column resize handle and commits the width once per gesture', () => {
+    const onResizeEnd = vi.fn();
+    const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [
+      { key: 'subject', title: 'Subject', minWidth: 100, priority: 1, render: (item: Entry) => item.title },
+    ] };
+    const view = mount({
+      anatomy: anatomyWithField, detail: 'none', reducedMotion: true,
+      tableColumnSizing: { widths: new Map([['subject', 220]]), onResizeEnd },
+    });
+    try {
+      view.measure(1200);
+      const handle = view.container.querySelector<HTMLElement>('[aria-label="Resize Subject"]');
+      expect(handle).not.toBeNull();
+      act(() => {
+        handle!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      });
+      expect(onResizeEnd).toHaveBeenCalledExactlyOnceWith({ columnKey: 'subject', width: 228 });
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('returns a column width only when its resize treatment submits an end intent', () => {
     const onResizeEnd = vi.fn();
     const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [

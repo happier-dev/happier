@@ -95,6 +95,7 @@ import { Dropdown } from './Overlay.js';
 import { HappierSkeletonRows, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
 import { HappierListSection } from '../presentation/collection/List.js';
 import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
+import { HappierListRowFocusDelegatedContext } from '../presentation/collection/List.js';
 import { encodeHappierSectionRowCellKey, resolveHappierRovingSelection, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
 import { HAPPIER_ITEM_DENSITY_ROW_HEIGHT, HAPPIER_ROW_CONTENT_POINTER_EVENTS, HAPPIER_ROW_CONTROL_POINTER_EVENTS } from '../presentation/collection/List.js';
 import { HappierRadioMark } from '../presentation/form/RadioMark.js';
@@ -109,6 +110,9 @@ import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
 import { CollectionVirtualizerContext, type CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
+import { createCollectionCellCursor, HappierCollectionCellCursorContext, useHappierCollectionCellCursorColumn } from '../presentation/collection/cellCursor.js';
+import { useResizableSize } from '../presentation/layout/resize/useResizableSize.js';
+import { HAPPIER_FOCUS_RING_V1 } from '../presentation/interaction/focusRingMetrics.js';
 import { useCollectionShownFields, type CollectionColumnsBinding } from './collectionColumnChoice.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 
@@ -1338,6 +1342,13 @@ const wrappedTitleLineStyle: HappierPortableStyle = { flexDirection: 'row', alig
 const overlayStyle: HappierPortableStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
 const cellTextStyle: HappierPortableStyle = { flexShrink: 1 };
 
+/** The selected cell stands the row's height so its ring does; its ring reaches half a gap past its text (lab dbEdit). */
+const selectedCellStyle: HappierPortableStyle = { alignSelf: 'stretch', justifyContent: 'center', overflow: 'visible' };
+const selectedCellRingStyle: HappierPortableStyle = {
+  position: 'absolute', top: 2, bottom: 2, right: -TABLE.gap / 2,
+  borderWidth: HAPPIER_FOCUS_RING_V1.widthPx, borderRadius: HAPPIER_RADIUS_V1.sm,
+};
+
 function cellStyle(column: ResolvedColumn<unknown>): HappierPortableStyle {
   return column.flex === true
     ? flexCellStyle
@@ -1402,8 +1413,17 @@ function TableCells<Item>(props: Readonly<{
   anatomy: CollectionAnatomy<Item>;
   /** A nested table's indent and disclosure, before the glyph. */
   leading?: TreeLeading | null;
+  itemKey?: HappierCollectionKey;
+  /** The selected cell's column on this row (`cellCursor`): a field key, null for the title, undefined for none. */
+  cursorColumn?: string | null | undefined;
 }>): ReactElement {
   const { item, anatomy } = props;
+  const theme = useHappierUiTheme();
+  const cellCursor = useContext(HappierCollectionCellCursorContext);
+  const itemKey = props.itemKey;
+  // A pressed cell becomes the selected cell; the row's own press (focus, open) carries on underneath.
+  const pressCell = (columnKey: string | null) => cellCursor === null || itemKey === undefined || !props.withTitle || item === null
+    ? undefined : () => { if (cellCursor.selectable()) cellCursor.select({ rowKey: itemKey, columnKey }); };
   const layer = rowLayerPointerEvents(anatomy);
   // A row's control replaces its glyph only when the row offers one, exactly as the list row decides: a row with no
   // control (a stale row, a source with no workflow) still says what it is.
@@ -1418,14 +1438,29 @@ function TableCells<Item>(props: Readonly<{
       ) : anatomy.loadingGlyph === false ? null : (
         <View pointerEvents={layer?.leaf} style={glyphStyle}>{item === null || !props.withTitle ? null : anatomy.glyph(item)}</View>
       )}
-      {renderTableRowCells(item, props.columns, (column, spanWidth) => (
-        <View key={column.key} pointerEvents={column.render === null ? layer?.content : column.control === true ? layer?.control : layer?.leaf}
-          style={spanWidth === null ? cellStyle(column as ResolvedColumn<unknown>) : [cellStyle(column as ResolvedColumn<unknown>), { width: spanWidth }]}>
-          {item === null ? null : column.render === null ? (
-            props.withTitle ? <TableTitle item={item} anatomy={anatomy} /> : null
-          ) : <TableCellValue value={column.render(item)} tabular={column.key === 'age'} />}
-        </View>
-      ))}
+      {renderTableRowCells(item, props.columns, (column, spanWidth) => {
+        const cellKey = column.key === 'title' ? null : column.fieldKey;
+        const isCell = column.key === 'title' || column.fieldKey !== null;
+        const selected = isCell && props.cursorColumn !== undefined && props.cursorColumn === cellKey;
+        const press = isCell ? pressCell(cellKey) : undefined;
+        return (
+          <View key={column.key} pointerEvents={column.render === null ? layer?.content : column.control === true ? layer?.control : layer?.leaf}
+            {...(press === undefined ? {} : Platform.OS === 'web' ? { onPointerDown: press } : { onTouchStart: press })}
+            style={[
+              spanWidth === null ? cellStyle(column as ResolvedColumn<unknown>) : [cellStyle(column as ResolvedColumn<unknown>), { width: spanWidth }],
+              selected ? selectedCellStyle : null,
+            ]}>
+            {selected ? (
+              <View pointerEvents="none" testID={anatomy.testID === undefined || item === null ? undefined : `${anatomy.testID(item)}:selected-cell`}
+                style={[selectedCellRingStyle, { left: column.gutter === true ? TABLE.gap / 2 : -TABLE.gap / 2,
+                  borderColor: theme.colors.focus, backgroundColor: theme.colors.surface }]} />
+            ) : null}
+            {item === null ? null : column.render === null ? (
+              props.withTitle ? <TableTitle item={item} anatomy={anatomy} /> : null
+            ) : <TableCellValue value={column.render(item)} tabular={column.key === 'age'} />}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -2029,8 +2064,10 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
     posInSet: node.posInSet,
     setSize: node.setSize,
   }), [branchOpen, node]);
+  const cursorColumn = useHappierCollectionCellCursorColumn(itemKey);
   const rowContents = geometry === 'table' ? (
-    <TableCells item={item} columns={stage.columns} height={height} withTitle anatomy={anatomy} leading={leading} />
+    <TableCells item={item} itemKey={itemKey} columns={stage.columns} height={height} withTitle anatomy={anatomy} leading={leading}
+      cursorColumn={cursorColumn} />
   ) : (
     <View>
       <ListCells
@@ -2120,7 +2157,10 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
       : props.beforeBand ? RULED_ROW_BEFORE_BAND
       : geometry === 'list' && stage.dividedKeys === null ? RULED_LIST_ROW : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>
-        {renderCollectionItemDestination(host, anatomy, item, rowItem)}
+        {/* Always this provider, so the row never remounts as the selected cell arrives or leaves. */}
+        <HappierListRowFocusDelegatedContext.Provider value={cursorColumn !== undefined && geometry === 'table'}>
+          {renderCollectionItemDestination(host, anatomy, item, rowItem)}
+        </HappierListRowFocusDelegatedContext.Provider>
       </HappierCollectionTreeRowContext.Provider>
     </HappierCollectionTableRowContext.Provider>
   );
@@ -2854,7 +2894,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const [gridViewportWidth, setGridViewportWidth] = useState(0);
   const tableWidth = gridScroll && gridViewportWidth > 0 ? gridViewportWidth : size?.width ?? 0;
   const tableColumnSizing = props.tableColumnSizing;
-  const columnWidths = tableColumnSizing?.widths;
+  // A column being dragged stands at its drag width; the author hears the width once, when the gesture ends.
+  const [draftColumn, setDraftColumn] = useState<CollectionTableColumnResize | null>(null);
+  const heldWidths = tableColumnSizing?.widths;
+  const columnWidths = useMemo(() => heldWidths === undefined || draftColumn === null ? heldWidths
+    : new Map(heldWidths).set(draftColumn.columnKey, draftColumn.width), [draftColumn, heldWidths]);
   const columns = useMemo(
     () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth, columnWidths),
     [accessibility.textScale, anatomy, columnWidths, rowAccessoryWidth, tableWidth, treeLeadingWidth],
@@ -2866,10 +2910,21 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     column.key === 'title' || column.fieldKey !== null ? [{ key: column.fieldKey, disabled: false }] : []) : [], [columns, hasTableCells]);
   const tableCellsRef = useRef(tableCells);
   tableCellsRef.current = tableCells;
+  // The selected cell is drawn on the focused row, in the author's selected column (two rows repaint per move).
+  const [cellCursor] = useState(createCollectionCellCursor);
+  const cursorColumn = tableCells?.selected?.columnKey;
+  const cursorRow = tableCells?.selected === null || tableCells?.selected === undefined
+    ? null : model.focusKey ?? tableCells.selected.rowKey;
+  const selectCell = tableCells?.onSelect;
+  useLayoutEffect(() => {
+    cellCursor.setOnSelect(selectCell ?? null);
+    cellCursor.set(cursorRow === null || cursorColumn === undefined ? null : { rowKey: cursorRow, columnKey: cursorColumn });
+  }, [cellCursor, cursorColumn, cursorRow, selectCell]);
   const onTableCellKey = useCallback((key: string, rowKey: string, event: unknown) => {
     const interaction = tableCellsRef.current;
     if (interaction === undefined || hasKeyModifier(event)) return false;
-    const selected = interaction.selected?.rowKey === rowKey ? interaction.selected.columnKey : null;
+    // The selected column carries across rows: the drawn cell stands on the focused row (`cellCursor`).
+    const selected = interaction.selected?.columnKey ?? null;
     const index = Math.max(0, cellColumns.findIndex(column => column.key === selected));
     const column = cellColumns[index];
     if (column === undefined) return false;
@@ -3285,16 +3340,26 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const headerGlyph = anatomy.loadingGlyph === false ? null : <View style={glyphStyle} />;
   const resizeHandle = (column: ResolvedColumn<Item>) => {
     const sizing = column.sizing;
-    if (sizing === undefined || tableColumnSizing?.renderHandle === undefined) return null;
+    if (sizing === undefined || tableColumnSizing === undefined) return null;
     const columnKey = column.fieldKey;
-    return tableColumnSizing.renderHandle({
-      columnKey, ...sizing,
-      resizeEnd(width) {
-        if (!Number.isFinite(width)) return;
-        const acceptedWidth = Math.max(sizing.minWidth, width);
-        if (acceptedWidth !== sizing.width) tableColumnSizing.onResizeEnd({ columnKey, width: acceptedWidth });
-      },
-    });
+    const resizeEnd = (width: number) => {
+      if (!Number.isFinite(width)) return;
+      const acceptedWidth = Math.max(sizing.minWidth, width);
+      if (acceptedWidth !== sizing.width) tableColumnSizing.onResizeEnd({ columnKey, width: acceptedWidth });
+    };
+    if (tableColumnSizing.renderHandle !== undefined) return tableColumnSizing.renderHandle({ columnKey, ...sizing, resizeEnd });
+    return (
+      <CollectionColumnResizeHandle
+        title={column.title}
+        width={sizing.width}
+        minWidth={sizing.minWidth}
+        // A column never needs to be wider than the table's own room.
+        maxWidth={Math.max(sizing.minWidth, tableWidth)}
+        onDrag={(width) => setDraftColumn(width === null ? null : { columnKey, width })}
+        onResizeEnd={resizeEnd}
+        {...(props.testID === undefined ? {} : { testID: `${props.testID}:resize:${columnKey ?? 'title'}` })}
+      />
+    );
   };
   const columnHeader = !headerBar ? null : rowGeometry === 'list' && transition === null ? (
     <View style={[tableRowContentStyle, { height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }]}>
@@ -3338,7 +3403,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:${column.fieldKey}` })}
             />
           ) : (
-            <View key={column.key} style={cellStyle(column as ResolvedColumn<unknown>)}
+            <View key={column.key} style={[cellStyle(column as ResolvedColumn<unknown>), headerCellOverflow(column as ResolvedColumn<unknown>)]}
               {...(sortableHeader && tableColumnSizing?.renderHandle === undefined ? { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const } : {})}>
               <HappierText variant="meta" tone={column.key === 'title' ? 'neutral' : 'muted'} numberOfLines={1}>
                 {column.title}
@@ -3668,6 +3733,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               ) : (
               <CollectionGridScroll enabled={gridScroll} width={gridRowsWidth} onViewportWidth={setGridViewportWidth} sheet={gridSheet}
                 footer={gridScroll && (props.footer !== undefined || footerLine !== null) ? <>{props.footer}{footerLine}</> : null}>
+              <HappierCollectionCellCursorContext.Provider value={hasTableCells ? cellCursor : null}>
               <CollectionStageContext.Provider value={stage as CollectionStage<unknown>}>
                 <ListCollectionControlContext.Provider value={control}>
                   <List<CollectionCell<Item>>
@@ -3711,6 +3777,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                   />
                 </ListCollectionControlContext.Provider>
               </CollectionStageContext.Provider>
+              </HappierCollectionCellCursorContext.Provider>
               </CollectionGridScroll>
               )}
             </View>
@@ -3790,6 +3857,50 @@ function hasKeyModifier(event: unknown): boolean {
  * The title column's named-order menu: the column's own title, quiet like its neighbours, naming the active
  * order and opening the shared menu's radio group (checks, focus and dismissal stay the menu owner's).
  */
+/**
+ * A sized column's trailing seam (`tableColumnSizing`): the shared resize handle, standing on the gutter after the
+ * column. The column follows the pointer while it drags; the width is committed once, on release (or per arrow key).
+ */
+function CollectionColumnResizeHandle(props: Readonly<{
+  title: string;
+  width: number;
+  minWidth: number;
+  maxWidth: number;
+  onDrag: (width: number | null) => void;
+  onResizeEnd: (width: number) => void;
+  testID?: string;
+}>): ReactElement {
+  const translate = usePluginTranslation();
+  const resize = useResizableSize({
+    axis: 'x', resizeEdge: 'end', sizePx: props.width, minSizePx: props.minWidth, maxSizePx: props.maxWidth,
+    onCommitSizePx: props.onResizeEnd,
+    onDragSizePx: (width) => props.onDrag(width),
+  });
+  return (
+    <HappierResizeHandle
+      axis="x"
+      labels={{ label: translate('happier.plugin-ui.collection.resizeColumn', 'Resize {title}').replace('{title}', props.title) }}
+      interactionProps={Platform.OS === 'web' ? resize.webHandleProps : resize.panHandlers}
+      accessibilityHandleProps={resize.accessibilityHandleProps}
+      showIndicator={false}
+      active={resize.dragging}
+      {...(props.testID === undefined ? {} : { testID: props.testID })}
+      style={columnResizeHandleStyle}
+    />
+  );
+}
+
+/** A sized column's title cell lets its seam reach the gutter past its edge; its title still ends in an ellipsis. */
+function headerCellOverflow(column: ResolvedColumn<unknown>): HappierPortableStyle | null {
+  return column.sizing === undefined ? null : visibleOverflowStyle;
+}
+const visibleOverflowStyle: HappierPortableStyle = { overflow: 'visible' };
+
+/** The seam stands mid-gutter, past the column's own edge, above the next column's header. */
+const columnResizeHandleStyle: HappierPortableStyle = {
+  position: 'absolute', top: 0, bottom: 0, right: -TABLE.gap / 2 - 5, width: 10, zIndex: 1,
+};
+
 function CollectionOrderHeader(props: Readonly<{
   column: ResolvedColumn<unknown>;
   sort: CollectionSort;
@@ -3809,7 +3920,7 @@ function CollectionOrderHeader(props: Readonly<{
   const radioGroup = 'order';
   return (
     // The title starts where the column's values start (lab "Entry ⌄" over the titles), never centred in a wide cell.
-    <View style={[cellStyle(props.column), orderHeaderCellStyle]} aria-sort={current === undefined ? 'none' : props.sort.direction}>
+    <View style={[cellStyle(props.column), orderHeaderCellStyle, headerCellOverflow(props.column)]} aria-sort={current === undefined ? 'none' : props.sort.direction}>
       <Dropdown
         open={open}
         onOpenChange={setOpen}
@@ -3841,7 +3952,7 @@ function CollectionSortHeader(props: Readonly<{
   const onChange = props.sort.onChange;
   const fieldKey = props.fieldKey;
   return (
-    <View style={props.cellStyle ?? cellStyle(props.column)} aria-sort={active ? props.sort.direction : 'none'}>
+    <View style={[props.cellStyle ?? cellStyle(props.column), headerCellOverflow(props.column)]} aria-sort={active ? props.sort.direction : 'none'}>
       <HappierPressable
         accessibilityRole="button"
         accessibilityLabel={props.column.title}
