@@ -745,6 +745,19 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedWorkflowStarts).toEqual([]);
         expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
     });
+    it('returns a sheet-hosted Review selection through its footer without starting a Review', async () => {
+        let footer: React.ReactNode = null;
+        const onLaunchSelection = vi.fn();
+        await mount({ intent: 'review', reviewSelectionProjection: 'composition', onLaunchSelection,
+            sheet: { onFooterChange: next => { footer = next; }, onCancel: vi.fn() },
+            initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
+        await waitFor(() => expect(composer().isSendDisabled).toBe(false));
+        const footerScreen = await renderScreen(<>{footer}</>);
+        expect(footerScreen.findByTestId('review-start-footer-start')).toBeNull();
+        await footerScreen.pressByTestIdAsync('review-start-footer-use-selection');
+        await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reviewComposition' })));
+        expect(emittedStarts).toEqual([]);
+    });
 
     it('edits only declared profile options of the opened reviewer while retaining the mixed roster and consent', async () => {
         backends.deepsec = { available: true, intents: ['review'] };

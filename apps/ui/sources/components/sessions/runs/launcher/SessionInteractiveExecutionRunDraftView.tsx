@@ -1355,9 +1355,10 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             {/* The link holds its own start alignment; its wrapper takes the footer's centre line. */}
             {selectingReviewInput ? null : <View><TextLinkButton testID="review-start-footer-save-as-workflow" size="meta"
                 label={t('workflows.run.saveAsWorkflow')} disabled={!editable} onPress={saveReviewAsWorkflow} /></View>}
-            {selectingReviewInput ? null : <RoundButton testID="review-start-footer-start"
-                title={t('runPage.launcher.start.review', { count: 1 })} disabled={footerStartDisabled}
-                loading={phase === 'starting'} onPress={startFromFooter} />}
+            {/* A host selection settles through the same composer submission; it returns the input and starts nothing. */}
+            <RoundButton testID={selectingReviewInput ? 'review-start-footer-use-selection' : 'review-start-footer-start'}
+                title={selectingReviewInput ? t('newSession.recipeComposerSubmit') : t('runPage.launcher.start.review', { count: 1 })}
+                disabled={footerStartDisabled} loading={phase === 'starting'} onPress={startFromFooter} />
         </ModalCardFooterActions>);
     });
     React.useEffect(() => () => sheetFooterChange?.(null), [sheetFooterChange]);
