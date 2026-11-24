@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseExternalActionPhase } from '@/daemon/externalActions/externalActionPhase';
 
 /** Diagnostic outcome of the incumbent issuer, never a second admission decision. */
@@ -17,20 +17,21 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
   machineId?: string, signal?: AbortSignal): ActionExecuteFailure {
   if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   const phase = `session.authorization.${refusal.phase}`;
+  const errorCode = refusal.code ?? 'action_forbidden';
+  const failureCause = refusal.failureCause ?? readActionFailureCauseV1({ phase, errorClass: 'Error', errorCode, httpStatus: null });
   // Home already refused the target before minting; retain that owner's
   // result instead of inventing a missing Account authorization.
   if (refusal.code === 'target_unavailable') return {
     ok: false, errorCode: refusal.code, error: refusal.code,
     ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
     ...(refusal.details === undefined ? {} : { details: refusal.details }),
-    failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: refusal.code }, phase),
+    failureCause,
   };
   // Home's Machine admission named the Manage requirement. Reconnecting cannot
   // grant Manage, so the reason and remedy follow that typed cause; the remedy
   // is the Machine availability diagnostic's existing Manage remedy.
   if (refusal.failureCause && !('kind' in refusal.failureCause)
     && refusal.failureCause.errorCode === 'machine_manage_required') {
-    const errorCode = refusal.code ?? 'action_forbidden';
     return { ok: false, errorCode, error: errorCode,
       ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
       details: { reason: refusal.failureCause.errorCode, phase, requiredFact: 'machine_manage_role',
@@ -46,11 +47,10 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
       : refusal.phase === 'binding'
         ? 'Update Home and this Machine, then retry from a fresh Session'
         : 'Start a fresh Session on the connected Machine, then retry the action';
-  const errorCode = refusal.code ?? 'action_forbidden';
   // Only our static branch fact is logged, never Home details, proof, or input.
   refuseExternalActionPhase(phase, machineId, undefined, { refusalBranch: refusal.requiredFact });
   return { ok: false, errorCode, error: errorCode,
     ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
     details: { ...ownerDetails, reason: 'external_authorization_refused', phase: 'phase' in ownerDetails ? ownerDetails.phase : phase, requiredFact, remedy },
-    failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: errorCode }, phase) };
+    failureCause };
 }

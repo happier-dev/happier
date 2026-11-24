@@ -96,15 +96,15 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
       return { ok: false, code: 'auth_unavailable' };
     }
     const failure = projectExternalActionHttpFailureV1(refusal.data);
+    const code = 'code' in refusal.data ? refusal.data.code : refusal.data.error;
     // A code-only Session mint denial still has a validated Home code and status.
     const failureCause: ExternalActionAuthorizationHttpFailure['failureCause'] = failure.failureCause
-      ?? (input.sessionActionOrigin && response.status === 403 && refusal.data.error === 'credential_scope_denied'
-        ? { phase: 'session.authorization.mint', errorClass: 'HttpStatusError',
-          errorCode: refusal.data.error, httpStatus: response.status }
+      ?? (input.sessionActionOrigin
+        ? { phase: 'session.authorization.mint', errorClass: 'HttpStatusError', errorCode: code, httpStatus: response.status }
         : undefined);
     // Home uses 409 for typed issuer refusals. The generic conflict retry only
     // applies when Home did not return a recognized refusal.
-    return { ok: false, code: 'code' in refusal.data ? refusal.data.code : refusal.data.error,
+    return { ok: false, code,
       ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
       ...(failure.details === undefined ? {} : { details: failure.details }),
       ...(failureCause === undefined ? {} : { failureCause }),

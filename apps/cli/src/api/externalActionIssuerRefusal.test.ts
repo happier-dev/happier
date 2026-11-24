@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionHttpError';
 import axios from '@/api/client/credentialAxios';
 
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
@@ -11,6 +12,26 @@ describe('Session Action mint HTTP refusal', () => {
   const authoredCause = {
     phase: 'machine.admission', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null,
   } satisfies ActionFailureCauseV1;
+
+  it('keeps the phase, public code and status of a code-only Machine refusal on a Session output read', async () => {
+    const requestId = 'sample-output-read';
+    const { statusCode, payload } = projectExternalActionHttpError('target_unavailable', requestId);
+    vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: statusCode, data: payload });
+
+    const result = await mintExternalActionExecutionAuthorization({
+      actionId: 'projects.execution.output.read', machineId: 'shared-machine',
+      serverHttpBaseUrl: 'https://home.invalid', pat: 'test-credential',
+      envelope: { v: 1, requestId, target: { kind: 'machine', machineId: 'shared-machine' }, input: {} },
+      sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'sample-session', starterDepth: 0, turnDepth: 1 },
+        sourceTurnId: 'sample-turn', requestId, callerPermissionMode: null },
+    });
+
+    if (result.ok) throw new Error('Expected Home to refuse the mint');
+    expect(projectSessionActionIssuerRefusal({ ...result, phase: 'mint', requiredFact: 'home_minted_authorization' }))
+      .toMatchObject({ ok: false, errorCode: 'target_unavailable', requestId, failureCause: {
+        phase: 'session.authorization.mint', errorClass: 'HttpStatusError', errorCode: 'target_unavailable', httpStatus: statusCode,
+      } });
+  });
 
   it.each([
     { given: 'a code-only denial', supplied: undefined, expected: {
@@ -46,7 +67,7 @@ describe('Session Action issuer refusal projection', () => {
     });
 
     expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
-      failureCause: { errorCode: 'target_unavailable' } });
+      failureCause: { phase: 'session.authorization.mint', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } });
     expect(result.details).toBeUndefined();
   });
 
