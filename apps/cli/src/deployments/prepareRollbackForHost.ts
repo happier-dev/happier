@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DeploymentRollbackInputV1Schema, type ActionExecutorContext,
     type DeploymentArtifactContentReferenceV1, type DeploymentRollbackInputV1, type DeploymentRollbackIntentInputV1 } from '@happier-dev/protocol';
-import { DeploymentContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { readPromotionSelectionForHost } from './storedPromotionCandidate';
 import { deploymentUnavailableError } from './deploymentFailure';
 
@@ -10,7 +10,7 @@ export async function prepareRollbackForHost(request: Readonly<{
     input: DeploymentRollbackIntentInputV1; context: ActionExecutorContext;
 }>, host: Pick<Parameters<typeof readPromotionSelectionForHost>[1], 'readEnvironment' | 'readReceipt'> & Readonly<{
     createCandidate(environment: DeploymentEnvironmentDetailV1, content: DeploymentContentV1): Promise<DeploymentArtifactContentReferenceV1>;
-}>): Promise<Readonly<{ environment: DeploymentEnvironmentDetailV1; input: DeploymentRollbackInputV1 }>> {
+}>): Promise<Readonly<{ environment: DeploymentEnvironmentDetailV1; input: DeploymentRollbackInputV1; retained: DeploymentReceiptDetailV1 }>> {
     const { input, context } = request;
     const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
     const link = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
@@ -26,7 +26,7 @@ export async function prepareRollbackForHost(request: Readonly<{
             observation: { v: 1, state: 'queued', observedAtMs: Date.now() } } } : {}),
         ...(link.source.kind === 'plugin' ? {} : { buildMachineId: environment.environment.buildMachineId ?? environment.environment.controllerMachineId }),
         machineResults: [], steps: [] });
-    return { environment, input: DeploymentRollbackInputV1Schema.parse({ ...input,
+    return { environment, retained, input: DeploymentRollbackInputV1Schema.parse({ ...input,
         requestKey: input.requestKey ?? randomUUID(), expectedRevision: environment.environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
         ...await host.createCandidate(environment, content) }) };

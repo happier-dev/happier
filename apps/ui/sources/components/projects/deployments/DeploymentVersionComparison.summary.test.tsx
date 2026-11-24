@@ -1,4 +1,5 @@
 import type { DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
+import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { afterEach, expect, it } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -14,7 +15,7 @@ const source = { kind: 'stored', contentRevision: 2, composeDigest: `sha256:${'a
 // PAGE-ACCEPT-176 R12-D10: the Overview summarizes what is deployed; its Compose YAML waits one press away, while the
 // Receipt (the deploy's own page) keeps the document open.
 it('keeps the deployed Compose file one press away on the Overview, and open on the Receipt', async () => {
-  const props = { source, current: null, serverId: 'home', accountId: 'account', demand: { mounted: true, visible: true, focused: true } };
+  const props = { source, revision: projectDeploymentReviewRevisionV1(source), current: null, serverId: 'home', accountId: 'account', demand: { mounted: true, visible: true, focused: true } };
   const summary = await renderScreen(<DeploymentVersionComparison {...props} presentation="summary" />);
   expect(summary.findAllByType(CodeBlockView)).toHaveLength(0);
   await summary.pressByTestIdAsync('project-deployments.receipt.definition.documentToggle');
@@ -29,7 +30,7 @@ it.each(['summary', 'detail'] as const)('shows the captured folder version in %s
     kind: 'folder', workspaceId: 'workspace', manifestFingerprint: `sha256:${'b'.repeat(64)}`,
     fileCount: 5, totalBytes: 240, excludedPaths: [],
   };
-  const screen = await renderScreen(<DeploymentVersionComparison source={folder} current={null} presentation={presentation}
+  const screen = await renderScreen(<DeploymentVersionComparison source={folder} revision={projectDeploymentReviewRevisionV1(folder)} current={null} presentation={presentation}
     serverId="home" accountId="account" demand={{ mounted: true, visible: true, focused: true }} />);
   expect(screen.getTextContent()).toContain('bbbbbbb');
   expect(screen.findAllByTestId('project-deployments.comparison')).toHaveLength(0);

@@ -72,6 +72,31 @@ describe('receipt facts', () => {
         expect(projectDeploymentReceiptFactsV1(receipt).builtInUrls).toBeNull();
     });
 
+    it.each([{ builtSha: 'b'.repeat(40) }, { builtSha: undefined }])('labels Pages Git History with the observed built commit $builtSha', ({ builtSha }) => {
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.content.ownServer = undefined;
+        receipt.content.sourceMethod = 'gitIntegration';
+        receipt.content.commitSubject = 'Requested commit';
+        receipt.content.platform = {
+            targetLinkRevision: 1,
+            credentialPrincipal: { kind: 'account', accountId: 'actor',
+                purpose: { consumer: { pluginId: 'happier.deploy-cloudflare', localId: 'deploy' }, purpose: 'deploy' },
+                target: { kind: 'account', account: { service: { pluginId: 'happier.deploy-cloudflare', localId: 'account' }, accountId: 'provider' } } },
+            providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
+            preparedNative: { projectName: 'project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } },
+            observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha },
+        };
+
+        expect(projectDeploymentReceiptHistoryEntryV1(receipt)).toMatchObject({
+            source: builtSha ? { kind: 'repository', sha: builtSha } : null,
+            historyTitle: builtSha?.slice(0, 7) ?? null,
+        });
+        expect(receipt.content.sourceIntent).toMatchObject({ kind: 'repository', sha: 'a'.repeat(40) });
+        receipt.content.sourceMethod = 'upload';
+        expect(projectDeploymentReceiptHistoryEntryV1(receipt).historyTitle).toBe('aaaaaaa · Requested commit');
+    });
+
     it('projects failed controller build output before a provider deployment exists', async () => {
         const { DeploymentContentV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const receipt = createDeploymentReceiptDetailV1();
@@ -162,6 +187,25 @@ describe('receipt facts', () => {
         expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items: [current], complete: false,
             runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null });
+    });
+    it('omits the serving folder manifest from retained rollback targets', () => {
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });
+        const current = createDeploymentReceiptHeaderV1({ id: 'current', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 });
+        const previous = createDeploymentReceiptHeaderV1({ id: 'previous', requestedAtMs: 1000 });
+        const folder = { kind: 'folder' as const, manifestFingerprint: 'sha256:' + 'a'.repeat(64),
+            fileCount: 1, totalBytes: 10, excludedPaths: [] };
+        const select = (manifestFingerprint: string) => selectDeploymentReceiptRetainedHistoryV1({
+            receipt: current, items: [{ ...current, source: folder }, { ...previous, source: { ...folder, manifestFingerprint } }],
+            complete: true, runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine',
+        });
+        expect(select(folder.manifestFingerprint).retainedRollbackTarget).toBeNull();
+        expect(select('sha256:' + 'b'.repeat(64)).retainedRollbackTarget).toMatchObject({ deploymentId: 'previous' });
+    });
+    it('compares stored releases by their Compose content and treats missing labels as unavailable', async () => {
+        const { areDeploymentSourceLabelsEqualV1 } = await import('@happier-dev/protocol/deployments/deploymentReviewV1');
+        const release = { kind: 'stored' as const, contentRevision: 1, composeDigest: 'sha256:' + 'a'.repeat(64) };
+        expect(areDeploymentSourceLabelsEqualV1(release, { ...release, contentRevision: 2 })).toBe(true);
+        expect(areDeploymentSourceLabelsEqualV1(release, null)).toBeNull();
     });
     it.each(['machine', 'platform'] as const)('uses %s retention when selecting a rollback with Docker retention off', placement => {
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });

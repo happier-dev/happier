@@ -247,7 +247,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function prepareAction(request: Omit<DaemonDeploymentPreparationRequest, 'input'>
         & { input: Exclude<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>['input'] },
         candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1,
-        sourceAdmitted: boolean, promotionSource?: DeploymentReceiptDetailV1): Promise<DaemonDeploymentPreparationResult> {
+        sourceAdmitted: boolean, retainedSource?: DeploymentReceiptDetailV1): Promise<DaemonDeploymentPreparationResult> {
         if ('onFailure' in request.input && request.input.onFailure !== undefined) return failure('unsupported_action');
         if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && 'restoreBackupId' in request.input
             && request.input.restoreBackupId !== undefined) return failure('unsupported_action');
@@ -281,23 +281,29 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     ...(candidate.platform.preparedNative ? { preparedNative: candidate.platform.preparedNative } : {}) },
                 controllerMachineId: environment.environment.controllerMachineId };
             const reviewTitle = summary ? { summary } : {};
-            if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1) {
+            if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && 'deploymentId' in request.input) {
+                const retained = retainedSource ?? await host.readReceipt({ environmentId: request.input.environmentId,
+                    deploymentId: request.input.deploymentId, context: request.context });
                 const serving = scope.activeDeploymentId ? await host.readReceipt({ environmentId: request.input.environmentId,
                     deploymentId: scope.activeDeploymentId, context: request.context }) : null;
-                const servingSource = serving?.content.sourceIntent;
-                if (serving && !servingSource) return failure('deployment_conflict');
-                const preview = normalizeStrictJsonValue({ ...reviewTitle, providerReview, platformRollback: {
+                if (!retained.content.sourceIntent || (serving && !serving.content.sourceIntent)) return failure('deployment_conflict');
+                const revision = projectDeploymentReviewRevisionV1(retained.content);
+                const servingRevision = serving && projectDeploymentReviewRevisionV1(serving.content);
+                const platformName = resolvePluginLocalizedStringV2Text(scope.targetTitle);
+                const preview = normalizeStrictJsonValue(!revision || (serving && !servingRevision) ? {
+                    summary: `Roll back ${environment.content.name} on ${platformName} and keep its data. The deployed source version could not be established.`,
+                    providerReview,
+                } : { ...reviewTitle, providerReview, platformRollback: {
                     environment: { id: environment.environment.id, name: environment.content.name },
-                    revision: projectDeploymentReviewRevisionV1(candidate.sourceIntent, candidate.commitSubject),
-                    replaces: serving && servingSource ? { deploymentId: serving.deployment.id,
-                        revision: projectDeploymentReviewRevisionV1(servingSource, serving.content.commitSubject) } : null,
-                    platformName: resolvePluginLocalizedStringV2Text(scope.targetTitle), providerResourceId: scope.common.providerIdentity.providerResourceId,
+                    revision,
+                    replaces: serving && servingRevision ? { deploymentId: serving.deployment.id, revision: servingRevision } : null,
+                    platformName, providerResourceId: scope.common.providerIdentity.providerResourceId,
                     providerEnvironment: scope.common.providerIdentity.providerEnvironment, data: 'keep',
                 } });
                 return { input: request.input, hostReviewedChildren: { children: scope.children }, preview };
             }
             if (request.actionId === DEPLOYMENT_PROMOTE_ACTION_ID_V1 && 'sourceDeploymentId' in request.input) {
-                const source = promotionSource ?? await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
+                const source = retainedSource ?? await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
                     deploymentId: request.input.sourceDeploymentId, context: request.context });
                 if (!source.content.sourceIntent) return failure('deployment_conflict');
                 const preview = normalizeStrictJsonValue({ ...reviewTitle, providerReview, platformPromotion: {

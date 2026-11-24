@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { deploymentRevisionLabelV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
@@ -19,8 +20,7 @@ import { useDeploymentRepositoryComparison, type DeploymentRepositoryComparisonI
 type Props = Readonly<{
   source: DeploymentSourceIntentV1;
   current: DeploymentEnvironmentDefinitionV1 | null;
-  /** The commit the platform observed building (Git integrations build the branch head, which may be newer). */
-  builtSha?: string | undefined;
+  revision: DeploymentReviewRevisionV1 | null;
   workspaceRef?: WorkspaceRefV1 | null;
   serverId: string;
   accountId: string;
@@ -34,10 +34,13 @@ export function DeploymentVersionComparison(props: Props) {
   if (props.source.kind === 'stored') return <StoredDefinitionHistory source={props.source}
     current={props.current?.kind === 'stored' ? props.current : null} summary={props.presentation === 'summary'} />;
   if (props.source.kind === 'folder') return <ItemGroup title={t('projects.deployments.review.version')}>
-    <Item title={deploymentRevisionLabelV1(props.source)} showChevron={false} />
+    <Item title={props.revision ? deploymentRevisionLabelV1(props.revision) : t('common.unknown')} showChevron={false} />
   </ItemGroup>;
-  return <RepositoryComparison key={`${props.serverId}:${props.accountId}:${props.source.projectSourceId}:${props.source.sourceRevision}:${props.source.sha}:${props.workspaceRef?.id}:${props.workspaceRef?.source?.sourceId}:${props.workspaceRef?.source?.revision}:${props.current?.kind === 'repository' ? props.current.ref : ''}`}
-    {...props} source={props.source} />;
+  if (props.revision?.kind !== 'repository') return <ItemGroup title={t('projects.deployments.review.version')}>
+    <Item testID="project-deployments.comparison.status" title={t('common.unknown')} showChevron={false} />
+  </ItemGroup>;
+  return <RepositoryComparison key={`${props.serverId}:${props.accountId}:${props.source.projectSourceId}:${props.source.sourceRevision}:${props.revision.sha}:${props.workspaceRef?.id}:${props.workspaceRef?.source?.sourceId}:${props.workspaceRef?.source?.revision}:${props.current?.kind === 'repository' ? props.current.ref : ''}`}
+    {...props} source={{ ...props.source, sha: props.revision.sha }} />;
 }
 
 function StoredDefinitionHistory(props: Readonly<{
@@ -94,7 +97,7 @@ function DefinitionSelectors({ definition }: Readonly<{ definition: Extract<Depl
   </>;
 }
 
-function RepositoryComparison(props: DeploymentRepositoryComparisonInput & Readonly<{ builtSha?: string | undefined }>) {
+function RepositoryComparison(props: DeploymentRepositoryComparisonInput) {
   const comparisonState = useDeploymentRepositoryComparison(props);
   return <DeploymentRepositoryComparisonView {...props} comparisonState={comparisonState} />;
 }
@@ -102,7 +105,6 @@ function RepositoryComparison(props: DeploymentRepositoryComparisonInput & Reado
 /** Lift the hook once to share its newer-commit fact with Overview and this Compare presenter. */
 export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryComparisonInput & Readonly<{
   comparisonState: DeploymentRepositoryComparisonState;
-  builtSha?: string | undefined;
 }>) {
   const router = useRouter();
   const { comparison, history, proven, pending, unavailable, unreadable, newerCommitCount, refresh } = props.comparisonState;
@@ -129,9 +131,6 @@ export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryCo
       onPress={comparison && workspace ? () => router.push(buildProjectRouteHref({ workspaceRefId: workspace.id,
         serverId: props.serverId, segment: 'changes', activeRootPath: workspace.rootPath, defaultRootPath: workspace.rootPath,
         details: { kind: 'scmReview', comparison: comparison.range, view: 'files', explain: false } }) as never) : undefined} />
-    {/* A Git-integration platform builds the branch head when it runs, so it can build a newer commit than the one asked for. */}
-    {props.builtSha && props.builtSha !== props.source.sha && sourceRef ? <Item testID="project-deployments.comparison.built"
-      title={t('projects.deployments.editors.builtNewer', { sha: props.builtSha.slice(0, 7), branch: sourceRef })} showChevron={false} /> : null}
     {!workspace || (unavailable && !unreadable) ? <DeploymentSourceCheckoutRow testID="project-deployments.comparison.checkout"
       projectSourceId={props.source.projectSourceId} serverId={props.serverId} checkout={workspace ? null : ownCheckout} /> : null}
   </ItemGroup>;

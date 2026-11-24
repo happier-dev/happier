@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -147,12 +147,6 @@ function describeCreateFields(create: DeploymentPlatformCreateReviewV1): Approva
 // Roll back say it, through the one revision formatter.
 const revisionText = deploymentRevisionLabel;
 
-function sameRevision(a: DeploymentReviewRevisionV1, b: DeploymentReviewRevisionV1): boolean {
-  if (a.kind === 'repository') return b.kind === 'repository' && a.sha === b.sha;
-  if (a.kind === 'folder') return b.kind === 'folder' && a.manifestFingerprint === b.manifestFingerprint;
-  return b.kind === 'stored' && a.contentRevision === b.contentRevision && a.composeDigest === b.composeDigest;
-}
-
 const selectSentenceName = (machine: Machine | null): string | null =>
   machine ? getMachineSentenceName(machine) : null;
 
@@ -271,7 +265,7 @@ function describeReviewFields(
   const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
   const replacesNote = replaces === undefined ? undefined
     // Deploying the version that already serves is a redeploy; it does not "replace" itself.
-    : replaces && revision && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
+    : replaces && areDeploymentSourceLabelsEqualV1(replaces.revision, revision) === true ? t('projects.deployments.review.replacesSame')
       : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
         : t('projects.deployments.review.replacesNothing');
   const rows = [

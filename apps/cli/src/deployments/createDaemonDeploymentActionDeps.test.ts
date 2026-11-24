@@ -2673,6 +2673,23 @@ describe('installed deployment storage and target composition', () => {
                         providerResourceId: row.content.providerIdentity?.providerResourceId,
                         data: 'keep',
                     } });
+                    const builtSha = 'c'.repeat(40);
+                    const pages = { ...platformCandidate, sourceIntent: servingSource, sourceMethod: 'gitIntegration',
+                        platform: { ...platformCandidate.platform,
+                            preparedNative: { projectName: 'project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } },
+                            observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha } } };
+                    put(serving.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema.parse(pages));
+                    await expect(deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
+                        input: { ...intent, deploymentId: receipt.id }, context: ownerContext })).resolves.toMatchObject({
+                        preview: { platformRollback: { replaces: { deploymentId: serving.id, revision: { kind: 'repository', sha: builtSha } } } },
+                    });
+                    put(serving.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema.parse({
+                        ...pages, platform: { ...pages.platform, observation: { ...pages.platform.observation, builtSha: undefined } },
+                    }));
+                    const unestablished = await deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
+                        input: { ...intent, deploymentId: receipt.id }, context: ownerContext });
+                    expect(unestablished).toMatchObject({ preview: { summary: expect.stringContaining('source version could not be established') } });
+                    expect(unestablished).not.toHaveProperty('preview.platformRollback');
                     await expect(deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
                         input: { ...intent, deploymentId: receipt.id, restoreBackupId: 'own-server-backup' }, context: ownerContext }))
                         .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });

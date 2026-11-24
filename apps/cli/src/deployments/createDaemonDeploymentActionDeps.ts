@@ -2310,7 +2310,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (reviewedReentry && authorsCandidate) return failure('approval_stale');
                 let preparationEnvironment: DeploymentEnvironmentDetailV1 | undefined;
                 let preparationPromotion: Awaited<ReturnType<typeof readStoredPromotionCandidateForHost>> | undefined;
-                let promotionSource: DeploymentReceiptDetailV1 | undefined;
+                let retainedSource: DeploymentReceiptDetailV1 | undefined;
                 let preparedCandidate: Readonly<{ title: string; content: DeploymentContentV1 }> | undefined;
                 let input: OwnServerDeploymentReviewRequest['input'];
                 const createCandidate = async (environment: DeploymentEnvironmentDetailV1, content: DeploymentContentV1) => {
@@ -2347,7 +2347,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     });
                     input = prepared.input;
                     preparationPromotion = prepared.promotion;
-                    promotionSource = prepared.sourceReceipt;
+                    retainedSource = prepared.sourceReceipt;
                     preparationEnvironment = prepared.environment;
                 }
                 else if (originalRequest.actionId === 'deployments.rollback' && 'deploymentId' in originalInput) {
@@ -2359,6 +2359,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         ...targetHostReaders, readReceipt: targetHostReaders.readAnyReceipt, createCandidate,
                     });
                     input = prepared.input;
+                    retainedSource = prepared.retained;
                     preparationEnvironment = prepared.environment;
                 }
                 else {
@@ -2439,10 +2440,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         if (request.actionId === 'deployments.promote') {
                             if (!usesCapturedPromotionSource(request.actionId, environment.environment.protection)) return failure('action_forbidden');
                         } else {
-                            const retained = request.actionId === 'deployments.rollback' && 'deploymentId' in request.input
+                            retainedSource = request.actionId === 'deployments.rollback' && 'deploymentId' in request.input
                                 ? await targetHostReaders.readReceipt({ environmentId: request.input.environmentId,
                                     deploymentId: request.input.deploymentId, context: request.context }) : undefined;
-                            admitUseDeploymentDefinition(environment, candidate.content, request.input.targetLinkId, retained?.content);
+                            admitUseDeploymentDefinition(environment, candidate.content, request.input.targetLinkId, retainedSource?.content);
                         }
                     }
                 }
@@ -2457,7 +2458,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const platform = DeploymentPlatformContentV1Schema.safeParse(candidate.content);
                     if (!platform.success) return failure('invalid_parameters');
                     return await contributedTarget.prepareAction(request, platform.data, environment,
-                        preparedCandidate !== undefined || Boolean(reviewedReentry), promotionSource);
+                        preparedCandidate !== undefined || Boolean(reviewedReentry), retainedSource);
                 }
                 const nativeCandidate = DeploymentOwnServerContentV1Schema.parse(candidate.content);
                 if (reviewedReentry && !nativeCandidate.ownServer) return failure('approval_stale');

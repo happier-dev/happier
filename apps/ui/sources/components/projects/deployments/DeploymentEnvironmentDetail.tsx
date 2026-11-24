@@ -595,10 +595,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       if (!deploy || availability.kind !== 'ready') return;
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));
     };
-    const liveSha =
-      active.snapshot.value?.content?.sourceIntent?.kind === 'repository'
-        ? active.snapshot.value.content.sourceIntent.sha
-        : null;
+    const liveSource = active.snapshot.value?.facts?.source ?? null;
+    const liveSha = liveSource?.kind === 'repository' ? liveSource.sha : null;
     const pressRedeploy = async () => {
       if (!deploy || availability.kind !== 'ready' || !liveSha) return;
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), sha: liveSha, ...(sourceMethod ? { sourceMethod } : {}) }));
@@ -1284,7 +1282,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   deployed revision is compared from the Definition section. */}
               {active.snapshot.value?.content?.sourceIntent && active.snapshot.value.content.sourceIntent.kind !== 'stored'
                 ? <DeploymentVersionComparison presentation="summary"
-                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
+                source={active.snapshot.value.content.sourceIntent} revision={liveSource} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
                 lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}

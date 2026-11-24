@@ -8,6 +8,7 @@ import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploym
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { DeploymentReferenceAddressV1Schema } from './deploymentReadsV1.js';
 import { DeploymentFolderReviewRevisionV1Schema, projectDeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
+import type { DeploymentContentV1 } from './deploymentReceiptContentV1.js';
 export type { DeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
 export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '../local/services/nativeRuntimeFactsV1.js';
 export { deploymentRevisionShortLabelV1 } from './storedAppInputV1.js';
@@ -41,10 +42,33 @@ export type DeploymentReviewRevisionV1 = z.infer<typeof DeploymentReviewRevision
 
 export function projectDeploymentReviewRevisionV1(source: Extract<DeploymentSourceIntentV1, { kind: 'folder' }>): Extract<DeploymentReviewRevisionV1, { kind: 'folder' }>;
 export function projectDeploymentReviewRevisionV1(source: DeploymentSourceIntentV1, subject?: string): DeploymentReviewRevisionV1;
-export function projectDeploymentReviewRevisionV1(source: DeploymentSourceIntentV1, subject?: string): DeploymentReviewRevisionV1 {
+export function projectDeploymentReviewRevisionV1(receipt: Pick<DeploymentContentV1, 'sourceIntent' | 'commitSubject' | 'sourceMethod' | 'platform'>): DeploymentReviewRevisionV1 | null;
+export function projectDeploymentReviewRevisionV1(
+  input: DeploymentSourceIntentV1 | Pick<DeploymentContentV1, 'sourceIntent' | 'commitSubject' | 'sourceMethod' | 'platform'>,
+  subject?: string,
+): DeploymentReviewRevisionV1 | null {
+  const receipt = 'kind' in input ? undefined : input;
+  const source = 'kind' in input ? input : input.sourceIntent;
+  if (!source) return null;
   if (source.kind === 'folder') return projectDeploymentFolderReviewRevisionV1(source);
-  return source.kind === 'repository' ? { kind: source.kind, sha: source.sha, ...(subject === undefined ? {} : { subject }) }
-    : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest };
+  if (source.kind === 'stored') return { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest };
+  // Pages Git submits a branch. Only the provider's saved observation establishes the commit it built.
+  const pagesGit = receipt?.sourceMethod === 'gitIntegration' && receipt.platform?.preparedNative?.pages?.projectMode === 'gitIntegration';
+  const sha = pagesGit ? receipt.platform?.observation.builtSha : source.sha;
+  if (!sha) return null;
+  const commitSubject = sha === source.sha ? receipt?.commitSubject ?? subject : undefined;
+  return { kind: source.kind, sha, ...(commitSubject === undefined ? {} : { subject: commitSubject }) };
+}
+
+/** Compares recorded source labels. Missing build evidence leaves equality unestablished. */
+export function areDeploymentSourceLabelsEqualV1(
+  left: DeploymentReviewRevisionV1 | null | undefined,
+  right: DeploymentReviewRevisionV1 | null | undefined,
+): boolean | null {
+  if (!left || !right) return null;
+  if (left.kind === 'repository') return right.kind === 'repository' && left.sha === right.sha;
+  if (left.kind === 'stored') return right.kind === 'stored' && left.composeDigest === right.composeDigest;
+  return right.kind === 'folder' && left.manifestFingerprint === right.manifestFingerprint;
 }
 
 /** Only the existing recreate path establishes this downtime class; not a duration or start-first guarantee. */

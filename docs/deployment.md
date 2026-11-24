@@ -1598,6 +1598,13 @@ be opened; a captured body without a subject reports null. No per-row source or
 receipt lookup is added. The existing `requestedByAccountId` identifies the Account
 principal; it does not identify a Git author or distinguish a person from an agent.
 
+For a Cloudflare Pages Git build, the private Receipt source label uses the commit
+reported in the saved provider observation. When the provider reports no built
+commit, the label is unavailable. The requested commit remains part of the private
+request. Recorded source equality compares Git commits, stored Compose digests,
+or folder manifest fingerprints. If either label is unavailable, equality is
+unavailable. Client consumers read these facts from the opened Receipt body.
+
 Ordinary inventory pages also carry `servingDeployments` and `liveAddressDomains`
 from the selected runtime link and current, nondeleted Domains. Their private
 Artifacts join the same mode-aware batch as Environment content and latest-attempt

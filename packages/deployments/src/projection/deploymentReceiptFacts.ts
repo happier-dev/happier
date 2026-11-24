@@ -3,7 +3,7 @@ import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deploymen
 import type { DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
 import { getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
-import { projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { areDeploymentSourceLabelsEqualV1, projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 type Version = Readonly<{ deploymentId: string; revision: DeploymentReviewRevisionV1 }>;
 export function deploymentRevisionLabelV1(revision: DeploymentReviewRevisionV1): string {
@@ -45,11 +45,9 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
         ? previous : retained.find(row => row.id === input.receipt.id);
     const source = candidate?.source;
     const servingSource = active?.source;
-    const sameRevision = source && servingSource && (source.kind === 'repository' && servingSource.kind === 'repository'
-        ? source.sha === servingSource.sha : source.kind === 'stored' && servingSource.kind === 'stored'
-            && source.composeDigest === servingSource.composeDigest);
     return { previousVersion, retainedPreviousCount: input.placement === 'machine' && input.complete ? predecessors.length : null,
-        retainedRollbackTarget: candidate && active && source && servingSource && candidate.id !== active.id && !sameRevision
+        retainedRollbackTarget: candidate && active && candidate.id !== active.id && source
+            && areDeploymentSourceLabelsEqualV1(source, servingSource) === false
             ? { deploymentId: candidate.id, revision: source } : null };
 }
 
@@ -115,8 +113,10 @@ export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: 
 /** Private source presentation from the opened receipt, without execution step/log trees. */
 export function projectDeploymentReceiptSourceFactsV1(content: DeploymentReceiptDetailV1['content']):
     Pick<DeploymentReceiptFactsV1, 'commitSubject' | 'source'> {
-    return { commitSubject: content.commitSubject ?? null,
-        source: content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null };
+    const source = projectDeploymentReviewRevisionV1(content);
+    const commitSubject = content.sourceIntent?.kind === 'repository'
+        ? (source?.kind === 'repository' ? source.subject : undefined) : content.commitSubject;
+    return { commitSubject: commitSubject ?? null, source };
 }
 
 /** Observed address facts without preparing unconsumed execution step/log trees. */
