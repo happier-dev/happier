@@ -19,7 +19,10 @@ import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientC
 import { SessionMessageV1Schema, SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { RawRecordSchema } from '@happier-dev/session-core/raw';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
-import { readSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec, SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { buildProtectedSessionInputTextRecordV1, buildTrustedHostSessionInputAdmissionV1, readSessionMessageProvenanceV1, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { createDeferred, createSessionFixture, createSessionListRenderableSessionFixture, createSessionMessagesFixture, createSessionViewerFixture, createToolCallMessageFixture, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import type { Message } from '@happier-dev/session-core/messages';
@@ -101,7 +104,7 @@ async function executeReverseVoiceAction(actionId: import('@happier-dev/protocol
 
 function expectVoicePendingInput(sessionId: string, text: string, runId: string | null = null) {
   expect(pendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: homeUrlA, sessionId, runId }));
-  const request = pendingEnqueue.mock.calls.find(([candidate]) => candidate.sessionId === sessionId)?.[0];
+  const request = pendingEnqueue.mock.calls.find(([candidate]) => candidate.sessionId === sessionId && candidate.runId === runId)?.[0];
   if (!request) throw new Error('Voice input did not reach the Pending HTTP boundary');
   const body: unknown = JSON.parse(String(request.init.body));
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected Pending HTTP body');
@@ -109,7 +112,7 @@ function expectVoicePendingInput(sessionId: string, text: string, runId: string 
   if (envelope.t !== 'plain') throw new Error('Plain Account input must use the plain envelope');
   const record = RawRecordSchema.parse(envelope.v);
   expect(record).toMatchObject({ role: 'user', content: { text } });
-  expect(readSessionMessageProvenanceV1(record.meta)).toEqual({ v: 1, kind: 'voice' });
+  expect(readSessionMessageProvenanceV1(record.meta, 'stored')).toEqual({ v: 1, kind: 'voice' });
   expect(PendingRequestedActionV1Schema.parse(Reflect.get(body, 'requestedAction'))).toEqual({ v: 1, kind: 'steer_if_active' });
 }
 
@@ -141,8 +144,10 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
   const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
   const { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
   const { useCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
-  const { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+  const { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjectionSubscription } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+  const { readPluginUiContributionOrigin } = await import('@/sync/domains/plugins/ui/projectionOrigins');
   const { usePluginUiProjectionCurrentness } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
+  const { usePluginSurfaceExecutionOrigin } = await import('@/components/plugins/surfaces/pluginSurfaceExecutionOrigin');
   const [{ PluginProjectionV2Schema, PluginProjectedActionV2Schema, DaemonPluginActionSchemasReadResponseSchema}, { formatQualifiedPluginActionId}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/actions/qualifiedActionId')]);
   // These are daemon-authored declarations, consumed by the real normalizer,
   // origin union and effect dispatcher, not fabricated AppShell decisions.
@@ -196,6 +201,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
   function Publication() {
     // The presented Machine surface owns acquisition; AppShell only observes it.
     usePluginUiProjectionCurrentness({ machineId: 'm1', serverId: homeA });
+    usePluginSurfaceExecutionOrigin({ pluginId: 'acme.triage', projection: null, enabled: true });
     usePublishCurrentUiContext(enrichment);
     return null;
   }
@@ -206,23 +212,19 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
         React.createElement(PluginSurfaceFocusEligibilityProvider, { active: true, currentUiContextActive: true, children: null },
           React.createElement(Publication), children))))));
   const mounted = await renderHook(() => ({ reader: useOptionalCurrentUiContextReader(), port: useCurrentUiContextVoiceToolPort(),
-    projection: useAppShellPluginUiProjection() }), { wrapper });
-  const { reader, port } = mounted.getCurrent();
-  if (!reader) throw new Error('Canonical Current UI owner did not mount');
-  if (!port) throw new Error('Canonical Current UI Voice port did not mount');
-  await waitForTestEvent(mounted.subscribe, mounted.getCurrent, value => (
-    value.port?.listCurrentContributedActionDefinitions?.().some(action => action.id === formatQualifiedPluginActionId({ pluginId: 'acme.triage', localId: 'refresh-issues' })) === true
-  ));
-  {
-    const { projection: current } = mounted.getCurrent();
-    expect(mounted.getCurrent().port?.listCurrentContributedActionDefinitions?.(), JSON.stringify({
-      phase: current.phase, reason: current.unavailableReasonCode, interactionEnabled: current.interactionEnabled,
-      machineId: current.machineId, actionIds: Object.keys(current.pluginUiProjection?.actionsById ?? {}),
-      daemonMethods: daemonRpc.mock.calls.map(([request]) => request.method),
-    })).toEqual(expect.arrayContaining([expect.objectContaining({ id: formatQualifiedPluginActionId({ pluginId: 'acme.triage', localId: 'refresh-issues' }) })]));
-  }
+    projection: useAppShellPluginUiProjectionSubscription() }), { wrapper });
+  const { reader, port, projection: source } = mounted.getCurrent();
+  if (!reader || !port) throw new Error('Canonical Current UI reader and Voice port must both mount');
+  const current = await waitForTestEvent(source.subscribe, source.getSnapshot,
+    value => value.phase === 'current' && readPluginUiContributionOrigin(value.pluginUiProjection?.actionsById['acme.triage/refresh-issues']) !== null);
+  const action = current.pluginUiProjection?.actionsById['acme.triage/refresh-issues'];
+  expect(port.listCurrentContributedActionDefinitions?.(), JSON.stringify({
+    available: action?.available, origin: readPluginUiContributionOrigin(action),
+  })).toEqual(expect.arrayContaining([expect.objectContaining({
+    id: formatQualifiedPluginActionId({ pluginId: 'acme.triage', localId: 'refresh-issues' }),
+  })]));
   const commandId = reader.readCurrentUiContext()?.commands[0]?.id;
-  return { port: mounted.getCurrent().port!, reader, commandId, admittedActions };
+  return { port, reader, commandId, admittedActions };
 }
 
 function createBaseState(): any {
@@ -524,7 +526,7 @@ async function createElevenLabsToolHarness() {
   bindVoiceRuntimeAttemptBinding({ owner: bindingOwner, binding: {
     adapterId, controlSessionId, conversationSessionId: 's1',
     conversationSessionAddress: { serverId: homeA, sessionId: 's1' },
-    lifetime: 'runtime_attempt', transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 1,
+    lifetime: 'runtime_attempt', transcriptMode: 'synthetic', targetSessionAddress: { serverId: homeA, sessionId: 's1' }, updatedAt: 1,
   } });
   const barrierInput = {
     adapterId, controlSessionId,
@@ -868,11 +870,53 @@ describe('voice tool handlers', () => {
       execute: () => ({ items: [{ engineId: 'claude', value: 'claude', label: 'Claude', backendId: 'claude',
         enabled: true, capabilities: { structuredNarration: true } }] }),
     })));
+    const sendBoundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a', accountId: 'account-a',
+      machineId: 'm1', actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1, tokenEpoch: 0,
+      async execute(input, { invocation, requestId, signal }) {
+        const send = SessionSendMessageInputSchema.parse(input);
+        if (!('message' in send) || typeof send.sessionId !== 'string') throw new Error('Expected a Voice message to one Session');
+        const localId = send.localId ?? `action-request:${requestId}`;
+        const runId = send.recipient?.kind === 'execution_run' ? send.recipient.runId : null;
+        expect(invocation.caller.kind).toBe('host');
+        const record = buildProtectedSessionInputTextRecordV1({
+          text: send.message,
+          admission: buildTrustedHostSessionInputAdmissionV1(invocation.surface, invocation.actionRequestAttributionV1),
+        });
+        // The daemon receiver owns delivery. Observe its exact Session and attribution at Home Pending.
+        const receipt = await pendingEnqueue({ serverUrl: homeUrlA, sessionId: send.sessionId, runId, init: {
+          method: 'POST', signal, body: JSON.stringify({
+            localId, requestedAction: send.requestedAction ?? { v: 1, kind: 'steer_if_active' },
+            content: { t: 'plain', v: record },
+          }),
+        } });
+        if (!receipt.ok) {
+          const response: unknown = await receipt.json();
+          const code = response !== null && typeof response === 'object' ? Reflect.get(response, 'code') : undefined;
+          return SessionMessageSendResultV1Schema.parse({ status: 'rejected', code: code ?? 'session_input_invalid' });
+        }
+        const response: { pending?: { localId?: string } } = await receipt.json();
+        return SessionMessageSendResultV1Schema.parse(response.pending?.localId === localId
+          ? { status: 'accepted', localId }
+          : { status: 'outcomeUnknown', localId, code: 'session_input_pending' });
+      },
+    });
+    const sendSchemaBoundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a', accountId: 'account-a', machineId: 'm1',
+      actionId: 'action.spec.get', tokenEpoch: 0,
+      execute: () => ({ actionSpec: actionSpecToActionDefinitionV1(getActionSpec(SESSION_MESSAGE_SEND_ACTION_ID_V1), {
+        surface: 'voice', includeOutputSchema: false,
+      }) }),
+    });
     account.request.mockImplementation(createCompactSessionListFetchBoundary(async (input, init) => {
       const url = new URL(String(input));
       const pathname = url.pathname;
       if (pathname === '/v2/sessions/read-batch' && init.method === 'POST') return undefined;
       if (pathname === '/health' || pathname === '/v1/auth/ping') return Response.json({});
+      const sendReply = await sendBoundary.handle(url, init);
+      if (sendReply) return sendReply;
+      const sendSchemaReply = await sendSchemaBoundary.handle(url, init);
+      if (sendSchemaReply) return sendSchemaReply;
       for (const boundary of reviewInventoryBoundaries) {
         const reply = await boundary.handle(url, init);
         if (reply) return reply;
@@ -1023,7 +1067,7 @@ describe('voice tool handlers', () => {
       recipient: { kind: 'execution_run', runId: 'run-1' },
     });
 
-    expect(JSON.parse(result), result).toMatchObject({ ok: true });
+    expect(JSON.parse(result), result).toMatchObject({ ok: true, status: 'accepted' });
     expectVoicePendingInput('s1', 'Continue this run', 'run-1');
   });
 
@@ -2858,7 +2902,6 @@ describe('voice tool handlers', () => {
 
     const result = JSON.parse(await (tools as any).answerUserActionRequest({
       answers: [{ question: 'Continue?', values: ['Yes'] }],
-      currentSessionOnly: false,
     }));
 
     expect(result).toMatchObject({
@@ -3604,9 +3647,11 @@ describe('voice tool reset Account authority', () => {
       expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
       const result = JSON.parse(await pendingReset);
       expect(result).toMatchObject({ ok: true });
-      expect(readHappierActionToolResultCandidates(result)).toContainEqual({ ok: true, result: expect.objectContaining({
-        kind: 'approval_request_created', actionId: 'ui.voice_global.reset', artifactId: approval.id,
-      }) });
+      expect(readHappierActionToolResultCandidates(result)).toEqual(expect.arrayContaining([expect.objectContaining({
+        ok: true,
+        voiceApprovalGuidance: 'spoken_decision',
+        result: expect.objectContaining({ kind: 'approval_request_created', actionId: 'ui.voice_global.reset', artifactId: approval.id }),
+      })]));
       expect(await readPersistentVoiceTranscriptEpoch()).toBe(3);
       expect(account.writes).toHaveLength(0);
       expect(JSON.parse(artifacts.readPlainBody(approval.id) ?? 'null')).toMatchObject({ status: 'executed' });
