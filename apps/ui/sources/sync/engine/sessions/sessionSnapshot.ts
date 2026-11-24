@@ -1985,29 +1985,8 @@ export async function fetchAndApplySessions(params: {
     });
     // Descriptor demand changes no opened document, tuple, or publication clock.
     if (observedSessions.length) params.applySessions(observedSessions, 'projection');
-    if (shouldApplyRenderables) {
-        const renderables = syncPerformanceTelemetry.measure(
-            'sync.sessions.snapshot.renderableBuild',
-            {
-                sessions: sessions.length,
-                cachedEntries: Object.keys(cachedSessionListEntries).length,
-                retainedCachedSessions: retainedCachedSessionIds.length,
-                requiredRows: requiredSnapshotRows,
-                backgroundRows: backgroundSnapshotRows,
-            },
-            () => [
-                ...sessions.map((row) => buildRenderableFromRowAndCache(
-                    row,
-                    credentials,
-                    accountCurrentness,
-                    cachedSessionListEntries[row.id],
-                    params.getExistingSession?.(row.id),
-                    params.getCurrentSessionListRenderable?.(row.id),
-                    admissionScope,
-                )),
-                ...retainedCachedSessionIds.map((sessionId) => buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!)),
-            ],
-        );
+    let pendingQueryRows: Map<string, SessionListRenderableSession> | undefined;
+    const publishRenderablePage = (renderables: SessionListRenderableSession[]) => {
         appliedRenderableCount = renderables.length;
         const staleMetadataPreservedRows = countStaleMetadataPreservedRows(
             renderables,
@@ -2031,6 +2010,35 @@ export async function fetchAndApplySessions(params: {
             staleMetadataPreservedRows,
             serverIdPresent: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? 1 : 0,
         });
+    };
+    if (shouldApplyRenderables) {
+        const renderables = syncPerformanceTelemetry.measure(
+            'sync.sessions.snapshot.renderableBuild',
+            {
+                sessions: sessions.length,
+                cachedEntries: Object.keys(cachedSessionListEntries).length,
+                retainedCachedSessions: retainedCachedSessionIds.length,
+                requiredRows: requiredSnapshotRows,
+                backgroundRows: backgroundSnapshotRows,
+            },
+            () => [
+                ...sessions.map((row) => buildRenderableFromRowAndCache(
+                    row,
+                    credentials,
+                    accountCurrentness,
+                    cachedSessionListEntries[row.id],
+                    params.getExistingSession?.(row.id),
+                    params.getCurrentSessionListRenderable?.(row.id),
+                    admissionScope,
+                )),
+                ...retainedCachedSessionIds.map((sessionId) => buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!)),
+            ],
+        );
+        if (isQuerySource && params.getCurrentSessionListRenderable) {
+            pendingQueryRows = new Map(renderables.map(row => [row.id, row]));
+        } else {
+            publishRenderablePage(renderables);
+        }
     }
 
     if (!shouldContinue()) {
@@ -2054,7 +2062,8 @@ export async function fetchAndApplySessions(params: {
     // Gather before awaiting: compact omissions never enter the full-document opener.
     // The transport owner chunks at the real body boundary and shares pending reads.
     const openedDisplayRows = new Map<string, SessionListRenderableSession>();
-    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? params.getCurrentSessionListRenderable?.(id);
+    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? pendingQueryRows?.get(id)
+        ?? params.getCurrentSessionListRenderable?.(id);
     const encryptionScope: EncryptionScopeInput = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? { serverId: params.serverId.trim() } : {};
     let capturedEncryptionGeneration = encryption?.getCurrentEncryptionGenerationScope?.(encryptionScope) ?? null;
@@ -2081,7 +2090,8 @@ export async function fetchAndApplySessions(params: {
     if (encryptedDisplayRows.length && !(await hydrateDataKeyRows(encryptedDisplayRows))) return buildFetchResult();
     const readOwnerMaterial = accountCurrentness && createCurrentAccountMaterialReader({ credentials, accountCurrentness });
     for (const { row, projection } of displayCandidates) {
-        if (!isDataKeyHydrationCurrent() || !isSessionCurrent(row.id)) return buildFetchResult();
+        if (!isDataKeyHydrationCurrent()) return buildFetchResult();
+        if (!isSessionCurrent(row.id)) continue;
         const crypto = createSessionDisplayCrypto({ sessionMode: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
             accountMode: accountCurrentness?.mode, credentials, sessionEncryption: encryption?.getSessionEncryption(row.id) });
         const owner = row.metadataAudience === 'owner'
@@ -2113,7 +2123,8 @@ export async function fetchAndApplySessions(params: {
             continue;
         }
         const shared = await crypto.openSharedDisplay(projection.shared);
-        if (!isDataKeyHydrationCurrent() || !isSessionCurrent(row.id)) return buildFetchResult();
+        if (!isDataKeyHydrationCurrent()) return buildFetchResult();
+        if (!isSessionCurrent(row.id)) continue;
         if (!shared.ok || (owner && !owner.ok)) {
             console.info(`[sessionsSnapshot] Display projection unavailable for ${row.id}: ${!shared.ok ? shared.reason : owner && !owner.ok ? owner.reason : 'invalid_envelope'}`);
             continue;
@@ -2155,6 +2166,20 @@ export async function fetchAndApplySessions(params: {
                 currentRenderable: readCurrentDisplay(row.id),
                 isRequiredHydrationRow: requiredHydrationSessionIds.has(row.id) && !isListProjectionDemand,
                 fullDocumentDemand: !isListProjectionDemand, admissionScope }))));
+    if (pendingQueryRows) {
+        // Scalar rows and inline displays come from the same query response. The
+        // compatibility read below has its own lifetime and can publish separately.
+        if (!isDataKeyHydrationCurrent()) return buildFetchResult();
+        const renderables: SessionListRenderableSession[] = [];
+        for (const [id, row] of pendingQueryRows) {
+            if (!isSessionCurrent(id)) continue;
+            const opened = openedDisplayRows.get(id);
+            renderables.push(opened ? applySessionListRenderablePatch(row, opened) : row);
+        }
+        pendingQueryRows = undefined;
+        openedDisplayRows.clear();
+        publishRenderablePage(renderables);
+    }
     if (compactDemand.length) {
         const parts = await readSessionParts({ request: (path, init) => request(path, { ...init,
             headers: { ...Object.fromEntries(new Headers(init.headers)), Authorization: `Bearer ${credentials.token}` } }),

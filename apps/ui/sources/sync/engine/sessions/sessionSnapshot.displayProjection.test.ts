@@ -1,15 +1,21 @@
+import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { SessionOwnerMetadataV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema, validateSessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
+import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { storage } from '@/sync/domains/state/storage';
+import { createDeferred, renderHook } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { fetchAndApplySessions } from './sessionSnapshot';
 import { createSessionDisplayCrypto } from '@/sync/encryption/sessionDisplayCrypto';
 import { Encryption } from '@/sync/encryption/encryption';
+import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { encodeBase64 } from '@/encryption/base64';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
@@ -24,6 +30,116 @@ import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/sugge
 
 const initialState = storage.getState();
 afterEach(() => storage.setState(initialState, true));
+
+it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
+    const serverId = `query-display-publication-${sessionCount}`;
+    const secret = new Uint8Array(32).fill(63);
+    const dataKey = new Uint8Array(32).fill(64);
+    const credentials = { token: 'query-display-publication', secret: encodeBase64(secret) };
+    const encryption = await Encryption.create(secret);
+    const encoder = await Encryption.create(secret);
+    encoder.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+    const sessionIds = Array.from({ length: sessionCount }, (_, index) => `session-${index}`);
+    await encoder.initializeSessions(new Map([[sessionIds[0]!, dataKey]]), { serverId });
+    const sessionEncryption = encoder.getSessionEncryption(sessionIds[0]!)!;
+    const crypto = createSessionDisplayCrypto({ sessionMode: 'e2ee', accountMode: 'plain', credentials, sessionEncryption });
+    const dataEncryptionKey = encodeBase64(await encoder.encryptEncryptionKey(dataKey));
+    const viewer = createSessionOwnerViewerFixture(createSessionFixture({ id: 'viewer-template' }));
+    const sessions = await Promise.all(sessionIds.map(async (id, index) => {
+        const sharedMetadata = SessionSharedMetadataV1Schema.parse({ v: 1, summary: { text: `Summary ${index}`, updatedAt: 2 } });
+        const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1,
+            workspace: { name: `Session ${index}`, path: '/workspace', host: `machine-${index % machineCount}` } });
+        const display = projectSessionDisplayV1({ sharedMetadata, ownerMetadata });
+        return createCompactSessionListRowFixture({
+            ...createPlainSessionCurrentProjectionRecordFixture({ id, metadataVersion: 2 }),
+            viewer, encryptionMode: 'e2ee', dataEncryptionKey, metadata: await sessionEncryption.encryptRaw(sharedMetadata),
+            displayProjectionV1: SessionDisplayProjectionV1Schema.parse({ v: 1, sourceMetadataVersion: 2, metadataLayoutVersion: 1,
+                shared: await crypto.encodeSharedDisplay(display.shared), owner: crypto.encodeOwnerDisplay(display.owner!) }),
+        });
+    }));
+    const keyReadStarted = createDeferred<void>();
+    const releaseKeys = createDeferred<void>();
+    const worker = createFakeCryptoWorker();
+    encryption.configureNativeCryptoWorker({
+        worker: { ...worker, decryptDataKeyEnvelopeV1: async request => {
+            keyReadStarted.resolve();
+            await releaseKeys.promise;
+            return worker.decryptDataKeyEnvelopeV1(request);
+        } },
+        routing: { mode: 'auto', minBatchSize: 1, minPayloadBytes: 0 },
+        scope: { accountId: 'query-display-publication', serverId, generation: 1 },
+    });
+    const machines = Array.from({ length: machineCount }, (_, index) => createMachineFixture({ id: `machine-${index}` }));
+    const readRows = () => storage.getState().sessionListRowsByServerId[serverId];
+    const readMachines = () => storage.getState().machineListByServerId[serverId];
+    const sessionDataKeys = new Map<string, Uint8Array>();
+    const refresh = () => fetchAndApplySessions({
+        serverId, credentials, encryption,
+        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
+        sessionDataKeys, contentDemand: 'list-projection',
+        source: { kind: 'query', allowV1Fallback: false, body: { v: 1, storage: 'active', includeInactive: true,
+            audiences: [], tagIds: [] } },
+        request: async path => {
+            expect(path).toBe('/v2/sessions/query');
+            return Response.json(SessionListQueryResponseV1Schema.parse({ sessions, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
+        },
+        getCurrentSessionListRenderable: sessionId => readRows()?.[sessionId],
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'query', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions() {}, log: { log() {} },
+    });
+    let commits = 0;
+    const mounted = await renderHook(() => {
+        const rows = React.useSyncExternalStore(storage.subscribe, readRows);
+        const inventory = React.useSyncExternalStore(storage.subscribe, readMachines);
+        React.useLayoutEffect(() => { commits++; });
+        return { rows, inventory };
+    });
+    const publications: ReturnType<typeof readRows>[] = [];
+    const stop = storage.subscribe((next, previous) => {
+        const rows = next.sessionListRowsByServerId[serverId];
+        if (rows !== previous.sessionListRowsByServerId[serverId]) publications.push(rows);
+    });
+    let hydration: ReturnType<typeof refresh> | undefined;
+    try {
+        const beforeHydration = commits;
+        await act(async () => { storage.getState().applyMachines(machines, true, { sourceServerId: serverId }); });
+        await act(async () => {
+            hydration = refresh();
+            await Promise.race([keyReadStarted.promise, hydration.then(() => {
+                throw new Error('Expected the first query page to open the Session display keys');
+            })]);
+        });
+        expect.soft(commits - beforeHydration).toBe(1);
+        expect.soft(publications).toHaveLength(0);
+
+        await act(async () => {
+            releaseKeys.resolve();
+            await hydration;
+        });
+        const hydrated = mounted.getCurrent();
+        expect(hydrated.inventory?.map(machine => machine.id)).toEqual(machines.map(machine => machine.id));
+        expect(Object.values(hydrated.rows ?? {}).map(row => [row.id, row.metadata?.name]))
+            .toEqual(sessions.map((row, index) => [row.id, `Session ${index}`]));
+        expect.soft(commits - beforeHydration).toBe(2);
+        expect.soft(publications).toHaveLength(1);
+        expect.soft(publications.at(-1)).toBe(hydrated.rows);
+
+        const beforeReplay = commits;
+        publications.length = 0;
+        await act(async () => { await refresh(); });
+        expect.soft(commits - beforeReplay).toBe(0);
+        expect.soft(publications).toHaveLength(0);
+        expect(mounted.getCurrent().rows).toBe(hydrated.rows);
+    } finally {
+        releaseKeys.resolve();
+        await hydration?.catch(() => {});
+        stop();
+        await mounted.unmount();
+        encryption.retireAccountMaterial();
+        encoder.retireAccountMaterial();
+    }
+});
 
 it('keeps the transcript title used by @ mentions when demanded metadata hydration advances', async () => {
     const id = 'docs-title-reviewer';
