@@ -107,45 +107,6 @@ function getRetainablePaneStateSnapshot(
     return retainedPaneState;
 }
 
-function getRetainablePaneState(
-    retainedPaneState: RetainedSessionListPaneState | null,
-    props: Pick<RetainedSessionListPaneState, 'storageKind' | 'pathname' | 'sourceScopeKey'>,
-): VisibleSessionListPaneState {
-    return getRetainablePaneStateSnapshot(retainedPaneState, props)?.paneState ?? EMPTY_SESSIONS_LIST_PANE_STATE;
-}
-
-function SessionsListPaneStateSubscriber(props: SessionsListPaneContentProps & Readonly<{
-    storageKind: SessionListStorageFilter;
-    dataActive: boolean;
-    retainedPathname?: string | null;
-    retainedVisibleSessionListIndex?: VisibleSessionListPaneState['visibleSessionListIndex'];
-    retainedEmptyState?: boolean;
-    surfaceOwnership: SessionListSurfaceOwnership;
-    filterController: SessionListViewFilterController;
-    onPaneState: (paneState: VisibleSessionListPaneState) => void;
-}>) {
-    const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
-    const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
-    const sessionListPaneState = useSessionListPaneProjection(props.storageKind, props.filterController, {
-        pathname: props.pathname,
-        retainedPathname: props.retainedPathname,
-        retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
-        retainedEmptyState: props.retainedEmptyState,
-        sessionListSurfaceDataActive: props.dataActive,
-        attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
-    });
-
-    // Reported before paint: the pane draws it in the same commit pass as the subscription that produced it.
-    // A withdrawn demand reports nothing; the pane keeps showing what it last reported.
-    const onPaneState = props.onPaneState;
-    const dataActive = props.dataActive;
-    React.useLayoutEffect(() => {
-        if (dataActive) onPaneState(sessionListPaneState);
-    }, [dataActive, onPaneState, sessionListPaneState]);
-
-    return null;
-}
-
 /**
  * While the list is loading or empty its header is not drawn, but the phone tab shell's line it carries
  * (the Home line and the shell glyphs) stays where that header puts it.
@@ -335,43 +296,31 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         ) ?? retained;
     }, [props.surfaceRoutePathname, retentionIdentity, sessionListSurfaceDataActive]);
 
-    // The subscriber renders nothing: the content view stays at one position whether the data demand is active or
-    // withdrawn (a page over the tab), so a return never remounts it. The subscriber itself stays mounted with its
-    // demand withdrawn, so its query keeps the rows it answered: a return re-presents them instead of starting an
-    // empty first query that drops and rebuilds every row.
-    const [subscribedPaneState, setSubscribedPaneState] = React.useState<VisibleSessionListPaneState | null>(null);
-    const reportPaneState = React.useCallback((paneState: VisibleSessionListPaneState) => {
-        setSubscribedPaneState(paneState);
-        handlePaneState(paneState);
-    }, [handlePaneState]);
-
-    const retainedPaneState = sessionListSurfaceDataActive
-        ? getRetainablePaneStateSnapshot(
-            readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
-            retentionIdentity,
-        )
-        : null;
+    const retainedPaneState = getRetainablePaneStateSnapshot(
+        readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
+        retentionIdentity,
+    );
+    const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
+    // Keep the query mounted while the pane is covered, with its demand off and its visible rows retained.
+    const sessionListPaneState = useSessionListPaneProjection(storageKind, filterController, {
+        pathname: props.pathname,
+        retainedPathname: retainedPaneState?.surfaceRoutePathname ?? null,
+        retainedVisibleSessionListIndex: retainedPaneState?.paneState.visibleSessionListIndex ?? null,
+        retainedEmptyState: retainedPaneState?.paneState.showEmptyState,
+        sessionListSurfaceDataActive,
+        attentionInteractionHeld: surfaceOwnership.interactive && attentionInteractionHeld,
+    });
+    React.useLayoutEffect(() => {
+        if (sessionListSurfaceDataActive) handlePaneState(sessionListPaneState);
+    }, [handlePaneState, sessionListPaneState, sessionListSurfaceDataActive]);
 
     return (
         <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
-            <SessionsListPaneStateSubscriber
-                {...props}
-                storageKind={storageKind}
-                dataActive={sessionListSurfaceDataActive}
-                retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
-                retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
-                retainedEmptyState={retainedPaneState?.paneState.showEmptyState}
-                surfaceOwnership={surfaceOwnership}
-                filterController={filterController}
-                onPaneState={reportPaneState}
-            />
             <SessionsListPaneContentView
                 {...props}
                 storageKind={storageKind}
-                sessionListPaneState={sessionListSurfaceDataActive && subscribedPaneState ? subscribedPaneState : getRetainablePaneState(
-                    readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
-                    retentionIdentity,
-                )}
+                sessionListPaneState={sessionListSurfaceDataActive
+                    ? sessionListPaneState : retainedPaneState?.paneState ?? EMPTY_SESSIONS_LIST_PANE_STATE}
                 surfaceOwnership={surfaceOwnership}
                 filterController={filterController}
             />

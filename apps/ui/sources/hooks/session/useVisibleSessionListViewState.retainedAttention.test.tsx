@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { createDeferred, createRenderCommitCounter, useRenderCommitCounter, renderScreen } from '@/dev/testkit';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -153,6 +154,8 @@ describe('visible session-list retained attention through real state', () => {
         projectManager.clear();
         const { storage } = await import('@/sync/domains/state/storage');
         previousState = storage.getState();
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
         await loadSyncSingletonForTests();
         serverId = await home.addHome({ name: 'Retained attention Home', serverUrl: 'https://retained-attention.test', accountId: 'u1' });
         const settings = {
@@ -744,6 +747,52 @@ describe('visible session-list retained attention through real state', () => {
                 spaces: [{ ...space, includeNeedsYouEverywhere: false }] } }));
             await flushHookEffects();
             expect(ids()).not.toContain(pending.id);
+        } finally { await screen.unmount(); }
+    });
+
+    it('commits a hydrated Session batch without a follow-up pane state commit', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
+        const { SessionsListViewWithFilterController } = await import('@/components/sessions/shell/SessionsList');
+        const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        snapshotResponse.resolve();
+        await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
+        route.pathname = '/';
+        mountedRowCost.os = 'ios';
+        const phases: Parameters<React.ProfilerOnRenderCallback>[1][] = [];
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
+            <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider>
+                <React.Profiler id="sessions-pane" onRender={(_id, phase) => phases.push(phase)}>
+                    <SessionsListPaneContent fallbackGuidanceVariant="sidebar" pathname="/" />
+                </React.Profiler>
+            </CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+        </InjectedAuthProvider>);
+        const visibleIds = () => {
+            const pane = screen.root.findByType(SessionsListViewWithFilterController).props.paneState as
+                import('./useVisibleSessionListPaneState').VisibleSessionListPaneState;
+            return pane.visibleSessionListIndex?.flatMap(item => item.type === 'session' ? [item.sessionId] : []);
+        };
+        try {
+            await flushHookEffects({ cycles: 4, turns: 3 });
+            await vi.waitFor(() => expect(visibleIds()).toContain('quiet'));
+            phases.length = 0;
+            const arrivals = ['batch-a', 'batch-b'].map(id => buildSessionListRenderableFromSession(createSessionFixture({
+                id, serverId, owner: 'u1', createdAt: 20, updatedAt: 20, seq: 1,
+                viewer: currentViewer(1, 1), active: false,
+            })));
+            const publish = (rows: typeof arrivals) =>
+                storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'append' });
+
+            await act(async () => publish(arrivals));
+            expect(visibleIds()).toEqual(expect.arrayContaining(['quiet', 'batch-a', 'batch-b']));
+            expect(phases).toContain('update');
+            // Row insertion also lets the list settle its layout. Mirroring the pane projection adds a second nested commit.
+            expect(phases.filter(phase => phase === 'nested-update').length).toBeLessThanOrEqual(1);
+
+            phases.length = 0;
+            await act(async () => publish(arrivals.map(row => ({ ...row }))));
+            expect(phases).toEqual([]);
         } finally { await screen.unmount(); }
     });
 
