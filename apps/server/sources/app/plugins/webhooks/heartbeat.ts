@@ -57,6 +57,7 @@ export async function recordPluginWebhookHeartbeatReceiptV1(params: Readonly<{
     routeId: string;
     now?: Date;
     deadlineAtMs?: number;
+    signal?: AbortSignal;
 }>): Promise<boolean> {
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
     const receivedAt = params.now ?? new Date();
@@ -73,7 +74,7 @@ export async function recordPluginWebhookHeartbeatReceiptV1(params: Readonly<{
             });
         }
         return true;
-    }, { isolationLevel: 'Serializable', ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }) });
+    }, { isolationLevel: 'Serializable', deadlineAtMs: params.deadlineAtMs, signal: params.signal });
 }
 
 /** Only the exact current observation host may read this source/check's liveness timestamp. */

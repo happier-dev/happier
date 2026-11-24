@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     const accountChange = { upsert: vi.fn(async () => ({})) };
     const tx = {
         account, accountChange,
+        automationTrigger: { findFirst: vi.fn(async () => null), updateMany: vi.fn(async () => ({ count: 0 })) },
         pluginWebhookEndpoint: { findFirst: vi.fn(), updateMany: vi.fn() },
         pluginWebhookDelivery: delivery,
     };
@@ -98,6 +99,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             routeId: "route-1",
             revision: 2,
             providerConfirmedAt: null,
+            providerRepositoryHookId: null,
             targetMachineId: "machine-1",
             targetMachineInstallationId: "installation-1",
             targetMaterializationId: "materialization-1",
@@ -189,7 +191,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
         // Readiness projections read this column; without the write an enabled
         // endpoint the provider really is delivering to stays unconfirmed.
         expect(mocks.tx.pluginWebhookEndpoint.updateMany).toHaveBeenCalledWith({
-            where: { id: "endpoint-1", providerConfirmedAt: null },
+            where: { id: "endpoint-1", providerConfirmedAt: null, providerRepositoryHookId: null },
             data: { providerConfirmedAt: new Date("2026-08-10T00:00:00.000Z") },
         });
 
@@ -234,6 +236,40 @@ describe("plugin webhook delivery store exact-target admission", () => {
         expect(mocks.tx.pluginWebhookEndpoint.updateMany).not.toHaveBeenCalled();
     });
 
+    it("keeps a duplicate insert race inside the original ingress deadline", async () => {
+        let releaseRead!: (row: null) => void;
+        let reportSecondAttempt!: () => void;
+        const pendingRead = new Promise<null>(resolve => { releaseRead = resolve; });
+        const secondAttemptEntered = new Promise<void>(resolve => { reportSecondAttempt = resolve; });
+        mocks.delivery.create.mockImplementationOnce(async () => {
+            mocks.tx.pluginWebhookEndpoint.findFirst.mockImplementationOnce(() => {
+                reportSecondAttempt();
+                return pendingRead;
+            });
+            throw { code: "P2002" };
+        });
+        const result = admitPluginWebhookDeliveryV1({
+            endpointId: "endpoint-1",
+            expectedEndpointRevision: 2,
+            routeId: "route-1",
+            verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-1",
+            deliveryIdentityDigest: "a".repeat(64),
+            stored: plainStoredEnvelope(),
+            deadlineAtMs: Date.now() + 2_000,
+        }).then(value => ({ value }), error => ({ error }));
+        try {
+            await Promise.race([secondAttemptEntered, result.then(resolved => {
+                throw new Error("Delivery did not reach duplicate recovery", { cause: resolved });
+            })]);
+            await expect.poll(() => Promise.race([result, Promise.resolve("pending")]), { timeout: 1_600 })
+                .toMatchObject({ error: { name: "TransactionDeadlineExceededError" } });
+        } finally {
+            releaseRead(null);
+            await result;
+        }
+    });
+
     it("restores provider confirmation from an authenticated duplicate after credential rotation", async () => {
         mocks.delivery.findUnique.mockResolvedValue({ id: "delivery-existing" });
 
@@ -249,7 +285,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
         })).resolves.toEqual({ kind: "duplicate", deliveryId: "delivery-existing" });
 
         expect(mocks.tx.pluginWebhookEndpoint.updateMany).toHaveBeenCalledWith({
-            where: { id: "endpoint-1", providerConfirmedAt: null },
+            where: { id: "endpoint-1", providerConfirmedAt: null, providerRepositoryHookId: null },
             data: { providerConfirmedAt: new Date("2026-08-10T00:00:00.000Z") },
         });
         expect(mocks.delivery.create).not.toHaveBeenCalled();
@@ -267,6 +303,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             routeId: "route-1",
             revision: 2,
             providerConfirmedAt: null,
+            providerRepositoryHookId: null,
             targetMachineId: "machine-1",
             targetMachineInstallationId: "installation-1",
             targetMaterializationId: "materialization-1",
@@ -310,7 +347,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             now: new Date("2026-08-11T00:00:00.000Z"),
         })).resolves.toEqual({ kind: "admitted", deliveryId: "delivery-1" });
         expect(mocks.tx.pluginWebhookEndpoint.updateMany).toHaveBeenCalledWith({
-            where: { id: "endpoint-1", providerConfirmedAt: null },
+            where: { id: "endpoint-1", providerConfirmedAt: null, providerRepositoryHookId: null },
             data: { providerConfirmedAt: new Date("2026-08-11T00:00:00.000Z") },
         });
     });
@@ -326,6 +363,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             routeId: "route-1",
             revision: 2,
             providerConfirmedAt: null,
+            providerRepositoryHookId: null,
             targetMachineId: "machine-1",
             targetMachineInstallationId: "installation-1",
             targetMaterializationId: "materialization-1",

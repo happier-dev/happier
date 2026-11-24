@@ -414,7 +414,11 @@ export function registerPluginWebhookIngressRoute(
                         reservation.deadlineController.signal,
                     );
                     if (prepared.kind === "recordReceiptOnly") {
-                        const receipt = recordPluginWebhookHeartbeatReceiptV1({ routeId: prepared.route.routeId, deadlineAtMs: reservation.deadlineAtMs });
+                        const receipt = recordPluginWebhookHeartbeatReceiptV1({
+                            routeId: prepared.route.routeId,
+                            deadlineAtMs: reservation.deadlineAtMs,
+                            signal: reservation.deadlineController.signal,
+                        });
                         reservation.custody = receipt;
                         const accepted = await awaitUntilAbortedV1(receipt, reservation.deadlineController.signal);
                         return publicEmpty(reply, accepted ? 202 : 404);

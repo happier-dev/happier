@@ -14,6 +14,7 @@ import type { AuthProviderResolver } from "@/app/auth/providers/types";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import {
     resolveDeploymentProviderSnapshot,
+    type DeploymentProviderSnapshot,
     type ProviderModule,
 } from "@/app/auth/providers/providerModules";
 import {
@@ -456,7 +457,9 @@ export async function listProviderDescriptors(
     env: NodeJS.ProcessEnv,
     context: ProviderCatalogContext = HOME_PROVIDER_CONTEXT,
 ): Promise<readonly ProviderDescriptorResolution[]> {
-    return await inTx(async (tx) => await listProviderDescriptorsInTx(tx, env, context));
+    // The deployment config may come from a file. Capture it before opening a transaction.
+    const snapshot = resolveDeploymentProviderSnapshot(env);
+    return await inTx(tx => listProviderDescriptorsInTx(tx, env, context, undefined, undefined, snapshot));
 }
 
 export async function listProviderDescriptorsInTx(
@@ -465,8 +468,8 @@ export async function listProviderDescriptorsInTx(
     context: ProviderCatalogContext = HOME_PROVIDER_CONTEXT,
     admittedHome?: Awaited<ReturnType<typeof readHomeGovernancePolicyInTx>>,
     readCapture?: TeamAuthenticationReadCapture,
+    snapshot: DeploymentProviderSnapshot = resolveDeploymentProviderSnapshot(env),
 ): Promise<readonly ProviderDescriptorResolution[]> {
-    const snapshot = resolveDeploymentProviderSnapshot(env);
     const policy = resolveAuthPolicyFromEnv(env);
     const deploymentIds = snapshot.modules.flatMap((module) => {
         const id = normalizeProviderId(module.id);
@@ -1239,22 +1242,24 @@ export async function describeLinkedIds(input: {
     env: NodeJS.ProcessEnv;
     providerIds: readonly string[];
 }): Promise<ReadonlyMap<AuthProviderId, ProviderPresentation>> {
-    return await inTx((tx) => describeLinkedIdsInTx(tx, input));
+    if (input.providerIds.length === 0) return new Map();
+    const snapshot = resolveDeploymentProviderSnapshot(input.env);
+    return await inTx(tx => describeLinkedIdsInTx(tx, input, snapshot));
 }
 
 export async function describeLinkedIdsInTx(tx: Tx, input: {
     env: NodeJS.ProcessEnv;
     providerIds: readonly string[];
-}): Promise<ReadonlyMap<AuthProviderId, ProviderPresentation>> {
+}, deploymentSnapshot?: DeploymentProviderSnapshot): Promise<ReadonlyMap<AuthProviderId, ProviderPresentation>> {
     const wanted = new Set(input.providerIds.map(normalizeProviderId).filter(Boolean));
     const presentation = new Map<AuthProviderId, ProviderPresentation>();
     if (wanted.size === 0) return presentation;
 
+    const snapshot = deploymentSnapshot ?? resolveDeploymentProviderSnapshot(input.env);
     const [descriptors, managed] = await Promise.all([
-        listProviderDescriptorsInTx(tx, input.env, HOME_PROVIDER_CONTEXT),
+        listProviderDescriptorsInTx(tx, input.env, HOME_PROVIDER_CONTEXT, undefined, undefined, snapshot),
         readIdentityProviderInstancePresentationsByIdsInTx(tx, { ids: [...wanted] }),
     ]);
-    const snapshot = resolveDeploymentProviderSnapshot(input.env);
     for (const { reference } of descriptors) {
         const id = normalizeProviderId(reference.id);
         if (!wanted.has(id) || reference.source === "managed") continue;

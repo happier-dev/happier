@@ -295,6 +295,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
     stored: PluginWebhookStoredEnvelopeReadyV1;
     now?: Date;
     deadlineAtMs?: number;
+    signal?: AbortSignal;
     onCommittedWake?: (wake: PluginWebhookCommittedDeliveryWakeV1) => void;
 }>): Promise<
     | Readonly<{ kind: "admitted" | "duplicate"; deliveryId: string }>
@@ -316,6 +317,8 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             params.deadlineAtMs,
         );
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
+    // Endpoint and credential authority precede both the delivery and duplicate confirmation.
+    const transactionOptions = { isolationLevel: "Serializable" as const, deadlineAtMs: transactionDeadlineAtMs, signal: params.signal };
     try {
         return await inTx(async (tx) => {
             const endpoint = await tx.pluginWebhookEndpoint.findFirst({
@@ -581,9 +584,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             });
         }
         return { kind: "admitted", deliveryId: created.id };
-        }, { /* Webhook endpoint and credential authority precedes admission or movement fencing. */ isolationLevel: "Serializable", ...(transactionDeadlineAtMs === undefined
-            ? undefined
-            : { deadlineAtMs: transactionDeadlineAtMs }) });
+        }, transactionOptions);
     } catch (error) {
         if (!isPrismaErrorCode(error, "P2002")) throw error;
         const duplicate = await inTx(async (tx) => {
@@ -637,7 +638,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                 now,
             });
             return row;
-        }, { /* Webhook endpoint and credential authority precedes admission or movement fencing. */ isolationLevel: "Serializable" });
+        }, transactionOptions);
         if (!duplicate) throw error;
         return { kind: "duplicate", deliveryId: duplicate.id };
     }

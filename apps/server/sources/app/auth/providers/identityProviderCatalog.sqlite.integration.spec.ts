@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import {
@@ -51,6 +54,27 @@ describe("identityProviderCatalog runtime resolution (SQLite integration)", () =
 
         expect(runtimes.map(({ reference }) => reference.id)).toEqual(["github", "acme"]);
         expect(runtimes.map(({ reference }) => reference.source)).toEqual(["built_in", "deployment"]);
+    });
+
+    it("reads deployment configuration before starting the descriptor transaction and refreshes it on the next call", async () => {
+        const path = join(harness.baseDir, "oidc-providers.json");
+        const env = { AUTH_PROVIDERS_CONFIG_PATH: path };
+        writeFileSync(path, JSON.stringify([oidcEntry("before")]));
+        const transaction = db.$transaction;
+        // Change the file at the real database boundary to distinguish when the
+        // catalog captures deployment configuration.
+        db.$transaction = new Proxy(transaction, {
+            apply(target, receiver, args: unknown[]) {
+                writeFileSync(path, JSON.stringify([oidcEntry("after")]));
+                return Reflect.apply(target, receiver, args);
+            },
+        });
+        try {
+            expect((await listProviderDescriptors(env)).map(({ reference }) => reference.id)).toEqual(["github", "before"]);
+        } finally {
+            db.$transaction = transaction;
+        }
+        expect((await listProviderDescriptors(env)).map(({ reference }) => reference.id)).toEqual(["github", "after"]);
     });
 
     it("resolves the built-in provider with a home-context built-in reference", async () => {

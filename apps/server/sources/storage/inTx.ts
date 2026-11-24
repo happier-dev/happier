@@ -55,6 +55,7 @@ export type InTxOptions = Readonly<{
     timeoutMs?: number;
     maxWaitMs?: number;
     deadlineAtMs?: number;
+    signal?: AbortSignal;
     transactionClass?: string;
     /** Refresh before each attempt; the returned fence precedes callback reads. */
     prepare?: () => Promise<(tx: Tx) => Promise<void>>;
@@ -294,11 +295,22 @@ async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAt
     await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${budgetMs}`);
 }
 
+function readTransactionCallSite(stack: string | undefined): string | undefined {
+    for (const line of stack?.split("\n").slice(1) ?? []) {
+        // Emit only the source location. Function names and absolute paths are unnecessary.
+        const location = /(?:^|[\\/])(?:sources|dist)[\\/]([^():]+:\d+:\d+)\)?$/.exec(line)?.[1];
+        if (location && !/^(?:storage[\\/](?:inTx|captureReadSnapshot)\.|inTx\.)/.test(location)) return location;
+    }
+    return undefined;
+}
+
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<ResolvedTransactionResult<T>> {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
     const startedAtMs = Date.now();
     const provider = getDbProviderFromEnv(process.env, "postgres");
     if (options?.singleStatementRead && (options.prepare || options.deadlineAtMs !== undefined
-        || options.timeoutMs !== undefined || options.maxWaitMs !== undefined)) {
+        || options.timeoutMs !== undefined || options.maxWaitMs !== undefined || signal)) {
         throw new Error("singleStatementRead cannot combine with prepare or a deadline/timeout option");
     }
     if (provider === "sqlite" && options?.readOnly) {
@@ -327,6 +339,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             throw new TransactionConflictExhaustedError(e);
         }
     }
+    const requestId = readWebLatencyRequestId();
+    const invocation: { stack?: string } = {};
+    Error.captureStackTrace(invocation, inTx);
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
     const configuredMaxWaitMs = options?.maxWaitMs ?? transactionConfig.maxWaitMs;
     const configuredTimeoutMs = options?.timeoutMs ?? transactionConfig.timeoutMs;
@@ -344,18 +359,20 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
     let wrapped = async (tx: Tx, timeoutMs: number, acquisitionDeadlineAtMs: number, fence?: (tx: Tx) => Promise<void>, trace?: WebLatencyTransactionAttempt) => {
         const attemptStartedAtMs = Date.now();
         if (trace) trace.nativeCallbackStartedAtMs = attemptStartedAtMs;
-        try {
-            if (
-                deadlineAtMs !== undefined
-                && attemptStartedAtMs >= deadlineAtMs
-            ) {
-                throw new TransactionDeadlineExceededError(null, options?.transactionClass);
-            }
-            // Prisma maxWait bounds its pool, but a proxy-queued BEGIN can enter
-            // later. Reject before admitting user work; callback rejection rolls
-            // the native transaction back through the existing acquisition path.
-            if (attemptStartedAtMs >= acquisitionDeadlineAtMs) throw new LockAdmissionDeadlineExceededError();
-            transactionCallbackEntered = true;
+        signal?.throwIfAborted();
+        if (deadlineAtMs !== undefined && attemptStartedAtMs >= deadlineAtMs) {
+            throw new TransactionDeadlineExceededError(null, options?.transactionClass);
+        }
+        // Prisma's acquisition can be followed by a delayed BEGIN acknowledgement.
+        if (attemptStartedAtMs >= acquisitionDeadlineAtMs) throw new LockAdmissionDeadlineExceededError();
+        transactionCallbackEntered = true;
+
+        const expiresAtMs = Math.min(attemptStartedAtMs + timeoutMs, deadlineAtMs ?? Infinity);
+        const assertActive = () => {
+            signal?.throwIfAborted();
+            if (Date.now() >= expiresAtMs) throw new TransactionAttemptDeadlineExceededError();
+        };
+        const executeCallback = async () => {
             if (provider === "postgres" && options?.readOnly) {
                 await tx.$executeRaw`SET TRANSACTION READ ONLY`;
             }
@@ -370,22 +387,47 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             const context: TransactionContext = {
                 callbacks: [], readOnly: options?.readOnly === true,
                 transactionClass: options?.transactionClass ?? "unspecified",
-                requestId: readWebLatencyRequestId(),
+                requestId,
             };
             tx = new Proxy(tx, {
                 get(target, property) {
                     return property === symbol ? context : Reflect.get(target, property, target);
                 },
             });
+            assertActive();
             if (fence) await fence(tx);
-            let result = await timeWebLatencyPhase('db.transaction.callback', () => fn(tx), options?.transactionClass);
+            assertActive();
+            const result = await timeWebLatencyPhase('db.transaction.callback', () => fn(tx), options?.transactionClass);
+            assertActive();
             await flushAccountChangesInTx(tx);
             if (trace) trace.publicationCompletedAtMs = Date.now();
             const resolvedResult = resolveTransactionResult(result);
-            let callbacks = context.callbacks;
+            assertActive();
+            return { result: resolvedResult, callbacks: context.callbacks };
+        };
+
+        // The native timeout releases PostgreSQL's connection but Prisma still
+        // waits for the user callback to settle. Reject inside that callback
+        // on the same budget so it cannot keep the operation pending.
+        let stopWaiting = () => {};
+        const stopped = new Promise<never>((_resolve, reject) => {
+            const abort = () => reject(signal?.reason);
+            const timeout = setTimeout(() => reject(new TransactionAttemptDeadlineExceededError()),
+                Math.max(0, expiresAtMs - Date.now()));
+            timeout.unref();
+            signal?.addEventListener("abort", abort, { once: true });
+            stopWaiting = () => {
+                clearTimeout(timeout);
+                signal?.removeEventListener("abort", abort);
+            };
+        });
+        try {
+            const result = await Promise.race([executeCallback(), stopped]);
+            assertActive();
             transactionCallbackCompleted = true;
-            return { result: resolvedResult, callbacks };
+            return result;
         } finally {
+            stopWaiting();
             if (trace) trace.nativeCallbackEndedAtMs = Date.now();
         }
     }
@@ -405,6 +447,7 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             if (attemptTrace) attemptTrace.admissionSubmittedAtMs = acquisitionStartedAtMs;
             const acquisitionDeadlineAtMs = Math.min(acquisitionStartedAtMs + configuredMaxWaitMs, deadlineAtMs ?? Infinity);
             const attempt = async () => {
+                signal?.throwIfAborted();
                 if (attemptTrace) attemptTrace.admissionAcquiredAtMs = Date.now();
                 const remainingMs = deadlineAtMs === undefined
                     ? null
@@ -475,6 +518,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             const acquisitionTimeout = !transactionCallbackEntered
                 && (isLockAdmissionDeadlineExceededError(e) || isTransactionAcquisitionTimeout(e) || isPrismaErrorCode(e, "P2024"));
             const sqlState = provider === "postgres" ? readPostgresTransactionSqlState(e) : undefined;
+            const driverErrorMessage = sqlState ? readContentFreeDriverErrorMessage(e) : undefined;
+            const expired = isTransactionDeadlineExceededError(e) || isExpiredTransactionError(e)
+                || e instanceof TransactionAttemptDeadlineExceededError || isDriverDeadlineCancellation(sqlState, driverErrorMessage);
             // Prisma evicts old closed-transaction diagnostics under churn. A
             // missing native transaction before our callback completes cannot
             // have committed: only $transaction may commit after that return.
@@ -500,6 +546,34 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             if (retryable && !acquisitionTimeout && !confirmedRollback) {
                 ambiguousAttemptFailure ??= { error: e };
             }
+            const reportFailure = () => {
+                const meta = typeof e === "object" && e !== null && "meta" in e ? e.meta : undefined;
+                const failedStatementRelation = typeof meta === "object" && meta !== null
+                    && "modelName" in meta && typeof meta.modelName === "string" ? meta.modelName : undefined;
+                const prismaCode = typeof e === "object" && e !== null && "code" in e
+                    && typeof e.code === "string" && /^P\d{4}$/.test(e.code) ? e.code : undefined;
+                // Reuse the recovery owner's classifications, never raw
+                // Prisma messages (which may contain SQL and parameters).
+                const prismaTransactionErrorKind = prismaCode !== "P2028" ? undefined
+                    : acquisitionTimeout ? "acquisition-unavailable"
+                    : isExpiredTransactionError(e) ? "expired-timeout"
+                    : isMissingPrismaTransactionError(e) ? "transaction-not-found" : "unclassified";
+                log({
+                    requestId, callSite: readTransactionCallSite(invocation.stack),
+                    module: "storage-tx", level: "warn", event: acquisitionTimeout ? "transaction-acquisition" : "transaction-rollback",
+                    transactionClass: options?.transactionClass ?? "unspecified",
+                    provider, sqlState, prismaCode, prismaTransactionErrorKind, failedStatementRelation,
+                    outcome: acquisitionTimeout ? "acquisition-unavailable" : expired ? "deadline-exceeded" : "conflict-exhausted",
+                    driverErrorCode: sqlState,
+                    driverErrorMessage,
+                    isolationLevel: provider === "sqlite" ? undefined : options?.isolationLevel ?? "ReadCommitted",
+                    readOnly: options?.readOnly === true,
+                    attempts: counter + 1,
+                    ...(e instanceof TransactionReplayRequiredError ? { replayReason: e.reason } : {}),
+                }, acquisitionTimeout ? "Database transaction acquisition is unavailable"
+                    : expired ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
+            };
+            if (expired && transactionCallbackEntered) reportFailure();
             const throwExhausted = (): never => {
                 if (isTransactionDeadlineExceededError(e)) {
                     throw ambiguousAttemptFailure
@@ -511,39 +585,14 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 }
                 if (ambiguousAttemptFailure) throw ambiguousAttemptFailure.error;
                 if (confirmedRollback || acquisitionTimeout) {
-                    const driverErrorMessage = sqlState ? readContentFreeDriverErrorMessage(e) : undefined;
-                    const expired = isExpiredTransactionError(e) || e instanceof TransactionAttemptDeadlineExceededError
-                        || isDriverDeadlineCancellation(sqlState, driverErrorMessage);
-                    const meta = typeof e === "object" && e !== null && "meta" in e ? e.meta : undefined;
-                    const failedStatementRelation = typeof meta === "object" && meta !== null
-                        && "modelName" in meta && typeof meta.modelName === "string" ? meta.modelName : undefined;
-                    const prismaCode = typeof e === "object" && e !== null && "code" in e
-                        && typeof e.code === "string" && /^P\d{4}$/.test(e.code) ? e.code : undefined;
-                    // Reuse the recovery owner's classifications, never raw
-                    // Prisma messages (which may contain SQL and parameters).
-                    const prismaTransactionErrorKind = prismaCode !== "P2028" ? undefined
-                        : acquisitionTimeout ? "acquisition-unavailable"
-                        : isExpiredTransactionError(e) ? "expired-timeout"
-                        : isMissingPrismaTransactionError(e) ? "transaction-not-found" : "unclassified";
-                    log({
-                        module: "storage-tx", level: "warn", event: acquisitionTimeout ? "transaction-acquisition" : "transaction-rollback",
-                        transactionClass: options?.transactionClass ?? "unspecified",
-                        provider, sqlState, prismaCode, prismaTransactionErrorKind, failedStatementRelation,
-                        outcome: acquisitionTimeout ? "acquisition-unavailable" : expired ? "deadline-exceeded" : "conflict-exhausted",
-                        driverErrorCode: sqlState,
-                        driverErrorMessage,
-                        isolationLevel: provider === "sqlite" ? undefined : options?.isolationLevel ?? "ReadCommitted",
-                        readOnly: options?.readOnly === true,
-                        attempts: counter + 1,
-                        ...(e instanceof TransactionReplayRequiredError ? { replayReason: e.reason } : {}),
-                    }, acquisitionTimeout ? "Database transaction acquisition is unavailable"
-                        : expired ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
+                    if (!expired || !transactionCallbackEntered) reportFailure();
                     if (acquisitionTimeout) throw new TransactionAcquisitionUnavailableError(e);
                     if (expired) throw new TransactionDeadlineExceededError(e, options?.transactionClass, 'rolled_back');
                     throw new TransactionConflictExhaustedError(e);
                 }
                 throw e;
             };
+            if (signal?.aborted && e === signal.reason) throw e;
             if (provider === "postgres" && (confirmedRollback || acquisitionTimeout)
                 && (!retryable || (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs))) {
                 // Execution/admission exhaustion never opens another window.

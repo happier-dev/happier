@@ -59,6 +59,7 @@ export type PluginWebhookIngestDependenciesV1 = Readonly<{
         stored: PluginWebhookStoredEnvelopeReadyV1;
         now?: Date;
         deadlineAtMs?: number;
+        signal?: AbortSignal;
         onCommittedWake?: (wake: PluginWebhookCommittedDeliveryWakeV1) => void;
     }>) => Promise<AdmissionResultV1>;
 }>;
@@ -297,6 +298,7 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
             stored,
             now,
             ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
+            ...(params.signal ? { signal: params.signal } : {}),
             ...(params.onCommittedWake ? { onCommittedWake: params.onCommittedWake } : {}),
         });
         const afterAdmission = unavailableIfAborted();
@@ -339,7 +341,8 @@ export async function ingestPluginWebhookV1(params: Readonly<{
     });
     if (prepared.kind === "recordReceiptOnly") {
         const accepted = await recordPluginWebhookHeartbeatReceiptV1({ routeId: prepared.route.routeId,
-            ...(params.now ? { now: params.now } : {}), ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }) });
+            ...(params.now ? { now: params.now } : {}), ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
+            ...(params.signal ? { signal: params.signal } : {}) });
         return accepted ? { kind: "receiptAccepted" } : { kind: "rejected", statusCode: 404, code: "not_found" };
     }
     if (prepared.kind !== "ready") return prepared;
