@@ -16,6 +16,10 @@ import {
   isSocketRpcActionApiServerOriginAuthorizationContext,
 } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { describe, expect, it, vi } from 'vitest';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -105,6 +109,50 @@ function expectPreparedRelayResponse(raw: unknown, response: unknown): void {
 }
 
 describe('registerExternalActionRpcHandler', () => {
+  it('admits a Home capture watch with the same Machine custody as its finite read', async () => {
+    const machineId = 'machine-1';
+    const accountId = 'account-1';
+    const installationId = currentInstallationBoundary.resolveInstallationId();
+    const target = { kind: 'machine' as const, machineId };
+    const input = { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)!,
+      input: { source: { kind: 'worktree', serverId: 'server-reserved-rpc', machineId,
+        projectId: 'billing-api', workspaceId: 'checkout' }, page: { limit: 5 } } };
+    const resource = { hostRead: 'telemetry.capture' as const, input, windowMs: 60_000 };
+    const boundary = { machineId, resolveInstallationId: currentInstallationBoundary.resolveInstallationId,
+      resolveCustodianAccountId: async () => accountId,
+      verifyMachineAdmission: async () => { throw new Error('An admitted Action must keep its existing custody'); } };
+    const common = { authorization: ACTION_API_SERVER_ORIGIN,
+      machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId, installationId,
+        role: 'manage' as const, encryptionMode: 'plain' as const } };
+    const request = (mode: 'read' | 'watch') => ({
+      ...common,
+      method: `${machineId}:${mode === 'read' ? EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 : RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`,
+      params: authorizedDispatch({
+        actionId: ACTION_INVOKE_ACTION_ID_V1,
+        principal: { accountId, authentication: { kind: 'account', tokenEpoch: 1 }, authority: 'present_user' },
+        placement: { machineId, target },
+        envelope: { v: 1, requestId: `capture-${mode}`, target, input,
+          resourceContinuation: mode === 'read'
+            ? { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, params: { machineId, resource } }
+            : { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, params: { machineId, resource, subscriptionId: 'capture-watch' } },
+        },
+      }),
+    });
+    const watch = request('watch');
+    await expect(authorizeMachineRpcRequest(request('read'), boundary, 'authenticated_home_socket')).resolves.toEqual({ ok: true });
+    await expect(authorizeMachineRpcRequest(watch, boundary, 'authenticated_home_socket')).resolves.toEqual({ ok: true });
+    await expect(authorizeMachineRpcRequest(watch, boundary)).resolves.toMatchObject({
+      ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+    for (const edit of [{ machineId: 'neighbor' }, { actorAccountId: 'neighbor-account' }, { installationId: 'retired' }]) {
+      await expect(authorizeMachineRpcRequest({ ...watch, machineAdmission: { ...watch.machineAdmission, ...edit } },
+        boundary, 'authenticated_home_socket')).resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    await expect(authorizeMachineRpcRequest({ ...watch, method: `${machineId}:${RPC_METHODS.MACHINES_SERVICE_LIST}` },
+      boundary, 'authenticated_home_socket'))
+      .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  });
+
   it.each(['owner', 'foreign_manage', 'unstamped_transport'] as const)(
     'admits a relayed C74 Session capability check only from the owning Account (%s)', async caller => {
       const custodianAccountId = 'account-owner';

@@ -1361,9 +1361,8 @@ export async function authorizeMachineRpcRequest(
     request.machineAdmission !== undefined &&
     isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization)
   ) {
-    // This closed relay executes the ORIGINAL Action, not a new raw grant for
-    // its custodian-only transport method. Its registered ingress verifies the
-    // signed root/effect/target before producing requester custody/currentness.
+    // Both Home relays carry the original signed Action. The receiving
+    // handler verifies its root and binds any watch to the selected Resource.
     const dispatch = ExternalActionDaemonDispatchRequestSchema.safeParse(
       request.params,
     );
@@ -1374,8 +1373,9 @@ export async function authorizeMachineRpcRequest(
       !machine ||
       !dispatch.success ||
       !admission.success ||
-      request.method !==
-        `${machine.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`
+      (request.method !== `${machine.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`
+        && (source !== 'authenticated_home_socket'
+          || request.method !== `${machine.machineId}:${RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`))
     )
       return forbidden('machine_target');
     const root = dispatch.data.executionAuthorization?.binding;
