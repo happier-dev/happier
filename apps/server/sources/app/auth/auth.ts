@@ -10,7 +10,7 @@ import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRAN
 import { projectDeploymentNativeAdmissionV1,
     isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1,
-    projectExternalActionDeploymentMetadataReceiptIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectExternalActionDeploymentMetadataReceiptIdV1, projectExternalActionDeploymentStopReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
@@ -779,7 +779,9 @@ class AuthModule {
         }
         let metadataEnvironmentId: string | undefined;
         let deploymentObservationReceiptId: string | undefined;
+        let deploymentStopReceipt: ExternalActionExecutionAuthorizationBindingV1['deploymentStopReceipt'];
         try {
+            deploymentStopReceipt = projectExternalActionDeploymentStopReceiptV1(input.actionId, inputRecord);
             metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(input.actionId, inputRecord);
             // A receipt read by its own id binds that receipt's real Environment. The
             // storage read still authorizes the actor in that Environment; nothing widens.
@@ -812,6 +814,12 @@ class AuthModule {
                 ? environment.admission.canManage && !environment.row.deletedAt
                 : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
                 throw refuse('metadata_environment_admission');
+            }
+            if (deploymentStopReceipt && (environment.row.controllerMachineId !== input.machineId
+                || !await db.deployment.findFirst({ where: { id: deploymentStopReceipt.deploymentId,
+                    environmentId: metadataEnvironmentId, acceptedControllerMachineId: input.machineId,
+                    acceptedControllerInstallationId: machine.installationId }, select: { id: true } }))) {
+                throw refuse('stop_receipt_controller', 'machine_unavailable');
             }
         }
         const environmentId = metadataEnvironmentId
@@ -895,6 +903,7 @@ class AuthModule {
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
             ...(deploymentObservationReceiptId ? { deploymentObservationReceiptId } : {}),
+            ...(deploymentStopReceipt ? { deploymentStopReceipt } : {}),
             ...((nativeAdmission && 'kind' in nativeAdmission && nativeAdmission.kind === 'promote' || ingressUpdateRoot || configureRoot || telemetryRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))

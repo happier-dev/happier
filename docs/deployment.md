@@ -4768,20 +4768,25 @@ removes old entries from the pool enumerated by the
 That observation motivated the approved Docker-grace design; it is no longer a
 request-counter RED or a blocker on implementing start-first.
 
-`deployments.cancel` submits a storage-only cancellation through the same receipt
-transition route used by installed daemons. Current Source/deployer admission and
-the expected receipt revision decide the write, even when the controller cannot
-reply. The write records `cancelRequestedAtMs` and overall `outcome_unknown`,
-releasing the Environment's effect slot. It preserves protected member evidence,
-the last uniform release and native resources. Repeating the acknowledged request
-does not publish another change, and cancellation cannot resume that receipt's
-queued/running stages. For a platform Deploy, receipt Observe reads the exact retained
-provider deployment. The captured controller may settle a confirmed success after
-Stop. The receipt keeps the stop-request timestamp and uses the admitted Link
-revision for serving publication. A Link change after Observe starts
-or a newer receipt prevents the old attempt from becoming the uniform release. The initial response
-acknowledges the stop request while the provider outcome is still unknown. Loaded
-rollout recovery and multi-Machine execution remain program integration work.
+`deployments.cancel` requests Stop through the existing receipt transition.
+Home checks the current Source/deployer admission and the expected receipt
+revision, records `cancelRequestedAtMs`, and releases the Environment's effect
+slot. It preserves protected member evidence and the last uniform release.
+For an in-progress platform Deploy that retains a provider deployment ID
+and declares a Cancel role, Home acknowledges the first committed Stop to
+the captured controller. That controller invokes the admitted role once for
+the exact provider deployment. A confirmed cancellation settles as
+`cancelled`. A provider that has already finished settles as `succeeded`,
+with the Stop timestamp retained. Typed provider refusals keep their cause.
+Stop can still be recorded in Home when the controller cannot be reached.
+Until a final provider result is known, the Receipt records `outcome_unknown`.
+
+Repeating Stop returns the current Receipt without a further provider call.
+The Stop does not resume queued/running stages. Receipt Observe can reconcile
+the exact retained provider deployment if the result is unknown. Confirmed
+success uses the admitted Link revision for serving publication. A Link
+change after Stop or Observe starts, or a newer Receipt, prevents the older
+attempt from becoming the uniform release.
 
 The deployment read controller derives `memberVersions` from its already-opened
 receipt window and current link installations. A newer unknown or unvisited

@@ -87,6 +87,7 @@ function transitionContentReference(row: Receipt, input: DeploymentTransitionInp
 /** Stop future stages without waiting for, or inventing observations from, the controller. */
 export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string, input: DeploymentCancelInputV1,
     authentication: DeploymentAuthentication = {},
+    onAccepted?: () => void,
 ) {
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
@@ -116,6 +117,7 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
         projectDeploymentReceiptCompletionV1(previousState,
             { state: 'outcome_unknown', settledAt: current.settledAt, cancelRequestedAt: current.cancelRequestedAt },
             current.revision, now.getTime()));
+    onAccepted?.();
     return receiptResult(current, loaded.row.revision);
 }
 
@@ -281,8 +283,9 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
 export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, input: DeploymentTransitionInputV1 | DeploymentCancelTransitionInputV1,
     authentication: DeploymentAuthentication = {},
     executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
+    onStopAccepted?: () => void,
 ) {
-    if (input.kind === 'cancel') return requestCancelDeploymentInTx(tx, actorAccountId, input, authentication);
+    if (input.kind === 'cancel') return requestCancelDeploymentInTx(tx, actorAccountId, input, authentication, onStopAccepted);
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const row = await tx.deployment.findFirst({ where: { id: input.deploymentId, environmentId: input.environmentId } });
     if (!row || row.actionOperationId !== input.actionOperationId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.transition.receipt', causeKind: row ? 'access_denied' : 'not_found' });
@@ -365,9 +368,11 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (!nextContent) return deploymentFailure('deployment_conflict');
     if (!input.contentUpdate && row.state === input.state) return receiptResult(row, loaded.row.revision);
     const observing = executionBinding?.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
+    const stopping = executionBinding?.actionId === 'deployments.cancel'
+        && executionBinding.deploymentStopReceipt?.deploymentId === row.id && row.cancelRequestedAt !== null;
     // A read-only observer may recover captured provider history, but never
     // reacquires its released effect slot or supersedes a newer target receipt.
-    const observedSettlement = observing && link.sourceKind === 'plugin' && row.state === 'outcome_unknown'
+    const observedSettlement = (observing || stopping) && link.sourceKind === 'plugin' && row.state === 'outcome_unknown'
         && input.kind === 'settle' && (input.state === 'succeeded' || input.state === 'running_unverified');
     const resumedTeardown = !observing && row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
         && input.state === 'running' && !row.cancelRequestedAt;

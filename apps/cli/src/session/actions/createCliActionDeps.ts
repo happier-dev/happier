@@ -142,7 +142,7 @@ import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/fea
 import type { readCliMemoryInheritedContext, readCliMemoryScopeContext } from './readCliMemoryInheritedContext';
 import axios from '@/api/client/credentialAxios';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { checkDeploymentTargetV1, readDeploymentTargetV1 } from '@happier-dev/deployments';
 import { createCliProjectSourceActionDeps } from './projectSourceActionDeps';
@@ -150,7 +150,7 @@ import { createCliDeploymentActionDeps } from '@/deployments/createCliDeployment
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
 import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { canRecordDeploymentStopWithoutControllerV1, DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupActionResultSchemasV1, type DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
@@ -1529,7 +1529,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
       }
       const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, async () => ({ ok: true,
         machineId: selected.machineId }));
-      if (!execution.ok) return execution;
+      if (!execution.ok) {
+        if (actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && canRecordDeploymentStopWithoutControllerV1(execution))
+          return deploymentStorage(actionId, input, context);
+        return execution;
+      }
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
       if (approval.success && approval.data.actionId === actionId) return approval.data;
       const output = DeploymentActionOutputSchemasV1[actionId].safeParse(execution.result);

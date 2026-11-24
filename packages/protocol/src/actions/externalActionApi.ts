@@ -46,7 +46,7 @@ import { isMachineTerminalSessionReadActionIdV1 } from './specs/machineTerminalA
 import { TerminalStreamReadRequestSchema } from '../terminal/stream.js';
 import type { ProjectSourceArtifactReadOptionsV1 } from '../projects/sources/projectSourceAttachmentAdmissionV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
-  isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+  isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
@@ -1016,6 +1016,11 @@ export function projectExternalActionApprovalDecisionAdmissionV1(input: unknown)
 }
 
 /** V2 is closed at every routing and encryption boundary; content is opaque. */
+const DeploymentStopReceiptV1Schema = lazyZodSchema(() => z.strictObject({
+  deploymentId: DeploymentIdentifierV1Schema,
+  expectedReceiptRevision: DeploymentRevisionV1Schema,
+}));
+
 export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), requestId: ExternalActionRequestIdV1Schema,
   /** Requester-scoped access to one known operation opens with an invocation key. */
@@ -1049,6 +1054,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   /** Exact non-content receipt operand of a receipt read by its own id; Home binds that receipt's Environment during issuance. */
   deploymentMetadataReceiptId: z.optional(DeploymentIdentifierV1Schema),
+  deploymentStopReceipt: z.optional(DeploymentStopReceiptV1Schema),
   presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
@@ -1061,6 +1067,21 @@ export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
   ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema,
 ]));
 export type ExternalActionRequestEnvelope = z.infer<typeof ExternalActionRequestEnvelopeSchema>;
+/** Stop carries only the exact receipt address and CAS operand. */
+export function projectExternalActionDeploymentStopReceiptV1(actionId: string, input: unknown) {
+  if (actionId !== DEPLOYMENT_CANCEL_ACTION_ID_V1) return undefined;
+  const { deploymentId, expectedReceiptRevision } = z.looseObject(DeploymentStopReceiptV1Schema.shape).parse(input);
+  return { deploymentId, expectedReceiptRevision };
+}
+export function projectExternalActionDeploymentStopEnvelopeReceiptV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>) {
+  if (input.envelope.v === 1) return projectExternalActionDeploymentStopReceiptV1(input.actionId, input.envelope.input);
+  if (input.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1) return DeploymentStopReceiptV1Schema.parse(input.envelope.deploymentStopReceipt);
+  if (input.envelope.deploymentStopReceipt !== undefined) throw new TypeError('Unexpected Stop receipt');
+  return undefined;
+}
+
 /** Public resource scope only; metadata content remains sealed in V2. */
 export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId: string, input: unknown): string | undefined {
   return (isDeploymentEnvironmentMetadataReadActionIdV1(actionId) || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
@@ -1567,6 +1588,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
       policyRevision: DeploymentRevisionV1Schema })),
     /** Home-signed receipt operand for Observe continuation. */
     deploymentObservationReceiptId: z.optional(DeploymentIdentifierV1Schema),
+    deploymentStopReceipt: z.optional(DeploymentStopReceiptV1Schema),
     presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
@@ -1718,6 +1740,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
     context.addIssue({ code: 'custom', path: ['approvalDecisionAdmission'], message: 'Approval admission binds only its decision Action' });
+  }
+  if (value.deploymentStopReceipt !== undefined && (value.actionId !== DEPLOYMENT_CANCEL_ACTION_ID_V1
+    || value.environmentId === undefined || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {
+    context.addIssue({ code: 'custom', path: ['deploymentStopReceipt'], message: 'Stop binds the exact Environment receipt and revision.' });
   }
   if (value.deploymentObservationReceiptId !== undefined && (value.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
     || value.environmentId === undefined || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {

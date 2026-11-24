@@ -704,7 +704,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const path = `/v1/deployments/environments/${encodeURIComponent(request.environmentId)}/deployments/${encodeURIComponent(request.deploymentId)}/transitions`;
                 if (prepared) await atHome(() => prepared.assertCurrent());
                 const rootOperation = binding && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-                const effectActionId = restoring || binding?.actionId === 'deployments.receipts.observe'
+                const effectActionId = restoring || binding?.actionId === 'deployments.receipts.observe' || binding?.actionId === 'deployments.cancel'
                     ? binding.actionId : `deployments.${rootOperation ?? receipt.operation}`;
                 const admittedHeaders = await headers(request.context, effectActionId,
                     { method: 'POST', path, body: wire });
@@ -1771,6 +1771,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (request.actionId === 'deployments.environments.update') {
                 const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
                 return input.success ? previewEnrollment.prepare(input.data, request.context) : failure('invalid_parameters');
+            }
+            if (request.actionId === 'deployments.cancel') {
+                const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
+                if (!input.success) return failure('invalid_parameters');
+                const { environmentId, deploymentId } = input.data;
+                return contributedTarget.prepareCancellation({ input: input.data, context: request.context,
+                    readReceiptHeader: async () => (await readReceiptMetadata(environmentId, deploymentId, request.context)).deployment,
+                    openReceipt: header => openDeploymentReceiptForHost(header, request.context, { open, assertCurrent }),
+                    stop: context => storageDeps.requestStop(input.data, context) });
             }
             if (request.actionId === 'deployments.receipts.observe') {
                 const input = DeploymentActionInputSchemasV1['deployments.receipts.observe'].safeParse(request.input);

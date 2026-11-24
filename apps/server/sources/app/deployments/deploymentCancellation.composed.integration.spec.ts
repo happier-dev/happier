@@ -2,9 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, computeDeploymentTransitionRequestDigestV1, encodePlainArtifactStoredContent,
+    DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, ExternalActionExecutionAuthorizationV1Schema,
+    bindExternalActionExecutionAuthorizationHttpPathV1, encodeExternalActionResolvedTargetV1,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, signExternalActionMachineRequestV1,
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -13,6 +18,7 @@ import { createSignedExternalActionPostHeadersForTests } from '@/testkit/externa
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { verifyExternalActionDomainExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
@@ -28,7 +34,7 @@ describe('storage-only cancellation through the sole receipt transition route', 
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each(['platform', 'platform-retained-builder', 'own-server', 'own-server-alias', 'late platform Stop', 'superseded platform Stop'] as const)(
+    it.each(['platform', 'platform-retained-builder', 'own-server', 'own-server-alias', 'late platform Stop', 'superseded platform Stop', 'provider Cancel', 'provider already live'] as const)(
         'captures and settles %s from persisted target custody through signed HTTP', async target => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
@@ -66,7 +72,7 @@ describe('storage-only cancellation through the sole receipt transition route', 
         const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId,
             environmentId: environment.id, expectedRevision: environment.revision, requestKey: crypto.randomUUID(), role: 'runtime',
             ...(native ? { targetId: target } : { targetId: 'platform-test', source: { kind: 'plugin' as const,
-                contribution: { pluginId: 'deployment-platform-test', localId: 'runtime' } }, targetKind: 'platform' }),
+                contribution: { pluginId: 'example.deploy', localId: 'runtime' } }, targetKind: 'platform' }),
             machines: native ? [{ machineId, installationId }] : [], ...linkContent }));
         if (staleBuilder) {
             // A revoked retained builder is current placement: linking is new work, so it is
@@ -115,6 +121,74 @@ describe('storage-only cancellation through the sole receipt transition route', 
             // The URL uses the existing sole receipt transition route.
             const running = await transition(stage);
             expect(running.statusCode, running.body).toBe(200);
+            if (target === 'provider Cancel' || target === 'provider already live') {
+                const expectedReceiptRevision = running.json().deploymentRevision;
+                const cancelPath = `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`;
+                const actionInput = { serverId, environmentId: environment.id, deploymentId: receipt.id, expectedReceiptRevision };
+                const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(DEPLOYMENT_CANCEL_ACTION_ID_V1),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId, envelope: { v: 1,
+                        requestId: crypto.randomUUID(), target: { kind: 'machine', machineId }, input: actionInput } } });
+                expect(minted.statusCode, minted.body).toBe(200);
+                const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                expect(root.binding).toMatchObject({ environmentId: environment.id,
+                    deploymentStopReceipt: { deploymentId: receipt.id, expectedReceiptRevision } });
+                const signedPost = (url: string, body: Record<string, unknown>) => app.inject({ method: 'POST', url, payload: body,
+                    headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: DEPLOYMENT_CANCEL_ACTION_ID_V1,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                            effectActionId: DEPLOYMENT_CANCEL_ACTION_ID_V1, target: root.binding.target, installationId,
+                            requestId: root.binding.requestId, method: 'POST', path: url, body, privateKey: keys.secretKey }) } });
+                const materialPath = '/v2/teams/stop-test-team/credential-resources/stop-test-resource/direct-material';
+                const consumer = { kind: 'platform_operation', deploymentId: receipt.id,
+                    environmentId: environment.id, operationId: receipt.actionOperationId };
+                const material = { resourceId: 'stop-test-resource', consumer,
+                    slot: { kind: 'connected_service_purpose',
+                        purpose: { purpose: 'deploy', consumer: { pluginId: 'example.deploy', localId: 'cancel' } } },
+                    disclosedMember: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'fixture' } };
+                const verifyMaterial = (body: typeof material) => verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: root.token, effectActionId: DEPLOYMENT_CANCEL_ACTION_ID_V1,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target), method: 'POST', path: materialPath, body,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: DEPLOYMENT_CANCEL_ACTION_ID_V1, target: root.binding.target, installationId,
+                        requestId: root.binding.requestId, method: 'POST', path: materialPath, body, privateKey: keys.secretKey }),
+                });
+                expect(await verifyMaterial(material)).toBeNull();
+                const stop = { ...actionInput, kind: 'cancel' };
+                expect((await signedPost(cancelPath, { ...stop, expectedReceiptRevision: expectedReceiptRevision + 1 })).statusCode).toBe(401);
+                const otherId = crypto.randomUUID();
+                const otherPath = `/v1/deployments/environments/${environment.id}/deployments/${otherId}/transitions`;
+                expect((await signedPost(otherPath, { ...stop, deploymentId: otherId })).statusCode).toBe(401);
+                const state = target === 'provider Cancel' ? 'cancelled' : 'succeeded';
+                const settled: Omit<DeploymentTransitionInputV1, 'proof'> = { ...stage, kind: 'settle', state,
+                    expectedRevision: expectedReceiptRevision + 1,
+                    ...(state === 'succeeded' ? { expectedTargetLinkRevision: linked.targetLinkRevision } : {}) };
+                const settle = (body: Omit<DeploymentTransitionInputV1, 'proof'>) => {
+                    const proof = signMachineInstallationProof({ payload: { version: 1, machineId, installationId, accountId: owner.id,
+                        deploymentTransition: { serverId, environmentId: environment.id, deploymentId: body.deploymentId,
+                            actionOperationId: body.actionOperationId, expectedRevision: body.expectedRevision,
+                            requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: keys.secretKey });
+                    return signedPost(cancelPath, { ...body, proof });
+                };
+                expect((await settle(settled)).statusCode).toBe(401);
+                const pending = await signedPost(cancelPath, stop);
+                expect(pending.statusCode, pending.body).toBe(200);
+                expect(pending.headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1]).toBe('1');
+                expect(pending.json()).toMatchObject({ ok: true, state: 'outcome_unknown', deploymentRevision: expectedReceiptRevision + 1 });
+                expect((await signedPost(cancelPath, stop)).headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1]).toBeUndefined();
+                expect(await verifyMaterial(material)).toMatchObject({ acceptedDeploymentReceipt: { platformMaterial: { consumer } } });
+                expect(await verifyMaterial({ ...material, consumer: { ...consumer, deploymentId: otherId } })).toBeNull();
+                expect(await verifyMaterial({ ...material, slot: { ...material.slot, purpose: { ...material.slot.purpose,
+                    consumer: { pluginId: 'other.deploy', localId: 'cancel' } } } })).toBeNull();
+                expect((await settle({ ...settled, expectedRevision: settled.expectedRevision + 1 })).statusCode).toBe(401);
+                const confirmed = await settle(settled);
+                expect(confirmed.statusCode, confirmed.body).toBe(200);
+                expect(confirmed.json()).toMatchObject({ ok: true, state, deploymentRevision: expectedReceiptRevision + 2 });
+                expect(await verifyMaterial(material)).toBeNull();
+                expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: linked.targetLinkId } })).activeDeploymentId)
+                    .toBe(state === 'succeeded' ? receipt.id : null);
+                return;
+            }
             if (target === 'late platform Stop' || target === 'superseded platform Stop') {
                 const receiptRevision = running.json().deploymentRevision;
                 const cancelPath = `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`;

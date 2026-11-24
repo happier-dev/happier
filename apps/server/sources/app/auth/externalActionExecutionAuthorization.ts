@@ -98,12 +98,13 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
-    isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+    isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -373,6 +374,8 @@ export function projectExternalActionMintInput(input: Readonly<{
 }>): unknown {
     const { envelope, deploymentMetadataReceiptId, deploymentMetadataEnvironmentId } = input;
     if (envelope.v === 1) return envelope.input;
+    if (input.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && envelope.deploymentStopReceipt)
+        return { ...envelope.deploymentStopReceipt, environmentId: deploymentMetadataEnvironmentId };
     if (deploymentMetadataReceiptId !== undefined) {
         return { deploymentId: deploymentMetadataReceiptId, environmentId: deploymentMetadataEnvironmentId };
     }
@@ -1860,7 +1863,7 @@ function readFiniteTeamDirectMaterialHttpPurpose(proof: ExternalActionExecutionR
         if (!params.success || params.data.resourceId !== body.data.resourceId
             || proof.path !== `/v2/teams/${encodeURIComponent(params.data.teamId)}/credential-resources/${encodeURIComponent(params.data.resourceId)}/direct-material`
             || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, { ...params.data, ...body.data })) return null;
-        return { ...params.data, consumer: body.data.consumer };
+        return { ...params.data, consumer: body.data.consumer, slot: body.data.slot };
     } catch { return null; }
 }
 
@@ -2164,15 +2167,19 @@ async function verifyCommon(
         && actionBrokerPurpose.initiatorMachineId === binding.machineId
         ? { ...actionBrokerPurpose, rootActionId: binding.actionId, machineId: binding.machineId,
             ...(proof.reviewedChild ? { admittedReviewedChildActionId: proof.reviewedChild.actionId } : {}) } : undefined;
+    const stopMaterialRevision = binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1
+        && binding.deploymentStopReceipt && platformMaterial?.slot.kind === 'connected_service_purpose'
+        ? binding.deploymentStopReceipt.expectedReceiptRevision + 1 : undefined;
     const deploymentContinuation: DeploymentReceiptContinuation | undefined = platformMaterial
-        && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined
+        && (stopMaterialRevision !== undefined
+            || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         ? { deploymentId: platformMaterial.consumer.deploymentId, environmentId: platformMaterial.consumer.environmentId,
             actionOperationId: platformMaterial.consumer.operationId, installationId: binding.installationId } : nativeTransition
         && (deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined
-            || binding.actionId === 'deployments.receipts.observe') && verifyBoundMachineKey() ? {
+            || binding.actionId === 'deployments.receipts.observe' || binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1) && verifyBoundMachineKey() ? {
         deploymentId: nativeTransition.deploymentId, actionOperationId: nativeTransition.actionOperationId,
         environmentId: nativeTransition.environmentId, installationId: binding.installationId,
-        ...(binding.actionId === 'deployments.receipts.observe' && nativeTransition.kind === 'settle'
+        ...((binding.actionId === 'deployments.receipts.observe' || binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1) && nativeTransition.kind === 'settle'
             ? { observedSettlementState: nativeTransition.state } : {}),
         // Unknown-outcome recovery records its private reason atomically. The
         // transition owner binds that update to the existing Artifact and versions.
@@ -2195,7 +2202,10 @@ async function verifyCommon(
         && verifyBoundMachineKey()
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
-            ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
+            ...(stopMaterialRevision !== undefined && platformMaterial?.slot.kind === 'connected_service_purpose'
+                ? { revision: stopMaterialRevision, state: 'outcome_unknown', operation: 'deploy',
+                    targetLink: { sourceKind: 'plugin', pluginId: platformMaterial.slot.purpose.consumer.pluginId } }
+                : platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
                 : declaredPreparationRead || domainPurpose?.kind === 'membership-content-read'
                     || childPurpose.deploymentWorkspaceRead || childPurpose.deploymentReferenceRead
                     || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
@@ -3596,13 +3606,20 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
 function readDeploymentNativeTransition(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, proof: ExternalActionExecutionRequestProof) {
     const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-    const effect = binding.actionId === 'deployments.receipts.observe' || binding.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+    const effect = binding.actionId === 'deployments.receipts.observe' || binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1
+        || binding.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
         ? binding.actionId : operation ? `deployments.${operation}` : null;
     if (!effect || effectActionId !== effect
         || proof.method.toUpperCase() !== 'POST') return null;
     const transition = DeploymentTransitionInputV1Schema.safeParse(proof.body);
     if (!transition.success || transition.data.serverId !== binding.serverIdentityId
         || transition.data.machineId !== binding.machineId || transition.data.installationId !== binding.installationId) return null;
+    if (binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && (!binding.deploymentStopReceipt
+        || transition.data.deploymentId !== binding.deploymentStopReceipt.deploymentId
+        || transition.data.environmentId !== binding.environmentId
+        || transition.data.expectedRevision !== binding.deploymentStopReceipt.expectedReceiptRevision + 1
+        || transition.data.kind !== 'settle' || transition.data.teardownProof !== undefined
+        || !['cancelled', 'succeeded', 'failed', 'outcome_unknown'].includes(transition.data.state))) return null;
     const expectedPath = `/v1/deployments/environments/${encodeURIComponent(transition.data.environmentId)}/deployments/${encodeURIComponent(transition.data.deploymentId)}/transitions`;
     return proof.path === expectedPath && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, proof.body))
         ? transition.data : null;
@@ -3821,6 +3838,41 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
                 && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, census.data));
         }
         return isAccountActionHttpOperation(root, proof);
+    }
+    if (root === DEPLOYMENT_CANCEL_ACTION_ID_V1) {
+        const stop = verified.binding.deploymentStopReceipt;
+        const environmentId = verified.binding.environmentId;
+        if (!stop || !environmentId) return false;
+        const effect = verified.effectActionId;
+        if (effect === root) {
+            if (verified.signedChildPurpose.nativeTransition && verified.acceptedDeploymentReceipt) return true;
+            if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+            const input = DeploymentCancelTransitionInputV1Schema.safeParse(proof.body);
+            if (input.success && proof.method.toUpperCase() === 'POST'
+                && input.data.serverId === verified.binding.serverIdentityId
+                && input.data.environmentId === environmentId && input.data.deploymentId === stop.deploymentId
+                && input.data.expectedReceiptRevision === stop.expectedReceiptRevision
+                && proof.path === `/v1/deployments/environments/${encodeURIComponent(environmentId)}/deployments/${encodeURIComponent(stop.deploymentId)}/transitions`
+                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, proof.body))) return true;
+        }
+        if (effect === root || effect === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
+            if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(db, verified.binding, proof)) return true;
+        }
+        if ((effect === root || effect === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1)
+            && isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, proof)) {
+            const input = DeploymentActionInputSchemasV1[DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1].safeParse(proof.routeInput);
+            return input.success && input.data.serverId === verified.binding.serverIdentityId
+                && input.data.deploymentId === stop.deploymentId
+                && (input.data.environmentId === undefined || input.data.environmentId === environmentId);
+        }
+        if (effect !== root) return false;
+        const artifactId = readArtifactGetHttpPurpose(proof);
+        if (artifactId === null) return false;
+        const receipt = await db.deployment.findFirst({ where: { id: stop.deploymentId, environmentId },
+            select: { contentArtifactId: true, environment: { select: { contentArtifactId: true } },
+                targetLink: { select: { contentArtifactId: true } } } });
+        return !!receipt && (artifactId === receipt.contentArtifactId || artifactId === receipt.environment.contentArtifactId
+            || artifactId === receipt.targetLink.contentArtifactId);
     }
     const movePreparation = await readDeploymentMoveToRepositoryHttpPurpose(db, verified.binding, verified.effectActionId, proof);
     if (movePreparation !== null) return movePreparation;

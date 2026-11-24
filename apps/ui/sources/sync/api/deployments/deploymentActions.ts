@@ -1,4 +1,4 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinksListResultV1Schema, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentCatalogCreateApplyV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinksListResultV1Schema, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentCatalogCreateApplyV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, canRecordDeploymentStopWithoutControllerV1, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -325,7 +325,11 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         // The controller owns preparation and approval. Preserve the sealed person/agent origin so its
         // existing review owner can carry a person's review back for native confirmation.
         const result = await machine(actionId, effectInput, context, machineId);
-        if (!result.ok) return result;
+        if (!result.ok) {
+            if (actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && canRecordDeploymentStopWithoutControllerV1(result))
+                return storage(actionId, input, context);
+            return result;
+        }
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentActionOutputSchemasV1[actionId].parse(result.result);
     }) };

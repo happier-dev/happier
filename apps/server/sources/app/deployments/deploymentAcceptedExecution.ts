@@ -8,7 +8,7 @@ import { deploymentFailure } from './deploymentAdmission';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparationAuthorization';
 import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 
@@ -26,7 +26,7 @@ export type DeploymentReceiptContinuation = Readonly<{
 }>;
 type AcceptedReceiptBinding = Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'actionId' | 'requestId' | 'target'>
     & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'requestEnvelopeDigest' | 'installationId' | 'environmentId'
-        | 'workflowActionOrigin' | 'deploymentPreparationAdmission' | 'deploymentObservationReceiptId'>>;
+        | 'workflowActionOrigin' | 'deploymentPreparationAdmission' | 'deploymentObservationReceiptId' | 'deploymentStopReceipt'>>;
 
 /** Builder custody belongs only to the persisted native own-server target. */
 export function isOwnServerDeploymentTarget(target: AcceptedTarget): boolean {
@@ -111,8 +111,11 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
             || binding.environmentId !== undefined && binding.environmentId !== continuation.environmentId)) return null;
     const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
     const observing = binding.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
-    if (!operation && !observing || observing && (!continuation
-        || binding.deploymentObservationReceiptId !== continuation.deploymentId)) return null;
+    const stopping = binding.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1;
+    const receiptControl = observing || stopping;
+    const selectedReceipt = observing ? binding.deploymentObservationReceiptId : binding.deploymentStopReceipt?.deploymentId;
+    if (!operation && !receiptControl || receiptControl && (!continuation
+        || selectedReceipt !== continuation.deploymentId)) return null;
     const observedState = continuation?.observedSettlementState;
     const originalRequest = operation ? { operation, acceptedRequestEnvelopeDigest: binding.requestEnvelopeDigest } : {};
     if (binding.workflowActionOrigin && binding.workflowActionOrigin.requestId !== binding.requestId) return null;
@@ -123,14 +126,16 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
     } satisfies Prisma.AutomationRunWhereInput : undefined;
     // An observer may spend captured installation custody on another requester's
     // receipt. Its Workflow belongs to the observer, not requestedByAccount.
-    if (observing && workflowRun && !await tx.automationRun.findFirst({ where: workflowRun, select: { id: true } })) return null;
+    if (receiptControl && workflowRun && !await tx.automationRun.findFirst({ where: workflowRun, select: { id: true } })) return null;
     return await tx.deployment.findFirst({ where: { AND: [constraints, {
         ...(continuation ? { id: continuation.deploymentId, environmentId: continuation.environmentId,
             actionOperationId: continuation.actionOperationId } : binding.environmentId ? { environmentId: binding.environmentId } : {}),
         // A fresh signed root can release its requester's interrupted slot on
         // the captured controller, without borrowing the old execution root.
         // Overlapping observers: the slower one reaches the transition owner's same-state replay, never another outcome.
-        ...(observing ? { OR: [
+        ...(stopping ? { cancelRequestedAt: { not: null }, targetLink: { sourceKind: 'plugin' },
+            state: { in: ['outcome_unknown', ...(observedState ? [observedState] : [])] } }
+            : observing ? { OR: [
             { state: { in: [...deploymentInProgressStates(),
                 ...(observedState && observedState !== 'outcome_unknown' ? [observedState] : [])] } },
             { state: 'outcome_unknown', targetLink: { sourceKind: 'plugin' } },
@@ -141,10 +146,10 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
         ] } : originalRequest),
         // Observation spends the installation's existing receipt custody, not
         // another permission to repeat the original requester's native effect.
-        ...(!observing ? { requestedByAccountId: binding.accountId } : {}),
+        ...(!receiptControl ? { requestedByAccountId: binding.accountId } : {}),
         acceptedControllerMachineId: binding.machineId, acceptedControllerInstallationId: binding.installationId,
         // Keep the active-job lookup in this same query for Workflow roots.
-        ...(workflowRun && !observing ? { requestedByAccount: { automationRuns: { some: workflowRun } } } : {}),
+        ...(workflowRun && !receiptControl ? { requestedByAccount: { automationRuns: { some: workflowRun } } } : {}),
     }] }, select: { id: true, environmentId: true, targetLinkId: true, operation: true, state: true, teardownProof: true,
         acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
         acceptedBuildMachineId: true, acceptedBuildInstallationId: true } });

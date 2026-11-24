@@ -17,6 +17,7 @@ import { DeploymentFailedEventV1ProtocolSchema, DeploymentReceiptOutcomeEventV1P
     DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { canTransitionDeploymentV1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -71,7 +72,9 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 // Home persistence and Cloudflare HTTP are the boundaries. The actual portable
 // Account artifact, role admission, reviewed child and receipt writer stay real.
 it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'pages branch review', 'pages repository grant', 'watched-non-production',
-    'settled authored replay', 'pending authored deploy', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
+    'stop workers preview', 'stop workers preview refused', 'settled authored replay', 'pending authored deploy', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
+    const stopRefused = scenario === 'stop workers preview refused';
+    const stopPreview = scenario === 'stop workers preview' || stopRefused;
     const watched = scenario === 'watched-non-production';
     const pendingAction = scenario === 'pending authored deploy';
     const broker = pendingAction ? createStablePluginEventsBroker() : undefined;
@@ -80,7 +83,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
     const worker = scenario === 'production' || scenario === 'settled-worker';
     const outcome = authoredRetry || scenario === 'second-preview' || scenario === 'production' ? 'succeeded'
         : scenario === 'lost-response' || scenario === 'missing-preview' ? 'outcome_unknown'
-        : scenario.startsWith('settled-') || watched || pendingAction ? 'queued' : scenario;
+        : scenario.startsWith('settled-') || stopPreview || watched || pendingAction ? 'queued' : scenario;
     const accountId = 'owner', origin = 'https://platform-home.test';
     const providerAccountId = 'a'.repeat(32), workerTag = 'b'.repeat(32), previewId = (scenario === 'second-preview' ? 'd' : 'c').repeat(32);
     const sha = 'f'.repeat(40), gitBranch = scenario === 'second-preview' ? 'feature/another-review' : 'feature/reviewed',
@@ -184,6 +187,10 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         expect(new Headers(init?.headers).get('authorization') === 'Bearer preview-fixture-secret').toBe(true);
         providerRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname,
             body: init?.body ? JSON.parse(await new Response(init.body).text()) : null });
+        if (stopPreview && parsed.pathname.endsWith('/cancel')) {
+            if (stopRefused) return Response.json({ success: false, errors: [{ code: 10000 }] }, { status: 403 });
+            return Response.json({ success: true, result: { build_uuid: 'reviewed-preview-build', build_outcome: 'cancelled' } });
+        }
         if (scenario === 'lost-response') throw new Error('Lost the accepted provider response');
         if (scenario === 'missing-preview') return Response.json({ success: false, errors: [{ code: 10090 }] }, { status: 404 });
         if (scenario === 'settled-pages') return Response.json({ success: true, result: {
@@ -223,8 +230,13 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                     provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                     repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } });
     });
-    app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
-        environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
+    app.get('/v1/deployments/environments/:environmentId', async request => {
+        if ((request.query as { projection?: string }).projection === 'approvalScope') {
+            const { id, projectSourceId, purpose } = environment.environment;
+            return { ok: true, environment: { id, projectSourceId, purpose } };
+        }
+        return { ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] };
+    });
     app.get('/v1/deployments/receipts/:deploymentId', async (request, reply) => {
         if ((request.params as { deploymentId: string }).deploymentId === refusedReceiptId) {
             return reply.code(404).send({ ok: false, error: 'deployment_not_found' });
@@ -258,7 +270,18 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         return { ok: true, environmentId: receipt.environmentId, revision: 1,
             deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state };
     });
-    app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async request => {
+    app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async (request, reply) => {
+        if (stopPreview && (request.body as { kind?: string }).kind === 'cancel') {
+            const stop = DeploymentCancelTransitionInputV1Schema.parse(request.body);
+            expect(stop).toMatchObject({ serverId, environmentId: receipt.environmentId, deploymentId: receipt.id });
+            if (receipt.cancelRequestedAtMs === undefined) {
+                expect(stop.expectedReceiptRevision).toBe(receipt.revision);
+                receipt = { ...receipt, revision: receipt.revision + 1, cancelRequestedAtMs: time, state: 'outcome_unknown' };
+                reply.header('x-happier-deployment-stop-accepted', '1');
+            }
+            return { ok: true, environmentId: receipt.environmentId, revision: 1,
+                deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state };
+        }
         const body = DeploymentTransitionInputV1Schema.parse(request.body);
         transitions.push(body);
         // Preserve Home's canonical lifecycle contract at the persistence boundary.
@@ -446,6 +469,30 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         expect(content.platform).toMatchObject({ ...row.content,
             ...(scenario === 'missing-preview' ? {} : { observation: { state: scenario === 'lost-response' ? 'queued' : outcome,
                 ...(scenario === 'lost-response' ? {} : { providerDeploymentId: 'reviewed-preview-build' }) } }) });
+        if (stopPreview) {
+            const revision = receipt.revision;
+            const input = { serverId, environmentId: receipt.environmentId, deploymentId: receipt.id, expectedReceiptRevision: revision };
+            const stopContext: ActionExecutorContext = { ...context, presentUserConfirmation: { actionId: 'deployments.cancel' } };
+            const stopped = await executor.execute('deployments.cancel', input, stopContext);
+            const expectedRequests = [{ method: 'PUT',
+                path: `/client/v4/accounts/${providerAccountId}/builds/builds/reviewed-preview-build/cancel`, body: null }];
+            expect(providerRequests.slice(1), JSON.stringify(stopped)).toEqual(expectedRequests);
+            if (stopRefused) {
+                expect(stopped).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', effectAttempted: true,
+                    failureCause: { httpStatus: 403, nativeErrorCode: '10000' } });
+                expect(receipt).toMatchObject({ revision: revision + 1, state: 'outcome_unknown', cancelRequestedAtMs: time });
+                expect(await executor.execute('deployments.cancel', input, stopContext)).toMatchObject({ ok: true,
+                    result: { deploymentRevision: revision + 1, state: 'outcome_unknown' } });
+                expect(providerRequests.slice(1)).toEqual(expectedRequests);
+                return;
+            }
+            expect(stopped).toMatchObject({ ok: true, result: {
+                deploymentId: receipt.id, deploymentRevision: revision + 2, state: 'cancelled' } });
+            expect(receipt).toMatchObject({ revision: revision + 2, state: 'cancelled', cancelRequestedAtMs: time });
+            expect(await executor.execute('deployments.cancel', input, stopContext)).toEqual(stopped);
+            expect(providerRequests.slice(1)).toEqual(expectedRequests);
+            return;
+        }
         if (scenario === 'lost-response') {
             expect(receipt.state).toBe('outcome_unknown');
             expect(content.platform?.observation?.providerDeploymentId).toBeUndefined();

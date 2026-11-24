@@ -37,7 +37,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentLinkEnvelopeReplacementV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
-  projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
+  projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1, projectExternalActionDeploymentStopEnvelopeReceiptV1,
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
   projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
   projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
@@ -150,6 +150,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
       && (input.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
         || binding.deploymentObservationReceiptId === projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1(input))
+      && sameStrictJsonValue(binding.deploymentStopReceipt, projectExternalActionDeploymentStopEnvelopeReceiptV1(input))
       && sameStrictJsonValue(binding.deploymentReadAdmission, projectExternalActionDeploymentReadEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.projectSessionDefaultsAdmission, projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(input))
       && binding.projectSourceCheckoutId === projectExternalActionProjectSourceCheckoutEnvelopeIdV1(input)

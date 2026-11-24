@@ -61,6 +61,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 // QA cli75: a rev2 running receipt must converge after finite provider observation.
 it.each([
     { scenario: 'READY', title: 'settles the retained Vercel receipt from READY' },
+    { scenario: 'provider stopped', title: 'Stops the exact Vercel deployment and settles cancelled' },
+    { scenario: 'provider already live', title: 'Reports the exact live Vercel deployment when Stop is too late' },
     { scenario: 'ERROR', title: 'settles the retained Vercel receipt from ERROR' },
     { scenario: 'status access revoked', title: 'stops following a Vercel receipt when the provider refuses its status read' },
     { scenario: 'status unavailable', title: 'retains an in-progress Vercel receipt when the provider status service is unavailable' },
@@ -69,6 +71,7 @@ it.each([
     { scenario: 'exact SHA', title: 'prepares an exact-SHA Vercel deploy without Compose' },
     { scenario: 'Session GitHub HEAD', title: 'prepares Vercel from native GitHub HEAD through its retained Session MCP' },
 ] as const)('$title through its real runtime', async ({ scenario }) => {
+    const providerStop = scenario === 'provider stopped' || scenario === 'provider already live';
     const sessionHead = scenario === 'Session GitHub HEAD';
     const stopped = scenario === 'cancelled while provider finished';
     const readyState = scenario === 'exact SHA' || sessionHead || stopped || scenario === 'concurrent observer' ? 'READY' : scenario;
@@ -166,6 +169,11 @@ it.each([
         if (scenario === 'status unavailable') {
             return Response.json({ error: { code: 'unavailable', message: 'Service unavailable' } }, { status: 503 });
         }
+        if (scenario === 'provider already live' && init?.method === 'PATCH') {
+            return Response.json({ error: { code: 'bad_request', message: 'Already terminal' } }, { status: 400 });
+        }
+        if (providerStop) return Response.json({ id: 'dpl_reviewed', projectId,
+            readyState: scenario === 'provider stopped' ? 'CANCELED' : 'READY' });
         return Response.json({ id: 'dpl_reviewed', projectId, readyState,
             ...(readyState === 'ERROR' ? { errorCode: 'NOW_SANDBOX_WORKER_ROOTDIR_NOT_EXIST',
                 errorMessage: 'provider-private-output-must-not-escape' } : {}) });
@@ -180,13 +188,26 @@ it.each([
             audience: [], createdByAccountId: accountId, repository: { protocol: 'https',
                 provider: { id: sessionHead ? `${githubManifest.id}/github` : 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                 repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
-    app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
-        environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
+    app.get('/v1/deployments/environments/:environmentId', async request => {
+        if ((request.query as { projection?: string }).projection === 'approvalScope') {
+            const { id, projectSourceId, purpose } = environment.environment;
+            return { ok: true, environment: { id, projectSourceId, purpose } };
+        }
+        return { ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] };
+    });
     app.get('/v1/deployments/receipts/:deploymentId', async () => ({ ok: true, deployment: receipt }));
     app.get('/v1/deployments/environments/:environmentId/deployments', async request => ({ ok: true,
         items: (request.query as { inProgressOnly?: string }).inProgressOnly === 'true'
             && (receipt.state === 'failed' || receipt.state === 'succeeded') ? [] : [receipt], nextCursor: null }));
-    app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async request => {
+    app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async (request, reply) => {
+        if (providerStop && (request.body as { kind?: string }).kind === 'cancel') {
+            if (receipt.cancelRequestedAtMs === undefined) {
+                receipt = { ...receipt, state: 'outcome_unknown', revision: receipt.revision + 1, cancelRequestedAtMs: 2 };
+                reply.header('x-happier-deployment-stop-accepted', '1');
+            }
+            return { ok: true, environmentId: receipt.environmentId, revision: 1,
+                deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state };
+        }
         const body = DeploymentTransitionInputV1Schema.parse(request.body);
         transitions.push(body);
         // Home already accepts an identical settled state before checking the
@@ -317,6 +338,24 @@ it.each([
                     providerDeploymentId: 'dpl_reviewed', observedAtMs: 2 } } });
         };
         const input = { serverId, environmentId: environment.environment.id, deploymentId: receipt.id };
+        if (providerStop) {
+            const outcome = await executor.execute('deployments.cancel', { ...input, expectedReceiptRevision: receipt.revision }, {
+                ...context, presentUserConfirmation: { actionId: 'deployments.cancel' },
+            });
+            expect(providerRequests, JSON.stringify({ outcome, receipt, transitions })).toEqual([{ method: 'PATCH', path: '/v12/deployments/dpl_reviewed/cancel', body: null },
+                ...(scenario === 'provider already live' ? [{ method: 'GET', path: '/v13/deployments/dpl_reviewed', body: null }] : [])]);
+            const state = scenario === 'provider stopped' ? 'cancelled' : 'succeeded';
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: {
+                deploymentId: receipt.id, deploymentRevision: 4, state } });
+            expect(receipt).toMatchObject({ revision: 4, state, cancelRequestedAtMs: 2 });
+            const nativeRequestCount = providerRequests.length;
+            const replay = await executor.execute('deployments.cancel', { ...input, expectedReceiptRevision: 2 }, {
+                ...context, presentUserConfirmation: { actionId: 'deployments.cancel' },
+            });
+            expect(replay).toEqual(outcome);
+            expect(providerRequests).toHaveLength(nativeRequestCount);
+            return;
+        }
         const observed = await executor.execute('deployments.receipts.observe', input, context);
         if (scenario === 'status unavailable') {
             expect(observed).toMatchObject({ ok: false, errorCode: 'provider_request_failed' });

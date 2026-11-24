@@ -413,10 +413,19 @@ export const DeploymentCancelInputV1Schema = lazyZodSchema(() => z.strictObject(
   ...home, environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
   expectedReceiptRevision: DeploymentRevisionV1Schema,
 }));
+export const DEPLOYMENT_STOP_ACCEPTED_HEADER_V1 = "x-happier-deployment-stop-accepted";
 export const DeploymentCancelTransitionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentCancelInputV1Schema, {
   kind: z.literal('cancel'),
 }));
 export type DeploymentCancelInputV1 = z.infer<typeof DeploymentCancelInputV1Schema>;
+
+/** Explicit pre-delivery absence can still record Stop at Home. An uncertain delivered request never re-enters. */
+export function canRecordDeploymentStopWithoutControllerV1(result: ActionExecuteFailure): boolean {
+  return result.effectAttempted === false && (result.errorCode === 'machine_unavailable'
+    || result.errorCode === 'target_unavailable' || result.errorCode === 'machine_offline'
+    || result.errorCode === 'machine_not_found' || result.errorCode === 'access_denied'
+    || result.errorCode === 'machine_inventory_unavailable');
+}
 export type DeploymentCancelTransitionInputV1 = z.infer<typeof DeploymentCancelTransitionInputV1Schema>;
 /** Private cleanup transport of the existing Action-operation cancellation owner. */
 export const DeploymentPendingCancelInputV1Schema = lazyZodSchema(() => z.strictObject({

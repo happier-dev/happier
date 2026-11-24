@@ -10,7 +10,7 @@ import { projectDeploymentException } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentCancelInputV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -206,13 +206,13 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   };
   function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId?: DeploymentTransportActionIdV1,
-    creationReview?: DeploymentStoragePreparation): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
+    creationReview?: DeploymentStoragePreparation, approvalMetadata?: false, onStopAccepted?: () => void): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
   function request(actionId: 'deployments.environments.get', input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1,
     creationReview: undefined, approvalMetadata: true): Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
   async function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1 = actionId,
-    creationReview?: DeploymentStoragePreparation, approvalMetadata = false): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
+    creationReview?: DeploymentStoragePreparation, approvalMetadata = false, onStopAccepted?: () => void): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
     let issued = false;
     let method = 'POST';
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
@@ -399,6 +399,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
       }
+      if (actionId === 'deployments.cancel' && 'ok' in parsed.data && parsed.data.ok
+        && response.headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1] === '1') onStopAccepted?.();
       if (providerVariables && 'ok' in parsed.data && !parsed.data.ok && 'error' in parsed.data)
         return withProviderEffect(failure(parsed.data.error));
       if (actionId === 'deployments.environments.update' && 'ok' in parsed.data && parsed.data.ok && preparedUpdateArtifact)
@@ -430,7 +432,14 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       return homeRequestFailure(caught, context);
     }
   }
-  return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => {
+  return { readEnvironmentAccess, observeEnvironmentAccessChanges,
+    async requestStop(input: DeploymentCancelInputV1, context: ActionExecutorContext) {
+      let accepted = false;
+      const result = await request('deployments.cancel', input, context, undefined, undefined, false, () => { accepted = true; });
+      if ('errorCode' in result) return { result, accepted: false };
+      return { result: DeploymentActionOutputSchemasV1['deployments.cancel'].parse(result), accepted };
+    },
+    resolveEnvironmentApprovalScope: args => {
     const metadataRoot = isDeploymentApprovalMetadataPreparationActionIdV1(args.actionId) ? args.actionId : undefined;
     const admittedRoot = args.context.externalActionExecutionAuthorization?.binding.actionId;
     // A root writer admits its own scope read. A composed child keeps the

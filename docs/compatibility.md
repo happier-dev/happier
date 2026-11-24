@@ -3164,6 +3164,15 @@ Setup retain it. Load the daemon and the executing Machine's managed CLI
 together: older strict readers reject the added internal/public fields.
 New readers accept older results without diagnostics and do not invent a cause.
 
+## Platform Deployment Stop (unreleased 0.3)
+
+The existing signed external Action proof for Stop binds the Environment,
+Receipt ID and expected Receipt revision. The sealed request carries the
+same public receipt operands so Home can admit the request without opening
+the Action body. Matching server, daemon and clients are required for provider
+Cancel. Earlier 0.3 builds continue to offer the storage-only Stop path.
+Existing Receipts keep their stored shape.
+
 ## Deployment child HTTP authorization carrier (unreleased 0.3)
 
 The execution binding optionally seals `deploymentChildRoot: true` at mint.

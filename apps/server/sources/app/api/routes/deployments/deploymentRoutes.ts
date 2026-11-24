@@ -31,6 +31,8 @@ import { linkDeploymentTargetInTx } from '@/app/deployments/deploymentTargetLink
 import { unlinkDeploymentTargetInTx, deleteDeploymentEnvironmentInTx } from '@/app/deployments/deploymentDispositionService';
 import { setDeploymentEnvironmentControllerInTx } from '@/app/deployments/deploymentControllerService';
 import { listDeploymentTargetLinksInTx } from '@/app/deployments/deploymentTargetLinkReadService';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentInTx, transitionDeploymentInTx } from '@/app/deployments/deploymentService';
 import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } from '@/app/deployments/deploymentPendingService';
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
@@ -390,8 +392,16 @@ export function registerDeploymentRoutes(app: Fastify): void {
             || request.body.deploymentId !== request.params.deploymentId) return reply.code(400).send(invalid);
         // The Environment row, receipt CAS and Artifact owner serialize this write;
         // an earlier Serializable snapshot would conflict with unrelated Account cursor publication.
-        const result = await inTx(tx => transitionDeploymentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'ReadCommitted' });
+        const binding = readDeploymentExecutionBindingFromRequest(request) ?? undefined;
+        const { result, stopAccepted } = await inTx(async tx => {
+            let stopAccepted = false;
+            const result = await transitionDeploymentInTx(tx, request.userId, request.body,
+                readTeamOperationAuthenticationFromRequest(request), binding,
+                () => { stopAccepted = true; });
+            return { result, stopAccepted };
+        }, { isolationLevel: 'ReadCommitted' });
+        if (binding?.actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1 && stopAccepted && result.ok)
+            reply.header(DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, '1');
         return reply.code(status(result)).send(result);
     });
     app.get('/v1/deployments/environments/:environmentId/deployments', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

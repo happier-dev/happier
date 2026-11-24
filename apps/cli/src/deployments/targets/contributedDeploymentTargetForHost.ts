@@ -6,7 +6,8 @@ import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, Deployme
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { deploymentInProgressStates, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { deploymentInProgressStates, isDeploymentSettledV1, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
@@ -39,7 +40,8 @@ import { projectDeploymentException, projectDeploymentFailure as failure, projec
 import { readDeploymentObservationTargetFailure } from '../readObservationForHost';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import type { DeploymentEnvironmentGetResultV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { hasDeploymentReceiptContentV1, type DeploymentCancelInputV1, type DeploymentEnvironmentGetResultV1,
+    type DeploymentReceiptHeaderV1, type DeploymentReceiptResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { configuration } from '@/configuration';
 import { resolveOwnServerDeploymentIdentityForHost } from './ownServer/paths';
@@ -123,7 +125,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             targetTitle: PluginLocalizedStringV2;
             pendingReceiptEvents?: StablePluginEventsBroker;
             admit(input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1): Promise<void>;
-        }>) => Promise<T>): Promise<T> {
+        }>) => Promise<T>, absent?: () => T): Promise<T> {
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
         const lease = await host.acquirePluginRuntimeRegistryLease();
         try {
@@ -148,6 +150,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 if (executionTarget !== 'account' && executionTarget !== 'daemon') return refuse('deployment_target_role_unavailable');
                 return { action, declaration, executionTarget };
             };
+            if (absent && role === 'cancel' && descriptor.actions.cancel === undefined) return absent();
             const { action, declaration, executionTarget } = readAction(role);
             // A retry can observe the retained receipt instead of sending it again.
             // Both declarations come from this same selected target and registry lease.
@@ -421,6 +424,63 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             ...(observedTargetLinkRevision === undefined ? {} : { observedTargetLinkRevision }) });
         return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true,
             failureCause: written.failureCause };
+    }
+
+    /** Stop claims the existing Home receipt transition before issuing the admitted provider write. */
+    async function prepareCancellation(request: Readonly<{
+        input: DeploymentCancelInputV1; context: ActionExecutorContext;
+        readReceiptHeader(): Promise<DeploymentReceiptHeaderV1>;
+        openReceipt(header: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
+        stop(context: ActionExecutorContext): Promise<Readonly<{ result: DeploymentReceiptResultV1 | ActionExecuteFailure; accepted: boolean }>>;
+    }>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
+        try {
+            const { environmentId, deploymentId, expectedReceiptRevision } = request.input;
+            if (request.input.serverId !== host.serverId) return failure('server_scope_mismatch');
+            const metadata = await host.readEnvironmentMetadata({ environmentId, context: request.context });
+            const link = metadata.targetLinks.find(item => item.id === metadata.environment.runtimeTargetLinkId);
+            if (link?.source.kind !== 'plugin') return null;
+            const retained = await request.readReceiptHeader();
+            const identity = readInstallationIdentityIfExistsSync();
+            const controller = retained.acceptedExecution?.controller;
+            if (retained.operation !== 'deploy' || retained.targetLinkId !== link.id
+                || retained.cancelRequestedAtMs !== undefined || !deploymentInProgressStates().includes(retained.state)
+                || retained.revision !== expectedReceiptRevision || controller?.machineId !== host.machineId
+                || !identity || controller.installationId !== identity.installationId
+                || metadata.environment.controllerMachineId !== host.machineId
+                || !hasDeploymentReceiptContentV1(retained)) return null;
+            const receipt = await request.openReceipt(retained);
+            const content = readContributedReceiptContent(receipt.content);
+            const providerDeploymentId = content.platform.observation.providerDeploymentId;
+            if (!providerDeploymentId) return null;
+            const environment = await host.readEnvironment({ environmentId, targetLinkId: link.id, context: request.context });
+            return await withRole<HostReviewedChildrenPreparationV1 | null>({ environmentId,
+                targetLinkId: link.id, context: request.context }, environment, 'cancel', async scope => {
+                // Home advances the exact revision once. Its acknowledgement selects the one caller
+                // which may spend the prepared child; a replay returns the committed receipt alone.
+                const input = normalizeStrictJsonValue(DeploymentTargetRoleInputSchemasV1.cancel.parse({ ...scope.common,
+                    deploymentId, expectedDeploymentRevision: expectedReceiptRevision + 1,
+                    actionOperationId: retained.actionOperationId, operation: retained.operation, providerDeploymentId }));
+                return { children: [{ action: scope.action, role: 'cancel', input }],
+                    executeAdmittedAction: async ({ context }) => {
+                        const { result, accepted } = await request.stop(context);
+                        if (!result.ok) return 'errorCode' in result ? result : failure(result.error);
+                        if (!accepted || !('deploymentRevision' in result) || result.state !== 'outcome_unknown'
+                            || result.deploymentRevision !== expectedReceiptRevision + 1) return { ok: true, result };
+                        if (!context.hostReviewedChild) return failure('unsupported_action');
+                        const outcome = await context.hostReviewedChild.invoke({ action: scope.action, role: 'cancel', input });
+                        if (!outcome.ok) return carryActionFailureDiagnostic({ ...outcome, effectAttempted: true }, outcome);
+                        const observed = DeploymentTargetRoleResultV1Schema.safeParse(outcome.result);
+                        if (!observed.success || observed.data.providerDeploymentId !== providerDeploymentId)
+                            return failure('provider_response_invalid');
+                        if (!isDeploymentSettledV1(observed.data.state)) return { ok: true, result };
+                        const written = await host.writeTransition({ environmentId, deploymentId, context,
+                            receiptHeader: retained, expectedRevision: result.deploymentRevision, state: observed.data.state,
+                            content: observedReceiptContent(content, observed.data),
+                            observedTargetLinkRevision: scope.common.expectedTargetLinkRevision });
+                        return written.ok ? { ok: true, result: written } : written;
+                    } };
+            }, () => null);
+        } catch (error) { return projectDeploymentException(error, { signal: request.context.signal }); }
     }
 
     /** A finite observer spends the retained receipt's controller proof, never another Deploy request. */
@@ -709,5 +769,5 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
         }
     }
-    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
+    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareCancellation, prepareObservation, prepareLogs, execute };
 }
