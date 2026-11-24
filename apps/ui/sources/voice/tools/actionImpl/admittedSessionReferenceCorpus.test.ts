@@ -1,7 +1,7 @@
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Socket } from 'socket.io-client';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -10,11 +10,7 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
-const sockets = new Map<string, Socket>();
-installDisconnectedServerSocketBoundary((socket, serverUrl) => {
-    if (serverUrl) sockets.set(new URL(serverUrl).origin, socket);
-    configureConnectedServerSocketBoundary(socket);
-});
+installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('@/sync/runtime/orchestration/concurrentSessionCache');
@@ -74,7 +70,6 @@ afterEach(async () => {
     await connection?.dispose();
     connection = undefined;
     await home.reset();
-    sockets.clear();
     if (initialConcurrentFlag === undefined) delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
     else process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = initialConcurrentFlag;
     storage.setState(initialState, true);
@@ -112,14 +107,14 @@ describe('acquireAdmittedSessionReferenceCorpusOptions', () => {
     it('keeps an offline mounted Home in the corpus as uncovered instead of dropping it', async () => {
         const { a, b } = await arrangeHomes();
         home.answer(a, '/v2/sessions', { body: page('deploy') });
-        const socket = sockets.get('https://voice-corpus-b.test');
-        if (!socket) throw new Error('Mounted Home Socket boundary missing');
-        // A client-requested disconnect is intentional and does not prove the
-        // Home is offline. Deliver the lost transport plus failed health probe.
+        const serverUrl = 'https://voice-corpus-b.test';
+        const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl);
+        if (!credentials) throw new Error('Expected the mounted secondary Home credentials');
+        const { reportServerUnreachable } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        // The transport requests a new probe. Only its Home readiness result changes coverage.
         home.answer(b, '/health', { status: 503, body: {} });
         home.answer(b, '/v1/auth/ping', { status: 503, body: {} });
-        socket.connected = false;
-        for (const listener of socket.listeners('disconnect')) listener('transport close');
+        reportServerUnreachable(serverUrl, new Error('Home unreachable'), credentials.token);
         await waitForHomeGovernance(() => expect(isSessionListQueryHomeOnline(b)).toBe(false));
         expect(resolveOrdinarySessionListHomeOwner(b)).toBe('concurrent');
         await expect(acquireAdmittedSessionReferenceCorpusOptions(NO_ORDINARY_MEMBERSHIP)).resolves.toEqual({
