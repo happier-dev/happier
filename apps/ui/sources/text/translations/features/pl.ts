@@ -279,6 +279,9 @@ const pl: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'Żadna Maszyna nie ma jeszcze włączonej roli Telemetria. Włącz ją dla Maszyny, która jest zawsze włączona, w jej Rolach.',
     team: 'Członkowie zespołu czytają telemetrię z tej samej Maszyny, na ile pozwalają uprawnienia tego Środowiska. Komputery osobiste usypiają, więc wybierz taką, która jest zawsze włączona.',
+    deployCollector: 'Wdróż kolektor obok przekaźnika',
+    enableRole: 'Włącz telemetrię',
+    askRoleOwner: 'Poproś właściciela maszyny o włączenie telemetrii.',
     record: 'Zapisuj',
     requests: 'Żądania i zapytania',
     requestsDescription: 'Endpointy, ślady, logi i zapytania każdego żądania.',
@@ -290,6 +293,12 @@ const pl: Shared_deploymentTelemetryTranslations.Copy = {
       'Model, tokeny i czas każdego wywołania aplikacji. Prompty i odpowiedzi nigdy nie są przechowywane.',
     metrics: 'Metryki działania',
     metricsDescription: 'Sterta, odśmiecanie, czas żądań i żądania w toku.',
+    sampling: 'Próbkowanie śladów',
+    samplingUnset: 'Próbkowanie nieustawione (domyślna wartość SDK: 100%).',
+    samplingSet: ({ percent }) => `Próbkowanie w środowisku: ${percent}.`,
+    samplingVariables: 'Ustawiono w zmiennych tego środowiska.',
+    samplingLower: 'Zmniejsz…',
+    samplingPrompt: 'Wpisz odsetek śladów do zachowania (od 0 do 100). Zmiana obowiązuje od następnego wdrożenia.',
     keptEncrypted: ({ machine }) =>
       `Żądania, stosy i logi zostają na ${machine}. Tytuły i liczby zgłoszeń są zapisywane na Twoim koncie, zaszyfrowane.`,
     keptPlain: ({ machine }) =>

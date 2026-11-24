@@ -279,6 +279,9 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'Encara cap Màquina té el rol de Telemetria activat. Activa’l en una Màquina que estigui sempre encesa, als seus Rols.',
     team: 'Els teus companys llegeixen la telemetria de la mateixa Màquina, segons els permisos d’aquest Entorn. Els ordinadors personals s’adormen; tria’n una que estigui sempre encesa.',
+    deployCollector: 'Desplega un col·lector al costat del relé',
+    enableRole: 'Activa la telemetria',
+    askRoleOwner: 'Demana al propietari de la màquina que activi la telemetria.',
     record: 'Registra',
     requests: 'Peticions i consultes',
     requestsDescription:
@@ -292,6 +295,12 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     metrics: 'Mètriques d’execució',
     metricsDescription:
       'Memòria, recollida d’escombraries, durada de les peticions i peticions en curs.',
+    sampling: 'Mostreig de traces',
+    samplingUnset: 'Mostrejador no configurat (valor per defecte de l’SDK: 100 %).',
+    samplingSet: ({ percent }) => `Mostrejador de l’entorn: ${percent}.`,
+    samplingVariables: 'Configurat a Variables d’aquest entorn.',
+    samplingLower: 'Redueix…',
+    samplingPrompt: 'Introdueix el percentatge de traces que vols conservar (de 0 a 100). S’aplicarà al desplegament següent.',
     keptEncrypted: ({ machine }) =>
       `Les peticions, les piles i els registres es queden a ${machine}. Els títols i recomptes de les incidències es desen al teu compte, xifrats.`,
     keptPlain: ({ machine }) =>

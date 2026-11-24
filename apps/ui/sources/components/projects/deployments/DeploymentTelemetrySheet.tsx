@@ -1,30 +1,39 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
-import { resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments';
+import { buildTelemetrySamplingVariablesV1, resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments';
+import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import {
   DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1,
   DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1,
   isMachineRoleActiveV1,
 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { useMachineRolesEditor } from '@/components/machines/security/useMachineRolesEditor';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { useAccountEncryptionMode } from '@/components/settings/account/useAccountEncryptionMode';
+import { showStoreAppPreparation } from '@/components/store/StoreAppPreparation';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { Modal } from '@/modal';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { readProjectDeploymentDefaults } from '@/sync/api/projects/projectDeploymentDefaults';
+import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { t } from '@/text';
-import type { DeploymentUiTelemetryInput, DeploymentUiTelemetryResult } from './deploymentActions';
+import { getPreferredLanguage, t } from '@/text';
+import type { DeploymentUiBindingsInput, DeploymentUiTelemetryInput, DeploymentUiTelemetryResult } from './deploymentActions';
+import { readDeploymentActionError } from './deploymentActionOutcome';
+import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 
 export type DeploymentTelemetrySheetInput = Readonly<{
@@ -33,17 +42,16 @@ export type DeploymentTelemetrySheetInput = Readonly<{
   environmentName: string;
   /** The Environment's `setTelemetry` Action callback (deploymentActions), at the revision this sheet read. */
   setTelemetry: (input: DeploymentUiTelemetryInput) => Promise<DeploymentUiTelemetryResult>;
+  setBindings: (input: DeploymentUiBindingsInput) => Promise<DeploymentBindingsSetResultV1>;
   /** The Action settled: the Environment re-reads its revision and the tab says what applies next. */
-  onSaved: (result: Extract<DeploymentUiTelemetryResult, { ok: true }>) => void;
+  onSaved: (result: Extract<SaveResult, { ok: true }>) => void;
 }>;
 
 const NO_MACHINES: readonly never[] = Object.freeze([]);
-type Refusal = Exclude<
-  Extract<DeploymentUiTelemetryResult, { ok: false }>['error'],
-  'telemetry_deletion_confirmation_required'
->;
+type SaveResult = DeploymentUiTelemetryResult | DeploymentBindingsSetResultV1;
+type Refusal = Readonly<{ error: string; details?: unknown }>;
 
-function refusalText(error: Refusal | null): string | null {
+function refusalText(error: string | null): string | null {
   if (error === null) return null;
   if (
     error === 'collector_required' ||
@@ -81,6 +89,8 @@ export function DeploymentTelemetrySheet(
   );
   const setUp = Boolean(environment.telemetryMachineId);
   const canManage = environment.capabilities.manageBindings;
+  const selection = resolveTelemetryCollectorSelectionV1({ environment, targetLinks: detail.targetLinks });
+  const offerTeamCollector = selection.kind === 'collector_required' && selection.recovery === 'deploy_collector';
   const [collectorId, setCollectorId] = React.useState<string | null>(environment.telemetryMachineId ?? null);
   React.useEffect(() => {
     if (setUp || !canManage || environment.owner.kind === 'team') return;
@@ -129,12 +139,13 @@ export function DeploymentTelemetrySheet(
       setRefusal(null);
       setConfirmingDelete(false);
     };
-  const submit = async (input: DeploymentUiTelemetryInput) => {
+  const submit = async (press: () => Promise<SaveResult | null>) => {
     if (saving || !canManage) return;
     setSaving(true);
     setRefusal(null);
     try {
-      const result = await props.setTelemetry(input);
+      const result = await press();
+      if (result === null) return;
       if (result.ok) {
         props.onClose();
         props.onSaved(result);
@@ -142,21 +153,56 @@ export function DeploymentTelemetrySheet(
       }
       if (result.error === 'telemetry_deletion_confirmation_required')
         setConfirmingDelete(true);
-      else setRefusal(result.error);
-    } catch {
-      setRefusal('deployment_unavailable');
+      else setRefusal(result);
+    } catch (error) {
+      const outcome = readDeploymentActionError(error);
+      if (outcome.kind === 'refused') setRefusal({ error: outcome.code, details: outcome.failure?.details });
     } finally {
       setSaving(false);
     }
   };
   const save = () => {
     if (!ready) return;
-    void submit({
+    void submit(() => props.setTelemetry({
       collector: requests && collectorId ? { machineId: collectorId } : null,
       ...(requests ? { capabilities: { metrics, appLlmCost, exceptions } } : {}),
       ...(confirmingDelete ? { confirmDelete: true as const } : {}),
-    });
+    }));
   };
+  const sampleVariable = (key: string) => detail.content.bindings.find(binding =>
+    binding.purpose === 'variable' && binding.phase === 'runtime' && binding.name === key);
+  const sampler = sampleVariable('OTEL_TRACES_SAMPLER');
+  const samplerArg = sampleVariable('OTEL_TRACES_SAMPLER_ARG');
+  const samplingInVariables = [sampler, samplerArg].some(binding =>
+    binding?.purpose === 'variable' && binding.managedBy !== 'telemetry');
+  const ratio = samplerArg?.purpose === 'variable' && samplerArg.source.kind === 'value'
+    ? Number(samplerArg.source.value)
+    : null;
+  const samplingDetail = samplingInVariables
+    ? t('deploymentTelemetry.sheet.samplingVariables')
+    : ratio === null
+      ? t('deploymentTelemetry.sheet.samplingUnset')
+      : t('deploymentTelemetry.sheet.samplingSet', {
+          percent: new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 2 }).format(ratio),
+        });
+  const editSampling = () => submit(async () => {
+    const entered = await Modal.prompt(t('deploymentTelemetry.sheet.sampling'), t('deploymentTelemetry.sheet.samplingPrompt'), {
+      inputType: 'numeric', defaultValue: ratio === null ? undefined : String(ratio * 100),
+      confirmText: t('common.save'),
+    });
+    if (entered === null) return null;
+    const percent = Number(entered.trim().replace(',', '.'));
+    if (!entered.trim() || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+      Modal.alert(t('deploymentTelemetry.sheet.sampling'), t('deploymentTelemetry.sheet.samplingPrompt'));
+      return null;
+    }
+    return await props.setBindings({
+      environmentId: environment.id, expectedRevision: environment.revision, remove: [],
+      set: Object.entries(buildTelemetrySamplingVariablesV1(percent / 100)).map(([name, value]) => ({
+        name, purpose: 'variable', phase: 'runtime', managedBy: 'telemetry', source: { kind: 'value', value },
+      })),
+    });
+  });
   const collectorName = name(collectorId);
   const footer = (
     <ModalCardFooterActions
@@ -184,7 +230,12 @@ export function DeploymentTelemetrySheet(
     props.setChrome?.({ kind: 'card', footer });
   });
   React.useEffect(() => () => props.setChrome?.(null), [props.setChrome]);
-  const refused = refusalText(refusal);
+  const refused = refusalText(refusal?.error ?? null);
+  const rejectedMachineId = refusal?.error === 'telemetry_role_inactive'
+    && refusal.details && typeof refusal.details === 'object' && 'machineId' in refusal.details
+    ? refusal.details.machineId : null;
+  const roleOffMachineId = rejectedMachineId ?? (collectorId && !collectors.some(machine => machine.id === collectorId) ? collectorId : null);
+  const roleOffMachine = canManage && requests ? allMachines.find(machine => machine.id === roleOffMachineId) : undefined;
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View
@@ -223,13 +274,33 @@ export function DeploymentTelemetrySheet(
             disabled={saving || !canManage || !requests}
             onSelectMachine={(machine) => change(setCollectorId)(machine.id)}
           />
+          {roleOffMachine ? (
+            <CollectorRoleRecovery key={roleOffMachine.id} machine={roleOffMachine}
+              machineName={getMachineDisplayName(roleOffMachine, allMachines)} lifetime={lifetime}
+              disabled={saving} onEnabled={() => setRefusal(null)} />
+          ) : null}
+          {offerTeamCollector && requests && canManage ? (
+            <Item
+              testID="project-deployments.telemetry.deploy-collector"
+              title={t('deploymentTelemetry.sheet.deployCollector')}
+              disabled={saving}
+              onPress={() => {
+                props.onClose();
+                showStoreAppPreparation({
+                  selection: { sourceId: 'happier.deployment.templates/data-services', itemId: 'telemetry-collector' },
+                  lifetime, projectSourceId: environment.projectSourceId,
+                  name: t('deploymentTelemetry.sheet.deployCollector'),
+                });
+              }}
+            />
+          ) : null}
           {setUp && canManage ? (
             <Item
               testID="project-deployments.telemetry.rotate"
               title={t('deploymentTelemetry.sheet.rotate')}
               subtitle={t('deploymentTelemetry.sheet.rotateDescription')}
               disabled={saving}
-              onPress={() => { void submit({ rotate: true }); }}
+              onPress={() => { void submit(() => props.setTelemetry({ rotate: true })); }}
             />
           ) : null}
         </ItemGroup>
@@ -287,6 +358,16 @@ export function DeploymentTelemetrySheet(
               />
             }
           />
+          {requests && !offerTeamCollector ? (
+            <Item
+              testID="project-deployments.telemetry.sampling"
+              title={t('deploymentTelemetry.sheet.sampling')}
+              subtitle={samplingDetail}
+              detail={canManage && !samplingInVariables ? ratio === null ? t('deploymentTelemetry.sheet.samplingLower') : t('common.edit') : undefined}
+              disabled={saving || !canManage || samplingInVariables}
+              onPress={canManage && !samplingInVariables ? () => { void editSampling(); } : undefined}
+            />
+          ) : null}
         </ItemGroup>
         {confirmingDelete ? (
           <SurfaceStateCard
@@ -307,6 +388,9 @@ export function DeploymentTelemetrySheet(
             size="line"
             kind="unavailable"
             title={refused}
+            diagnosticCode={refusal?.error}
+            reason={refusal && refused === t('deploymentTelemetry.sheet.refused.other')
+              ? readDeploymentFailureRecovery(refusal.error, refusal.details).remedy : undefined}
           />
         ) : null}
         {/* D30: raw telemetry stays on the collector; native issue metadata is Account data, said by Account mode. */}
@@ -328,6 +412,29 @@ export function DeploymentTelemetrySheet(
       </View>
     </ListPresentationProvider>
   );
+}
+
+function CollectorRoleRecovery({ machine, machineName, lifetime, disabled, onEnabled }: Readonly<{
+  machine: Machine;
+  machineName: string;
+  lifetime: ServerAccountScopeLifetime;
+  disabled: boolean;
+  onEnabled: () => void;
+}>) {
+  const now = useMachinePresenceNowMs(React.useMemo(() => [machine], [machine]));
+  const roles = useMachineRolesEditor({ scope: lifetime.scope, machine, machineName, online: isMachineOnline(machine, now) });
+  if (roles.list.status !== 'ready' || !roles.list.roles.some(role => role.id === DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) return null;
+  if (roles.shownActive.has(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) return null;
+  if (!roles.canManage) return <Item mode="info" title={t('deploymentTelemetry.sheet.askRoleOwner')} />;
+  return <Item
+    testID="project-deployments.telemetry.enable-role"
+    title={t('deploymentTelemetry.sheet.enableRole')}
+    subtitle={roles.readOnlyReason ?? machineName}
+    disabled={disabled || roles.busy || roles.readOnlyReason !== null}
+    onPress={async () => {
+      if (await roles.setRole(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, true)) onEnabled();
+    }}
+  />;
 }
 
 export function showDeploymentTelemetrySheet(

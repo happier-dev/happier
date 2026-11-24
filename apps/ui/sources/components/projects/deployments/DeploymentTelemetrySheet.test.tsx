@@ -4,6 +4,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1
 import {
   createDeploymentEnvironmentHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import {
   act,
   renderScreen,
@@ -11,6 +12,8 @@ import {
   waitForTestEvent,
 } from '@/dev/testkit';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -79,6 +82,7 @@ async function open(
       lifetime,
       environmentName: 'Production',
       setTelemetry,
+      setBindings: vi.fn(),
       onSaved,
     });
   });
@@ -123,6 +127,97 @@ describe('Environment Telemetry tab', () => {
 });
 
 describe('Environment telemetry sheet', () => {
+  it('writes the explicit trace sampler through the current Environment bindings revision', async () => {
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.prompt).mockResolvedValueOnce('25');
+    const detail = setUpDetail();
+    const setBindings = vi.fn(async () => ({ ok: true as const, environmentId: 'production', revision: 8 }));
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => {
+        showDeploymentTelemetrySheet({ detail, lifetime, environmentName: 'Production',
+          setTelemetry: vi.fn(), setBindings, onSaved: vi.fn() });
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.sampling');
+      expect(setBindings).toHaveBeenCalledExactlyOnceWith({
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision, remove: [],
+        set: [
+          { purpose: 'variable', phase: 'runtime', managedBy: 'telemetry',
+            name: 'OTEL_TRACES_SAMPLER', source: { kind: 'value', value: 'parentbased_traceidratio' } },
+          { purpose: 'variable', phase: 'runtime', managedBy: 'telemetry',
+            name: 'OTEL_TRACES_SAMPLER_ARG', source: { kind: 'value', value: '0.25' } },
+        ],
+      });
+    } finally {
+      await act(async () => { Modal.hideAll(); });
+      await screen.unmount();
+    }
+  });
+
+  it('offers the collector App for a Team without a collector and keeps its Project and destination explicit', async () => {
+    const { Modal } = await import('@/modal');
+    const detail = createDeploymentEnvironmentDetailV1({
+      environment: createDeploymentEnvironmentHeaderV1({
+        id: 'production', projectSourceId: 'team-project', owner: { kind: 'team', teamId: 'team' },
+      }),
+    });
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => {
+        showDeploymentTelemetrySheet({ detail, lifetime, environmentName: 'Production',
+          setTelemetry: vi.fn(), setBindings: vi.fn(), onSaved: vi.fn() });
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.deploy-collector');
+      expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+        props: expect.objectContaining({ projectSourceId: 'team-project', lifetime,
+          selection: { sourceId: 'happier.deployment.templates/data-services', itemId: 'telemetry-collector' } }),
+      }));
+    } finally {
+      await act(async () => { Modal.hideAll(); });
+      await screen.unmount();
+    }
+  });
+
+  it('uses the Machine role Action for a manageable role-off collector and keeps the sheet on refusal', async () => {
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { t } = await import('@/text');
+    const { Modal } = await import('@/modal');
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+      actionsSettingsV1: { v: 1, actions: { 'machines.roles.set': { enabled: false } } },
+    }) });
+    const context = await captureLazyActionAccountContext(account.scope.serverId);
+    const [pluginId, roleId] = DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1.split('/');
+    const machine = createHydratedPlainMachineFixture({ id: 'collector-old', accountId: account.scope.accountId,
+      machine: { activeAt: Date.now(), daemonState: { machineRoles: { plugins: [{
+        pluginId: pluginId!, declaration: { id: roleId!, title: 'Telemetry', description: 'Collect telemetry' },
+      }] } } },
+    });
+    await publishMachineInventoryForTest(account.scope, [machine]);
+    const detail = setUpDetail();
+    const setTelemetry = vi.fn(async () => ({
+      ok: false as const, error: 'telemetry_role_inactive' as const, details: { machineId: machine.id },
+    }));
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => {
+        showDeploymentTelemetrySheet({ detail, lifetime: context.accountLifetime, environmentName: 'Production',
+          setTelemetry, setBindings: vi.fn(), onSaved: vi.fn() });
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      await screen.pressByTestIdAsync('project-deployments.telemetry.enable-role');
+      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
+        t('machineDetailPage.roles.saveFailed'), t('actionConfirmations.turnedOffUnnamedMessage'),
+      ));
+      expect(screen.findByTestId('project-deployments.telemetry.save')).not.toBeNull();
+      expect(setTelemetry).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => { Modal.hideAll(); });
+      await screen.unmount();
+      context.dispose();
+      await account.dispose();
+    }
+  });
+
   it('uses the selected Project collector default ahead of the runtime Machine on first setup', async () => {
     const account = await createSecretSettingsTestHarness({ handleRequest: async path => {
       if (path.startsWith('/v1/projects/sources/source-app')) return Response.json({ ok: true, canManage: true,
@@ -147,7 +242,7 @@ describe('Environment telemetry sheet', () => {
     const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
     try {
       await act(async () => { showDeploymentTelemetrySheet({ detail, lifetime: context.accountLifetime,
-        environmentName: 'Production', setTelemetry, onSaved: () => {} }); });
+        environmentName: 'Production', setTelemetry, setBindings: vi.fn(), onSaved: () => {} }); });
       const picker = () => screen.findAllByType(SessionMachineField).find(row => row.props.testID === 'project-deployments.telemetry.collector');
       await vi.waitFor(() => expect(picker()?.props.machineId).toBe('collector-default'));
       await screen.pressByTestIdAsync('project-deployments.telemetry.save');

@@ -278,6 +278,9 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'テレメトリの役割がオンのマシンはまだありません。常に起動しているマシンの「役割」でオンにしてください。',
     team: 'チームメンバーは、この環境の権限の範囲で同じマシンからテレメトリを読みます。個人のコンピューターはスリープするので、常に起動しているマシンを選んでください。',
+    deployCollector: 'リレーの近くにコレクターをデプロイ',
+    enableRole: 'テレメトリをオンにする',
+    askRoleOwner: 'マシンの所有者にテレメトリをオンにするよう依頼してください。',
     record: '記録する内容',
     requests: 'リクエストとクエリ',
     requestsDescription:
@@ -291,6 +294,12 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
     metrics: 'ランタイムメトリクス',
     metricsDescription:
       'ヒープ、ガベージコレクション、リクエスト時間、処理中のリクエスト。',
+    sampling: 'トレースのサンプリング',
+    samplingUnset: 'サンプラー未設定（SDK の既定値は 100%）。',
+    samplingSet: ({ percent }) => `環境のサンプラー：${percent}。`,
+    samplingVariables: 'この環境の変数で設定されています。',
+    samplingLower: '下げる…',
+    samplingPrompt: '保持するトレースの割合を 0 から 100 までの数値で入力してください。次回のデプロイで適用されます。',
     keptEncrypted: ({ machine }) =>
       `リクエスト、スタック、ログは ${machine} に残ります。Issue のタイトルと件数は暗号化してアカウントに保存されます。`,
     keptPlain: ({ machine }) =>

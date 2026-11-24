@@ -978,6 +978,38 @@ it.each(['none', 'optional', 'required'] as const)('reviews an App using its dec
   }
 });
 
+it('prepares a directly opened App in its fixed Team Project after the person chooses a Machine', async () => {
+  const { showStoreAppPreparation } = await import('./StoreAppPreparation');
+  const { Modal } = await import('@/modal');
+  const fixture = await createFixture([], { teams: true });
+  const projectSourceId = 'ops-project';
+  homes.answer(fixture.lifetime.scope.serverId, `/v1/projects/sources/${projectSourceId}`, {
+    body: { ok: true, canManage: true, source: { id: projectSourceId, name: 'Ops services', revision: 9,
+      owner: { kind: 'team', teamId: 'team-ops' }, audience: [], createdByAccountId: 'owner' } },
+  });
+  showStoreAppPreparation({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+    lifetime: fixture.lifetime, name: 'Uptime Kuma', projectSourceId });
+  const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+  const Component = modal.component;
+  const screen = await renderScreen(<Component {...modal.props} onClose={() => {}} />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Ops services'));
+    await nameIt(screen);
+    const review = () => screen.findHostByTestId('store.app.prepare.review');
+    expect(review()!.props.disabled).toBe(true);
+    expect(fixture.preparations).toEqual([]);
+    await chooseMachine(screen, 'target');
+    await act(async () => { await review()!.props.onPress?.(); });
+    await waitForHomeGovernance(() => expect(fixture.preparations).toEqual([expect.objectContaining({
+      machineId: 'target', installationId: 'installed', projectSourceId, sourceRevision: 9,
+    })]));
+    expect(fixture.preparations[0]).not.toHaveProperty('newProject');
+  } finally {
+    await screen.unmount();
+    fixture.dispose();
+  }
+});
+
 it('prepares the exact App only on the person’s review and shows prepared, refused and approval outcomes in place', async () => {
   const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
   const fixture = await createFixture();

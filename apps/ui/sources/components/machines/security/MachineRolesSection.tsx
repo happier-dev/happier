@@ -1,21 +1,14 @@
 import * as React from 'react';
-import { CoreMachineRoleIdV1Schema, MachineRolesMutationResultV1Schema, type CoreMachineRoleIdV1, type MachineRoleListEntryV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { CoreMachineRoleIdV1Schema, type CoreMachineRoleIdV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Modal } from '@/modal';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
-import { readSyncedMachineRolesList } from '@/sync/domains/machines/roles/machineRoles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { useMachineRolesEditor } from './useMachineRolesEditor';
 
 function isCoreRoleId(id: string): id is CoreMachineRoleIdV1 { return CoreMachineRoleIdV1Schema.safeParse(id).success; }
-
-/** A saved choice waits here until synced metadata reaches its version, so the switch never flickers back. */
-type PendingRoles = Readonly<{ active: readonly string[]; settledAtVersion: number | null }>;
 
 /**
  * Machine → Security → Roles (OWNER-RULINGS 2026-11-12): what this Machine runs, one switch per role. The state is
@@ -29,46 +22,10 @@ export const MachineRolesSection = React.memo(function MachineRolesSection(props
     machineName: string;
     online: boolean | null;
 }>) {
-    const { machine, serverId, machineName } = props;
-    const list = React.useMemo(() => readSyncedMachineRolesList(machine), [machine]);
-    const { execute } = useMountedActionExecution(serverId);
-    const [pending, setPending] = React.useState<PendingRoles | null>(null);
-    const syncedVersion = list.status === 'ready' ? list.metadataVersion : null;
-    React.useEffect(() => {
-        if (pending?.settledAtVersion != null && syncedVersion != null && syncedVersion >= pending.settledAtVersion) setPending(null);
-    }, [pending, syncedVersion]);
-
-    const canManage = canManageMachine(machine);
-    const readOnlyReason = !canManage ? t('machineDetailPage.roles.notManager')
-        : props.online !== true ? t('machineDetailPage.roles.offline', { machine: machineName }) : null;
-    const busy = pending !== null && pending.settledAtVersion === null;
-
-    const toggle = React.useCallback(async (role: MachineRoleListEntryV1, on: boolean) => {
-        if (list.status !== 'ready') return;
-        const current = list.policy.active;
-        const next = on ? [...current.filter(id => id !== role.id), role.id] : current.filter(id => id !== role.id);
-        setPending({ active: next, settledAtVersion: null });
-        const result = await execute('machines.roles.set', {
-            serverId, machineId: machine.id, expectedMetadataVersion: list.metadataVersion,
-            expectedPolicy: list.policy, policy: { active: next },
-        });
-        const parsed = result.ok ? MachineRolesMutationResultV1Schema.safeParse(result.result) : null;
-        if (parsed?.success && (parsed.data.status === 'applied' || parsed.data.status === 'satisfied' || parsed.data.status === 'unchanged')) {
-            setPending({ active: parsed.data.policy.active, settledAtVersion: parsed.data.metadataVersion });
-            return;
-        }
-        setPending(null);
-        if (parsed?.success && parsed.data.status === 'conflict') {
-            Modal.alert(t('machineDetailPage.roles.title'), t('machineDetailPage.roles.changed'));
-            return;
-        }
-        if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
-        Modal.alert(t('machineDetailPage.roles.saveFailed'), result.ok ? undefined
-            : resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
-    }, [execute, list, machine.id, serverId]);
+    const { machine, serverId, machineName, online } = props;
+    const { list, shownActive, readOnlyReason, busy, setRole } = useMachineRolesEditor({ scope: serverId, machine, machineName, online });
 
     if (list.status !== 'ready') return null;
-    const shownActive = new Set(pending?.active ?? list.roles.filter(role => role.selected).map(role => role.id));
     const switchable = list.roles.filter(role => role.partOf === undefined);
     return (
         <ItemGroup testID="machine-roles-section" title={t('machineDetailPage.roles.title')}
@@ -88,8 +45,8 @@ export const MachineRolesSection = React.memo(function MachineRolesSection(props
                 return (
                     <Item key={role.id} testID={`machine-roles-row-${role.id}`} title={copy.title} subtitle={subtitle}
                         showChevron={false} disabled={disabled}
-                        onPress={() => { void toggle(role, !on); }}
-                        rightElement={<Switch value={on} disabled={disabled} onValueChange={next => { void toggle(role, next); }} />}
+                        onPress={() => { void setRole(role.id, !on); }}
+                        rightElement={<Switch value={on} disabled={disabled} onValueChange={next => { void setRole(role.id, next); }} />}
                     />
                 );
             })}

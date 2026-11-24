@@ -41,6 +41,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 
 import type {
   StoreAppListingState,
+  StoreAppListingSelection,
   StoreAppPreparationInput,
 } from './useStoreAppListing';
 import { useStoreAppListing } from './useStoreAppListing';
@@ -52,6 +53,7 @@ type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
 type ReviewProps = Readonly<{
   ready: Ready;
   lifetime: ServerAccountScopeLifetime;
+  projectSourceId?: string;
   /** The listing's name for the App; the template's own title when omitted. */
   name?: string;
   /** Explicit Store route choice, captured before the review opens. */
@@ -59,6 +61,11 @@ type ReviewProps = Readonly<{
   reviewState?: StoreAppPreparationStore;
   onClose: () => void;
 }>;
+
+type PreparationModalProps = Omit<ReviewProps, 'onClose' | 'ready' | 'projectSourceId'> & (
+  | Readonly<{ ready: Ready; selection?: never; projectSourceId?: never }>
+  | Readonly<{ selection: StoreAppListingSelection; ready?: never; projectSourceId: string; initialMachine?: never }>
+);
 
 function createReviewState(props: Pick<ReviewProps, 'initialMachine' | 'lifetime'>) {
   return createStoreAppPreparationState(props.initialMachine
@@ -74,27 +81,27 @@ export function catalogText(value: DeploymentTemplateV1['title'] | undefined): s
 
 /** The App's preparation review (lab publish `addapp/reviewFirstRun`), over the listing that opened it. */
 export function showStoreAppPreparation(
-  props: Omit<ReviewProps, 'onClose'> & Readonly<{ name: string }>,
+  props: PreparationModalProps & Readonly<{ name: string }>,
 ): string {
   return Modal.show({ component: StoreAppPreparationModal,
     props: { ...props, reviewState: props.reviewState ?? createReviewState(props) } });
 }
 
 function StoreAppPreparationModal(
-  props: ReviewProps & CustomModalInjectedProps,
+  props: PreparationModalProps & CustomModalInjectedProps,
 ) {
   const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
-  return <StoreAppPreparationTargeted {...props} reviewState={reviewState} />;
-}
-
-function StoreAppPreparationTargeted(props: ReviewProps & CustomModalInjectedProps & Readonly<{ reviewState: StoreAppPreparationStore }>) {
-  const { ready: initialReady, lifetime, reviewState } = props;
-  const selection = { sourceId: initialReady.item.summary.sourceId, itemId: initialReady.item.summary.itemId,
-    ...(initialReady.item.summary.version ? { version: initialReady.item.summary.version } : {}) };
+  const { ready: initialReady, lifetime } = props;
+  const selection = initialReady ? {
+    sourceId: initialReady.item.summary.sourceId, itemId: initialReady.item.summary.itemId,
+    ...(initialReady.item.summary.version ? { version: initialReady.item.summary.version } : {}),
+  } : props.selection;
   const installMachineId = useStore(reviewState, state => state.machineId);
   const listing = useStoreAppListing({ selection, lifetime, demand: { presented: true }, installMachineId });
-  const ready = listing.kind === 'ready' ? listing : null;
-  return ready ? <StoreAppPreparationReview {...props} ready={ready} reviewState={reviewState} /> : null;
+  if (listing.kind === 'ready') return <StoreAppPreparationReview {...props} ready={listing} reviewState={reviewState} />;
+  return <SurfaceStateCard testID="store.app.prepare.listing-state" size="line"
+    kind={listing.kind === 'loading' ? 'loading' : 'unavailable'}
+    title={t(listing.kind === 'loading' ? 'status.loading' : 'common.unavailable')} />;
 }
 
 /**
@@ -115,7 +122,7 @@ export function StoreAppPreparationReview(
     () => (allMachines ?? []).filter((machine) => Boolean(machine.installationId)),
     [allMachines],
   );
-  const projectChoice = useDeploymentProjectChoice({ lifetime });
+  const projectChoice = useDeploymentProjectChoice({ lifetime, fixedProjectSourceId: props.projectSourceId });
   const sources = projectChoice.sources;
   const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
   const { machineId, controllerId, pending, prepared, refusal, environmentName, domainHostnames, production, creating, templateChoices } = useStore(reviewState);
@@ -334,7 +341,7 @@ export function StoreAppPreparationReview(
               })
             : t('capabilities.store.appPage.inProject', {
                 project:
-                  sources.rows.find(
+                  projectChoice.fixedProject?.name ?? sources.rows.find(
                     (row) => row.id === prepared.project.projectSourceId,
                   )?.name ??
                   prepared.project.projectSourceId ??

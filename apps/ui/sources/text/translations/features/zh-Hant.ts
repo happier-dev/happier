@@ -278,6 +278,9 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       '還沒有機器開啟遙測角色。請在一台始終在線的機器的「角色」中開啟它。',
     team: '隊友會在此環境權限允許的範圍內，從同一台機器讀取遙測。個人電腦會休眠，請選擇一台始終在線的機器。',
+    deployCollector: '在中繼旁部署收集器',
+    enableRole: '開啟遙測',
+    askRoleOwner: '請機器的擁有者開啟遙測。',
     record: '記錄內容',
     requests: '請求和查詢',
     requestsDescription: '端點、追蹤、日誌以及每個請求執行的查詢。',
@@ -289,6 +292,12 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
       '應用程式每次呼叫的模型、權杖和耗時。從不保存提示詞和回覆。',
     metrics: '執行階段指標',
     metricsDescription: '堆積記憶體、垃圾回收、請求耗時和進行中的請求。',
+    sampling: '追蹤取樣',
+    samplingUnset: '未設定取樣器（SDK 預設值為 100%）。',
+    samplingSet: ({ percent }) => `環境取樣比例：${percent}。`,
+    samplingVariables: '於此環境的變數中設定。',
+    samplingLower: '降低…',
+    samplingPrompt: '輸入要保留的追蹤百分比（0 到 100）。下次部署時生效。',
     keptEncrypted: ({ machine }) =>
       `請求、堆疊和日誌保留在 ${machine}。問題的標題和計數會加密儲存到你的帳號。`,
     keptPlain: ({ machine }) =>

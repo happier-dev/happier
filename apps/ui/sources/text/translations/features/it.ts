@@ -279,6 +279,9 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'Nessuna Macchina ha ancora il ruolo Telemetria attivo. Attivalo su una Macchina sempre accesa, nei suoi Ruoli.',
     team: 'I tuoi colleghi leggono la telemetria dalla stessa Macchina, secondo i permessi di questo Ambiente. I computer personali vanno in sospensione: scegline una sempre accesa.',
+    deployCollector: 'Distribuisci un collector vicino al relay',
+    enableRole: 'Attiva la telemetria',
+    askRoleOwner: 'Chiedi al proprietario della macchina di attivare la telemetria.',
     record: 'Registra',
     requests: 'Richieste e query',
     requestsDescription: 'Endpoint, trace, log e le query di ogni richiesta.',
@@ -291,6 +294,12 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
     metrics: 'Metriche di runtime',
     metricsDescription:
       'Heap, garbage collection, durata delle richieste e richieste in corso.',
+    sampling: 'Campionamento delle tracce',
+    samplingUnset: 'Campionatore non impostato (valore predefinito SDK: 100%).',
+    samplingSet: ({ percent }) => `Campionatore dell’ambiente: ${percent}.`,
+    samplingVariables: 'Impostato nelle variabili di questo ambiente.',
+    samplingLower: 'Riduci…',
+    samplingPrompt: 'Inserisci la percentuale di tracce da conservare (da 0 a 100). Si applica al prossimo deploy.',
     keptEncrypted: ({ machine }) =>
       `Richieste, stack e log restano su ${machine}. Titoli e conteggi delle issue sono salvati nel tuo account, cifrati.`,
     keptPlain: ({ machine }) =>

@@ -279,6 +279,9 @@ const fr: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'Aucune Machine n’a encore son rôle Télémétrie activé. Activez-le pour une Machine toujours allumée, dans ses Rôles.',
     team: 'Vos coéquipiers lisent la télémétrie depuis la même Machine, selon les permissions de cet Environnement. Les ordinateurs personnels se mettent en veille : choisissez-en une toujours allumée.',
+    deployCollector: 'Déployer un collecteur près de votre relais',
+    enableRole: 'Activer la télémétrie',
+    askRoleOwner: 'Demandez au propriétaire de la machine d’activer la télémétrie.',
     record: 'Enregistrer',
     requests: 'Requêtes et appels',
     requestsDescription:
@@ -292,6 +295,12 @@ const fr: Shared_deploymentTelemetryTranslations.Copy = {
     metrics: 'Métriques d’exécution',
     metricsDescription:
       'Tas, ramasse-miettes, durée des requêtes et requêtes en cours.',
+    sampling: 'Échantillonnage des traces',
+    samplingUnset: 'Échantillonneur non défini (valeur SDK par défaut : 100 %).',
+    samplingSet: ({ percent }) => `Échantillonneur de l’environnement : ${percent}.`,
+    samplingVariables: 'Défini dans les variables de cet environnement.',
+    samplingLower: 'Réduire…',
+    samplingPrompt: 'Saisissez le pourcentage de traces à conserver (0 à 100). Ce réglage s’applique au prochain déploiement.',
     keptEncrypted: ({ machine }) =>
       `Les requêtes, piles et journaux restent sur ${machine}. Les titres et compteurs des tickets sont enregistrés dans votre compte, chiffrés.`,
     keptPlain: ({ machine }) =>

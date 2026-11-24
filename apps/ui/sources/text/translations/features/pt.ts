@@ -279,6 +279,9 @@ const pt: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       'Nenhuma Máquina tem ainda o papel Telemetria ativado. Ative-o numa Máquina sempre ligada, nos Papéis dela.',
     team: 'Seus colegas leem a telemetria da mesma Máquina, conforme as permissões deste Ambiente. Computadores pessoais dormem; escolha uma sempre ligada.',
+    deployCollector: 'Implantar um coletor junto ao seu relay',
+    enableRole: 'Ativar a telemetria',
+    askRoleOwner: 'Peça ao proprietário da máquina para ativar a telemetria.',
     record: 'Registrar',
     requests: 'Requisições e consultas',
     requestsDescription:
@@ -292,6 +295,12 @@ const pt: Shared_deploymentTelemetryTranslations.Copy = {
     metrics: 'Métricas de execução',
     metricsDescription:
       'Heap, coleta de lixo, duração das requisições e requisições em andamento.',
+    sampling: 'Amostragem de rastros',
+    samplingUnset: 'Amostrador não configurado (padrão do SDK: 100%).',
+    samplingSet: ({ percent }) => `Amostrador do ambiente: ${percent}.`,
+    samplingVariables: 'Configurado nas variáveis deste ambiente.',
+    samplingLower: 'Reduzir…',
+    samplingPrompt: 'Digite a porcentagem de rastros a manter (de 0 a 100). A alteração vale na próxima implantação.',
     keptEncrypted: ({ machine }) =>
       `Requisições, pilhas e logs ficam em ${machine}. Títulos e contagens das issues são salvos na sua conta, criptografados.`,
     keptPlain: ({ machine }) =>

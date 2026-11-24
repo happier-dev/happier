@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DeploymentNewProjectV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
-import { useProjectSources } from '@/components/projects/sources/useProjectSources';
+import { useProjectSource, useProjectSources } from '@/components/projects/sources/useProjectSources';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
@@ -22,21 +22,24 @@ export type DeploymentProjectSelection =
  * The new Project's request key is stable per name and owner, so a retried review keeps the Source creator's identity.
  */
 export function useDeploymentProjectChoice(input: Readonly<{ lifetime: ServerAccountScopeLifetime; initialNewProjectName?: string;
-  initiallyNew?: boolean }>) {
+  initiallyNew?: boolean; fixedProjectSourceId?: string }>) {
   const { serverId, accountId } = input.lifetime.scope;
-  const sources = useProjectSources(input.lifetime.scope).state;
+  const fixed = input.fixedProjectSourceId !== undefined;
+  const sources = useProjectSources(input.lifetime.scope, { enabled: !fixed }).state;
+  const projectRead = useProjectSource(fixed ? input.lifetime : null, input.fixedProjectSourceId ?? null);
+  const fixedProject = projectRead.source?.source ?? null;
   const [sourceId, setSourceId] = React.useState<string | null>(null);
-  const [newProject, setNewProject] = React.useState(input.initiallyNew === true);
+  const [newProject, setNewProject] = React.useState(!fixed && input.initiallyNew === true);
   const [newProjectName, setNewProjectName] = React.useState(input.initialNewProjectName ?? '');
   const [ownerId, setOwnerId] = React.useState('account');
-  const teamsDirectory = useTeamsDirectory({ serverIds: [serverId], enabled: newProject });
+  const teamsDirectory = useTeamsDirectory({ serverIds: [serverId], enabled: !fixed && newProject });
   const owner = React.useMemo(() => ownerId.startsWith('team:')
     ? { kind: 'team' as const, teamId: ownerId.slice('team:'.length) }
     : { kind: 'account' as const, accountId }, [accountId, ownerId]);
   const newProjectKey = React.useRef<Readonly<{ identity: string; requestKey: string }> | null>(null);
-  const source = newProject ? null : sources.rows.find((row) => row.id === sourceId) ?? null;
+  const source = fixed ? fixedProject : newProject ? null : sources.rows.find((row) => row.id === sourceId) ?? null;
   const selection = React.useMemo((): DeploymentProjectSelection | null => {
-    if (newProject) {
+    if (!fixed && newProject) {
       const name = newProjectName.trim();
       if (!name) return null;
       const identity = JSON.stringify([name, owner]);
@@ -44,12 +47,15 @@ export function useDeploymentProjectChoice(input: Readonly<{ lifetime: ServerAcc
       return { newProject: { name, owner, requestKey: newProjectKey.current.requestKey } };
     }
     return source ? { projectSourceId: source.id, sourceRevision: source.revision } : null;
-  }, [newProject, newProjectName, owner, source]);
-  const missing = newProject
+  }, [fixed, newProject, newProjectName, owner, source]);
+  const missing = fixed
+    ? fixedProject ? null : t(projectRead.status === 'initial' || projectRead.status === 'loading'
+      ? 'capabilities.store.appPage.projectsLoading' : 'common.unavailable')
+    : newProject
     ? !newProjectName.trim() ? t('capabilities.store.appPage.nameProject') : null
     : !source ? t('capabilities.store.appPage.chooseProject') : null;
   return { selection, missing, newProject, newProjectName, setNewProject, setNewProjectName, sourceId, setSourceId,
-    ownerId, setOwnerId, sources, teams: teamsDirectory.rows, serverId };
+    ownerId, setOwnerId, sources, teams: teamsDirectory.rows, serverId, fixed, fixedProject };
 }
 
 export type DeploymentProjectChoiceModel = ReturnType<typeof useDeploymentProjectChoice>;
@@ -85,6 +91,12 @@ export function DeploymentProjectChoiceGroups(props: Readonly<{
       .map((row): DropdownMenuItem => ({ id: `team:${row.team.id}`, title: row.team.name, checked: model.ownerId === `team:${row.team.id}` })),
   ], [model.ownerId, model.serverId, model.teams]);
   const selectedId = model.newProject ? DEPLOYMENT_NEW_PROJECT_CHOICE_ID : model.sourceId ?? '';
+  if (model.fixed) return (
+    <ItemGroup testID={`${testIDPrefix}.group`}>
+      <Item testID={testIDPrefix} mode="info" title={t('capabilities.store.appPage.projectTitle')}
+        subtitle={model.fixedProject?.name ?? model.missing ?? undefined} />
+    </ItemGroup>
+  );
   return (
     <ItemGroup testID={`${testIDPrefix}.group`} title={t('capabilities.store.appPage.projectTitle')} description={props.description}>
       <DropdownMenu

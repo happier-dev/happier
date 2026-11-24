@@ -278,6 +278,9 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     noCollector:
       '还没有机器开启遥测角色。请在一台始终在线的机器的“角色”中开启它。',
     team: '队友会在此环境权限允许的范围内，从同一台机器读取遥测。个人电脑会休眠，请选择一台始终在线的机器。',
+    deployCollector: '在中继旁部署采集器',
+    enableRole: '开启遥测',
+    askRoleOwner: '请让计算机所有者开启遥测。',
     record: '记录内容',
     requests: '请求和查询',
     requestsDescription: '端点、链路追踪、日志以及每个请求运行的查询。',
@@ -288,6 +291,12 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     llmDescription: '应用每次调用的模型、令牌和耗时。从不保存提示词和回复。',
     metrics: '运行时指标',
     metricsDescription: '堆内存、垃圾回收、请求耗时和进行中的请求。',
+    sampling: '链路采样',
+    samplingUnset: '未设置采样器（SDK 默认值为 100%）。',
+    samplingSet: ({ percent }) => `环境采样比例：${percent}。`,
+    samplingVariables: '在此环境的变量中设置。',
+    samplingLower: '降低…',
+    samplingPrompt: '输入要保留的链路百分比（0 到 100）。下次部署时生效。',
     keptEncrypted: ({ machine }) =>
       `请求、堆栈和日志保留在 ${machine}。问题的标题和计数会加密保存到你的账户。`,
     keptPlain: ({ machine }) =>

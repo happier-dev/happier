@@ -55,6 +55,9 @@ export type Copy = Readonly<{
     rotateDescription: string;
     noCollector: string;
     team: string;
+    deployCollector: string;
+    enableRole: string;
+    askRoleOwner: string;
     record: string;
     requests: string;
     requestsDescription: string;
@@ -64,6 +67,12 @@ export type Copy = Readonly<{
     llmDescription: string;
     metrics: string;
     metricsDescription: string;
+    sampling: string;
+    samplingUnset: string;
+    samplingSet: (p: Readonly<{ percent: string }>) => string;
+    samplingVariables: string;
+    samplingLower: string;
+    samplingPrompt: string;
     keptEncrypted: (p: MachineName) => string;
     keptPlain: (p: MachineName) => string;
     save: string;
@@ -139,6 +148,9 @@ const en: Copy = {
     noCollector:
       'No Machine has its Telemetry role on yet. Turn it on for a Machine that stays on, in that Machine’s Roles.',
     team: 'Your teammates read telemetry from the same Machine, as this Environment’s permissions allow. Personal computers sleep, so choose one that stays on.',
+    deployCollector: 'Deploy a collector next to your relay',
+    enableRole: 'Turn on Telemetry',
+    askRoleOwner: 'Ask the Machine’s owner to turn on Telemetry.',
     record: 'Record',
     requests: 'Requests and queries',
     requestsDescription:
@@ -152,6 +164,12 @@ const en: Copy = {
     metrics: 'Runtime metrics',
     metricsDescription:
       'Heap, garbage collection, request duration and requests in flight.',
+    sampling: 'Trace sampling',
+    samplingUnset: 'Sampler variable not set (SDK default 100%).',
+    samplingSet: ({ percent }) => `Environment sampler: ${percent}.`,
+    samplingVariables: 'Set in this Environment’s Variables.',
+    samplingLower: 'Lower…',
+    samplingPrompt: 'Enter the percentage of traces to keep (0 to 100). This applies at the next deploy.',
     keptEncrypted: ({ machine }) =>
       `Requests, stacks and logs stay on ${machine}. Issue titles and counts are saved to your account, encrypted.`,
     keptPlain: ({ machine }) =>
