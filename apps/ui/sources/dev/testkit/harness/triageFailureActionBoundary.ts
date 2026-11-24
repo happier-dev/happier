@@ -1,14 +1,37 @@
 import { onTestFinished } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
+import type { AccountKvEntry } from '@happier-dev/plugin-sdk/storage';
 import { createPluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 import { activate } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { PluginAccountStorageReadResponseV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../../../../../packages/plugins/triage/src/settings/actions';
+import type { HomeGovernanceHarness } from './homeGovernanceHarness';
 import { getPluginUiEphemeralSharedScope } from '@/components/plugins/surfaces/pluginUiEphemeralSharedScope';
 import { createActionExecutorBoundaryFixture } from '../fixtures/actionExecutorBoundary';
 
 export const TRIAGE_FAILURE_TEST_BINDING = { pluginId: PLUGIN_MANIFEST.id, action: 'native-failure/handle-v1' };
+
+/** The invoking UI runs the registered Triage catalog Action against Account storage. */
+export function answerTriageFailureCatalogForHome(
+    homes: Pick<HomeGovernanceHarness, 'answer'>,
+    serverId: string,
+    entry: AccountKvEntry,
+    respondAfter: PromiseLike<void>,
+): string {
+    const path = `/v1/account/plugin-storage/${encodeURIComponent(PLUGIN_MANIFEST.id)}`;
+    homes.answer(serverId, `GET ${path}`, {
+        body: PluginAccountStorageReadResponseV1Schema.parse({
+            status: 'present',
+            revision: 1,
+            content: { t: 'plain', v: { v: 1, values: { [TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1]: entry } } },
+        }),
+        respondAfter,
+    });
+    return path;
+}
 
 /** Keep the declared client Action and its retained owner real beneath the realm transport. */
 export function createTriageFailureActionBoundaryFixture(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
