@@ -2,7 +2,7 @@ import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1, isReviewAgentRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
-import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { PROJECT_DEFINITION_ACTION_IDS, isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
@@ -1984,7 +1984,8 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || isProjectCheckoutRemovalActionIdV1(authorization.binding.actionId)
     || isProjectWorkspaceSyncPreparationActionV1(authorization.binding.actionId)
     || isMachineTerminalOpenOrRestartActionIdV1(authorization.binding.actionId)
-    || isRequesterProjectDefinitionActionIdV1(authorization.binding.actionId)
+    // Every definition root pins to the requester's own accepted checkout, the write included.
+    || PROJECT_DEFINITION_ACTION_IDS.some(id => id === authorization.binding.actionId)
     || authorization.binding.actionId === 'projects.worker.status'
     || authorization.binding.actionId === 'projects.execution.output.read'
     || authorization.binding.actionId === 'projects.execution.output.copy' ? requesterContext : undefined;
