@@ -192,6 +192,16 @@ describe('receipt facts', () => {
             runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null });
     });
+    it('does not offer a rollback to a successful receipt whose private content was removed', () => {
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });
+        const current = createDeploymentReceiptHeaderV1({ id: 'current', requestedAtMs: 2000,
+            startedAtMs: 2001, settledAtMs: 2002 });
+        const previous = createDeploymentReceiptHeaderV1({ id: 'previous', contentArtifactId: null });
+        const items = [{ ...current, source: { kind: 'repository' as const, sha: 'b'.repeat(40) } },
+            { ...previous, source: { kind: 'repository' as const, sha: 'a'.repeat(40) } }];
+        expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items, complete: true,
+            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }).retainedRollbackTarget).toBeNull();
+    });
     it('omits the serving folder manifest from retained rollback targets', () => {
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });
         const current = createDeploymentReceiptHeaderV1({ id: 'current', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 });

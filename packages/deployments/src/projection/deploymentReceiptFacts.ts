@@ -1,6 +1,7 @@
 import type { DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentStepV1, DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentReceiptHistoryV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
 import { getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
 import { areDeploymentSourceLabelsEqualV1, projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -46,7 +47,7 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
     const source = candidate?.source;
     const servingSource = active?.source;
     return { previousVersion, retainedPreviousCount: input.placement === 'machine' && input.complete ? predecessors.length : null,
-        retainedRollbackTarget: candidate && active && candidate.id !== active.id && source
+        retainedRollbackTarget: candidate && hasDeploymentReceiptContentV1(candidate) && active && candidate.id !== active.id && source
             && areDeploymentSourceLabelsEqualV1(source, servingSource) === false
             ? { deploymentId: candidate.id, revision: source } : null };
 }

@@ -113,6 +113,7 @@ describe('Promote', () => {
       expect(promote).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({ artifact: 'image' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(
         screen.findByTestId('project-deployments.promote.rebuild'),
@@ -123,11 +124,46 @@ describe('Promote', () => {
       expect(promote).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({ artifact: 'rebuild' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     } finally {
       await screen.unmount();
       controller.retire();
     }
+  });
+
+  it('cancels a pending review and ignores a late receipt', async () => {
+    const destination = createDeploymentEnvironmentHeaderV1({ id: 'production' });
+    const controller = createDeploymentReadControllerV1({
+      scope,
+      transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: [{ environment: destination, title: 'Production' }], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: createDeploymentEnvironmentDetailV1() }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+      },
+    });
+    type PromotionReceipt = Extract<Awaited<ReturnType<Parameters<typeof showDeploymentPromotionSheet>[0]['promote']>>, { ok: true }>;
+    let finish!: (result: PromotionReceipt) => void;
+    const response = new Promise<PromotionReceipt>(resolve => { finish = resolve; });
+    const promote = vi.fn((_input: unknown, _operation?: { signal?: AbortSignal }) => response);
+    const onOpenReceipt = vi.fn();
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => { showDeploymentPromotionSheet({
+        controller, serverId: 'home', sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-61',
+        name: 'Staging', version: '7f3e2b1', target: { kind: 'ownServer' },
+        initialDestination: { environmentId: destination.id, projectSourceId: scope.projectSourceId, title: 'Production' },
+        promote, review: { pendingId: null, request() {}, open() {} }, onOpenReceipt,
+      }); });
+      await screen.pressByTestIdAsync('project-deployments.promote.confirm');
+      expect(promote).toHaveBeenCalledTimes(1);
+      await screen.pressByTestIdAsync('project-deployments.promote.cancel');
+      expect(screen.findByTestId('project-deployments.promote.confirm')).toBeNull();
+      expect(promote.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+      await act(async () => { finish({ ok: true, deploymentId: 'late', environmentId: 'production', revision: 1, deploymentRevision: 1, state: 'succeeded' }); });
+      expect(onOpenReceipt).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); }
   });
 
   it('sends Promote to admission and explains a typed Machine refusal with one next action', async () => {

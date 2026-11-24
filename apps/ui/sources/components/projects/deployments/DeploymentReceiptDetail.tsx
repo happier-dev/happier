@@ -495,7 +495,7 @@ export const DeploymentReceiptDetail = React.memo(
     // with the rollback they would repeat, the card's own button is that choice.
     const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads
       ? <DeploymentNoticeRecoveryChoices scope={props.controller?.scope ?? null} environmentId={environmentId}
-          deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" /> : null;
+          deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" onReview={review.request} /> : null;
     const headerActions = phone ? (
       <View style={styles.headerActions}>{noticeRecovery}{rollbackButton}{menu}</View>
     ) : (

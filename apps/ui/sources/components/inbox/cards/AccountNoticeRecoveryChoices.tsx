@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { OfferedChoices } from '@happier-dev/plugin-ui/presentation';
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { useUnistyles } from 'react-native-unistyles';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import type { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
@@ -27,6 +30,7 @@ export const AccountNoticeRecoveryChoices = React.memo(
       entry: AccountNoticeArtifact;
       recovery: NoticeRecovery;
       testID: string;
+      onReview?: (artifactId: string) => void;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -54,15 +58,19 @@ export const AccountNoticeRecoveryChoices = React.memo(
           index,
         );
         if (!result.ok) {
-          const presentation = presentActionExecutionFailure(result);
+          const presentation = choices[index]?.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1
+            ? presentActionFailureOutcome(result, 'deployment') : presentActionExecutionFailure(result);
           alertActionFailure({
-            reason: presentation.reason,
+            reason: presentation.reason ?? result.error,
             code: result.errorCode,
             requestId: result.requestId,
             context: Object.fromEntries(presentation.technicalDetails
               .filter(line => line.key !== 'code' && line.key !== 'requestId')
               .map(line => [line.key, line.value])),
           });
+        } else if (props.onReview) {
+          const review = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+          if (review.success) props.onReview(review.data.artifactId);
         }
       } finally {
         setBusyIndex(null);
@@ -97,6 +105,7 @@ type DeploymentNoticeRecoveryProps = Readonly<{
   environmentId: string;
   deploymentId: string;
   testID: string;
+  onReview: (artifactId: string) => void;
 }>;
 
 export function DeploymentNoticeRecoveryChoices(props: DeploymentNoticeRecoveryProps) {
@@ -111,5 +120,5 @@ function DeploymentNoticeRecoveryBody(props: DeploymentNoticeRecoveryProps) {
   const { items } = useDeploymentNoticeHeaders(props.scope, props.environmentId, true, props.deploymentId);
   const recovery = useAccountNoticeInvestigation();
   const entry = findInboxDeploymentNotice(items.filter(candidate => isOpenAccountNotice(candidate.header)), props.deploymentId);
-  return entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} /> : null;
+  return entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} onReview={props.onReview} /> : null;
 }

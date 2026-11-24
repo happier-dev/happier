@@ -59,6 +59,12 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
     onChooseDestination?.(next);
   }, [onChooseDestination]);
   const { onClose, review, onOpenReceipt } = props;
+  const activeReview = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => activeReview.current?.abort(), []);
+  const cancel = () => {
+    activeReview.current?.abort();
+    onClose();
+  };
   const router = useRouter();
   // Advisory (SOS-GAP-PREFLIGHT #3): the promotion's own admission still decides; this only says what is missing.
   const gaps = useDeploymentPromotionBindingGaps(props.controller, props.sourceEnvironmentId, destination, SHEET_DEMAND);
@@ -108,10 +114,12 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
   // Own servers offer a separately reviewed rebuild only when the exact images cannot reach the destination.
   const [artifact, setArtifact] = React.useState<'image' | 'rebuild'>('image');
   const request = (choice: 'image' | 'rebuild') => {
-    if (!destination) return;
+    if (!destination || busy) return;
+    const operation = new AbortController();
+    activeReview.current = operation;
     setArtifact(choice);
     void press.press(() => props.promote({ environmentId: destination, sourceEnvironmentId: props.sourceEnvironmentId,
-      sourceDeploymentId: props.sourceDeploymentId, artifact: choice }));
+      sourceDeploymentId: props.sourceDeploymentId, artifact: choice }, { signal: operation.signal }), { signal: operation.signal });
   };
   const confirm = () => request('image');
   const target = props.target;
@@ -122,7 +130,7 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
     ? { title: t('projects.deployments.promotion.image'), subtitle: t('projects.deployments.promotion.imageBody') }
     : target.consequence ? { title: target.consequence } : null;
   const footer = (
-    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.promote.cancel', disabled: busy }}>
+    <ModalCardFooterActions cancel={{ onPress: cancel, testID: 'project-deployments.promote.cancel' }}>
       <RoundButton testID="project-deployments.promote.confirm" title={t('projects.deployments.promotion.review')}
         disabled={busy || destination === null} loading={press.running} onPress={confirm} />
     </ModalCardFooterActions>

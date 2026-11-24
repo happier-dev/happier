@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -37,6 +38,41 @@ describe('notice recovery choices through the existing Account Action ingress', 
             expect(await execute('inbox.notice.dismiss', { artifactId: legacy.id }, context)).toMatchObject({ ok: true });
             expect(await owner.fetchArtifact(legacy.id, { fresh: true }))
                 .toMatchObject({ rawHeader: { kind: 'usage_notice.v1', status: 'dismissed' }, body: legacy.body });
+        } finally { owner.dispose(); }
+    });
+
+    it('reopens a saved failed-deploy notice as a rollback intent through ordinary action admission', async () => {
+        account = await createSecretSettingsTestHarness({ mode: 'plain', settings: settingsParse({}) });
+        const home = account;
+        const owner = await captureLazyActionAccountContext(home.scope.serverId);
+        try {
+            const artifactId = '11111111-1111-4111-8111-111111111111';
+            const fixture = createAccountNoticeArtifactFixture({ id: artifactId, header: {
+                source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
+                    environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' } },
+                page: { kind: 'host', page: 'environment', targetLinkId: 'runtime',
+                    environment: { serverId: home.scope.serverId, projectSourceId: 'project', environmentId: 'environment' } },
+                type: 'blocked', healthPhase: 'open', recoveryChoices: [{
+                    actionId: DEPLOYMENT_ROLLBACK_ACTION_ID_V1, label: 'Restore backup and roll back code',
+                    input: { serverId: home.scope.serverId, environmentId: 'environment', expectedRevision: 1,
+                        requestKey: 'recover', targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
+                        deploymentId: 'previous', contentArtifactId: 'environment-content',
+                        contentHeaderVersion: 1, contentBodyVersion: 1, restoreBackupId: 'backup' },
+                }],
+            } });
+            await owner.createArtifactDocument({ artifactId, header: fixture.rawHeader ?? fixture.header, body: fixture.body ?? '' });
+            const artifact = await owner.fetchArtifact(artifactId, { fresh: true });
+            const header = artifact && readAccountNoticeArtifactHeader(artifact, home.scope.accountId);
+            if (!artifact || !header) throw new Error('Missing owned deployment notice');
+            const frontDoor = createFrontDoorActionExecute(createDefaultActionExecutor());
+            const execute = Object.assign(vi.fn(frontDoor), frontDoor);
+            const model = createAccountNoticeInvestigation({ scope: home.scope, execute, isCurrent: () => true });
+
+            await model.runRecoveryChoice({ artifact, header }, 0);
+            expect(execute).toHaveBeenLastCalledWith(DEPLOYMENT_ROLLBACK_ACTION_ID_V1, {
+                serverId: home.scope.serverId, environmentId: 'environment', deploymentId: 'previous',
+                requestKey: 'recover', restoreBackupId: 'backup',
+            }, expect.anything());
         } finally { owner.dispose(); }
     });
 

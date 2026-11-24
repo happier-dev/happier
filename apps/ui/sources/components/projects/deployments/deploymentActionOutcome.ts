@@ -157,6 +157,8 @@ export async function runDeploymentAction(
   }
 }
 
+type DeploymentPressOptions = Readonly<{ openReceipt?: boolean; request?: DeploymentRefusalRequestV1; signal?: AbortSignal }>;
+
 /**
  * One page control's press through the Action owner, as Deploy, Deploy again, Roll back and Cancel use it: one
  * press at a time, a new receipt opens (unless the press acts on the receipt already shown), a held review goes
@@ -171,12 +173,12 @@ export function useDeploymentPress(
   const busy = React.useRef(false);
   const { request } = review;
   const lastPress = React.useRef<(() => Promise<ReceiptResult>) | null>(null);
-  const lastOptions = React.useRef<Readonly<{ openReceipt?: boolean; request?: DeploymentRefusalRequestV1 }> | undefined>(undefined);
+  const lastOptions = React.useRef<DeploymentPressOptions | undefined>(undefined);
   const press = React.useCallback(async (
     run: () => Promise<ReceiptResult>,
-    options?: Readonly<{ openReceipt?: boolean; request?: DeploymentRefusalRequestV1 }>,
+    options?: DeploymentPressOptions,
   ) => {
-    if (busy.current) return;
+    if (busy.current || options?.signal?.aborted) return;
     lastPress.current = run;
     lastOptions.current = options;
     busy.current = true;
@@ -184,6 +186,7 @@ export function useDeploymentPress(
     setOutcome(null);
     const result = await runDeploymentAction(run);
     busy.current = false;
+    if (options?.signal?.aborted) return;
     setRunning(false);
     if (result.kind === 'receipt' && options?.openReceipt !== false) {
       onOpenReceipt(result.deploymentId);

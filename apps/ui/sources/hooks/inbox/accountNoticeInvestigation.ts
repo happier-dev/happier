@@ -1,3 +1,5 @@
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DeploymentRollbackIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FailureActionOutcome, FailureAgentAction, FailureActionPlacement } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
@@ -141,6 +143,14 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                 || current.revision.bodyVersion !== entry.artifact.bodyVersion
                 || !sameStrictJsonValue(choice, notice.recoveryChoices?.[index])) {
                 return { ok: false, errorCode: 'usage_notice_changed', error: 'usage_notice_changed' };
+            }
+            if (choice.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1) {
+                // The saved references bind the notice's subject. The rollback owner prepares the actual Receipt.
+                const { serverId, environmentId, deploymentId, requestKey, restoreBackupId } = choice.input;
+                const intent: DeploymentRollbackIntentInputV1 = { serverId, environmentId, deploymentId,
+                    ...(requestKey === undefined ? {} : { requestKey }),
+                    ...(restoreBackupId === undefined ? {} : { restoreBackupId }) };
+                return input.execute(choice.actionId, intent, context(options));
             }
             return input.execute(choice.actionId, choice.actionId === 'inbox.notice.dismiss'
                 ? { ...choice.input, expectedRevision: current.revision } : choice.input, context(options));
