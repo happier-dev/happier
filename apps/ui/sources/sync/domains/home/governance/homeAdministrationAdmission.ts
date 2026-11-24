@@ -32,7 +32,7 @@ const ADMITTED_FOR_OWNER_SETUP: HomeAdministrationAdmission = Object.freeze({
  * missing or in-flight projection can never read as granted.
  */
 export function resolveHomeAdministrationAdmission(
-    projection: HomeGovernanceProjectionV1 | null | undefined,
+    projection: Pick<HomeGovernanceProjectionV1, 'viewer' | 'capabilities' | 'setupState'> | null | undefined,
 ): HomeAdministrationAdmission {
     if (!projection) return DENIED;
 

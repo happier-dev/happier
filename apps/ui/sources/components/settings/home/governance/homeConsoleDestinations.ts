@@ -1,4 +1,4 @@
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import type { HomeGovernanceProjectionV1, HomeRoleV1 } from '@happier-dev/protocol/home/governance';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { TranslationKeyNoParams } from '@/text';
@@ -34,17 +34,20 @@ export type HomeConsoleDestinationId =
     | 'activity'
     | 'usage';
 
+/** What the console's navigation reads of the viewer: its role, capabilities and whether the Home has an owner. */
+export type HomeConsoleViewerAccess = Pick<HomeGovernanceProjectionV1, 'viewer' | 'capabilities' | 'setupState'>;
+
 export type HomeConsoleDestination = Readonly<{
     id: HomeConsoleDestinationId;
     titleKey: TranslationKeyNoParams;
     icon: IconName;
     path: (serverId: string) => string;
     /** Whether this viewer's projected capabilities back the page. */
-    available: (projection: HomeGovernanceProjectionV1) => boolean;
+    available: (projection: HomeConsoleViewerAccess) => boolean;
 }>;
 
 const always = () => true;
-const viewsAdministration = (projection: HomeGovernanceProjectionV1) => projection.capabilities.viewAdministration;
+const viewsAdministration = (projection: HomeConsoleViewerAccess) => projection.capabilities.viewAdministration;
 
 /**
  * The Home console's pages, in rail order (plan §3.10, r3): who uses the Home · how it is reached and
@@ -83,12 +86,35 @@ const OVERVIEW_ONLY: readonly (readonly HomeConsoleDestination[])[] = [[HOME_CON
  * and while it has no owner yet (claim), only Overview is offered: nothing else can be used until then.
  */
 export function resolveHomeConsoleDestinations(
-    projection: HomeGovernanceProjectionV1 | null,
+    projection: HomeConsoleViewerAccess | null,
 ): readonly (readonly HomeConsoleDestination[])[] {
     if (!projection || projection.setupState === 'setup_required') return OVERVIEW_ONLY;
     return HOME_CONSOLE_DESTINATION_GROUPS
         .map((group) => group.filter((destination) => destination.available(projection)))
         .filter((group) => group.length > 0);
+}
+
+/**
+ * The console's role line and destinations. Until the Home answers they stand on how it answered last on this device
+ * (`access` not current), so the rail neither grows nor shifts when the answer is the same; with nothing known the
+ * role line is held (`pending`) and only Overview, which every viewer has, is offered. A fresh answer replaces it at
+ * once: a withdrawn role (`access` null once answered) leaves Overview alone. Navigation only offers; every page and
+ * request is still authorized by the Home.
+ */
+export function resolveHomeConsoleViewer(input: Readonly<{
+    /** The Home has answered this process's read (with a projection, an ownerless Home or a refusal). */
+    answered: boolean;
+    setupRequired: boolean;
+    access: HomeConsoleViewerAccess | null;
+}>): Readonly<{
+    role: Extract<HomeRoleV1, 'owner' | 'admin'> | 'noOwner' | 'pending' | null;
+    destinations: readonly (readonly HomeConsoleDestination[])[];
+}> {
+    if (input.setupRequired) return { role: 'noOwner', destinations: OVERVIEW_ONLY };
+    const homeRole = input.access?.viewer.homeRole ?? null;
+    const role = homeRole === 'owner' || homeRole === 'admin' ? homeRole
+        : input.access || input.answered ? null : 'pending';
+    return { role, destinations: resolveHomeConsoleDestinations(input.access) };
 }
 
 /**

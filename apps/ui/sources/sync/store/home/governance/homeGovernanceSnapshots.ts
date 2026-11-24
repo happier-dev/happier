@@ -5,6 +5,7 @@ import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/p
 import type { IdentityConnectionV1, TeamAdmissionModeApplicabilityV1, TeamIdentityEligibleProviderV1 } from '@happier-dev/protocol/teams';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { loadHomeGovernanceViewerWarmCache, saveHomeGovernanceViewerWarmCache } from '@/sync/domains/state/warmCachePersistence';
 
 import {
     readServerAccountScopeOwnerLifetime,
@@ -179,6 +180,44 @@ export function getHomeGovernanceSnapshot(
     return snapshots.get(keyOf(scope)) ?? null;
 }
 
+/** Who this Account is on one Home, as navigation needs it: its role and status, capabilities and owner state. */
+export type HomeGovernanceViewerAccess = Pick<HomeGovernanceProjectionV1, 'viewer' | 'capabilities' | 'setupState'>;
+
+/**
+ * The one answer to "who is this Account on this Home" for navigation: the Home's live projection, or, until the
+ * Home has answered in this process, how it answered last on this device (`current: false`). A Home that refused
+ * withdraws both. The Home still authorizes every request; this only decides what navigation offers.
+ */
+export function readHomeGovernanceViewerAccess(
+    scope: ServerAccountScope | null | undefined,
+): Readonly<{ access: HomeGovernanceViewerAccess; current: boolean }> | null {
+    if (!scope) return null;
+    const snapshot = getHomeGovernanceSnapshot(scope);
+    if (snapshot?.data) return lastLiveAccess(snapshot.data);
+    if (isAuthoritativeScopedSnapshotRefusal(snapshot?.error)) return null;
+    const lastKnown = loadHomeGovernanceViewerWarmCache(scope.serverId, scope.accountId);
+    return lastKnown ? retainedLastKnownAccess(lastKnown) : null;
+}
+
+const liveAccessByProjection = new WeakMap<HomeGovernanceProjectionV1, Readonly<{ access: HomeGovernanceViewerAccess; current: true }>>();
+function lastLiveAccess(projection: HomeGovernanceProjectionV1) {
+    let entry = liveAccessByProjection.get(projection);
+    if (!entry) {
+        entry = Object.freeze({ access: projection, current: true as const });
+        liveAccessByProjection.set(projection, entry);
+    }
+    return entry;
+}
+const lastKnownAccessByRecord = new WeakMap<HomeGovernanceViewerAccess, Readonly<{ access: HomeGovernanceViewerAccess; current: false }>>();
+function retainedLastKnownAccess(record: HomeGovernanceViewerAccess) {
+    let entry = lastKnownAccessByRecord.get(record);
+    if (!entry) {
+        entry = Object.freeze({ access: record, current: false as const });
+        lastKnownAccessByRecord.set(record, entry);
+    }
+    return entry;
+}
+
 export function subscribeHomeGovernanceSnapshots(listener: () => void): () => void {
     listeners.add(listener);
     return () => {
@@ -214,6 +253,8 @@ export function applyHomeGovernanceProjection(params: Readonly<{
     observedAt: number;
     current?: boolean;
 }>): void {
+    const { viewer, capabilities, setupState } = params.projection;
+    saveHomeGovernanceViewerWarmCache(params.scope.serverId, params.scope.accountId, { viewer, capabilities, setupState });
     // An equal re-read keeps the projection's identity, so its readers see no change.
     write(params.scope, Object.freeze({
         scope: params.scope,
@@ -247,6 +288,7 @@ export function applyHomeGovernanceFailure(params: Readonly<{
     const current = getHomeGovernanceSnapshot(params.scope);
     const reachability = reachabilityForScopedSnapshotError(params.error);
     const withdrawn = isAuthoritativeScopedSnapshotRefusal(params.error);
+    if (withdrawn) saveHomeGovernanceViewerWarmCache(params.scope.serverId, params.scope.accountId, null);
     write(params.scope, Object.freeze({
         scope: params.scope,
         status: 'error',

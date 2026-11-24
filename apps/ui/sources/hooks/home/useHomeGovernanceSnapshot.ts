@@ -4,6 +4,7 @@ import { createServerAccountScope, type ServerAccountScope } from '@/sync/domain
 import { observeHomeGovernance } from '@/sync/engine/home/governance/homeGovernanceEngine';
 import {
     getHomeGovernanceSnapshot,
+    readHomeGovernanceViewerAccess,
     subscribeHomeGovernanceSnapshots,
     type HomeGovernanceSnapshot,
 } from '@/sync/store/home/governance/homeGovernanceSnapshots';
@@ -40,4 +41,21 @@ export function useHomeGovernanceSnapshot(
     }, [serverId, accountId]);
 
     return snapshot;
+}
+
+/**
+ * Who this Account is on one exact Home, for navigation (the console rail, the Settings entry): the Home's live
+ * answer, or this device's last answer until the Home answers in this process (`readHomeGovernanceViewerAccess`).
+ * It does not observe the Home; the surface's own governance read does.
+ */
+export function useHomeGovernanceViewerAccess(
+    scope: ServerAccountScope | null | undefined,
+): ReturnType<typeof readHomeGovernanceViewerAccess> {
+    const serverId = scope?.serverId ?? '';
+    const accountId = scope?.accountId ?? '';
+    const getSnapshot = React.useCallback(
+        () => readHomeGovernanceViewerAccess(createServerAccountScope(serverId, accountId)),
+        [serverId, accountId],
+    );
+    return React.useSyncExternalStore(subscribeHomeGovernanceSnapshots, getSnapshot, getSnapshot);
 }

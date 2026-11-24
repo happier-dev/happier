@@ -30,6 +30,7 @@ import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happie
 import { MachinePublishedAgentInventoryV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { SkillFoundListResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { DaemonMcpServersDetectResponseSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { AccountStatusV1Schema, HomeCapabilitiesV1Schema, HomeGovernanceSetupStateV1Schema, HomeRoleV1Schema } from '@happier-dev/protocol/home/governance';
 
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { prepareWarmCacheEncryptionKey, readResolvedWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
@@ -590,6 +591,38 @@ export function saveUsageSummaryWarmCache(
     value: UsageSummaryCacheV1,
 ): void {
     saveScopedRecord(buildScopedKey(USAGE_SUMMARY_WARM_CACHE_PREFIX, serverId, accountId), value);
+}
+
+const HOME_GOVERNANCE_VIEWER_WARM_CACHE_PREFIX = 'home-governance-viewer-warm-cache-v1';
+
+/**
+ * How one Home last answered "who is this Account here": the viewer's role and status, its capabilities and whether
+ * the Home has an owner. Navigation that depends on it (the Home console rail, the Settings "Home administration"
+ * entry) draws from it with the first frame instead of growing when the Home answers. The Home's answer stays
+ * authoritative and replaces it; a refusal forgets it.
+ */
+const HomeGovernanceViewerWarmCacheSchema = z.object({
+    viewer: z.object({
+        accountId: z.string().check(z.minLength(1)),
+        homeRole: HomeRoleV1Schema,
+        status: AccountStatusV1Schema,
+    }),
+    capabilities: HomeCapabilitiesV1Schema,
+    setupState: HomeGovernanceSetupStateV1Schema,
+});
+export type HomeGovernanceViewerWarmCache = z.infer<typeof HomeGovernanceViewerWarmCacheSchema>;
+
+export function loadHomeGovernanceViewerWarmCache(serverId: string | null | undefined, accountId: string | null | undefined): HomeGovernanceViewerWarmCache | null {
+    return loadScopedRecord(buildScopedKey(HOME_GOVERNANCE_VIEWER_WARM_CACHE_PREFIX, serverId, accountId), HomeGovernanceViewerWarmCacheSchema);
+}
+
+/** `null` forgets the Account's last answer on this Home. */
+export function saveHomeGovernanceViewerWarmCache(
+    serverId: string | null | undefined,
+    accountId: string | null | undefined,
+    value: HomeGovernanceViewerWarmCache | null,
+): void {
+    saveScopedRecord(buildScopedKey(HOME_GOVERNANCE_VIEWER_WARM_CACHE_PREFIX, serverId, accountId), value ?? {});
 }
 
 const WORK_BOARD_SUMMARIES_WARM_CACHE_PREFIX = 'work-board-summaries-warm-cache-v1';

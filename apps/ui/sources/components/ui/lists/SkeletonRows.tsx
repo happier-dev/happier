@@ -31,8 +31,9 @@ export const SkeletonRows = React.memo(function SkeletonRows(props: SkeletonRows
  * Core's binding of the shared title placeholder bar (`HappierSkeletonTitle`): a name still arriving holds its title
  * slot with the loading rows' quiet bar, never the word "Loading…".
  */
-export const SkeletonTitle = React.memo(function SkeletonTitle(props: Readonly<{ lineHeight: number; testID?: string }>) {
+export const SkeletonTitle = React.memo(function SkeletonTitle(props: Readonly<{ lineHeight: number; line?: 'title' | 'meta'; testID?: string }>) {
     const { theme } = useUnistyles();
     const pluginTheme = usePluginUiTheme(theme);
-    return <HappierSkeletonTitle theme={pluginTheme} lineHeight={props.lineHeight} {...(props.testID === undefined ? {} : { testID: props.testID })} />;
+    return <HappierSkeletonTitle theme={pluginTheme} lineHeight={props.lineHeight} {...(props.line === undefined ? {} : { line: props.line })}
+        {...(props.testID === undefined ? {} : { testID: props.testID })} />;
 });

@@ -16,8 +16,11 @@ import { resolveHomeAdministrationAdmission } from './homeAdministrationAdmissio
  */
 export type HomeAdministrationHomeObservation = Readonly<{
     scope: 'resolving' | 'unknown_home' | 'unavailable' | 'signed_out' | 'bound';
-    /** The last projection this Home returned, retained through refresh and failure. */
-    projection: HomeGovernanceProjectionV1 | null;
+    /**
+     * Who this Account is there: the last projection this Home returned, retained through refresh and failure, or
+     * until it answers in this process, how it answered last on this device. A refusal withdraws both.
+     */
+    projection: Pick<HomeGovernanceProjectionV1, 'viewer' | 'capabilities' | 'setupState'> | null;
     error: ScopedSnapshotError | null;
     stale: boolean;
 }>;

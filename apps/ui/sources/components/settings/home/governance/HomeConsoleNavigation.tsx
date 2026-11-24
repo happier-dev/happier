@@ -8,7 +8,6 @@ import {
     resolveHappierFieldBoxLabel,
     useHappierCollectionLayout,
 } from '@happier-dev/plugin-ui/presentation';
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 import { SettingsFloatingControlsHost } from '@/components/settings/shell/SettingsModalFloatingControls';
 import { CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
@@ -31,7 +30,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useHomeAdministration } from '@/hooks/home/useHomeAdministration';
 import { HomeSettingsLifetime } from '@/hooks/home/homeSettingsLifetime';
-import { resolveHomeViewerRole } from '@/hooks/home/resolveHomeViewerRole';
+import { useHomeGovernanceViewerAccess } from '@/hooks/home/useHomeGovernanceSnapshot';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -42,7 +42,7 @@ import { homeAdministrationHomesPath } from './homeAdministrationRoutes';
 import {
     HOME_CONSOLE_DESTINATION_GROUPS,
     resolveActiveHomeConsoleDestination,
-    resolveHomeConsoleDestinations,
+    resolveHomeConsoleViewer,
 } from './homeConsoleDestinations';
 
 /** Which rail stands beside the console's pages: its own, or People's while a person is open. */
@@ -123,8 +123,9 @@ type HomeConsoleIdentity = Readonly<{
     homeName: string;
     /** The Home's address, which its mark is drawn from. */
     serverUrl: string | null;
-    role: string | null;
-    projection: HomeGovernanceProjectionV1 | null;
+    /** The role line: words, held while nothing is known yet (`pending`), or none. */
+    role: string | 'pending' | null;
+    destinations: ReturnType<typeof resolveHomeConsoleViewer>['destinations'];
 }>;
 
 /** Which Home this is and as whom, as the rail header and the header menu name it. */
@@ -138,15 +139,20 @@ function useHomeConsoleIdentity(serverId: string): HomeConsoleIdentity {
     const state = binding.kind === 'bound' ? binding.state : null;
     const projection = state?.kind === 'ready' ? state.projection : null;
     const setupRequired = state?.kind === 'setup_required' || projection?.setupState === 'setup_required';
-    const viewerRole = resolveHomeViewerRole(binding);
-    const role = setupRequired
+    const viewerAccess = useHomeGovernanceViewerAccess(binding.kind === 'bound' ? binding.scope : null);
+    const viewer = resolveHomeConsoleViewer({
+        answered: binding.kind !== 'bound' || (state !== null && state.kind !== 'unobserved' && state.kind !== 'loading'),
+        setupRequired,
+        access: viewerAccess?.access ?? null,
+    });
+    const role = viewer.role === 'noOwner'
         ? t('homeGovernance.console.noOwnerYet')
-        : viewerRole === 'owner'
+        : viewer.role === 'owner'
             ? t('homeGovernance.console.viewerOwner')
-            : viewerRole === 'admin'
+            : viewer.role === 'admin'
                 ? t('homeGovernance.console.viewerAdmin')
-                : null;
-    return { homeName, serverUrl, role, projection: setupRequired ? null : projection };
+                : viewer.role;
+    return { homeName, serverUrl, role, destinations: viewer.destinations };
 }
 
 function openConsolePath(router: ReturnType<typeof useRouter>, href: string, tag: string) {
@@ -172,7 +178,7 @@ export const HomeConsoleSidebar = React.memo(function HomeConsoleSidebar(props: 
     const router = useRouter();
     const activeId = resolveActiveHomeConsoleDestination(usePathname(), props.serverId);
     const identity = useHomeConsoleIdentity(props.serverId);
-    const groups = resolveHomeConsoleDestinations(identity.projection);
+    const groups = identity.destinations;
     return (
         <AppShellMaterialPlane testID="home-console-sidebar" group="sidebar" color={appShellColumnPlaneColor(theme.colors)} translucentColor={theme.colors.surface.selected} style={[styles.sidebar, appShellColumnSurface.plane]}>
             <View style={styles.header}>
@@ -180,7 +186,12 @@ export const HomeConsoleSidebar = React.memo(function HomeConsoleSidebar(props: 
                 <View style={styles.identity}>
                     {/* A long Home name wraps once rather than losing the words that tell Homes apart. */}
                     <Text style={styles.homeName} numberOfLines={2}>{identity.homeName}</Text>
-                    {identity.role ? (
+                    {identity.role === 'pending' ? (
+                        // Nothing is known yet: the role's line is held, so the Home's name does not move when it arrives.
+                        <View style={styles.rolePending}>
+                            <SkeletonTitle testID="home-console-rail-role-pending" line="meta" lineHeight={ITEM_SUBTITLE_TEXT_METRICS.compact.lineHeight} />
+                        </View>
+                    ) : identity.role ? (
                         <Text testID="home-console-rail-role" style={styles.role} numberOfLines={1}>{identity.role}</Text>
                     ) : null}
                 </View>
@@ -228,7 +239,7 @@ const HomeConsoleMenuControl = React.memo(function HomeConsoleMenuControl(props:
     const maxWidth = useLayoutMaxWidth();
     const [open, setOpen] = React.useState(false);
     const identity = useHomeConsoleIdentity(props.serverId);
-    const groups = resolveHomeConsoleDestinations(identity.projection);
+    const groups = identity.destinations;
     const active = HOME_CONSOLE_DESTINATION_GROUPS.flat().find((destination) => destination.id === activeId)
         ?? HOME_CONSOLE_DESTINATION_GROUPS[0]![0]!;
     const activeTitle = t(active.titleKey);
@@ -338,6 +349,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         ...ITEM_SUBTITLE_TEXT_METRICS.compact,
         color: theme.colors.text.secondary,
+    },
+    rolePending: {
+        height: ITEM_SUBTITLE_TEXT_METRICS.compact.lineHeight,
     },
     scroller: {
         flex: 1,

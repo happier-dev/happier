@@ -11,6 +11,7 @@ import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCr
 import {
     getHomeGovernanceSnapshot,
     getHomeGovernanceAuthoritySelectionKey,
+    readHomeGovernanceViewerAccess,
     subscribeHomeGovernanceSnapshots,
 } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
@@ -120,9 +121,12 @@ export function useHomeAdministrationSettingsAdmission(
             const snapshot = resolution.kind === 'bound'
                 ? getHomeGovernanceSnapshot(resolution.scope)
                 : null;
+            // Until the Home answers, this device's last answer decides what Settings offers, so the entry stands
+            // from the first frame; the Home's answer replaces it, and a refusal withdraws it.
+            const viewer = resolution.kind === 'bound' ? readHomeGovernanceViewerAccess(resolution.scope) : null;
             observationsByServerId[serverId] = {
                 scope: resolution.kind,
-                projection: snapshot?.data ?? null,
+                projection: viewer?.access ?? null,
                 error: snapshot?.error ?? null,
                 stale: snapshot?.stale ?? false,
             };
