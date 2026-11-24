@@ -54,8 +54,9 @@ describe('createCodexRequestUserInputBridge', () => {
       toolName: 'mcp__playwright__browser_navigate',
       nativeChoices: expect.objectContaining({ requirementId: 'call_1', source: 'codex',
         choices: expect.arrayContaining([
-          expect.objectContaining({ id: 'Approve Once', decision: 'approved', scope: 'once' }),
-          expect.objectContaining({ id: 'Deny', decision: 'denied', scope: 'once' }),
+          // A choice id is a routing field kept unredacted: a positional id, never the native label.
+          expect.objectContaining({ id: 'option:0', label: 'Approve Once', decision: 'approved', scope: 'once' }),
+          expect.objectContaining({ id: 'option:2', label: 'Deny', decision: 'denied', scope: 'once' }),
         ]),
       }),
       input: expect.objectContaining({

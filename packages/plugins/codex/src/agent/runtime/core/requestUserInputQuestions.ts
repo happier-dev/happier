@@ -217,15 +217,19 @@ function findApprovalQuestion(questions: unknown): ApprovalQuestionCandidate | n
     ?? null;
 }
 
-/** Only actual native labels become choices; host session grants still resume with a once-scoped native option. */
+/**
+ * Only actual native labels become choices; host session grants still resume with a once-scoped
+ * native option. A choice id is a routing field kept unredacted in Agent state, so it is positional
+ * and never the native label (which may echo a secret); answers resolve by decision, not id.
+ */
 export function buildCodexApprovalQuestionChoices(requirementId: string, questions: unknown): NativePermissionChoicesV1 {
   const question = findApprovalQuestion(questions);
-  return { requirementId, source: 'codex', choices: (question?.labels ?? []).flatMap((label) => {
+  return { requirementId, source: 'codex', choices: (question?.labels ?? []).flatMap((label, index) => {
     const decision = POSITIVE_CHOICE_LABEL.test(label)
       ? SESSION_SCOPED_CHOICE_LABEL.test(label) ? 'approved_for_session' : 'approved'
       : NEGATIVE_CHOICE_LABEL.test(label) ? 'denied'
         : CANCELLATION_CHOICE_LABEL.test(label) ? 'abort' : null;
-    return decision ? [{ id: label, label, decision, scope: decision === 'approved_for_session' ? 'session' as const : 'once' as const,
+    return decision ? [{ id: `option:${index}`, label, decision, scope: decision === 'approved_for_session' ? 'session' as const : 'once' as const,
       response: { approved: decision === 'approved' || decision === 'approved_for_session', decision } }] : [];
   }) };
 }

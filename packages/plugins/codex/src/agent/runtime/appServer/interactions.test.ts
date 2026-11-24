@@ -132,7 +132,8 @@ describe('Codex app-server canonical interaction bridge', () => {
     { method: 'item/fileChange/requestApproval', choiceId: 'cancel', input: {}, reply: { decision: 'cancel' } },
     { method: 'item/permissions/requestApproval', choiceId: 'acceptForSession', input: { permissions: { network: { enabled: true } } },
       reply: { permissions: { network: { enabled: true } }, scope: 'session' } },
-    { method: 'item/tool/requestUserInput', choiceId: 'Approve this Session', input: { questions: [{
+    // Positional id of 'Approve this Session'; the native label never becomes a routing id.
+    { method: 'item/tool/requestUserInput', choiceId: 'option:1', input: { questions: [{
       id: 'mcp_tool_call_approval_wire', header: 'Approve app tool call?', question: 'Allow this action?',
       options: [{ label: 'Approve Once' }, { label: 'Approve this Session' }, { label: 'Deny' }, { label: 'Cancel' }],
     }] }, reply: { answers: { mcp_tool_call_approval_wire: { answers: ['Approve Once'] } } } },
