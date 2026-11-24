@@ -13,7 +13,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { deriveWorkflowSessionInputLocalIdV2 } from '../sessions/messages/sessionInputAdmission.js';
-import { deriveSessionMessageReplyReturnLocalIdV1 } from '../sessions/messages/sessionMessageReplyV1.js';
+import { classifySessionMessageReplyPublicationFailureV1, deriveSessionMessageReplyReturnLocalIdV1 } from '../sessions/messages/sessionMessageReplyV1.js';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '../workflows/workflowInvocationIdentityV1.js';
 
 const input = { discussionId: 'discussion', localId: 'answer', content: { v: 1 as const,
@@ -73,6 +73,31 @@ function harness(initialPolicy: DiscussionAnswerPolicyV1 = 'drafts_for_approval'
 }
 
 describe('Discussion direct-user creation policy', () => {
+  it('keeps a cross-Account draft private when the terminal return lacks a signed requester binding', async () => {
+    const state = harness();
+    const requestLocalId = 'original-input';
+    const acceptedTurnId = 'original-turn';
+    const home = 'srv_home';
+    const addressing = { discussionId: input.discussionId, messageId: input.replyTarget.messageId,
+      throughSeq: 1, participantSessionId: 'receiver' };
+    const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'receiver', localId: requestLocalId, acceptedTurnId });
+    const result = await state.executor.execute('discussion.reply', { ...input, localId }, { ...context,
+      actionCaller: { kind: 'host' }, actionRequestId: localId,
+      discussionReplyReturn: { serverId: home, requestLocalId, acceptedTurnId },
+      sessionInputSource: { sourceSessionId: 'receiver', sourceInputId: requestLocalId, sourceTurnId: acceptedTurnId,
+        via: 'action', discussionAddressing: addressing },
+      actionRequestAttributionV1: { requestRef: requestLocalId, requester: { serverId: home, accountId: 'bob' },
+        persona: { serverId: home, sessionId: 'receiver' }, origin: { kind: 'discussion',
+          discussion: { serverId: home, discussionId: addressing.discussionId }, messageId: addressing.messageId } },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+    expect(state.stored()).toBeNull();
+    expect(state.publications).toHaveLength(0);
+    if (result.ok) throw new Error('Expected an approval admission refusal');
+    expect(classifySessionMessageReplyPublicationFailureV1(result.errorCode, 'action_admission'))
+      .toEqual({ code: 'approval_requester_unavailable', phase: 'action_admission', retryable: true });
+  });
+
   it('prepares participant policy once for the same admitted dispatch and reads it afresh for a new request', async () => {
     const state = harness('when_addressed');
     const prepared = await state.executor.prepare('discussion.reply', input, context);

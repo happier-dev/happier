@@ -7,7 +7,7 @@ import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProg
 function isRetryableSessionMessageReplyPublicationCodeV1(code: unknown): boolean {
   return code === 'discussions_unavailable' || code === 'discussion_content_unavailable'
     || code === 'discussion_data_key_changed' || code === 'recipient_key_unavailable'
-    || code === 'approval_context_unavailable' || code === 'cancelled'
+    || code === 'approval_context_unavailable' || code === 'approval_requester_unavailable' || code === 'cancelled'
     || code === 'outcome_unknown' || code === 'action_outcome_unknown';
 }
 
@@ -16,7 +16,7 @@ export const SessionMessageReplyPublicationFailureV1Schema = lazyZodSchema(() =>
   code: z.union([MachineAccessRefusalCodeV1Schema, WorkflowOperationErrorCodeV1Schema, z.enum([...DISCUSSION_ERROR_CODES_V1,
     'action_disabled', 'present_user_required', 'run_access_denied', 'approval_stale', 'action_failed',
     'unsupported_action', 'invalid_action_output', 'invalid_parameters', 'discussion_participant_required', 'discussion_answer_policy_denied',
-    'approval_context_unavailable', 'approval_invalid', 'approval_rejected', 'approval_canceled', 'cancelled', 'outcome_unknown', 'action_outcome_unknown',
+    'approval_context_unavailable', 'approval_requester_unavailable', 'approval_invalid', 'approval_rejected', 'approval_canceled', 'cancelled', 'outcome_unknown', 'action_outcome_unknown',
     'workflow_authorization_revoked'])]),
   phase: z.enum(['action_admission', 'workflow_publication', 'publisher_request', 'session_transport', 'session_publisher', 'machine_publisher']),
   retryable: z.boolean(),
