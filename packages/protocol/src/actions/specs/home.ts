@@ -199,6 +199,8 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/governance/claim',
     inputSchema: HomeGovernanceClaimInputV1Schema,
     outputSchema: HomeGovernanceClaimResultV1Schema,
+    projectObservationInput: redactObservationInputPaths('code'),
+    approvalPresentation: { inputHints: { fields: [] } },
     inputHints: { fields: [approvalField('code', 'Claim code', { required: true })] },
   }),
   homeDomainActionRow({

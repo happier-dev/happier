@@ -1286,7 +1286,7 @@ export function describeApprovalActionFields(input: Readonly<{
     kind: 'value', path, title: humanizeApprovalKey(path), value: 'null',
     selectedOptions: [{ label: 'Not set', labelKey: 'homeSettings.row.notSet' }],
   }));
-  let unrepresentable: ApprovalActionFieldsPresentation['unrepresentable'] = resolved.length === 0
+  let unrepresentable: ApprovalActionFieldsPresentation['unrepresentable'] = inferReviewFields && resolved.length === 0
     && (!isRecord(presentationInput) || Object.keys(presentationInput).length > 0
       || (isRecord(input.actionArgs) && Object.keys(input.actionArgs).length > 0))
     ? { path: '', reason: 'missing_required_context' } : null;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
-import { projectApprovalRequestForPublicRead } from './actionApprovalPresentation.js';
+import { describeApprovalRequestFields, projectApprovalRequestForPublicRead } from './actionApprovalPresentation.js';
 import { getActionSpec } from './actionSpecs.js';
 
 const queryPlan = {
@@ -10,6 +10,26 @@ const queryPlan = {
 };
 
 describe('public approval read schema', () => {
+  it.each(['open', 'rejected', 'executed'] as const)('keeps the Home claim code out of %s review fields and public reads', status => {
+    const spec = getActionSpec('home.governance.claim');
+    const code = 'synthetic-private-home-claim-code';
+    const actionArgs = spec.inputSchema.parse({ code });
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1, status, createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'cli' },
+      actionId: spec.id, actionArgs, preview: { actionId: spec.id, actionArgs }, summary: 'Claim this Home',
+      ...(status === 'rejected' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}),
+      ...(status === 'executed' ? {
+        decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: { executedAtMs: 3, ok: true, result: { status: 'claimed' } },
+      } : {}),
+    });
+
+    expect.soft(describeApprovalRequestFields(request)).toEqual({ rows: [], unrepresentable: null });
+    const publicRead = projectApprovalRequestForPublicRead(request);
+    expect(publicRead).toMatchObject({ actionId: spec.id, status, summary: 'Claim this Home' });
+    expect(JSON.stringify(publicRead)).not.toContain(code);
+  });
+
   it('reads the identity-only skill acknowledgment already persisted by older observation projection', () => {
     const result = { ok: true, skillId: 'review', revision: '1:1' };
     expect(getActionSpec('skills.create').outputSchema.safeParse(result).success).toBe(true);
