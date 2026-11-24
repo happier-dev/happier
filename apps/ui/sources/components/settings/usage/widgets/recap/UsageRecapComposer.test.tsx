@@ -174,7 +174,7 @@ describe('recap composer through authorized query and composition', () => {
     expect(details).toContain('invalid_type');
     expect(details).not.toContain('private-invalid-value');
     expect(screen.findAllByType(SurfaceStateCard)[0]!.findAll(node => node.props.children === details)).toHaveLength(0);
-    const disclosure = commandReader!.readCurrentUiContext()?.commands.find(command => command.title.endsWith(': common.details'));
+    const disclosure = commandReader!.readCurrentUiContext()?.commands.find(command => command.title.endsWith(': approvals.technicalDetails'));
     expect(disclosure).toBeDefined();
     await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
       input: { commandId: disclosure!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });

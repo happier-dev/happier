@@ -5,7 +5,7 @@ import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryRequest,
 
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { expandDisclosureAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -343,7 +343,7 @@ it.each([
   if (refused) {
     expect(screen.findHostByTestId('usage-page.header.scopeRefused.changeScope')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain('denied');
-    await screen.pressByTestIdAsync('usage-page.header.scopeRefused.technicalDetails.header');
+    await expandDisclosureAsync(screen.findAllByTestId('usage-page.header.scopeRefused.technicalDetails'));
     expect(screen.getTextContent()).toContain('denied');
   }
   if (!transient && !views) return;
@@ -408,7 +408,7 @@ it('only shows the quiet refusal for a fixed shared Session', async () => {
   expect(screen.findByTestId('usage-page.header.scopeRefused.changeScope')).toBeNull();
   expect(screen.getTextContent()).not.toContain(t('usage.board.page.sessionRecipientSubtitle'));
   expect(screen.getTextContent()).not.toContain('denied');
-  await screen.pressByTestIdAsync('usage-page.header.scopeRefused.technicalDetails.header');
+  await expandDisclosureAsync(screen.findAllByTestId('usage-page.header.scopeRefused.technicalDetails'));
   expect(screen.getTextContent()).toContain('denied');
 });
 

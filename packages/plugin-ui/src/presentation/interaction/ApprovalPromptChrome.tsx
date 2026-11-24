@@ -1,4 +1,4 @@
-import { Children, useEffect, useState, type ReactNode } from 'react';
+import { Children, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
@@ -8,6 +8,7 @@ import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js
 import { HappierText } from '../text/Text.js';
 import { resolveHappierWorkStatusSurfaceStyle, type HappierWorkStatusColors, type HappierWorkStatusTone } from '../work/workStatus.js';
 import { resolveHappierWorkTextStep } from '../work/workTheme.js';
+import { HappierApprovalFirstFactContext } from './approvalFirstFact.js';
 
 export type HappierApprovalPromptTextRender = (input: Readonly<{
   role: 'eyebrow' | 'title' | 'subtitle';
@@ -139,7 +140,12 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // and leave the facts one line short of the room they were counted for.
   const [decisionContent, setDecisionContent] = useState(0);
   const decisionHeight = decisionContent > 0 ? decisionContent + inset + (factsRuled ? step + 1 : 0) : 0;
-  const boundedMinHeight = headHeight + decisionHeight;
+  // The deciding fact (the facts' first row, as the shared fields table reports it) is never cut: the least the
+  // card takes keeps it in view between its head and its decision. Further facts scroll beneath it.
+  const [firstFactBottom, setFirstFactBottom] = useState(0);
+  const reportFirstFact = useCallback((bottomPx: number) => setFirstFactBottom((current) => current === bottomPx ? current : bottomPx), []);
+  const firstFactHeight = firstFactBottom > 0 && factsContent > 0 ? Math.min(firstFactBottom, factsContent) : firstFactBottom;
+  const boundedMinHeight = headHeight + firstFactHeight + decisionHeight;
   const onMeasure = props.onMeasure;
   const naturalHeight = bounded && headHeight > 0 ? headHeight + decisionHeight + factsContent : 0;
   useEffect(() => {
@@ -162,7 +168,8 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
     <View testID={props.testID} accessibilityRole={props.accessibilityRole}
       style={[surface, toneSurface, compact ? props.surfaceStyle : null, pinned ? { maxHeight: props.maxHeight,
         ...(boundedMinHeight > 0 ? { minHeight: boundedMinHeight } : null) } : null]}>
-      <View onLayout={bounded ? (event) => setHeadHeight(event.nativeEvent.layout.height) : undefined}
+      <View testID={props.testID ? `${props.testID}-head` : undefined}
+        onLayout={bounded ? (event) => setHeadHeight(event.nativeEvent.layout.height) : undefined}
         style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: compact ? COMPACT_MARK_GAP : ICON_TEXT_GAP,
         paddingHorizontal: inset, paddingTop: compact ? step : inset, paddingBottom: compact ? (hasBody || hasFooter ? COMPACT_PART_GAP : step) : step }}>
         {compact ? props.icon : <View style={{ width: ICON_SIZE, height: ICON_SIZE, alignItems: 'center', justifyContent: 'center' }}>{props.icon}</View>}
@@ -185,7 +192,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
             onScroll={renderFade ? (event) => setFactsOffset(event.nativeEvent.contentOffset.y) : undefined}
             onLayout={(event) => setFactsViewport(event.nativeEvent.layout.height)}
             onContentSizeChange={(_width, height) => setFactsContent(height)}>
-            {props.children}
+            <HappierApprovalFirstFactContext.Provider value={reportFirstFact}>{props.children}</HappierApprovalFirstFactContext.Provider>
           </ScrollView>
           {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
             content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES,
@@ -196,7 +203,8 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
           prompt's decisions start on its facts' column under the title, so the two read as one column. */}
       {props.footer ? <View style={{ flexShrink: 0, paddingLeft: inline ? factsStart : inset, paddingRight: inset, paddingBottom: compact ? step : inset,
         ...(factsRuled ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
-        <View onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
+        <View testID={props.testID ? `${props.testID}-decision` : undefined}
+          onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
       </View> : null}
     </View>
   );

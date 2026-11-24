@@ -2,6 +2,8 @@ import { View } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
+import { act } from 'react';
+import { HappierApprovalFields } from './ApprovalFields.js';
 import { HappierApprovalPromptChrome, resolveHappierApprovalFactsEdges, type HappierApprovalPromptChromeProps } from './ApprovalPromptChrome.js';
 
 const base: HappierApprovalPromptChromeProps = {
@@ -74,6 +76,36 @@ describe('HappierApprovalPromptChrome', () => {
         return getComputedStyle(node).paddingLeft;
       };
       expect(edge('decision')).toBe(edge('facts'));
+    } finally { view.unmount(); }
+  });
+
+  // UI refinements ruling 2026-11-24 10:02Z (DESIGN-ACCEPT-152 fix 6): a card's minimum counts its title, its first
+  // fact row (the deciding value) and its buttons, so a tray sharing its room never cuts the deciding fact.
+  it('counts the first fact row in a bounded card\'s minimum, and scrolls the rest and its Technical details inside', () => {
+    const heights: Array<Readonly<{ natural: number; minimum: number }>> = [];
+    const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" maxHeight={160}
+      onMeasure={(value) => heights.push(value)} footer={<View testID="decision" />}>
+      <HappierApprovalFields testID="fields" rows={[
+        { kind: 'value', key: 'title', label: 'Title', value: 'Release notes' },
+        { kind: 'value', key: 'session', label: 'Session', value: 'Review the checkout copy' },
+      ]} footer={<View testID="technical" />} />
+    </HappierApprovalPromptChrome>);
+    try {
+      const layout = (testID: string, y: number, height: number) => {
+        const node = view.container.querySelector(`[data-testid="${testID}"]`) as unknown as {
+          __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void;
+        } | null;
+        expect(node, testID).not.toBeNull();
+        act(() => { node!.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y, width: 600, height } } }); });
+      };
+      layout('card-head', 0, 40);
+      layout('card-decision', 0, 36);
+      layout('fields', 0, 120);
+      layout('fields.row:title', 8, 20);
+      // Title row (40), the first fact's bottom (8 + 20), the decision and its inset (36 + 12).
+      expect(heights.at(-1)?.minimum).toBe(40 + 28 + 36 + 12);
+      const scroller = view.container.querySelector('[data-testid="card-facts"]')!;
+      expect(scroller.contains(view.container.querySelector('[data-testid="technical"]'))).toBe(true);
     } finally { view.unmount(); }
   });
 

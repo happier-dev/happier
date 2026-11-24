@@ -409,7 +409,8 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
             <ActivitySpinner size={sizePx} color={theme.colors.text.secondary} animationEnabled={animationEnabled} />
         ),
         renderTile: () => null,
-        detailsLabel: t('common.details'),
+        // A reason code is a diagnostic: "Technical details" by the disclosure label rule (UI refinements 2026-11-24).
+        detailsLabel: t('approvals.technicalDetails'),
         // Quiet disclosure for the raw reason code: collapsed by default so the card leads with human
         // copy, one tap away when someone needs to report or debug.
         renderDetailsCaret: disclosure.renderCaret,

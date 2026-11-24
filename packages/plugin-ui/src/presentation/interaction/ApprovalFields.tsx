@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -11,6 +11,7 @@ import { happierPageTextMetrics } from '../layout/pageText.js';
 import type { HappierPortableStyle } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
 import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
+import { HappierApprovalFirstFactContext } from './approvalFirstFact.js';
 
 /** One labelled leaf of a structured value; a group heading has no value and indents what follows it by `depth`. */
 export type HappierApprovalFieldEntry<TSource = never> = Readonly<{
@@ -394,6 +395,13 @@ export function HappierApprovalFields<TSource = never>(
 ) {
   const { colors, space, styles, text } = useApprovalFieldsLook(props);
   const page = props.density === 'page';
+  // Inside a bounded prompt, the table reports where its first row (the deciding fact) ends within the facts.
+  const reportFirstFact = useContext(HappierApprovalFirstFactContext);
+  const [tableTop, setTableTop] = useState<number | null>(null);
+  const [firstRowBottom, setFirstRowBottom] = useState<number | null>(null);
+  useEffect(() => {
+    if (reportFirstFact && tableTop !== null && firstRowBottom !== null) reportFirstFact(tableTop + firstRowBottom);
+  }, [firstRowBottom, reportFirstFact, tableTop]);
   const keyText = (label: string) =>
     page ? text('tableLabel', label, styles.pageEntryLabel) : text('tableLabel', label);
   const valueText = (value: string, code = false) =>
@@ -495,6 +503,7 @@ export function HappierApprovalFields<TSource = never>(
   return (
     <View
       testID={props.testID}
+      onLayout={reportFirstFact ? (event) => setTableTop(event.nativeEvent.layout.y) : undefined}
       style={
         page
           ? { gap: space.s4 }
@@ -508,11 +517,15 @@ export function HappierApprovalFields<TSource = never>(
             }
       }
     >
-      {props.rows.map((row) =>
+      {props.rows.map((row, rowIndex) =>
         row.kind === 'value' || row.kind === 'entries' ? (
           <View
             key={row.key}
             testID={rowTestID(row)}
+            onLayout={reportFirstFact && rowIndex === 0 ? (event) => {
+              const { y, height } = event.nativeEvent.layout;
+              setFirstRowBottom(y + height);
+            } : undefined}
             style={{
               flexDirection: 'row',
               alignItems: 'baseline',
