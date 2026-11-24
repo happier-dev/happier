@@ -424,6 +424,8 @@ type HarnessOptions = Readonly<{
   search?: CollectionProps<Entry>['search'];
   create?: CollectionProps<Entry>['create'];
   sort?: CollectionProps<Entry>['sort'];
+  tableCells?: CollectionProps<Entry>['tableCells'];
+  tableColumnSizing?: CollectionProps<Entry>['tableColumnSizing'];
   summaryRows?: CollectionProps<Entry>['summaryRows'];
   sheetAfter?: CollectionProps<Entry>['sheetAfter'];
   renderDetail?: CollectionProps<Entry>['renderDetail'];
@@ -477,6 +479,8 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.search === undefined ? {} : { search: props.search })}
       {...(props.create === undefined ? {} : { create: props.create })}
       {...(props.sort === undefined ? {} : { sort: props.sort })}
+      {...(props.tableCells === undefined ? {} : { tableCells: props.tableCells })}
+      {...(props.tableColumnSizing === undefined ? {} : { tableColumnSizing: props.tableColumnSizing })}
       {...(props.summaryRows === undefined ? {} : { summaryRows: props.summaryRows })}
       {...(props.sheetAfter === undefined ? {} : { sheetAfter: props.sheetAfter })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
@@ -680,6 +684,62 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it('selects and edits the focused row field with the keyboard without opening the row', async () => {
+    const onEdit = vi.fn(() => true);
+    const onSelect = vi.fn();
+    const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [
+      { key: 'subject', title: 'Subject', minWidth: 100, priority: 1, render: (item: Entry) => item.title },
+    ] };
+    const held = (columnKey: string | null) => ({ rowKey: 'a', columnKey });
+    const view = mount({
+      anatomy: anatomyWithField, detail: 'none', reducedMotion: true,
+      tableCells: { selected: held(null), onSelect, onEdit },
+    });
+    try {
+      view.measure(1200);
+      const row = view.query('row:a')!;
+      act(() => {
+        row.focus();
+        row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      });
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith(held('subject'));
+      await view.update({ tableCells: { selected: held('subject'), onSelect, onEdit } });
+      act(() => {
+        view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+      });
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(held('subject'));
+      expect(view.openChanges).toEqual([]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('returns a column width only when its resize treatment submits an end intent', () => {
+    const onResizeEnd = vi.fn();
+    const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [
+      { key: 'subject', title: 'Subject', minWidth: 100, priority: 1, render: (item: Entry) => item.title },
+    ] };
+    const view = mount({
+      anatomy: anatomyWithField, detail: 'none', reducedMotion: true,
+      tableColumnSizing: {
+        widths: new Map([['subject', 220]]),
+        onResizeEnd,
+        renderHandle: ({ columnKey, width, resizeEnd }) => columnKey === 'subject'
+          ? <button aria-label="Resize Subject" onClick={() => resizeEnd(width + 25)} />
+          : null,
+      },
+    });
+    try {
+      view.measure(1200);
+      expect(onResizeEnd).not.toHaveBeenCalled();
+      const resize = view.container.querySelector<HTMLButtonElement>('[aria-label="Resize Subject"]')!;
+      act(() => { resize.click(); });
+      expect(onResizeEnd).toHaveBeenCalledExactlyOnceWith({ columnKey: 'subject', width: 245 });
+    } finally {
+      view.unmount();
+    }
+  });
+
   it.each(['list', 'table'] as const)('starts a right-to-left %s row title on the page side, keeping its own reading order', (presentation) => {
     const title = 'تعطل تسجيل الدخول — QA-F fixture';
     const view = mount({ items: [{ ...entries[0]!, title }], presentation, detail: 'none', reducedMotion: true });

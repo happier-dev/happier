@@ -51,6 +51,7 @@ export {
   type CollectionSort, type CollectionSummaryRow, type CollectionRowActions, type CollectionDetailHeader,
   type CollectionHeaderSlots, type CollectionDetailRenderContext, type CollectionSingleChoice,
   type CollectionProps, type CollectionLoadingRowsProps,
+  type CollectionTableCell, type CollectionTableColumnResize,
 } from './Collection.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';

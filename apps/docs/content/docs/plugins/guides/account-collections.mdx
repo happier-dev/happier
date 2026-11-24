@@ -213,6 +213,19 @@ the next page sends the cursor returned by the previous page, so a table never
 sorts only the rows already loaded. Every sortable field must name a declared
 Collection index; fields without one remain presentation-only.
 
+## Selecting cells and resizing columns
+
+In 0.3 development builds, pass `tableCells` to a Collection table to keep a
+controlled selection by row key and column key. The title cell uses a `null`
+column key. Arrow keys move the selection, Enter and Space select the focused
+cell, and F2 calls `onEdit` for that cell when supplied. The caller owns the edit
+flow and decides whether the cell is editable.
+
+`tableColumnSizing` accepts current widths and a `renderHandle` that receives
+`resizeEnd`. Call `resizeEnd` when the gesture completes. Collection applies the
+column's minimum and emits one `onResizeEnd` intent when the width changes. Keep
+widths in local interaction state.
+
 ## Writing more rows than one batch carries
 
 `batch` is atomic: every operation in one call applies together or none does.

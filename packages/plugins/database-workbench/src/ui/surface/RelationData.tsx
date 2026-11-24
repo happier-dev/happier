@@ -28,11 +28,15 @@ import {
   Collection,
   useHappierCollection,
   useListMultiSelectionController,
+  usePluginUiFocusTarget,
+  type CollectionTableCell,
+  type CollectionTableColumnResize,
 } from '@happier-dev/plugin-ui/components';
 import {
   WorkbenchProvider,
   useRelationPage,
   useWorkbenchCellState,
+  useWorkbenchColumnWidths,
   useWorkbenchDraft,
   useWorkbenchInstance,
   useWorkbenchLocation,
@@ -116,6 +120,7 @@ function RowDetail(
     columns: readonly PageColumn[];
     relation: DatabaseRelationV1;
     editable: boolean;
+    editCell: CollectionTableCell | null;
     reason?: string;
     tools: ValueTools;
     /** The other tables whose rows point at this table (D41). */
@@ -229,6 +234,8 @@ function RowDetail(
             column={column}
             cell={props.row.cells[index]}
             editable={props.editable && identity !== undefined}
+            editRequest={props.editCell?.rowKey === props.row.rowKey &&
+              (props.editCell.columnKey ?? props.columns[0]?.name) === column.name ? props.editCell : null}
             rowKey={props.row.rowKey}
             onStage={stage}
             translate={translate}
@@ -382,11 +389,16 @@ function rowIdentity(
     reviewLabel: [key ?? row.rowKey, named >= 0 ? title : null].filter(Boolean).join(' · ') };
 }
 
+function isTextEditorCell(column: PageColumn | undefined, cell: DatabaseCellV1 | undefined): boolean {
+  return column?.kind === 'text' && (cell?.type === 'text' || cell?.type === 'null');
+}
+
 function RowField(
   props: Readonly<{
     column: PageColumn;
     cell: DatabaseCellV1 | undefined;
     editable: boolean;
+    editRequest: CollectionTableCell | null;
     rowKey: string;
     onStage: (column: string, value: DatabaseValueV1 | null) => void;
     translate: PluginTranslate;
@@ -397,11 +409,11 @@ function RowField(
   const state = useWorkbenchCellState(props.rowKey, props.column.name);
   const shown = presentCell(props.cell, props.translate, { identifier: isIdentifierColumn(props.column) });
   // Text-like values edit in place; other kinds, cut values and binary stay read-only here.
-  const textual =
-    props.editable &&
-    !shown.incomplete &&
-    props.column.kind === 'text' &&
-    (props.cell?.type === 'text' || props.cell?.type === 'null');
+  const textual = props.editable && isTextEditorCell(props.column, props.cell);
+  const focusTarget = usePluginUiFocusTarget();
+  React.useLayoutEffect(() => {
+    if (textual && props.editRequest !== null) focusTarget.focus();
+  }, [focusTarget, props.editRequest, textual]);
   const [value, setValue] = React.useState(
     props.cell?.type === 'text' ? props.cell.value : '',
   );
@@ -475,6 +487,7 @@ function RowField(
         <Stack gap="small">
           <TextField
             label={props.column.name}
+            focusTarget={focusTarget}
             value={value}
             onChange={setValue}
             autoCorrect={false}
@@ -512,6 +525,34 @@ export function RelationData(
   const location = useWorkbenchLocation();
   const page = useRelationPage(location);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
+  const [selectedCell, setSelectedCell] = React.useState<CollectionTableCell | null>(null);
+  const [editCell, setEditCell] = React.useState<CollectionTableCell | null>(null);
+  const openRow = React.useCallback((key: string | null) => {
+    setEditCell(null);
+    setOpenKey(key);
+  }, []);
+  const editSelectedCell = React.useCallback(({ rowKey, columnKey }: CollectionTableCell) => {
+    if (!page.capabilities.edit) return false;
+    const row = page.rows.find(candidate => candidate.rowKey === rowKey);
+    const index = columnKey === null ? 0 : page.columns.findIndex(column => column.name === columnKey);
+    if (row?.identity === undefined || !isTextEditorCell(page.columns[index], row.cells[index])) return false;
+    setEditCell({ rowKey, columnKey });
+    setOpenKey(rowKey);
+    return true;
+  }, [page.capabilities.edit, page.columns, page.rows]);
+  const columnWidths = useWorkbenchColumnWidths(props.relation);
+  const widthMap = React.useMemo(() => {
+    const widths = new Map<string | null, number>();
+    page.columns.forEach((column, index) => {
+      const width = columnWidths.widths[column.name];
+      if (typeof width === 'number') widths.set(index === 0 ? null : column.name, width);
+    });
+    return widths;
+  }, [columnWidths.widths, page.columns]);
+  const resizeColumn = React.useCallback(({ columnKey, width }: CollectionTableColumnResize) => {
+    const column = columnKey ?? page.columns[0]?.name;
+    if (column !== undefined) columnWidths.commit(column, width);
+  }, [columnWidths.commit, page.columns]);
   const [previous, setPrevious] = React.useState<
     readonly WorkbenchLocation['page'][]
   >([]);
@@ -537,7 +578,7 @@ export function RelationData(
     items: page.rows,
     keyOf: (row) => row.rowKey,
     openKey,
-    onOpenChange: setOpenKey,
+    onOpenChange: openRow,
   });
   // D27 #8: rows chosen for export; the List owns which loaded rows can be chosen.
   const selection = useListMultiSelectionController({
@@ -604,7 +645,7 @@ export function RelationData(
   const open = openKey
     ? page.rows.find((row) => row.rowKey === openKey)
     : undefined;
-  const closeRow = () => setOpenKey(null);
+  const closeRow = () => openRow(null);
   // Pushed (a phone) or in the host pane, the band names the row; beside the table the pane names it itself.
   const detailHeader = (key: string) => {
     const row = page.rows.find((candidate) => candidate.rowKey === key);
@@ -690,6 +731,8 @@ export function RelationData(
       detail="auto"
       detailOpenIntent="explicit"
       sort={sort}
+      tableCells={{ selected: selectedCell, onSelect: setSelectedCell, onEdit: editSelectedCell }}
+      tableColumnSizing={{ widths: widthMap, onResizeEnd: resizeColumn }}
       selection={{ multiple: { store: selection } }}
       collapsedGroups={EMPTY_SET}
       loading={page.status === 'loading' && page.rows.length === 0}
@@ -744,6 +787,7 @@ export function RelationData(
               uniqueColumns={page.uniqueColumns ?? NO_UNIQUE}
               inlineHeader={detailContext.headerHosted ? null : { onClose: closeRow }}
               editable={page.capabilities.edit}
+              editCell={editCell}
               {...(page.capabilities.reason
                 ? { reason: page.capabilities.reason }
                 : {})}

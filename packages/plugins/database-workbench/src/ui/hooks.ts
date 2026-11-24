@@ -165,7 +165,10 @@ export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
     const subscribe = useCallback((listener: () => void) => instance.widths.subscribe(key, listener), [instance, key]);
     const get = useCallback(() => instance.widths.get(key), [instance, key]);
     const value = useSyncExternalStore(subscribe, get, get);
-    const commit = useCallback((widths: Readonly<Record<string, number>>) => instance.widths.set(key, widths), [instance, key]);
+    const commit = useCallback((column: string, width: number) => {
+        const held = instance.widths.get(key);
+        instance.widths.set(key, { ...held, [column]: width });
+    }, [instance, key]);
     return useMemo(() => ({ widths: value, commit }), [value, commit]);
 }
 export function useDatabaseAccess(targetKey: string) {

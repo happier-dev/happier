@@ -20,6 +20,7 @@ import { PluginUiSurfaceNoticeContext } from '../presentationHost/surfaceNotice.
 import {
   resolveHappierUiPalette,
   useHappierUiAccessibility,
+  useHappierUiLocalization,
   useHappierUiTheme,
   useOptionalHappierUiAccessibility,
   useOptionalHappierUiPalette,
@@ -94,7 +95,7 @@ import { Dropdown } from './Overlay.js';
 import { HappierSkeletonRows, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
 import { HappierListSection } from '../presentation/collection/List.js';
 import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
-import { encodeHappierSectionRowCellKey, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
+import { encodeHappierSectionRowCellKey, resolveHappierRovingSelection, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
 import { HAPPIER_ITEM_DENSITY_ROW_HEIGHT, HAPPIER_ROW_CONTENT_POINTER_EVENTS, HAPPIER_ROW_CONTROL_POINTER_EVENTS } from '../presentation/collection/List.js';
 import { HappierRadioMark } from '../presentation/form/RadioMark.js';
 import { HAPPIER_DISCLOSURE_CHEVRON_METRICS, HappierChevron, HappierDisclosureChevron } from '../presentation/collection/DisclosureChevron.js';
@@ -481,6 +482,10 @@ export type CollectionSingleChoice<Item> = Omit<ListSingleChoiceCapabilityProps<
   unavailableReason?: (item: Item) => string | null;
 }>;
 
+/** A visible field in a keyed table row. A null column key identifies the title column. */
+export type CollectionTableCell = Readonly<{ rowKey: HappierCollectionKey; columnKey: string | null }>;
+export type CollectionTableColumnResize = Readonly<{ columnKey: string | null; width: number }>;
+
 export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<{
   labels?: Readonly<{ resize: string; resizeHint?: string; resizeValue?: (px: number) => string }>;
   model: HappierCollectionModel<Item>;
@@ -562,6 +567,21 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   collapsedGroups?: ReadonlySet<string>;
   /** Sortable field titles in the table (`CollectionField.sortable`); the Collection never reorders. */
   sort?: CollectionSort;
+  /** The author holds the selected cell and owns what an edit request does. */
+  tableCells?: Readonly<{
+    selected: CollectionTableCell | null;
+    onSelect: (cell: CollectionTableCell) => void;
+    onEdit?: (cell: CollectionTableCell) => boolean;
+  }>;
+  /** Opt-in widths in unscaled pixels for a horizontally scrolling table. */
+  tableColumnSizing?: Readonly<{
+    widths: ReadonlyMap<string | null, number>;
+    onResizeEnd: (intent: CollectionTableColumnResize) => void;
+    renderHandle?: (input: CollectionTableColumnResize & Readonly<{
+      minWidth: number;
+      resizeEnd(width: number): void;
+    }>) => ReactNode;
+  }>;
   /** Totals rows after the last group, aligned under the field columns (two columns in the list). */
   summaryRows?: readonly CollectionSummaryRow[];
   /**
@@ -746,6 +766,7 @@ const SLOT_KEYS: readonly SlotKey[] = ['where', 'reason', 'signal', 'agent', 'ti
 const TRAILING_SLOT_KEYS: ReadonlySet<SlotKey> = new Set(['titleMeta', 'age']);
 
 type ResolvedColumn<Item> = HappierCollectionTableColumn & Readonly<{
+  sizing?: Readonly<{ width: number; minWidth: number }>;
   title: string;
   /** The header's second line (`CollectionField.subtitle`). */
   subtitle?: string;
@@ -954,6 +975,7 @@ function resolveColumns<Item>(
   textScale: number,
   rowAccessoryWidth: number,
   leadingWidth: number,
+  widths?: ReadonlyMap<string | null, number>,
 ): readonly ResolvedColumn<Item>[] {
   const declared: ResolvedColumn<Item>[] = [{
     key: 'title',
@@ -1005,7 +1027,19 @@ function resolveColumns<Item>(
   for (const slot of SLOT_KEYS) if (TRAILING_SLOT_KEYS.has(slot)) slotColumn(slot);
   const available = width - TABLE.insetStart - TABLE.insetEnd - tableGlyphWidth(anatomy) - rowAccessoryWidth - leadingWidth;
   if (anatomy.columnsOverflow === 'scroll') {
-    const guttered = declared.map((column, index) => (index === 0 ? column : { ...column, minWidth: column.minWidth + TABLE.gap, gutter: true as const }));
+    const guttered = declared.map((column, index) => {
+      const minWidth = column.minWidth / textScale;
+      const held = widths?.get(column.fieldKey);
+      const sizing = widths !== undefined && (index === 0 || column.fieldKey !== null)
+        ? { minWidth, width: held !== undefined && Number.isFinite(held) ? Math.max(minWidth, held) : minWidth }
+        : undefined;
+      return {
+        ...column,
+        ...(sizing === undefined ? {} : { sizing }),
+        minWidth: (sizing === undefined ? column.minWidth : sizing.width * textScale) + (index === 0 ? 0 : TABLE.gap),
+        ...(index === 0 ? {} : { gutter: true as const }),
+      };
+    });
     return resolveHappierCollectionTableColumns({ columns: guttered, availableWidth: available, gap: TABLE.gap, overflow: 'scroll' });
   }
   return resolveHappierCollectionTableColumns({ columns: declared, availableWidth: available, gap: TABLE.gap });
@@ -2779,10 +2813,32 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // A data grid shares its spare room by the width its rows actually stand in (the list beside a detail).
   const [gridViewportWidth, setGridViewportWidth] = useState(0);
   const tableWidth = gridScroll && gridViewportWidth > 0 ? gridViewportWidth : size?.width ?? 0;
+  const tableColumnSizing = props.tableColumnSizing;
+  const columnWidths = tableColumnSizing?.widths;
   const columns = useMemo(
-    () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth),
-    [accessibility.textScale, anatomy, rowAccessoryWidth, tableWidth, treeLeadingWidth],
+    () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth, columnWidths),
+    [accessibility.textScale, anatomy, columnWidths, rowAccessoryWidth, tableWidth, treeLeadingWidth],
   );
+  const tableCells = rowGeometry === 'table' ? props.tableCells : undefined;
+  const hasTableCells = tableCells !== undefined;
+  const { direction } = useHappierUiLocalization();
+  const cellColumns = useMemo(() => hasTableCells ? columns.flatMap(column =>
+    column.key === 'title' || column.fieldKey !== null ? [{ key: column.fieldKey, disabled: false }] : []) : [], [columns, hasTableCells]);
+  const tableCellsRef = useRef(tableCells);
+  tableCellsRef.current = tableCells;
+  const onTableCellKey = useCallback((key: string, rowKey: string, event: unknown) => {
+    const interaction = tableCellsRef.current;
+    if (interaction === undefined || hasKeyModifier(event)) return false;
+    const selected = interaction.selected?.rowKey === rowKey ? interaction.selected.columnKey : null;
+    const index = Math.max(0, cellColumns.findIndex(column => column.key === selected));
+    const column = cellColumns[index];
+    if (column === undefined) return false;
+    if (key === 'F2') return interaction.onEdit?.({ rowKey, columnKey: column.key }) ?? false;
+    if (key !== 'ArrowRight' && key !== 'ArrowLeft') return false;
+    const next = resolveHappierRovingSelection({ entries: cellColumns, currentIndex: index, key, rtl: direction === 'rtl' });
+    if (next !== null && next !== index) interaction.onSelect({ rowKey, columnKey: cellColumns[next]!.key });
+    return true;
+  }, [cellColumns, direction]);
   // A data grid's rows stand at their columns' full width (scrolling sideways past their room), list rows at the room.
   const gridRowsWidth = !gridScroll ? 0 : rowGeometry === 'table'
     ? Math.max(tableContentWidth(anatomy, columns, rowAccessoryWidth, treeLeadingWidth), tableWidth)
@@ -2902,6 +2958,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     focus: { key: model.focusKey, tabStopKey, request: model.focusRequest,
       onRequestHandled: model.actions.consumeFocusRequest,
       ...(singleChoice === undefined ? { onKey: (key: string, from: string, event: unknown) => {
+        if (onTableCellKey(key, from, event)) return true;
         if (treeNodes !== null && (key === 'ArrowRight' || key === 'ArrowLeft') && !hasKeyModifier(event)) {
           const intent = resolveHappierTreeKeyIntent(treeNodes, from, key);
           if (intent?.kind === 'focus') model.actions.requestFocus(intent.key);
@@ -3001,7 +3058,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         {header}
       </driver.AnimatedView>
     ),
-  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageWindows, pageGeometry, pageSections, sheetShown, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
+  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, onTableCellKey, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageWindows, pageGeometry, pageSections, sheetShown, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
@@ -3185,6 +3242,19 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     ? TABLE.headerHeight + readCollectionLineHeight('meta', theme, typography, accessibility.textScale) - TABLE.headerSubtitleOverlap
     : TABLE.headerHeight;
   const headerGlyph = anatomy.loadingGlyph === false ? null : <View style={glyphStyle} />;
+  const resizeHandle = (column: ResolvedColumn<Item>) => {
+    const sizing = column.sizing;
+    if (sizing === undefined || tableColumnSizing?.renderHandle === undefined) return null;
+    const columnKey = column.fieldKey;
+    return tableColumnSizing.renderHandle({
+      columnKey, ...sizing,
+      resizeEnd(width) {
+        if (!Number.isFinite(width)) return;
+        const acceptedWidth = Math.max(sizing.minWidth, width);
+        if (acceptedWidth !== sizing.width) tableColumnSizing.onResizeEnd({ columnKey, width: acceptedWidth });
+      },
+    });
+  };
   const columnHeader = !headerBar ? null : rowGeometry === 'list' && transition === null ? (
     <View style={[tableRowContentStyle, { height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }]}>
       {headerGlyph}
@@ -3193,7 +3263,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     <driver.AnimatedView value={progress} tracks={transitionTracks} style={{ height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
       <View
         // Titles are read from the rows' own names; only sort buttons are controls a reader reaches here.
-        {...(sortableHeader ? {} : { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const })}
+        {...(sortableHeader || tableColumnSizing?.renderHandle !== undefined ? {} : { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const })}
         style={[tableRowContentStyle, { height: headerHeight - 1, paddingRight: TABLE.insetEnd + rowAccessoryWidth + 1 }]}
       >
         {treeStage === null ? null : <View style={{ width: TABLE.treeIndent }} />}
@@ -3204,6 +3274,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               key={column.key}
               column={column as ResolvedColumn<unknown>}
               sort={props.sort}
+              resizeHandle={resizeHandle(column)}
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:title` })}
             />
           ) : props.sort !== undefined
@@ -3213,6 +3284,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               key={column.key}
               column={column as ResolvedColumn<unknown>}
               sort={props.sort}
+              resizeHandle={resizeHandle(column)}
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:${column.key}` })}
             />
           ) : column.sortable && props.sort !== undefined && column.fieldKey !== null ? (
@@ -3221,15 +3293,17 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               column={column as ResolvedColumn<unknown>}
               fieldKey={column.fieldKey}
               sort={props.sort}
+              resizeHandle={resizeHandle(column)}
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:${column.fieldKey}` })}
             />
           ) : (
             <View key={column.key} style={cellStyle(column as ResolvedColumn<unknown>)}
-              {...(sortableHeader ? { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const } : {})}>
+              {...(sortableHeader && tableColumnSizing?.renderHandle === undefined ? { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const } : {})}>
               <HappierText variant="meta" tone={column.key === 'title' ? 'neutral' : 'muted'} numberOfLines={1}>
                 {column.title}
               </HappierText>
               <ColumnSubtitle column={column as ResolvedColumn<unknown>} />
+              {resizeHandle(column)}
             </View>
           )
         ))}
@@ -3679,6 +3753,7 @@ function CollectionOrderHeader(props: Readonly<{
   column: ResolvedColumn<unknown>;
   sort: CollectionSort;
   testID?: string;
+  resizeHandle?: ReactNode;
 }>): ReactElement {
   const [open, setOpen] = useState(false);
   const orderKeys = props.sort.orderColumns?.[props.column.key];
@@ -3706,6 +3781,7 @@ function CollectionOrderHeader(props: Readonly<{
         onSelect={props.sort.onChange}
       />
       {current === undefined ? null : <CollectionSortArrow sort={props.sort} testID={props.testID} />}
+      {props.resizeHandle}
     </View>
   );
 }
@@ -3715,6 +3791,7 @@ function CollectionSortHeader(props: Readonly<{
   column: ResolvedColumn<unknown>;
   fieldKey: string;
   sort: CollectionSort;
+  resizeHandle?: ReactNode;
   testID?: string;
   /** Outside the table's columns (a list's sheet bar) the title keeps its own width. */
   cellStyle?: HappierPortableStyle;
@@ -3737,6 +3814,7 @@ function CollectionSortHeader(props: Readonly<{
         ) : null}
       </HappierPressable>
       <ColumnSubtitle column={props.column} />
+      {props.resizeHandle}
     </View>
   );
 }
