@@ -3231,6 +3231,18 @@ the existing V1 operation adapter continues to omit these details.
 
 ## Shared-Machine Workflow requester custody (unreleased 0.3)
 
+Fresh saved Workflow Run now requests return the guest Session start refusal
+`target_unavailable` if Machine admission denies access and no assignment can
+run. The Home sends the content-free code with HTTP 409 before creating a Run.
+An empty assignment has its existing validation response. Idempotent retries of
+admitted requests keep their existing receipt.
+
+Private Automation definition detail, including explicit details queries, can
+carry `scheduleHolds` entries with a trigger ID, `open_occurrence` and the owning
+Account's Run ID. A recurring unscoped schedule retains its open incumbent
+across cadence edits. Earlier responses omit the hold evidence. Use matching
+0.3 development Home and Protocol readers for the closed detail response.
+
 The existing `requester_session_bootstrap_v1` private installed message supports
 `scope: 'workflow_trigger'`, with an exact Machine target, opaque scope id,
 optional Automation id for trigger custody, and `retain`/`retire` operation. A Session message keeps its existing absent scope

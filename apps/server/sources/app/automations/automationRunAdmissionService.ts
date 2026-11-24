@@ -49,6 +49,7 @@ export type AutomationRunAdmissionIneligibleReason =
     | "automationNotFound"
     | "automationDisabled"
     | "noEnabledAssignment"
+    | "target_unavailable"
     | "machineRequired"
     | "triggerNotFound"
     | "triggerDisabled"
@@ -329,6 +330,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
     scopedConversationMatches: boolean;
     invocationPlacement: boolean;
     runTargetAdmission: WorkflowMachineAdmission | undefined;
+    manualAssignmentAccessDenied: boolean;
 }>): PreparedAutomationRunAdmissionResult {
     const cause = params.cause;
     const existing = findExistingRun({
@@ -379,6 +381,9 @@ function prepareAutomationRunAdmission(params: Readonly<{
     // is permanently unclaimable.
     // Rejoin above keeps already-admitted Runs on their immutable snapshots.
     if (admissionAutomation.assignments.length === 0) {
+        if (cause.kind === "manual" && params.manualAssignmentAccessDenied) {
+            return { kind: "ineligible", reason: "target_unavailable" };
+        }
         return { kind: "ineligible", reason: params.invocationPlacement && cause.kind === "trigger"
             && cause.triggerKind === "action" ? "machineRequired" : "noEnabledAssignment" };
     }
@@ -703,21 +708,23 @@ export async function admitAutomationRunsTx(params: Readonly<{
             ...placedAdmissions.flatMap(({ request }) => workflowRecipes.has(request.automationId)
                 && request.runTargetMachineId !== undefined ? [request.runTargetMachineId] : []),
         ] });
+    const deniedAssignmentAutomationIds = new Set<string>();
     const automationsById = new Map(automations.map((automation) => [
         automation.id,
         {
             ...automation,
-            assignments: automation.assignments.filter((assignment) => (
-                (workflowRecipes.has(automation.id)
-                    ? machineAdmissions.get(assignment.machineId)?.kind === 'admitted'
-                    : assignment.machine.accountId === params.accountId)
-                && classifyMachineAvailabilityState(assignment.machine) !== "revoked"
-            )).map(assignment => {
-                const admission = workflowRecipes.has(automation.id) ? machineAdmissions.get(assignment.machineId) : undefined;
-                return admission?.kind === 'admitted'
-                    ? { ...assignment, machine: { ...assignment.machine, installationId: admission.installationId,
-                        accountId: admission.custodianAccountId } }
-                    : assignment;
+            assignments: automation.assignments.flatMap(assignment => {
+                if (!workflowRecipes.has(automation.id)) {
+                    return assignment.machine.accountId === params.accountId
+                        && classifyMachineAvailabilityState(assignment.machine) !== "revoked" ? [assignment] : [];
+                }
+                const admission = machineAdmissions.get(assignment.machineId);
+                if (admission?.kind === "denied" && admission.code === "access_denied") {
+                    deniedAssignmentAutomationIds.add(automation.id);
+                }
+                if (admission?.kind !== "admitted" || classifyMachineAvailabilityState(assignment.machine) === "revoked") return [];
+                return [{ ...assignment, machine: { ...assignment.machine, installationId: admission.installationId,
+                    accountId: admission.custodianAccountId } }];
             }),
         },
     ]));
@@ -741,6 +748,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
         scopedConversationMatches: scopedConversationMatches[index] === true,
         invocationPlacement,
         runTargetAdmission: request.runTargetMachineId === undefined ? undefined : machineAdmissions.get(request.runTargetMachineId),
+        manualAssignmentAccessDenied: deniedAssignmentAutomationIds.has(request.automationId),
     }));
 
     const results: AutomationRunAdmissionResult[] = [];

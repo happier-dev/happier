@@ -16,6 +16,7 @@ import { type Fastify } from "../../types";
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
 import { loadAutomationScheduleOccurrences } from '@/app/automations/automationScheduleOccurrenceProjection';
+import { loadAutomationScheduleHolds } from '@/app/automations/automationRunQueueService';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { admitExecutionRunLifecycleAutomationRunsTx } from "@/app/automations/automationRunLifecycleAdmission";
@@ -41,6 +42,7 @@ import {
     updateAutomationTrigger,
     AutomationDefinitionCreateConflictError,
     AutomationDisabledError,
+    AutomationRunTargetUnavailableError,
     AutomationTemplateMutationConflictError,
     AutomationTriggerCreateConflictError,
     AutomationTriggerMutationConflictError,
@@ -145,11 +147,12 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
+    const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences, scheduleHolds] = await Promise.all([
         loadAutomationEventStatusProjections({ automations: [automation], includePayloadSchemas: true }),
         loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
         loadAutomationLastRunAtProjections(automation.accountId, [automation.id]),
         loadAutomationScheduleOccurrences(automation.accountId, [automation.id]),
+        loadAutomationScheduleHolds(automation.accountId, [automation]),
     ]);
     return { ...toAutomationDefinitionDetailApiDto(
         automation,
@@ -157,7 +160,7 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
         lastRunAt.get(automation.id) ?? null,
         eventProjections,
         lifecycleProjections.get(automation.id),
-    ), scheduleOccurrences: scheduleOccurrences.get(automation.id) ?? [] };
+    ), scheduleOccurrences: scheduleOccurrences.get(automation.id) ?? [], scheduleHolds: scheduleHolds.get(automation.id) };
 }
 
 /** The legacy definition field consumes the same Run summary as Library; it is not persisted. */
@@ -226,18 +229,20 @@ export function registerAutomationV3Routes(
             if (page.legacySessionLifecycleSelections !== undefined) return AutomationDefinitionDetailsResponseSchema.parse(page);
             if (page.attached !== undefined) return AutomationDefinitionListResponseSchema.parse(page);
             const rows = page.automations;
-            const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
+            const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences, scheduleHolds] = await Promise.all([
                 loadAutomationEventStatusProjections({ automations: rows, ...('details' in query ? { includePayloadSchemas: true as const } : {}) }),
                 loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
                 loadAutomationLastRunAtProjections(accountId, rows.map(row => row.id)),
                 'details' in query ? loadAutomationScheduleOccurrences(accountId, rows.map(row => row.id)) : undefined,
+                'details' in query ? loadAutomationScheduleHolds(accountId, rows) : undefined,
             ]);
             const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
             if (!accountCurrentness) return sendStoredContentFailure(reply);
             if ('details' in query) {
                 return AutomationDefinitionDetailsResponseSchema.parse({
                     automations: rows.map(row => ({ ...toAutomationDefinitionDetailApiDto(row, accountCurrentness, lastRunAt.get(row.id) ?? null,
-                        eventProjections, lifecycleProjections.get(row.id)), scheduleOccurrences: scheduleOccurrences?.get(row.id) ?? [] })),
+                        eventProjections, lifecycleProjections.get(row.id)), scheduleOccurrences: scheduleOccurrences?.get(row.id) ?? [],
+                        scheduleHolds: scheduleHolds?.get(row.id) })),
                     nextCursor: page.nextCursor,
                 });
             }
@@ -716,6 +721,9 @@ export function registerAutomationV3Routes(
         } catch (error) {
             if (error instanceof AutomationDisabledError) {
                 return reply.code(409).send({ error: "automation_disabled" });
+            }
+            if (error instanceof AutomationRunTargetUnavailableError) {
+                return reply.code(409).send({ error: error.code });
             }
             if (!isAutomationDefinitionValidationError(error)) throw error;
             return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });

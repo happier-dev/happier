@@ -1,12 +1,16 @@
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { Prisma } from '@prisma/client';
 
+import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { afterTx } from "@/storage/inTx";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { computeNextDueAtForAutomation } from "./automationSchedulingService";
-import type { AutomationRunItem, AutomationScheduleKind } from "./automationTypes";
+import type { AutomationListItem, AutomationRunItem, AutomationScheduleKind } from "./automationTypes";
 import { AUTOMATION_RUN_TERMINAL_STATES, isTerminalAutomationRunState } from "./automationTypes";
 import { emitAutomationScheduleWake } from "./automationScheduleWake";
 import { catchUpAutomationRunLifecycleSourcesTx } from "./automationRunLifecycleAdmission";
@@ -14,6 +18,48 @@ import { markSharedWorkflowTriggerSummaryChangedInTx } from "./automationSharedW
 
 function isCanonicalScheduleKind(value: string | null): value is AutomationScheduleKind {
     return value === "cron" || value === "interval" || value === "once";
+}
+
+function hasOneOpenScheduleOccurrence(scopeSessionId: string | null): boolean {
+    return scopeSessionId === null;
+}
+
+function openScheduleOccurrencesWhere(accountId: string, triggerId: Prisma.AutomationRunWhereInput["triggerId"]) {
+    return { accountId, triggerId, causeTriggerKind: "schedule",
+        state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } } satisfies Prisma.AutomationRunWhereInput;
+}
+
+/** Project the same incumbent the queue checks, including after a cadence edit. */
+export async function loadAutomationScheduleHolds(
+    accountId: string,
+    automations: readonly Pick<AutomationListItem, "id" | "enabled" | "scopeSessionId" | "triggers">[],
+): Promise<Map<string, NonNullable<AutomationDefinitionDetail["scheduleHolds"]>>> {
+    const candidates = new Map<string, string>();
+    for (const automation of automations) {
+        if (!automation.enabled || !hasOneOpenScheduleOccurrence(automation.scopeSessionId)) continue;
+        for (const trigger of automation.triggers) {
+            if (trigger.kind === "schedule" && trigger.enabled && trigger.deletedAt === null
+                && (trigger.scheduleKind === "cron" || trigger.scheduleKind === "interval") && trigger.nextRunAt !== null) {
+                candidates.set(trigger.id, automation.id);
+            }
+        }
+    }
+    const byAutomation = new Map<string, NonNullable<AutomationDefinitionDetail["scheduleHolds"]>>();
+    for (const triggerIds of portableQueryChunks({
+        values: [...candidates.keys()], bindingsPerValue: 1, fixedBindings: 2 + AUTOMATION_RUN_TERMINAL_STATES.length,
+    })) {
+        const runs = await db.automationRun.findMany({
+            where: openScheduleOccurrencesWhere(accountId, { in: [...triggerIds] }),
+            select: { id: true, automationId: true, triggerId: true },
+        });
+        for (const run of runs) {
+            if (run.triggerId === null || candidates.get(run.triggerId) !== run.automationId) continue;
+            const holds = byAutomation.get(run.automationId) ?? [];
+            holds.push({ triggerId: AutomationTriggerIdSchema.parse(run.triggerId), reason: "open_occurrence", runId: run.id });
+            byAutomation.set(run.automationId, holds);
+        }
+    }
+    return byAutomation;
 }
 
 export function resolveScheduledRunDueAt(params: Readonly<{
@@ -120,15 +166,11 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         triggerId,
         evidence: { v: 1, kind: "schedule", scheduledFor },
     });
-    const scoped = trigger.automation.scopeSessionId !== null;
-    const open = scoped ? null : await params.tx.automationRun.findFirst({
-        where: {
-            triggerId: trigger.id,
-            causeTriggerKind: "schedule",
-            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-        },
+    const oneOpen = hasOneOpenScheduleOccurrence(trigger.automation.scopeSessionId);
+    const open = oneOpen ? await params.tx.automationRun.findFirst({
+        where: openScheduleOccurrencesWhere(trigger.automation.accountId, trigger.id),
         select: { occurrenceKey: true },
-    });
+    }) : null;
     if (open && open.occurrenceKey !== occurrenceKey) return null;
     const result = await admitAutomationRunTx({
         tx: params.tx,
@@ -142,7 +184,7 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         },
     });
     if (result.kind === "ineligible") return null;
-    if (trigger.scheduleKind === "once" || scoped || isTerminalAutomationRunState(result.run.state)) {
+    if (trigger.scheduleKind === "once" || !oneOpen || isTerminalAutomationRunState(result.run.state)) {
         await advanceAutomationScheduleCursorTx({
             tx: params.tx,
             run: result.run,

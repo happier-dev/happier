@@ -1350,6 +1350,15 @@ export class AutomationDisabledError extends Error {
     }
 }
 
+export class AutomationRunTargetUnavailableError extends Error {
+    readonly code = "target_unavailable";
+
+    constructor() {
+        super("target_unavailable");
+        this.name = "AutomationRunTargetUnavailableError";
+    }
+}
+
 export type AutomationAccountEncryptionMigrationResult =
     | Readonly<{ status: "applied" }>
     | Readonly<{ status: "not_empty" }>
@@ -6657,6 +6666,7 @@ export async function runAutomationNow(params: {
         if (admitted.kind === "ineligible") {
             if (admitted.reason === "automationNotFound") return null;
             if (admitted.reason === "automationDisabled") throw new AutomationDisabledError();
+            if (admitted.reason === "target_unavailable") throw new AutomationRunTargetUnavailableError();
             throw new AutomationValidationError(`Cannot admit manual Automation Run: ${admitted.reason}`);
         }
         return admitted.run as AutomationRunItem;

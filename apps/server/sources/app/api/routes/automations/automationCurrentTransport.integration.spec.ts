@@ -1,11 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
+import { removeMachineAccessGrantInTx } from "@/app/machines/machineAccess";
+import { admitDueAutomationScheduleTriggerTx } from "@/app/automations/automationRunQueueService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { setEligibleMachineAccessGrantInTx } from "@/testkit/machineAccessGrant.testkit";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { automationRoutes } from "./automationRoutes";
 import { AUTOMATION_TEMPLATE_V02_PLAIN } from "@happier-dev/protocol/testing/accountScopedCipherFixtures";
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from "@happier-dev/protocol/automations/automationWorkflowRecipeV2";
+
+function workflowRecipe(kind: "session" | "detached_run") {
+    return JSON.stringify(AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({
+        v: 2, templateVersion: 1, triggerEvidence: null,
+        workflow: { t: "plain", v: { workspace: { directory: "/repo" }, executionTarget: { kind } } },
+    }));
+}
 
 describe("Automation current transport and retained 0.2 data", () => {
     let harness: LightSqliteHarness;
@@ -18,6 +31,88 @@ describe("Automation current transport and retained 0.2 data", () => {
     }, 120_000);
 
     afterAll(async () => await harness.close());
+
+    it.each(["session", "detached_run"] as const)("preserves the revoked Machine refusal for Workflow Run now with a %s target", async kind => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const guest = await db.account.create({ data: { encryptionMode: "plain" } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: owner.id, installationId: randomUUID(), active: true,
+            metadata: encodePlainMachineStoredContent({ host: "test-host", platform: "linux",
+                happyCliVersion: "test", homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+        } });
+        const grant = { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: "account" as const, accountId: guest.id } };
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { ...grant, level: "view" })))
+            .toMatchObject({ kind: "saved" });
+        const definition = { accountId: guest.id, name: "Guest Workflow", enabled: true,
+            templateVersion: 1, templateCiphertext: workflowRecipe(kind) };
+        const automation = await db.automation.create({ data: {
+            ...definition, assignments: { create: { machineId: machine.id, enabled: true } },
+            triggers: { create: { kind: "schedule", scheduleKind: "interval", enabled: true, everyMs: 60_000 } },
+        } });
+        const unassigned = await db.automation.create({ data: definition });
+        await withAuthenticatedTestApp(automationRoutes, async app => {
+            const runNow = (id: string) => app.inject({ method: "POST", url: `/v3/automations/${id}/run-now`,
+                headers: { "x-test-user-id": guest.id, "idempotency-key": randomUUID() } });
+            const allowed = await runNow(automation.id);
+            expect(allowed.statusCode, allowed.body).toBe(200);
+            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, grant))).toMatchObject({ kind: "removed" });
+            const denied = await runNow(automation.id);
+            const noAssignment = await runNow(unassigned.id);
+            expect(await db.automationRun.count({ where: { accountId: guest.id } })).toBe(1);
+            expect(noAssignment.statusCode).toBe(400);
+            expect(noAssignment.json()).toEqual({ error: "Cannot admit manual Automation Run: noEnabledAssignment" });
+            expect(denied.statusCode, denied.body).toBe(409);
+            expect(denied.json()).toEqual({ error: "target_unavailable" });
+        });
+    });
+
+    it("returns the exact open Run holding a pending recurring schedule to its owner until settlement", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const other = await db.account.create({ data: { encryptionMode: "plain" } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, installationId: randomUUID(), metadata: "{}",
+        } });
+        const dueAt = new Date(Date.now() - 60_000);
+        const automation = await db.automation.create({ data: {
+            accountId: account.id, name: "Scheduled Workflow", enabled: true,
+            templateVersion: 1, templateCiphertext: workflowRecipe("detached_run"),
+            assignments: { create: { machineId: machine.id, enabled: true } },
+            triggers: { create: [{ kind: "schedule", scheduleKind: "interval", everyMs: 60_000, nextRunAt: dueAt },
+                { kind: "schedule", scheduleKind: "interval", everyMs: 60_000, nextRunAt: dueAt }] },
+        }, include: { triggers: true } });
+        const trigger = automation.triggers[0]!;
+        const admitted = await inTx(tx => admitDueAutomationScheduleTriggerTx({
+            tx, triggerId: trigger.id, expectedRevision: trigger.revision, expectedNextRunAt: dueAt, now: dueAt,
+        }));
+        expect(admitted?.kind).toBe("admitted");
+        const runId = admitted!.run.id;
+        await db.automationRun.update({ where: { id: runId }, data: {
+            state: "interrupted", leaseExpiresAt: dueAt,
+        } });
+        // A cadence edit keeps an open prior occurrence as the incumbent.
+        await db.automationTrigger.update({ where: { id: trigger.id }, data: { revision: { increment: 1 } } });
+        await withAuthenticatedTestApp(automationRoutes, async app => {
+            const read = (accountId: string) => app.inject({ method: "GET", url: `/v3/automations/${automation.id}`,
+                headers: { "x-test-user-id": accountId } });
+            const detail = await read(account.id);
+            const page = await app.inject({ method: "POST", url: "/v3/automations/query",
+                headers: { "x-test-user-id": account.id }, payload: { details: true } });
+            const foreign = await read(other.id);
+            expect(detail.statusCode, detail.body).toBe(200);
+            expect(page.statusCode, page.body).toBe(200);
+            expect(foreign.statusCode).toBe(404);
+            expect(foreign.body).not.toContain(runId);
+            const holds = [{ triggerId: trigger.id, reason: "open_occurrence", runId }];
+            expect(detail.json().scheduleHolds).toEqual(holds);
+            expect(page.json().automations).toEqual([expect.objectContaining({ id: automation.id, scheduleHolds: holds })]);
+            const cancelled = await app.inject({ method: "POST", url: `/v3/automations/runs/${runId}/cancel`,
+                headers: { "x-test-user-id": account.id } });
+            expect(cancelled.statusCode, cancelled.body).toBe(200);
+            expect((await read(account.id)).json().scheduleHolds).toBeUndefined();
+        });
+    });
 
     it('closes the retained Automation route when the canonical Workflow gate is disabled', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
