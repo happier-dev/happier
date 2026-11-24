@@ -147,4 +147,28 @@ describe('openCliMachinePresetsForRequester', () => {
       },
     ]);
   });
+
+  it('opens a Team preset for its recipient and reports the pending Team key for an undelivered envelope', async () => {
+    const key = new Uint8Array(32).fill(64);
+    const { publicKey, preset } = ownSealedPreset(key);
+    const teamPreset = { ...preset, owner: { kind: 'team' as const, teamId: 'team-a' } };
+    const token = tokenFor('owner');
+    const request = {
+      context: externalContext('owner'),
+      token,
+      credentials: {
+        token,
+        encryption: { type: 'dataKey' as const, machineKey: key, publicKey },
+      },
+      serverUrl: 'http://account.test',
+    };
+    await expect(openCliMachinePresetsForRequester({ ...request, presets: [teamPreset] })).resolves.toMatchObject([
+      { kind: 'opened', presetId: preset.id, content: { name: 'Private' } },
+    ]);
+    await expect(openCliMachinePresetsForRequester({
+      ...request, presets: [{ ...teamPreset, recipients: [] }],
+    })).resolves.toEqual([
+      { kind: 'unavailable', presetId: preset.id, code: 'team_preset_key_pending' },
+    ]);
+  });
 });

@@ -1,6 +1,6 @@
 import { isActionFamilyId } from '../actionFamilies.js';
-import { MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../../machines/managed/actionIdsV1.js';
-import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '../../../machines/managed/actionsV1.js';
+import { MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1, MANAGED_GET_ACTION_ID_V1 } from '../../../machines/managed/actionIdsV1.js';
+import { ManagedDeleteOutputV1Schema, ManagedGetOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '../../../machines/managed/actionsV1.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../../../machines/machineReferenceCensusV1.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
@@ -100,6 +100,15 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           });
           const failure = readActionFailureEnvelope(result);
           if (failure) return failure;
+          if (managedMachineActionId === MANAGED_GET_ACTION_ID_V1 && deps.machinePresetOpen) {
+            const read = ManagedGetOutputV1Schema.safeParse(result);
+            if (read.success && 'presetContent' in read.data && read.data.machine.preset.contentEncryptionMode === 'e2ee') {
+              const [opened] = await deps.machinePresetOpen({
+                presets: [read.data], context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+              });
+              if (opened) return { ok: true, result: { ...read.data, opened } };
+            }
+          }
           const projectedResult = machineReferences ? { ...readRecord(result), machineReferences } : result;
           if (managedMachineActionId === 'machines.managed.delete') {
             const deferred = { ok: true as const, result: projectedResult };
@@ -175,7 +184,7 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
   return null;
 }
 
-/** Attach the host's opening of the requester's own E2EE presets; the sealed carrier stays as the server returned it. */
+/** Attach the host's opening of the requester's E2EE presets to the server's sealed rows. */
 async function openMachinePresetRead(actionId: string, result: unknown, deps: ActionExecutorDeps,
   ctx: ActionExecutorContext): Promise<unknown> {
   if (!deps.machinePresetOpen) return result;

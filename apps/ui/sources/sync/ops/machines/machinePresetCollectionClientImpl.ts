@@ -6,13 +6,13 @@ import {
 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import {
     MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema,
+    selectAdmittedMachinePresetReadProjectionV1,
     type ManagedMachinePresetV1, type ManagedMachinePresetRecipientCensusInputV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import {
     createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetLaunchNameOverrideV1,
     createManagedMachinePresetResizeOverrideV1,
     createManagedMachinePresetSetupOverrideV1,
-    projectManagedMachinePresetForRecipientV1,
     replaceManagedMachinePresetAuthorContentV1,
     sealManagedMachinePresetContentV1,
     ManagedMachinePresetContentV1Schema,
@@ -521,12 +521,8 @@ export async function openStoredMachinePresetAtCustody(raw: ManagedMachinePreset
     const mode = raw.contentEncryptionMode;
     const custody = await (await reader())?.open(mode);
     if (!custody) return null;
-    const projection = mode === 'plain'
-        ? ManagedMachinePresetRecipientProjectionV1Schema.safeParse({ content: raw.content, recipientEnvelope: null }).data
-        : projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
-            recipientAccountId: custody.accountId });
-    if (!projection) return null;
-    if (mode === 'e2ee' && raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
+    const projection = selectAdmittedMachinePresetReadProjectionV1(raw, custody.accountId);
+    if (projection === MACHINE_PRESET_TEAM_KEY_PENDING) return projection;
     const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id, mode, projection, custody });
     if (!content) return null;
     const { content: _stored, recipients: _recipients, ...structural } = raw;

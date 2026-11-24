@@ -14,7 +14,7 @@ import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, 
 import {
   MANAGED_MACHINE_ACTION_IDS_V1,
   ManagedMachineActionInputSchemasV1,
-  ManagedMachineActionOutputSchemasV1,
+  ManagedMachineActionResultSchemasV1,
   managedMachineActionEndpointPathV1,
   type ManagedAcquireInputV1,
   type ManagedMachineActionIdV1,
@@ -113,7 +113,7 @@ function createManagedMachineActionSpecs() {
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'managed', 'exec'], visibility: 'canonical' }] },
     inputHints: { title: titles[actionId], fields: MANAGED_MACHINE_INPUT_FIELDS[actionId] },
     inputSchema: ManagedMachineActionInputSchemasV1[actionId],
-    outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
+    outputSchema: ManagedMachineActionResultSchemasV1[actionId],
     operation: { version: 1, visibility: 'activity', progress: 'indeterminate', cancellation: 'supported', presentation: { onStart: 'current' } },
   };
   const effect = isManagedEffectActionIdV1(actionId);
@@ -203,7 +203,7 @@ function createManagedMachineActionSpecs() {
     cli: { acceptsServerId: true, commands: [{ path: actionId.split('.'), visibility: 'canonical' }] },
     inputHints: { title: titles[actionId], fields: MANAGED_MACHINE_INPUT_FIELDS[actionId] },
     inputSchema: ManagedMachineActionInputSchemasV1[actionId],
-    outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
+    outputSchema: ManagedMachineActionResultSchemasV1[actionId],
     ...(isMachineSetupOperationActionIdV1(actionId)
       ? { completion: machineSetupCompletion(actionId) } : {}),
     ...(isManagedActionWithoutServerTransportV1(actionId) ? {} : {
@@ -253,7 +253,7 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     const title = `${verb[0]!.toUpperCase()}${verb.slice(1)} Machine preset`;
     return {
       id, executionPlacement: 'account', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' }, title, description: `${title} on the exact authenticated Home. ${read
-        ? 'For your own end-to-end encrypted preset, the host adds its opened content in the opened field; Saved Secret bindings stay references.'
+        ? 'The host adds opened content for end-to-end encrypted presets you can open with your Account key, including Team presets. Saved Secret bindings stay references.'
         : 'Preset changes affect future machines only.'}`,
       safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger', placements: [],
       bindings: { mcpToolName: `machines_presets_${verb}`, voiceClientToolName: `machines_presets_${verb}` },

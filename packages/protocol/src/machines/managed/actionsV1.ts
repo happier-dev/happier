@@ -21,9 +21,10 @@ import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRe
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
 import { isManagedOpaquePresetMachineV1, ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
 import { AcquireResultV1Schema, ManagedGuestPlatformV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
-import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_GET_ACTION_ID_V1, MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 export { MANAGED_CONTROL_ACTION_IDS_V1, type ManagedControlActionIdV1 } from './actionIdsV1.js';
 import { ManagedConfigurationFactsV1Schema, ManagedOneOffSelectionV1Schema, ManagedPresetSelectionV1Schema } from './managedConfigurationV1.js';
+import { ManagedMachinePresetOpenedContentV1Schema } from './managedMachinePresetV1.js';
 import { DevcontainerRebuildIntentV1Schema, ManagedIntentInputSchema, ManagedIntentResultSchema, ManagedActivityReadRequestV1Schema } from './managedIntentV1.js';
 import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
@@ -469,6 +470,18 @@ export const ManagedGetOutputV1Schema: z.ZodMiniUnion<[
   z.safeExtend(ManagedMachinePublicFullV1Schema, { retainedWorkflowRoot: z.optional(ExternalActionRetainedWorkflowRootV1Schema) }),
   z.safeExtend(ManagedOpaquePresetReadV1Schema, { retainedWorkflowRoot: z.optional(ExternalActionRetainedWorkflowRootV1Schema) }),
 ]));
+/** The receiving CLI may open the opaque snapshot locally for the requester. */
+type ManagedGetOpenedOpaqueReadSchema = ReturnType<typeof z.safeExtend<
+  ManagedReadWithRetainedWorkflowSchema<typeof ManagedOpaquePresetReadV1Schema>,
+  { opened: z.ZodMiniOptional<typeof ManagedMachinePresetOpenedContentV1Schema> }
+>>;
+export const ManagedGetActionOutputV1Schema: z.ZodMiniUnion<[
+  ManagedReadWithRetainedWorkflowSchema<typeof ManagedMachinePublicFullV1Schema>,
+  ManagedGetOpenedOpaqueReadSchema,
+]> = lazyZodSchema(() => {
+  const [plain, opaque] = ManagedGetOutputV1Schema.def.options;
+  return z.union([plain, z.safeExtend(opaque, { opened: z.optional(ManagedMachinePresetOpenedContentV1Schema) })]);
+});
 export const ManagedResourceTargetV1Schema = lazyZodSchema(() => z.strictObject(target()));
 export const ManagedGetInputV1Schema = lazyZodSchema(() => z.union([
   ManagedResourceTargetV1Schema,
@@ -841,6 +854,13 @@ export const ManagedMachineActionOutputSchemasV1: {
   'machines.managed.delete': ManagedDeleteOutputV1Schema,
   'machines.managed.controller.update': ManagedGetOutputV1Schema,
   'machines.managed.retire': ManagedGetOutputV1Schema,
+};
+/** The Action host can add local custody results after Home transport settles. */
+export const ManagedMachineActionResultSchemasV1: Omit<typeof ManagedMachineActionOutputSchemasV1, typeof MANAGED_GET_ACTION_ID_V1> & {
+  readonly [MANAGED_GET_ACTION_ID_V1]: typeof ManagedGetActionOutputV1Schema;
+} = {
+  ...ManagedMachineActionOutputSchemasV1,
+  [MANAGED_GET_ACTION_ID_V1]: ManagedGetActionOutputV1Schema,
 };
 export const ManagedControlAdmissionInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('machines.managed.power.set'), input: ManagedPowerInputV1Schema, requestId: id() }),

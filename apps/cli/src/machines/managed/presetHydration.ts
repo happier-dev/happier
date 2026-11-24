@@ -1,4 +1,5 @@
 import { ManagedMachinePresetRecipientCensusResultV1Schema, type ManagedMachinePresetRecipientCensusInputV1,
+    MACHINE_PRESET_TEAM_KEY_PENDING, selectAdmittedMachinePresetReadProjectionV1,
     type ManagedMachinePresetRecipientCensusResultV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -9,7 +10,7 @@ import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecre
 import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
     type ManagedMachineFullV1, type ManagedMachineV1, type ManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV1Schema, openManagedMachinePresetContentV1,
-    openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
+    openAdmittedManagedMachinePresetRecipientProjectionV1, openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
     resolveManagedMachinePresetResizeOverrideV1,
     rewrapManagedMachinePresetRecipientsV1,
     replaceManagedMachinePresetPreparationV1,
@@ -218,31 +219,21 @@ export function createManagedPresetHydrator(input: Readonly<{
     async function withPresetDefinition<T>(preset: ManagedMachinePresetV1,
         read: (opened: ManagedMachinePresetContentV1, open: ManagedPresetDefinitionOpener) => Promise<T>,
         signal?: AbortSignal): Promise<T> {
-        return await withVerifiedAccount(preset.contentEncryptionMode, signal, async account => {
-            const open: ManagedPresetDefinitionOpener = (content, recipients = preset.recipients) => preset.contentEncryptionMode === 'plain'
+        const mode = preset.contentEncryptionMode;
+        return await withVerifiedAccount(mode, signal, async account => {
+            const projection = selectAdmittedMachinePresetReadProjectionV1(preset, account.accountId);
+            if (projection === MACHINE_PRESET_TEAM_KEY_PENDING) throw new ManagedMachineControllerError(projection);
+            const opened = mode === 'plain'
+                ? openAdmittedManagedMachinePresetRecipientProjectionV1({ presetId: preset.id, mode, projection })
+                : account.accountKey === undefined ? null : openAdmittedManagedMachinePresetRecipientProjectionV1({
+                    presetId: preset.id, mode, projection, accountId: account.accountId, accountKey: account.accountKey });
+            if (!opened?.launch) throw new ManagedMachineControllerError('credential_unavailable');
+            const open: ManagedPresetDefinitionOpener = (content, recipients = preset.recipients) => mode === 'plain'
                 ? openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content })
                 : account.accountKey === undefined ? null : openManagedMachinePresetContentV1({ presetId: preset.id,
                     mode: 'e2ee', content, recipients, accountId: account.accountId, accountKey: account.accountKey });
-            const opened = await open(preset.content);
-            if (!opened?.launch) throw new ManagedMachineControllerError('credential_unavailable');
             return await read(opened, open);
         });
-    }
-
-    /**
-     * Open server-selected single-recipient projections of one persisted mode under one
-     * Account verification. An item this Account cannot open is null.
-     */
-    async function openRecipientProjections(params: Readonly<{
-        mode: 'plain' | 'e2ee';
-        items: readonly Readonly<{ presetId: string; projection: unknown }>[];
-        signal?: AbortSignal;
-    }>): Promise<(ManagedMachinePresetContentV1 | null)[]> {
-        return await withVerifiedAccount(params.mode, params.signal, account => params.items.map(item => params.mode === 'plain'
-            ? openManagedMachinePresetRecipientProjectionV1({ presetId: item.presetId, mode: params.mode,
-                projection: item.projection })
-            : account.accountKey === undefined ? null : openManagedMachinePresetRecipientProjectionV1({ presetId: item.presetId,
-                mode: params.mode, projection: item.projection, accountId: account.accountId, accountKey: account.accountKey })));
     }
 
     /** Open exactly the server-selected single-recipient setup/get projection. */
@@ -252,8 +243,11 @@ export function createManagedPresetHydrator(input: Readonly<{
         projection: unknown;
         signal?: AbortSignal;
     }>): Promise<ManagedMachinePresetContentV1> {
-        const [opened] = await openRecipientProjections({ mode: params.mode,
-            items: [{ presetId: params.presetId, projection: params.projection }], ...(params.signal ? { signal: params.signal } : {}) });
+        const opened = await withVerifiedAccount(params.mode, params.signal, account => params.mode === 'plain'
+            ? openManagedMachinePresetRecipientProjectionV1({ presetId: params.presetId, mode: params.mode, projection: params.projection })
+            : account.accountKey === undefined ? null : openManagedMachinePresetRecipientProjectionV1({
+                presetId: params.presetId, mode: params.mode, projection: params.projection,
+                accountId: account.accountId, accountKey: account.accountKey }));
         if (!opened) throw new ManagedMachineControllerError('credential_unavailable');
         return opened;
     }
@@ -604,7 +598,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         return projectManagedEnrollmentCorrelationV1(structural(machine), correlation);
     }
 
-    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRecipientProjections, openRead, withE2eeAccountKey, readRecipientCensus, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
+    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, readRecipientCensus, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
         replacePreparation, rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
 }
 

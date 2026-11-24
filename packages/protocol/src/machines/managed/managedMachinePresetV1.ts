@@ -21,6 +21,7 @@ import {
   createManagedMachinePresetStoredContentV1Schema,
   ManagedMachinePresetRecipientsV1Schema,
   ManagedMachinePresetContentV1Schema,
+  projectAdmittedManagedMachinePresetForRecipientV1,
 } from './managedMachinePresetContentV1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1 } from './machineSetupV1.js';
 
@@ -235,6 +236,17 @@ export const ManagedMachinePresetV1Schema = lazyZodSchema(() => createManagedMac
 export const ManagedMachinePresetV1ReadSchema = lazyZodSchema(() =>
   createManagedMachinePresetV1ReadSchema(PluginJsonValueV2Schema));
 export type ManagedMachinePresetV1 = z.infer<typeof ManagedMachinePresetV1Schema>;
+
+/** Home has admitted the row. Select only the viewer's delivered Account envelope. */
+export const MACHINE_PRESET_TEAM_KEY_PENDING = 'team_preset_key_pending';
+export function selectAdmittedMachinePresetReadProjectionV1(
+  preset: Pick<ManagedMachinePresetV1, 'owner' | 'contentEncryptionMode' | 'content' | 'recipients'>,
+  recipientAccountId: string,
+) {
+  const projection = projectAdmittedManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId });
+  return preset.contentEncryptionMode === 'e2ee' && preset.owner.kind === 'team' && projection.recipientEnvelope === null
+    ? MACHINE_PRESET_TEAM_KEY_PENDING : projection;
+}
 /** Exact acquisition routing is ephemeral; saved Presets never expose controller custody. */
 export const MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 = '/v1/machines/presets/resolve-acquire';
 export const ManagedMachinePresetAcquireRoutingInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -293,12 +305,13 @@ export const PresetMutationResultV1Schema = lazyZodSchema(() => z.discriminatedU
   ManagedMachinePresetRefusedV1Schema,
 ]));
 /**
- * The keyholding host's opening of one E2EE preset for the requester who owns it.
+ * The keyholding host's opening of one E2EE preset for its admitted requester.
  * The server never returns this: it sees only the sealed carrier in `preset`.
  */
 export const ManagedMachinePresetOpenedContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('opened'), presetId: id(), content: ManagedMachinePresetContentV1Schema }),
-  z.strictObject({ kind: z.literal('unavailable'), presetId: id(), code: ManagedRefusalCodeV1Schema }),
+  z.strictObject({ kind: z.literal('unavailable'), presetId: id(),
+    code: z.union([ManagedRefusalCodeV1Schema, z.literal(MACHINE_PRESET_TEAM_KEY_PENDING)]) }),
 ]));
 export type ManagedMachinePresetOpenedContentV1 = z.infer<typeof ManagedMachinePresetOpenedContentV1Schema>;
 export const ManagedMachinePresetGetResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

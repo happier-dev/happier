@@ -36,7 +36,8 @@ import { createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { projectAdmittedManagedMachinePresetForRecipientV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { encrypt, getRandomBytes } from './encryption';
@@ -370,7 +371,7 @@ describe('Account API token HTTP adapter', () => {
       create, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }]);
   });
 
-  it('opens the requester\'s own E2EE preset for Action readers through the host custody and keeps other Accounts\' presets sealed', async () => {
+  it('opens admitted Team and own E2EE presets through CLI custody while keeping other Accounts\' presets sealed', async () => {
     const ownerKey = new Uint8Array(32).fill(41);
     const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(ownerKey).publicKey;
     const otherPublicKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(42)).publicKey;
@@ -393,18 +394,30 @@ describe('Account API token HTTP adapter', () => {
     const own = sealedPreset('own-preset', 'owner', [recipient('owner', ownerPublicKey)]);
     // Another Account's preset shared to the requester: its envelope opens with the requester's key, yet it stays sealed.
     const foreign = sealedPreset('foreign-preset', 'other', [recipient('other', otherPublicKey), recipient('owner', ownerPublicKey)]);
+    const team = { ...sealedPreset('team-preset', 'other', [recipient('owner', ownerPublicKey)]),
+      owner: { kind: 'team', teamId: 'team' } };
+    const retained = ManagedGetOutputV1Schema.parse({
+      machine: { id: 'retained-machine', homeId: team.homeId, custodianAccountId: 'other',
+        preset: { id: team.id, revision: team.revision, contentEncryptionMode: 'e2ee' },
+        controller: team.controller, allocation: 'unsubmitted', creationState: 'active',
+        desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      presetContent: projectAdmittedManagedMachinePresetForRecipientV1({ ...team, recipientAccountId: 'owner' }),
+    });
     app.get('/v1/account/encryption/currentness', async () => AccountEncryptionCurrentnessResponseSchema.parse({
       mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, updatedAt: 1,
       contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(ownerPublicKey) }));
+    const presets = [own, foreign, team];
     app.post('/v1/machines/presets/get', async request => ({ kind: 'found',
-      preset: (request.body as { id: string }).id === own.id ? own : foreign }));
-    app.post('/v1/machines/presets/list', async () => ({ kind: 'listed', presets: [own, foreign] }));
+      preset: presets.find(preset => preset.id === (request.body as { id: string }).id) }));
+    app.post('/v1/machines/presets/list', async () => ({ kind: 'listed', presets }));
+    app.post(managedMachineActionEndpointPathV1('machines.managed.get'), async () => retained);
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const deps = createAccountServerActionDeps({ token, serverId: 'route-preset', serverIdentityId: 'srv_preset',
       serverHttpBaseUrl: 'http://account.test',
       credentials: { token, encryption: { type: 'dataKey', machineKey: ownerKey, publicKey: ownerPublicKey } } });
     const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
-    const context = { surface: 'mcp', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true } as const;
+    const context = { surface: 'cli', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true } as const;
 
     const ownRead = await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: own.id }, context);
     expect(ownRead).toMatchObject({ ok: true, result: { kind: 'found', preset: { id: own.id, content: own.content },
@@ -412,12 +425,17 @@ describe('Account API token HTTP adapter', () => {
         setup: { secretRefs: { v: 1, bindings: { GH_TOKEN: { ref: 'personal-gh-token' } } } } } } } });
     expect(await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: foreign.id }, context))
       .toMatchObject({ ok: true, result: { kind: 'found', opened: { kind: 'unavailable', presetId: foreign.id, code: 'permission_denied' } } });
+    const openedTeam = { kind: 'opened', presetId: team.id, content };
+    expect(await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: team.id }, context))
+      .toMatchObject({ ok: true, result: { kind: 'found', opened: openedTeam } });
     const listed = await executor.execute('machines.presets.list', { homeId: 'srv_preset' }, context);
     expect(listed).toMatchObject({ ok: true, result: { kind: 'listed', opened: [
       { kind: 'opened', presetId: own.id, content: { name: 'Private GPU box' } },
       { kind: 'unavailable', presetId: foreign.id, code: 'permission_denied' },
+      openedTeam,
     ] } });
-    expect(JSON.stringify(listed).match(/"kind":"opened"/g)).toHaveLength(1);
+    expect(await executor.execute('machines.managed.get', { homeId: 'srv_preset', managedId: 'retained-machine' }, context))
+      .toMatchObject({ ok: true, result: { ...retained, opened: openedTeam } });
   });
 
   it('keeps an own E2EE preset sealed with a typed failure when the host key is not the Account\'s current key', async () => {

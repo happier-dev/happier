@@ -9,7 +9,7 @@ import { connectUiActionClient, installBundledPluginUiDeclarationsForTests } fro
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
-import { ManagedAcceptedV1Schema, ManagedGetOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcceptedV1Schema, ManagedGetActionOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { sealManagedMachinePresetContentV1, openManagedMachinePresetRecipientProjectionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -308,7 +308,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   console.info('LATE-MEMBER PRODUCER: managed preset acquisition admitted');
   const managedAddress = { homeId: home.serverId, managedId };
   const readSnapshot = async (account: Account) => {
-    const read = ManagedGetOutputV1Schema.parse(await act(account, 'machines.managed.get', managedAddress));
+    const read = ManagedGetActionOutputV1Schema.parse(await act(account, 'machines.managed.get', managedAddress));
     if (!('presetContent' in read)) throw new Error('Managed Machine has no opaque preset snapshot');
     expect(read.presetContent.content.t).toBe('encrypted');
     return { machine: unwrapManagedMachineReadV1(read), content: openManagedMachinePresetRecipientProjectionV1({
@@ -349,6 +349,22 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
     await act(departed, collectionActions.get, collectionAddress)).value).toEqual(document);
   expect((await readSnapshot(departed)).content).toMatchObject(retainedDefinition);
   console.info('LATE-MEMBER EXISTING-SHARE CONTROL PASS: credential, Saved Secret, Task, Collection, retained preset decrypt');
+
+  const presetAddress = { homeId: home.serverId, id: presetId };
+  const rawPreset = await request(departed, '/v1/machines/presets/get', presetAddress);
+  expect(rawPreset.status).toBe(200);
+  const rawPresetBody = await rawPreset.json();
+  expect(rawPresetBody).toMatchObject({ kind: 'found', preset: { content: { t: 'encrypted' } } });
+  expect(rawPresetBody).not.toHaveProperty('opened');
+  const readPreset = (account: Account) => act(account, 'machines.presets.get', presetAddress);
+  const opened = { kind: 'opened', presetId, content: { name: presetContent.name } };
+  expect(await readPreset(departed)).toMatchObject({ kind: 'found', opened });
+  expect(await act(departed, 'machines.presets.list', { homeId: home.serverId, sharedWithTeamId: teamId }))
+    .toMatchObject({ kind: 'listed', opened: expect.arrayContaining([opened]) });
+  expect(await act(departed, 'machines.managed.get', managedAddress)).toMatchObject({
+    opened: { kind: 'opened', presetId, content: retainedDefinition },
+  });
+  expect(await readPreset(outsider)).toEqual({ kind: 'refused', code: 'preset_not_found' });
 
   const replacement = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
     content: { ...presetContent, name: 'Later source preset with another key' }, recipientCensus: census.recipients, randomBytes });

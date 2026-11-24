@@ -1,9 +1,12 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import type {
-  ManagedMachinePresetOpenedContentV1,
-  ManagedMachinePresetV1,
+import { openAdmittedManagedMachinePresetRecipientProjectionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import {
+  MACHINE_PRESET_TEAM_KEY_PENDING,
+  selectAdmittedMachinePresetReadProjectionV1,
+  type ManagedMachinePresetOpenedContentV1,
+  type ManagedMachinePresetV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedOpaquePresetReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -11,15 +14,12 @@ import type { StoredCredentials } from '@/persistence';
 import { createManagedPresetHydrator } from './presetHydration';
 
 /**
- * Open the requester's own E2EE presets from an Action read with this host's Account
- * custody. Only the key holder's own request opens: the requester is the bearer of an
- * external execution carrier (a Session agent's call carries one even for its owner), else
- * this host's token. A preset owned by another Account or a Team stays sealed even when
- * this Account holds one of its envelopes.
+ * Open Home-admitted preset reads using the requester's own Account custody.
+ * A Session agent carries its requester's bearer even when it runs for the host owner.
  */
 export async function openCliMachinePresetsForRequester(
   params: Readonly<{
-    presets: readonly ManagedMachinePresetV1[];
+    presets: readonly (ManagedMachinePresetV1 | ManagedOpaquePresetReadV1)[];
     context: ActionExecutorContext;
     token: string;
     credentials: StoredCredentials | undefined;
@@ -27,59 +27,44 @@ export async function openCliMachinePresetsForRequester(
     signal?: AbortSignal;
   }>,
 ): Promise<ManagedMachinePresetOpenedContentV1[]> {
-  const unavailable = (
-    presetId: string,
-    code: 'permission_denied' | 'credential_unavailable',
-  ) => ({ kind: 'unavailable' as const, presetId, code });
+  const unavailable = (presetId: string, code: Extract<ManagedMachinePresetOpenedContentV1, { kind: 'unavailable' }>['code']) =>
+    ({ kind: 'unavailable' as const, presetId, code });
+  const presetId = (preset: ManagedMachinePresetV1 | ManagedOpaquePresetReadV1) =>
+    'machine' in preset ? preset.machine.preset.id : preset.id;
   const accountId = readAccountIdFromToken(params.token);
   const carrier = params.context.externalActionExecutionAuthorization;
   if (carrier && readAccountIdFromToken(carrier.token) !== accountId) {
     return params.presets.map((preset) =>
-      unavailable(preset.id, 'permission_denied'),
+      unavailable(presetId(preset), 'permission_denied'),
     );
   }
   const credentials =
     params.credentials?.token === params.token ? params.credentials : undefined;
   if (!accountId || !credentials)
     return params.presets.map((preset) =>
-      unavailable(preset.id, 'credential_unavailable'),
+      unavailable(presetId(preset), 'credential_unavailable'),
     );
-  const own = params.presets.filter(
-    (preset) =>
-      preset.owner.kind === 'account' && preset.owner.accountId === accountId,
-  );
-  let contents: (ManagedMachinePresetOpenedContentV1 | null)[] = [];
-  if (own.length > 0) {
-    try {
-      const opened = await createManagedPresetHydrator({
-        credentials,
-        serverUrl: params.serverUrl,
-      }).openRecipientProjections({
-        mode: 'e2ee',
-        ...(params.signal ? { signal: params.signal } : {}),
-        items: own.map((preset) => ({
-          presetId: preset.id,
-          projection: projectManagedMachinePresetForRecipientV1({
-            ...preset,
-            recipientAccountId: accountId,
-          }),
-        })),
-      });
-      contents = opened.map((content, index) =>
-        content ? { kind: 'opened', presetId: own[index]!.id, content } : null,
-      );
-    } catch (error) {
-      if (!(error instanceof ManagedMachineControllerError)) throw error;
-    }
+  const mayOpen = (preset: ManagedMachinePresetV1 | ManagedOpaquePresetReadV1) =>
+    'machine' in preset || preset.owner.kind === 'team' || preset.owner.accountId === accountId;
+  if (!params.presets.some(mayOpen)) {
+    return params.presets.map(preset => unavailable(presetId(preset), 'permission_denied'));
   }
-  const byId = new Map(
-    own.map((preset, index) => [
-      preset.id,
-      contents[index] ?? unavailable(preset.id, 'credential_unavailable'),
-    ]),
-  );
-  return params.presets.map(
-    (preset) =>
-      byId.get(preset.id) ?? unavailable(preset.id, 'permission_denied'),
-  );
+  try {
+    return await createManagedPresetHydrator({ credentials, serverUrl: params.serverUrl }).withE2eeAccountKey(account =>
+      params.presets.map<ManagedMachinePresetOpenedContentV1>(preset => {
+        const id = presetId(preset);
+        if (!mayOpen(preset)) return unavailable(id, 'permission_denied');
+        const projection = 'machine' in preset ? preset.presetContent
+          : selectAdmittedMachinePresetReadProjectionV1(preset, account.accountId);
+        if (projection === MACHINE_PRESET_TEAM_KEY_PENDING) return unavailable(id, projection);
+        const content = openAdmittedManagedMachinePresetRecipientProjectionV1({
+          presetId: id, mode: 'e2ee', projection, ...account,
+        });
+        return content ? { kind: 'opened', presetId: id, content } : unavailable(id, 'credential_unavailable');
+      }), params.signal);
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    if (!(error instanceof ManagedMachineControllerError) || error.code !== 'credential_unavailable') throw error;
+    return params.presets.map(preset => unavailable(presetId(preset), mayOpen(preset) ? 'credential_unavailable' : 'permission_denied'));
+  }
 }
