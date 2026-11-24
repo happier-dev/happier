@@ -10,6 +10,7 @@ import {
     type PostgresqlExecutionOptions,
 } from '../postgresql/index.js';
 import { postgresqlReadRoleProof, postgresqlReadRoleSchemas } from '../postgresql/readRoleSetup.js';
+import { quotePostgresqlIdentifier } from '../postgresql/identifiers.js';
 import {
     DatabaseReadRoleError, matchesDatabaseReadRolePlan, planDatabaseReadRoleSetup, postgresqlReadRolePassword, readRoleFailure,
     type DatabaseReadRoleConnection, type DatabaseReadRoleVerificationResult,
@@ -25,6 +26,8 @@ export interface PostgresqlConnection {
 /** The caller owns this demand's credential and connection. No pool, timer or retry outlives it. */
 export async function openPostgresqlConnection(connectionString: string, signal?: AbortSignal,
     options: Readonly<{ sessionGuardSql?: string; tls?: DatabaseTls;
+        /** One row admits the writer. A null value keeps the login's own grants. */
+        writeRoleSetupSql?: string;
         runOperation?: DatabaseConnectionOperationRunner;
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
     }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection> {
@@ -107,6 +110,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         });
     };
     let setup: PostgresqlSetupFactsV1;
+    let writeRoleSql: string | undefined;
     const onConnectAbort = () => { void close().catch(() => {}); };
     signal?.throwIfAborted();
     signal?.addEventListener('abort', onConnectAbort, { once: true });
@@ -114,6 +118,11 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         signal?.throwIfAborted();
         await client.connect();
         if (options.sessionGuardSql) await query({ text: options.sessionGuardSql, values: [] });
+        if (options.writeRoleSetupSql) {
+            const role = (await query({ text: options.writeRoleSetupSql, values: [] })).rows[0]?.[0];
+            if (role === undefined) throw Object.assign(new Error('The PostgreSQL write role is unavailable'), { code: 'write_role_unavailable' });
+            if (role !== null) writeRoleSql = `SET LOCAL ROLE ${quotePostgresqlIdentifier(role)}`;
+        }
         setup = decodePostgresqlSetupV1(await query(compilePostgresqlSetupV1()));
         signal?.throwIfAborted();
     }
@@ -147,6 +156,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (signalsBackend) return await executePostgresqlOperation(input, query);
             await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
             transaction = true;
+            if (write && writeRoleSql) await query({ text: writeRoleSql, values: [] });
             const result = await executePostgresqlOperation(input, query, executionOptions);
             operationSignal?.throwIfAborted();
             if (!result.ok || (input.operation === 'statement.explain' && input.accessMode === 'write')) {

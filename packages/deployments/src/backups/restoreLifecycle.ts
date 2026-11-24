@@ -1,4 +1,5 @@
 import type { DeploymentRestoreIntegrityUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import { postgresqlBoundedLoginAuthoritySql } from '@happier-dev/deployment-protocol';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1, type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployments/contracts/v1';
 export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployments/contracts/v1';
 
@@ -469,7 +470,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                 `--owner=${role}`, '--', destination.stagingDatabase])));
             const authority = completed(await execute({ kind: 'service', mode: 'exec', service: destination.service,
                 argv: ['psql', '-X', '-v', 'ON_ERROR_STOP=1', `--username=${role}`, `--dbname=${destination.stagingDatabase}`, '-At', '-c',
-                    `SELECT current_user = ${literal(role)} AND NOT rolsuper AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication AND NOT rolbypassrls AND NOT pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER') AND NOT pg_has_role(current_user, 'pg_read_server_files', 'MEMBER') AND NOT pg_has_role(current_user, 'pg_write_server_files', 'MEMBER') FROM pg_roles WHERE rolname = current_user`],
+                    `SELECT current_user = ${literal(role)} AND ${postgresqlBoundedLoginAuthoritySql} FROM pg_catalog.pg_roles WHERE rolname = current_user`],
                 environmentOverrides, sensitiveValues: [password] }));
             if (authority.stdout.trim() !== 't' || authority.stdoutTruncated) refuse('unsupported_action');
             const consumer = { mode: 'exec' as const, service: destination.service, environmentOverrides,

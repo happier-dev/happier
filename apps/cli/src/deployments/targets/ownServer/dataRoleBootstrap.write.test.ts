@@ -22,7 +22,8 @@ describe('native write-role bootstrap (P3 R14)', () => {
                 await postgres.execute('CREATE ROLE app_owner LOGIN');
                 await postgres.execute('CREATE DATABASE member_app OWNER app_owner');
                 await postgres.execute('SET ROLE app_owner; CREATE TABLE owned(id serial PRIMARY KEY, value text)', 'member_app');
-                await postgres.execute('CREATE TABLE role_fixture(id serial PRIMARY KEY, value text); INSERT INTO role_fixture(value) VALUES (\'original\')');
+                await postgres.execute('CREATE ROLE "App Admin" SUPERUSER; ALTER DATABASE postgres OWNER TO "App Admin";'
+                    + ' SET ROLE "App Admin"; CREATE TABLE role_fixture(id serial PRIMARY KEY, value text)');
                 const writer = (database: string, sql: string) => spawnSync(postgres.psqlPath, ['-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1',
                     '--host=127.0.0.1', '--port', String(postgres.port), '--username=happier_rw', `--dbname=${database}`, '-c', sql],
                 { encoding: 'utf8', env: { ...process.env, PGPASSWORD: 'write-password' } });
@@ -31,16 +32,24 @@ describe('native write-role bootstrap (P3 R14)', () => {
                 await bootstrapOwnServerWriteDataRoleForHost({ engine: 'postgresql', database: 'postgres', port: postgres.port,
                     password: 'write-password', signal }, native);
                 expect(writer('postgres', "INSERT INTO role_fixture(value) VALUES ('written') RETURNING value").stdout.trim()).toBe('written');
+                await postgres.execute('SET ROLE "App Admin"; CREATE TABLE created_after_setup(id serial PRIMARY KEY, value text)');
+                expect.soft(writer('postgres', "INSERT INTO created_after_setup(value) VALUES ('new') RETURNING id, value").stdout.trim())
+                    .toBe('1|new');
+                await postgres.execute('CREATE TABLE unrelated_owner_table(value text)');
+                expect(writer('postgres', "INSERT INTO unrelated_owner_table VALUES ('denied')").stderr).toContain('permission denied');
                 expect((await postgres.execute("SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls FROM pg_roles WHERE rolname='happier_rw'")).stdout)
                     .toContain('f        | f             | f           | f              | f');
                 const fileRead = writer('postgres', "SELECT pg_read_file('/etc/hostname')");
                 expect(fileRead.status).not.toBe(0);
                 expect(fileRead.stderr).toContain('permission denied');
                 expect(writer('postgres', 'CREATE ROLE escalated').status).not.toBe(0);
-                // A member-owned app: the writer acts through the app's owning role.
+                // Reviewed setup also adopts the previously inherited membership in a member-owned app.
+                await postgres.execute('ALTER ROLE happier_rw INHERIT; GRANT app_owner TO happier_rw WITH INHERIT TRUE');
                 await bootstrapOwnServerWriteDataRoleForHost({ engine: 'postgresql', database: 'member_app', port: postgres.port,
                     password: 'write-password', signal }, native);
-                expect(writer('member_app', "INSERT INTO owned(value) VALUES ('member') RETURNING value").stdout.trim()).toBe('member');
+                const insert = "INSERT INTO owned(value) VALUES ('member') RETURNING value";
+                expect(writer('member_app', `BEGIN; SET LOCAL ROLE app_owner; ${insert}; COMMIT`).stdout.trim()).toBe('member');
+                expect.soft(writer('member_app', insert).stderr).toContain('permission denied');
                 // Tampered authority is refused without rotating the password.
                 const password = async () => (await postgres.execute("SELECT rolpassword FROM pg_authid WHERE rolname='happier_rw'")).stdout;
                 const original = await password();

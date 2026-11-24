@@ -18,7 +18,7 @@ import { prepareEnvironmentSecretBindingsForLaunch } from '../../secrets/prepare
 import { acquireOwnServerDataServiceForHost, type OwnServerDataServiceHost } from './dataQueryScope';
 import { readOwnServerDatabaseEndpointForHost } from './databaseEndpoint';
 import { ownServerReadOnlyRoleGuardSql } from './dataRoleGuard';
-import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
+import { postgresqlWriteRoleSetupSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type Host = OwnServerDataServiceHost & Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string }>;
@@ -96,9 +96,13 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                         ], scope.handle.retirementSignal) };
                     return await machineNativeEffectAdmission.runStage(effect, () => openConnection(url.toString(), signal, {
                         ...transport, runOperation,
-                        ...(isPostgresql ? { sessionGuardSql: write ? postgresqlWriteRoleGuardSql : ownServerReadOnlyRoleGuardSql('postgresql') } : {}),
+                        ...(isPostgresql ? write ? { writeRoleSetupSql: postgresqlWriteRoleSetupSql }
+                            : { sessionGuardSql: ownServerReadOnlyRoleGuardSql('postgresql') } : {}),
                     })).catch((error: unknown) => {
-                            if (error && typeof error === 'object' && 'code' in error && error.code === '42501') return refuse(write ? 'write_role_unavailable' : 'read_role_unavailable');
+                            if (error && typeof error === 'object' && 'code' in error) {
+                                if (error.code === 'write_role_unavailable') return refuse(error.code);
+                                if (error.code === '42501') return refuse(write ? 'write_role_unavailable' : 'read_role_unavailable');
+                            }
                             throw error;
                         });
                 } finally { prepared.dispose(); }

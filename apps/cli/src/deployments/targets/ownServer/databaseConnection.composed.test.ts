@@ -387,9 +387,11 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                         expect(await opened.connection.execute(statistics)).toMatchObject(unavailable);
                         const bindings = detail.content.bindings;
                         detail.content.bindings = [...bindings, { ...use, role: 'write' }];
-                        await pg.execute("CREATE ROLE happier_rw LOGIN PASSWORD 'private-native-password'; GRANT SELECT, UPDATE ON native_items TO happier_rw");
+                        await pg.execute("CREATE ROLE happier_rw LOGIN NOINHERIT PASSWORD 'private-native-password'");
+                        await pg.execute('CREATE ROLE "App Writer"; ALTER DATABASE postgres OWNER TO "App Writer";'
+                            + ' ALTER TABLE native_items OWNER TO "App Writer"; GRANT "App Writer" TO happier_rw');
                         const write = { operation: 'statement.run' as const, target, mode: 'write' as const, executionMode: 'transaction' as const,
-                            statements: [{ sql: "UPDATE native_items SET note = 'held-reader' WHERE id = 1", parameters: [] }] };
+                            statements: [{ sql: "UPDATE native_items SET note = 'held-reader' WHERE id = 1 RETURNING current_user", parameters: [] }] };
                         const writeEnvelope = { ...envelope, requestId: 'native-statistics-writer', input: { action, input: write } };
                         const writeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-write-root',
                             binding: { ...root.binding, deploymentDatabaseEditor: 'allowed', requestId: writeEnvelope.requestId,
@@ -411,7 +413,11 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                             });
                             const writable = await openWriter(writeEnvelope.requestId);
                             try {
-                                expect(await writable.execute(write)).toMatchObject({ ok: true });
+                                expect(await writable.execute(write)).toMatchObject({ ok: true,
+                                    results: [{ rows: [{ cells: [{ type: 'text', value: 'App Writer' }] }] }] });
+                                expect(await writable.execute({ operation: 'statement.run', target, mode: 'read',
+                                    statement: { sql: 'SELECT current_user', parameters: [] } })).toMatchObject({ ok: true,
+                                    results: [{ rows: [{ cells: [{ type: 'text', value: 'happier_rw' }] }] }] });
                                 const stopWrite = new AbortController();
                                 const writing = writable.execute({ ...write,
                                     statements: [{ sql: 'SELECT pg_sleep(60)', parameters: [] }] }, stopWrite.signal);

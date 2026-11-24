@@ -145,26 +145,36 @@ SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='happier_rw') AS role_exists 
 SET LOCAL ROLE happier_rw;
 ${postgresqlWriteRoleGuardSql}
 RESET ROLE;
+ALTER ROLE happier_rw NOINHERIT;
 \\else
-CREATE ROLE happier_rw LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
+CREATE ROLE happier_rw LOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
 \\endif
-SELECT r.rolsuper AS owner_super, quote_ident(r.rolname) AS owner_ident
-  FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = current_database() \\gset
-\\if :owner_super
 DO $happier_grants$
-DECLARE schema_name text;
+DECLARE
+  schema_name text;
+  owner_name text;
+  owner_super boolean;
 BEGIN
-  FOR schema_name IN SELECT nspname FROM pg_namespace
-    WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname !~ '^pg_' LOOP
-    EXECUTE format('GRANT USAGE ON SCHEMA %I TO happier_rw', schema_name);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO happier_rw', schema_name);
-    EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO happier_rw', schema_name);
-  END LOOP;
+  SELECT r.rolname, r.rolsuper INTO STRICT owner_name, owner_super
+    FROM pg_catalog.pg_database d JOIN pg_catalog.pg_roles r ON r.oid = d.datdba
+    WHERE d.datname = pg_catalog.current_database();
+  IF owner_super THEN
+    FOR schema_name IN SELECT nspname FROM pg_catalog.pg_namespace
+      WHERE nspname <> 'information_schema' AND nspname !~ '^pg_' LOOP
+      EXECUTE format('GRANT USAGE ON SCHEMA %I TO happier_rw', schema_name);
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO happier_rw', schema_name);
+      EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO happier_rw', schema_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO happier_rw', owner_name, schema_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO happier_rw', owner_name, schema_name);
+    END LOOP;
+  ELSIF pg_catalog.current_setting('server_version_num')::int >= 160000 THEN
+    -- In 16+, role-level NOINHERIT alone does not change existing membership options.
+    EXECUTE format('GRANT %I TO happier_rw WITH INHERIT FALSE, SET TRUE', owner_name);
+  ELSE
+    EXECUTE format('GRANT %I TO happier_rw', owner_name);
+  END IF;
 END
 $happier_grants$;
-\\else
-GRANT :owner_ident TO happier_rw;
-\\endif
 SET LOCAL ROLE happier_rw;
 ${postgresqlWriteRoleGuardSql}
 RESET ROLE;
