@@ -9050,8 +9050,10 @@ describe("external Action execution authorization", () => {
             const { ApiClient } = await importTestModule<typeof import('../../../../../../cli/src/api/api')>('../../../../../../cli/src/api/api');
             const sourceRead = await runWithServerHttpBaseUrl(origin, () => ApiClient.getRequesterMachine(source.id,
                 { authorization, effectActionId: root.binding.actionId }))
-                .then(() => 200, (error: unknown) => axios.isAxiosError(error) ? error.response?.status : undefined);
-            expect(sourceRead).toBe(401);
+                .then(() => 'read', (error: unknown) => error && typeof error === 'object' && 'code' in error ? error.code : 'unknown');
+            // Home still refuses a foreign Machine row under this root by purpose; the CLI boundary keeps its typed cause.
+            expect({ sourceRead, home: outcomes.at(-1) }).toEqual({ sourceRead: 'action_forbidden',
+                home: { endpoint: 'sync-source', requestedMachineId: source.id, status: 401 } });
             const withoutFacts = { ...authorization, binding: { ...authorization.binding, workspaceSyncAdmission: undefined } };
             const legacy = await readWorkspaceSyncChildMachineFacts({ serverId: homeId, serverHttpBaseUrl: origin,
                 machineIds: [source.id], authorization: withoutFacts, effectActionId: root.binding.actionId,
@@ -9078,6 +9080,72 @@ describe("external Action execution authorization", () => {
             expect(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, sourceRouting, controller.id))
                 .toMatchObject({ receivingMachineAdmission: { machineId: controller.id, role: 'use' },
                     route: { parentMachineId: controller.id, parentInstallationId: controller.installationId } });
+        } finally { restoreHttp(); await app.close(); }
+    });
+
+    // SYNC-MEMBER-OPEN-SIGNER-2 (live READY215 req-2whs): a workspace-only Open names its Source on the
+    // opening Machine, so Home admits that Machine. A selected ref resolving elsewhere is not admitted:
+    // the target refuses typed and never signs the foreign Machine GET that Home refuses by purpose.
+    it('refuses typed, without a foreign Machine GET, when a workspace-only Project Open resolves its Source elsewhere', async () => {
+        const receiver = await createFixture({ qualifiedPat: false });
+        const source = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: receiver.account.id,
+            metadata: receiver.machine.metadata, metadataVersion: 1,
+            dataEncryptionKey: receiver.machine.dataEncryptionKey, installationId: crypto.randomUUID(),
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey) } });
+        const homeId = await getOrCreateServerIdentityId();
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const gets: Array<{ machineId: string; status: number }> = [];
+        const { app } = await createApp(receiver.team.id, false, undefined, undefined, false, routes => {
+            routes.addHook('onResponse', async (request, reply) => {
+                const machineId = [source.id, receiver.machine.id].find(id => request.method === 'GET' && request.url === `/v1/machines/${id}`);
+                if (machineId) gets.push({ machineId, status: reply.statusCode });
+            });
+        }, true);
+        const origin = 'http://sync-member-open-signer.test';
+        const restoreHttp = installAxiosFastifyAdapter({ app, origin });
+        try {
+            const token = await auth.createToken(receiver.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const envelope = { ...receiver.envelope,
+                input: OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: receiver.machine.id,
+                    source: { kind: 'workspace', workspaceId: 'sync-source' },
+                    materialization: { kind: 'sync', targetPath: '/target', workspaceAction: { kind: 'create_relationship',
+                        mode: 'keep_synced', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+                        flushBeforeCommit: true } } }) };
+            const root = await mint(app, receiver, 'projects.open', envelope, token);
+            const admitted = root.binding.workspaceSyncAdmission;
+            expect(admitted?.source.machineId).toBe(receiver.machine.id);
+            const { projectExternalActionRequesterHttpAuthorization } = await importTestModule<
+                typeof import('../../../../../../cli/src/api/externalActionExecutionAuthorization')
+            >('../../../../../../cli/src/api/externalActionExecutionAuthorization');
+            const http = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target: root.binding.target,
+                installationId: receiver.machine.installationId!, privateKey: receiver.keyPair.secretKey, rootAdmitted: true });
+            if (!http) throw new Error('Signed requester HTTP unavailable');
+            const authorization = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: homeId,
+                bootstrap: { credentials: { token, encryption: null }, serverHttpBaseUrl: origin,
+                    isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: root,
+                        effectActionId: root.binding.actionId, target: root.binding.target,
+                        installationId: receiver.machine.installationId!, privateKey: receiver.keyPair.secretKey, serverHttpBaseUrl: origin }),
+                    attribution: { serverId: homeId, accountId: receiver.account.id, machineId: receiver.machine.id,
+                        installationId: receiver.machine.installationId! } } });
+            if (!authorization?.requesterHttpProjection) throw new Error('Requester HTTP projection unavailable');
+            const { readWorkspaceSyncChildMachineFacts } = await importTestModule<{
+                readWorkspaceSyncChildMachineFacts(input: Readonly<{ serverId: string; serverHttpBaseUrl: string;
+                    machineIds: readonly string[]; authorization: ExternalActionExecutionAuthorizationV1;
+                    effectActionId: string; purpose: 'admitted_mapping'; relationshipId: string }>): Promise<readonly unknown[]>;
+            }>('../../../../../../cli/src/workspaces/sync/workspaceSyncTargetAuthority');
+            // Open's admitted mapping reads [resolved Source, target] (openProject.ts). Never log a rejected Axios error.
+            const outcome = await readWorkspaceSyncChildMachineFacts({ serverId: homeId, serverHttpBaseUrl: origin,
+                machineIds: [source.id, receiver.machine.id], authorization, effectActionId: root.binding.actionId,
+                purpose: 'admitted_mapping', relationshipId: admitted!.relationshipId })
+                .then(() => 'read', (error: unknown) => axios.isAxiosError(error) ? `http_${error.response?.status}`
+                    : error && typeof error === 'object' && 'code' in error ? error.code : 'unknown');
+            expect({ outcome, gets }).toEqual({ outcome: 'workspace_sync_source_admission_unavailable', gets: [] });
+            // The admitted opening Machine itself is still read from its admission, never by a GET.
+            const own = await readWorkspaceSyncChildMachineFacts({ serverId: homeId, serverHttpBaseUrl: origin,
+                machineIds: [receiver.machine.id], authorization, effectActionId: root.binding.actionId,
+                purpose: 'admitted_mapping', relationshipId: admitted!.relationshipId });
+            expect({ own: own.length, gets }).toEqual({ own: 0, gets: [] });
         } finally { restoreHttp(); await app.close(); }
     });
 

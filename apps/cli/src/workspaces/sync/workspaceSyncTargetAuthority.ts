@@ -10,6 +10,7 @@ import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/action
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
@@ -426,9 +427,12 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         // requester's existing Machine read port. Only SOURCE facts come from
         // the signed Sync admission; mutating WORKER-bound roots still require
         // it for every foreign endpoint, including when the admission is missing.
+        // Project Open binds its opening Machine and has no WORKER: every other
+        // endpoint is its Source, so only the admission may name it.
         if (input.authorization && !readOnly && (machineId === sourceMachineId
           || machineId !== input.authorization.binding.machineId
-            && input.authorization.binding.machineId !== sourceMachineId)) {
+            && (input.authorization.binding.machineId !== sourceMachineId
+              || isProjectWorkspaceSyncOpenActionV1(input.authorization.binding.actionId)))) {
           const binding = input.authorization.binding;
           const admitted = input.relationshipId ? readWorkspaceSyncSourceAdmissionV1(binding,
             { serverId: input.serverId, machineId, relationshipId: input.relationshipId }) : null;
