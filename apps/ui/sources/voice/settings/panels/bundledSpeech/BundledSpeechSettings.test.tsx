@@ -20,6 +20,8 @@ import { getStorage as getActualStorage, storage } from '@/sync/domains/state/st
 import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from '../voiceSettingsAccountTestHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
@@ -507,6 +509,19 @@ describe('BundledSpeechSettings', () => {
       ?? await account.request(url, init));
     executionMachine.machineId = 'machine-a';
     executionMachine.machineLabel = 'Machine A';
+    // Hydrate RPC content through Sync; a locally published row carries no
+    // admitted machine encryption state for the real Socket transport.
+    const context = await captureLazyActionAccountContext(account.scope.serverId);
+    try {
+      await fetchAndApplyMachines({ credentials: context.credentials, expectedAccountMode: 'plain', encryption: null,
+        machineDataKeys: new Map(), sourceServerId: account.scope.serverId, throwOnError: true, replace: true,
+        applyMachines: (machines, replace, rows) => storage.getState().applyMachines(machines, replace, {
+          sourceServerId: account.scope.serverId,
+          activityUpdates: rows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+        }),
+        onListComplete: () => storage.getState().markMachineListSettled(account.scope.serverId),
+      });
+    } finally { context.dispose(); }
     fetchCatalog.mockReset();
     fetchCatalog.mockImplementation(async (_entry: unknown, catalog: string): Promise<CatalogRows> => catalog === 'models'
       ? [{ id: 'gemini-test', name: 'Gemini Test', metadata: {} }]

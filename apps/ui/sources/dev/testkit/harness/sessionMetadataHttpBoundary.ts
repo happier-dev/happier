@@ -1,5 +1,5 @@
 import { SessionCurrentProjectionRecordV1Schema, type SessionCurrentProjectionRecordV1 } from '@happier-dev/protocol/sessions/listing/response';
-import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionOwnerMetadataEnvelopeV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionOwnerMetadataEnvelopeV1Schema, SessionMetadataVersionConflictV1Schema, type SessionMetadataTuplePatchV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { z } from 'zod/mini';
 import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageTimingV1';
@@ -18,7 +18,7 @@ export interface SessionMetadataHttpBoundary {
     replaceSession(sessionId: string, record?: SessionCurrentProjectionRecordV1): void;
     updateAgentState(sessionId: string, agentState: Session['agentState'], version: number): void;
     createSessionFromPost(sessionId: string, init: RequestInit): Response;
-    rejectNextPatch(sessionId: string): void;
+    rejectNextPatch(sessionId: string, matches?: (patch: SessionMetadataTuplePatchV1) => boolean): void;
     handle(input: URL | RequestInfo, init?: RequestInit): Response | null;
 }
 
@@ -26,6 +26,7 @@ export interface SessionMetadataHttpBoundary {
 export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<Record<string, Session>>): SessionMetadataHttpBoundary {
     const records = new Map<string, ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse>>();
     let rejectPatchFor: string | null = null;
+    let rejectPatchMatches: ((patch: SessionMetadataTuplePatchV1) => boolean) | undefined;
     const writes: string[] = [];
     return {
         writes,
@@ -65,7 +66,7 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             records.set(sessionId, record);
             return Response.json({ created: true, session: record });
         },
-        rejectNextPatch(sessionId: string) { rejectPatchFor = sessionId; },
+        rejectNextPatch(sessionId, matches) { rejectPatchFor = sessionId; rejectPatchMatches = matches; },
         handle(input: URL | RequestInfo, init?: RequestInit): Response | null {
             const path = new URL(String(input)).pathname;
             const turns = /^\/v1\/sessions\/([^/]+)\/turns$/.exec(path);
@@ -105,11 +106,12 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             if (!current) return Response.json({ error: 'Session not found' }, { status: 404 });
             if (init?.method !== 'PATCH') return Response.json({ session: current });
             writes.push(id);
-            if (rejectPatchFor === id) {
+            const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+            if (rejectPatchFor === id && (!rejectPatchMatches || rejectPatchMatches(patch))) {
                 rejectPatchFor = null;
+                rejectPatchMatches = undefined;
                 return Response.json({ error: 'Failed to update session' }, { status: 500 });
             }
-            const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
             if (patch.mode === 'shared_editor') {
                 if (current.effectiveAccess?.level !== 'edit') return Response.json({ error: 'forbidden' }, { status: 403 });
                 if (current.metadataLayoutVersion !== 1 || patch.sharedMetadata.expectedVersion !== current.metadataVersion) {

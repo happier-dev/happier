@@ -714,8 +714,8 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         providerId: 'happier.voice.openai/realtime-openai',
         requestedTargetSessionId: null,
       })).resolves.toEqual({
-        conversationSessionId: null,
-        conversationServerId: null,
+        conversationSessionId: binding!.conversationSessionAddress.sessionId,
+        conversationServerId: binding!.conversationSessionAddress.serverId,
       });
 
       browser.peer.channel.message(JSON.stringify({
@@ -834,7 +834,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     ['switches', 'account-b' as string | null],
     ['deletes', null],
   ] as const)(
-    'fences an OpenAI Connected Account attempt that %s before client-auth issuance',
+    'retains an admitted client-auth failure when its Connected Account %s and uses the next selection on Start',
     async (_change, invalidatedBinding) => {
       await environment.installConnectedAccountSettings();
       await environment.selectConnectedAccount('account-a');
@@ -883,12 +883,12 @@ describe('realtime_openai source-composed WebRTC gate', () => {
           new Error('credential_unavailable'),
           { code: 'credential_unavailable' },
         ));
-        await expect(firstStart).resolves.toMatchObject({ code: 'voice_account_operation_cancelled' });
+        await expect(firstStart).resolves.toMatchObject({ code: 'service_temporarily_unavailable' });
 
         expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
           status: 'error',
-          errorCode: 'voice_account_operation_cancelled',
-          errorMessage: 'voice_account_operation_cancelled',
+          errorCode: 'service_temporarily_unavailable',
+          errorMessage: 'service_temporarily_unavailable',
         });
         expect(browser.micSession.ensureActive).not.toHaveBeenCalled();
         expect(getUserMedia).not.toHaveBeenCalled();

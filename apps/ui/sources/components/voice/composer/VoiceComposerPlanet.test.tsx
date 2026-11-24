@@ -25,7 +25,6 @@ import { createSessionFixture } from '@/dev/testkit';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { saveAndUseAccountVoiceCredential, applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
@@ -200,7 +199,7 @@ describe('VoiceComposerPlanet', () => {
         const saved = saveAndUseAccountVoiceCredential({ settings: settingsParse({ voiceSettingsV1: voice }),
             contribution: { pluginId: entry.pluginId, localId: entry.declaration.id }, credentialSlotId: recipient.credentialSlot.id,
             expectedSettingsVersion: 1, currentDeclaration: entry.declaration, value: 'sk_composer_hold', generateId: () => 'composer-hold-secret', now: 1,
-            expectedSecretId: null, expectedSecretUpdatedAt: null, approvedRecipientContractDigest: createRecipientContractDigestV1(recipient) });
+            expectedSecretId: null, expectedSecretUpdatedAt: null });
         const selected = applyAccountVoiceCredentialSourceSelection({ settings: saved.settings, connectedPurposes: { v: 1, bindings: [] }, currentDeclaration: entry.declaration,
             mutation: { contribution: { pluginId: entry.pluginId, localId: entry.declaration.id }, credentialSlotId: recipient.credentialSlot.id, expectedSettingsVersion: 1, selection: { kind: 'savedSecret' } } });
         const account = await createVoiceSettingsAccountTestHarness(selected.settings);

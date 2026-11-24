@@ -299,6 +299,7 @@ describe('realtime_codex normal web composed gate', () => {
     });
     activeServerId = globalCreationAccount.home.id;
     transportHomes.set(globalCreationAccount.home.serverUrl, { serverId: activeServerId, token: globalCreationAccount.credentials.token });
+    await sync.awaitBootstrapForegroundAcquisition();
     await sync.refreshProfile();
     expect(storage.getState().profileScope).toMatchObject({
       serverId: activeServerId, accountId: 'codex-composed-account',
@@ -1491,7 +1492,8 @@ describe('realtime_codex normal web composed gate', () => {
         initialInput: { status: 'notRequested' as const },
       };
     });
-    sessionHttp.rejectNextPatch('hidden-global-failed');
+    sessionHttp.rejectNextPatch('hidden-global-failed', patch => patch.mode === 'owner'
+      && patch.ownerMetadata.t === 'plain' && patch.ownerMetadata.v.system?.voiceConversationScopeV1?.kind === 'voice_home');
 
     let resolveWatch!: (value: unknown) => void;
     const assertFinalizedHiddenSession = (sessionId: string): void => {

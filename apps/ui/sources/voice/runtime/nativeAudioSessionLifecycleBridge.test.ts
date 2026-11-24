@@ -11,7 +11,6 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { XAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../packages/plugins/xai/src/protocol/voice/settings';
 import {
   createVoiceAudioSessionCoordinator,
@@ -249,7 +248,6 @@ async function withNativePcmBridge(run: (fixture: Readonly<{
   }),
     contribution, credentialSlotId: recipientContract.credentialSlot.id, expectedSettingsVersion: 1, currentDeclaration: entry.declaration,
     value: 'xai_native_bridge', generateId: () => 'native-bridge-secret', now: 1, expectedSecretId: null, expectedSecretUpdatedAt: null,
-    approvedRecipientContractDigest: createRecipientContractDigestV1(recipientContract),
   });
   const selected = applyAccountVoiceCredentialSourceSelection({ settings: saved.settings, connectedPurposes: purposes.value, currentDeclaration: entry.declaration,
     mutation: { contribution, credentialSlotId: recipientContract.credentialSlot.id, expectedSettingsVersion: 1, selection: { kind: 'savedSecret' } },
