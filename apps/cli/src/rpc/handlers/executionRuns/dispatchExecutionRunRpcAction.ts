@@ -65,7 +65,6 @@ import {
 } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
 import { readExecutionRunErrorCode, readExecutionRunErrorMessage, readExecutionRunStartPreparationReason } from '@/agent/runtime/bridges/executionRun/errors';
 import { CONNECTED_SERVICE_BINDING_UNSUPPORTED } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 import type { RpcActionExecutor, RpcActionExecutorContext } from '../_actionDispatchAdapter';
 import type { ExecutionRunRpcHandlerContext } from './registerExecutionRunRpcHandlers';
@@ -347,19 +346,19 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     return sessionId === params.context.sessionId;
   }
 
-  // Run output leaves the hosting process only through these reads; Workflow storage, Action
-  // completions and other readers copy it, so registered host secrets are redacted here, once.
+  // Run output leaves the hosting process only through these reads. Its writers already
+  // redacted registered secrets (publishExecutionRunTurn, finishExecutionRun, exact-input turns).
   function projectExecutionRunGetResponse(runState: NonNullable<Awaited<ReturnType<ExecutionRunHostBridgeContract['getForRequest']>>>, includeStructured: boolean, includeLatestToolResult = true) {
     const run = params.manager.projectPublicState(runState);
     const hasLatestToolResult = Object.prototype.hasOwnProperty.call(runState, 'latestToolResult');
     const structuredMeta = includeStructured ? runState.structuredMeta ?? null : null;
     const reviewFindings = includeStructured ? readRetainedReviewFindings(runState) : null;
-    return redactTranscriptSecrets({
+    return {
       run,
       ...(hasLatestToolResult && includeLatestToolResult ? { latestToolResult: runState.latestToolResult ?? null } : {}),
       ...(structuredMeta !== null ? { structuredMeta } : {}),
       ...(reviewFindings !== null ? { reviewFindings } : {}),
-    });
+    };
   }
 
   async function startAdmittedRun(
@@ -710,7 +709,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       await params.manager.recoverRetainedRuns();
       const listRequest = ExecutionRunListRequestSchema.parse(request);
       const runs = params.manager.listPublicForRequest(listRequest, sessionId, opts?.requesterWorkAttributionV1);
-      return runs ? { runs: redactTranscriptSecrets(runs) } : executionRunNotFound();
+      return runs ? { runs } : executionRunNotFound();
     },
     executionRunGet: async (sessionId, request, opts) => {
       const disabled = ensureEnabled();
@@ -744,7 +743,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
             ...(projectedTurns?.occurrenceId === observedInputTurn.occurrenceId && projectedTurns.current
               ? { current: projectedTurns.current }
               : {}),
-            last: redactTranscriptSecrets(observedInputTurn.turn),
+            last: observedInputTurn.turn,
           },
         },
       };
@@ -901,7 +900,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       if (!read.ok) {
         return { ok: false, error: read.error, errorCode: read.errorCode };
       }
-      return { streamId: read.streamId, events: redactTranscriptSecrets(read.events), nextCursor: read.nextCursor, done: read.done,
+      return { streamId: read.streamId, events: read.events, nextCursor: read.nextCursor, done: read.done,
         ...(read.preparedInstructionsFor ? { preparedInstructionsFor: read.preparedInstructionsFor } : {}) };
     },
     executionRunStreamCancel: async (sessionId, request, actionOptions) => {
@@ -1018,11 +1017,11 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           errorCode: acted.errorCode ?? 'execution_run_action_not_supported',
         };
       }
-      return redactTranscriptSecrets({
+      return {
         ok: true as const,
         ...(typeof acted.updatedToolResult !== 'undefined' ? { updatedToolResult: acted.updatedToolResult } : {}),
         ...(typeof acted.result !== 'undefined' ? { result: acted.result } : {}),
-      });
+      };
     },
     executionRunWait: async (sessionId, request, opts) => {
       const disabled = ensureEnabled();

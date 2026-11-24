@@ -1,3 +1,4 @@
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, resolveVoiceAgentOutputSpeechSegmentLength } from '@happier-dev/protocol/voice/outputEvents';
 import type { VoiceAgentOutputTurnV1 } from '@happier-dev/protocol';
 
@@ -64,7 +65,8 @@ export function flushVoiceAgentStreamingSpeech(
       patch({ outputSpeechBuffer: '', outputIncomplete: true });
       return;
     }
-    const output = { ...candidate, text };
+    // The stream is read from other devices; registered secrets are masked as it is written.
+    const output = { ...candidate, text: redactTranscriptSecrets(text) };
     stream.events.push({ t: 'voice_output', output } satisfies VoiceOutputDeltaEvent);
     patch({
       outputSpeechBuffer: incomplete ? '' : stream.outputSpeechBuffer.slice(segmentLength),

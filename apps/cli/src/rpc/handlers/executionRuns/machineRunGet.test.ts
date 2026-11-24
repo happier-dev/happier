@@ -19,7 +19,6 @@ import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/
 import { reloadConfiguration } from '@/configuration';
 import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
-import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 describe('Machine Run get through the shared registered handler', () => {
     let directory: string;
@@ -198,57 +197,5 @@ describe('Machine Run get through the shared registered handler', () => {
             { machineId: 'machine', runId: run.runId, outputRefs: [outputRef] }))
             .rejects.toMatchObject({ rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
         rpc.onSocketDisconnect();
-    });
-
-    it('redacts registered host secrets from a Workflow Action execution.run.get read before it leaves the hosting process', async () => {
-        const secret = 'live-host-bearer-secret';
-        const unregister = registerTranscriptSecret(secret);
-        try {
-            const run = { runId: 'secret-run', callId: 'secret-call', sidechainId: 'secret-sidechain', sessionId: null,
-                depth: 0, intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
-                instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
-                status: 'failed', startedAtMs: 1, finishedAtMs: 2, terminalOccurrenceId: 'secret-terminal',
-                requesterWorkAttributionV1: { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation' },
-                latestToolResult: { answer: `echoed ${secret}` },
-                error: { code: 'execution_run_failed', message: `provider said ${secret}` },
-            } satisfies ExecutionRunState;
-            await retainExecutionRunState(run);
-            const admission = { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
-                installationId: 'installation', role: 'manage', encryptionMode: 'plain' } as const;
-            const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
-                authorizeRequest: async () => ({ ok: true }) });
-            registerExecutionRunHandlers(rpc, {
-                sessionId: null, cwd: directory, serverId: 'home', machineId: 'machine', parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
-                executionRunProfileCatalog: buildExecutionRunProfileCatalog(),
-                getServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
-                    features: { execution: { runs: { enabled: true } } },
-                }) }),
-                onManagerCreated: manager => { managers.push(manager); },
-            });
-            // The registered daemon handler, dispatch, Action executor and retained store run for real.
-            const call = (method: string, params: unknown) => rpc.handleRequest({ method: `machine:${method}`, params,
-                callerAuthority: 'present_user', machineAdmission: admission });
-            const workflowActionRead = await rpc.handleRequest(
-                { method: `machine:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`,
-                    params: { runId: run.runId, includeStructured: true }, callerAuthority: 'present_user', machineAdmission: admission },
-                undefined, 'local_session_channel', {
-                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                    actionRequestId: 'workflow-action-read', executionRunWorkflowRunId: 'workflow-run-secret',
-                });
-            expect(workflowActionRead).toMatchObject({ run: { runId: run.runId }, latestToolResult: { answer: 'echoed [redacted]' } });
-            const reads = [
-                workflowActionRead,
-                await call(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: run.runId, includeStructured: true }),
-                await call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {}),
-                await call(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, { runId: run.runId, timeoutSeconds: 1 }),
-            ];
-            expect(reads[0]).toMatchObject({ run: { runId: run.runId }, latestToolResult: { answer: 'echoed [redacted]' } });
-            for (const read of reads) {
-                expect(JSON.stringify(read)).toContain('[redacted]');
-                expect(JSON.stringify(read)).not.toContain(secret);
-            }
-        } finally {
-            unregister();
-        }
     });
 });

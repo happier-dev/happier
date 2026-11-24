@@ -1,3 +1,4 @@
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -1364,7 +1365,7 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
         stream.events.push({
           t: 'voice_output',
-          output: { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: cleanText },
+          output: { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: redactTranscriptSecrets(cleanText) },
         });
         stream.outputSeq += 1;
       } catch (error: unknown) {
@@ -1375,7 +1376,7 @@ export class VoiceAgentManager {
         const code = readExecutionRunErrorCode(failure);
         const runtimeIssueV1 = readExecutionRunRuntimeIssue(failure);
         stream.events.push(ExecutionRunTurnStreamEventErrorSchema.parse({
-          t: 'error', error: message, ...(code ? { errorCode: code } : {}),
+          t: 'error', error: redactTranscriptSecrets(message), ...(code ? { errorCode: code } : {}),
           ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}),
           ...(failure && typeof failure === 'object' && 'usageLimitRecovery' in failure
             ? { usageLimitRecovery: failure.usageLimitRecovery } : {}),
