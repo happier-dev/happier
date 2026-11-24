@@ -14,7 +14,7 @@ import { createMarketplaceIndexService, type MarketplaceRegistrySourcesReaderV1,
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { projectPluginTransactionChangeResult } from '@/plugins/daemon/transactionChangeResult';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
-import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
+import { readCurrentDaemonPluginCatalog, readCurrentDaemonPluginList } from '@/plugins/daemon/currentCatalog';
 import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -696,6 +696,11 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       }
       return result;
     },
+    readPluginList: (display) => readCurrentDaemonPluginList({
+      reloadController: params.reloadController,
+      happyHomeDir: params.happyHomeDir,
+      display,
+    }),
     async listPendingPluginChanges() {
       const base = await baseChangeService.listPendingPluginChanges();
       return Object.freeze({

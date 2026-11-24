@@ -11,7 +11,11 @@ import { readCurrentBundledPluginEnablement } from '@/plugins/projection/registr
 import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import type { ResolvedPluginEnablement } from '@/plugins/projection/registry/types';
-import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/introspection/catalogSnapshot';
+import {
+  joinInstalledCatalogRuntimeIntrospection,
+  projectPluginListDisplay,
+  type PluginListDisplay,
+} from '@/plugins/projection/introspection/catalogSnapshot';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
   projectOccurrenceBoundExecutablePluginToolCatalog,
@@ -86,13 +90,23 @@ export async function readCurrentDaemonPluginCatalog(params: Readonly<{
   reloadController: PluginReloadController;
   happyHomeDir?: string;
 }>): Promise<readonly PluginCatalogEntry[]> {
-  return (await readCurrentDaemonPluginCatalogSnapshot(params)).plugins;
+  return (await readCurrentDaemonPluginCatalogSnapshot({ ...params, includeTools: false })).plugins;
+}
+
+export async function readCurrentDaemonPluginList(params: Readonly<{
+  reloadController: PluginReloadController;
+  happyHomeDir?: string;
+  display: PluginListDisplay;
+}>) {
+  await params.reloadController.recoverFailedAccountCensus();
+  return projectPluginListDisplay(await readCurrentDaemonPluginCatalog(params), params.display);
 }
 
 export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
   reloadController: PluginReloadController;
   happyHomeDir?: string;
   selection?: DaemonPluginCatalogReadRequest['selection'];
+  includeTools?: false;
 }>): Promise<CurrentDaemonPluginCatalogSnapshot> {
   const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: params.reloadController });
   try {
@@ -147,7 +161,7 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
 
     return {
       plugins: joinInstalledCatalogRuntimeIntrospection(currentEntries, runtimeSnapshot),
-      tools: projectCurrentDaemonPluginTools(lease.registry),
+      tools: params.includeTools === false ? Object.freeze([]) : projectCurrentDaemonPluginTools(lease.registry),
     };
   } finally {
     await lease?.release();

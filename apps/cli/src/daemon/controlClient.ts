@@ -494,7 +494,11 @@ export async function listDaemonPluginChanges(
         : 'daemon_unavailable',
     };
   }
-  const changes = (result as Readonly<Record<string, unknown>>).changes;
+  return parseDaemonPluginChangeListResult(result);
+}
+
+export function parseDaemonPluginChangeListResult(result: Readonly<Record<string, unknown>>): UserPluginChangeListResult {
+  const changes = result.changes;
   if (!Array.isArray(changes)) return { kind: 'unavailable', code: 'invalid_daemon_response' };
   return {
     kind: 'available',

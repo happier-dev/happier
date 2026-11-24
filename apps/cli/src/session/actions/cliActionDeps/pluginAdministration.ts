@@ -34,6 +34,10 @@ export function createCliPluginAdministrationActionDeps(
 ): CliPluginAdministrationActionDeps {
   const pluginChangeService = params.pluginChangeService;
   const pluginChangeServices = pluginChangeService ? {
+    ...(pluginChangeService.readPluginList ? {
+      readPluginList: pluginChangeService.readPluginList,
+      listPendingPluginChanges: pluginChangeService.listPendingPluginChanges,
+    } : {}),
     requestUserPluginChange: async (input: Parameters<typeof requestUserPluginChange>[0]) => {
       const { requestUserPluginChange } = await import("@/plugins/daemon/changeClient");
       return requestUserPluginChange(input, {

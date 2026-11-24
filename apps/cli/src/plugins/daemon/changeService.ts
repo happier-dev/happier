@@ -25,6 +25,8 @@ import { PluginRegistryProfileRequiredError } from './changeContract';
 import { mapDaemonModuleLoadErrorToDiagnostic, projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { findPluginFailureDiagnostic, findPluginModuleLoadError } from '@/plugins/runtime/moduleFailure';
 import { logger } from '@/ui/logger';
+import type { readCurrentDaemonPluginList } from './currentCatalog';
+import type { PluginListDisplay } from '@/plugins/projection/introspection/catalogSnapshot';
 import { developmentSourceAuthorityEqual, type PluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 import type {
   DaemonPluginDevelopmentControlRequest,
@@ -81,6 +83,8 @@ export type DaemonPluginChangeService = Readonly<{
   ) => Promise<PluginChangeRequestResult>;
   decidePluginChange: (decision: PluginChangeDecision, signal?: AbortSignal) => Promise<PluginChangeDecisionResult>;
   statusPluginChange: (request: PluginChangeStatusRequest) => Promise<PluginChangeStatusResult>;
+  /** The admitted runtime owner supplies the display projection for in-daemon Actions. */
+  readPluginList?: (display: PluginListDisplay) => ReturnType<typeof readCurrentDaemonPluginList>;
   /** Every change still awaiting or executing a present-user decision. */
   listPendingPluginChanges: () => Promise<PluginChangeListResult>;
   /** Thin daemon-owned development-root registration/reload/status seam. */

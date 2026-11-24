@@ -8,14 +8,18 @@ import { installPluginFromLocator } from '@/plugins/projection/catalog/installed
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { readInstalledPluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
-import { controlDaemonPluginDevelopment, listDaemonPluginChanges, readDaemonPluginCatalog } from '@/daemon/controlClient';
+import {
+  controlDaemonPluginDevelopment, listDaemonPluginChanges, parseDaemonPluginChangeListResult, readDaemonPluginCatalog,
+} from '@/daemon/controlClient';
 import {
   describeUserPluginChangeFailure,
   decideUserPluginChange,
   readUserPluginChangeStatus,
   requestUserPluginChange,
 } from '@/plugins/daemon/changeClient';
-import { projectPluginCatalogEntrySnapshot, projectPluginCatalogEntrySummary } from '@/plugins/projection/introspection/catalogSnapshot';
+import { projectPluginCatalogEntrySnapshot, projectPluginListDisplay } from '@/plugins/projection/introspection/catalogSnapshot';
+import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { logger } from '@/ui/logger';
 import { runPluginAuthorToolchain, type PluginAuthorToolchainOperation } from '@/plugins/authoring/toolchain';
 import { runPluginAuthorDoctor } from '@/plugins/authoring/doctor';
 import { packLocalPlugin } from '@/plugins/packaging/pack';
@@ -40,6 +44,8 @@ type PluginPendingReview = Extract<
 >;
 
 export type PluginDevLoopActionServices = Readonly<{
+  readPluginList?: DaemonPluginChangeService['readPluginList'];
+  listPendingPluginChanges?: DaemonPluginChangeService['listPendingPluginChanges'];
   account?: Readonly<{ credentials: StoredCredentials; serverUrl: string }>;
   runPluginAuthorToolchain?: typeof runPluginAuthorToolchain;
   runPluginAuthorDoctor?: typeof runPluginAuthorDoctor;
@@ -655,11 +661,32 @@ export async function executePluginDevLoopAction(
   }
 
   if (params.actionId === 'plugins.list') {
+    const display = input.projection === 'summary' ? 'summary' : 'full';
+    const readInDaemon = async <T>(operation: string, read: () => Promise<T>) => {
+      try {
+        return await read();
+      } catch {
+        logger.warnLocalFile('[plugins] In-daemon list reader failed', { operation });
+        return { kind: 'unavailable' as const, code: 'daemon_unavailable' };
+      }
+    };
+    const { readPluginList, listPendingPluginChanges } = services;
     const [catalog, pendingChanges] = await Promise.all([
       runTracedExternalActionStage(params.actionId, params.context?.actionRequestId,
-        'plugins.catalog', () => readDaemonPluginCatalog()),
+        'plugins.catalog', async () => {
+          if (readPluginList) return readInDaemon('catalog', async () => ({
+            kind: 'available' as const,
+            plugins: await readPluginList(display),
+          }));
+          const result = await readDaemonPluginCatalog();
+          return result.kind === 'available'
+            ? { kind: 'available' as const, plugins: projectPluginListDisplay(result.plugins, display) }
+            : result;
+        }),
       runTracedExternalActionStage(params.actionId, params.context?.actionRequestId,
-        'plugins.pending_changes', () => listDaemonPluginChanges()),
+        'plugins.pending_changes', () => listPendingPluginChanges
+          ? readInDaemon('pending changes', async () => parseDaemonPluginChangeListResult(await listPendingPluginChanges()))
+          : listDaemonPluginChanges()),
     ]);
     if (catalog.kind !== 'available') {
       return {
@@ -683,12 +710,10 @@ export async function executePluginDevLoopAction(
         }],
       };
     }
-    const entries = catalog.plugins;
     return {
       ok: true,
       kind: 'plugins_list',
-      // The admitted input decides the projection; a listing surface asks for the summary.
-      plugins: input.projection === 'summary' ? entries.map(projectPluginCatalogEntrySummary) : entries.map(summarizeCatalogEntry),
+      plugins: catalog.plugins,
       // The daemon is the only pending-decision owner. Project its exact
       // listing beside installed inventory so an Agent can discover the id
       // it must rejoin through plugins.change.status without recreating work.

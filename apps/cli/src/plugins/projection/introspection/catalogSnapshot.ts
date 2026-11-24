@@ -126,6 +126,12 @@ export function projectPluginCatalogEntrySummary(entry: PluginCatalogEntry): Plu
   return Object.freeze(summary);
 }
 
+export type PluginListDisplay = 'summary' | 'full';
+
+export function projectPluginListDisplay(entries: readonly PluginCatalogEntry[], display: PluginListDisplay) {
+  return display === 'summary' ? entries.map(projectPluginCatalogEntrySummary) : entries.map(entry => projectPluginCatalogEntrySnapshot(entry));
+}
+
 function projectAttributedCatalogDiagnostics(params: Readonly<{
   entries: readonly PluginCatalogEntry[];
   diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
