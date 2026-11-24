@@ -33,7 +33,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
-import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationPluginEventDefinitionTrigger, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -330,6 +330,24 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
+    it('prefills the addressed Event condition and lets the person edit or remove it', async () => {
+        const event = eligibleEvent();
+        const initialSetupSeed = { eventRef: event.event.identity, setupInput: {},
+            initialFilter: { v: 1 as const, all: [{ op: 'eq' as const, field: '/eventId', value: 'selected' }] } };
+        const hook = await renderHook(() => usePluginEventAutomationComposer({
+            machineId: WATCHER_MACHINE_ID, serverId, projectionPhase: 'ready', projectionInputs: projectionInputs(event),
+            initialSetupSeed,
+        }));
+        await flushHookEffects();
+        const clause = hook.getCurrent().filterClauses[0];
+        expect(clause).toMatchObject({ field: '/eventId', op: 'eq', valueText: '"selected"' });
+        if (!clause) throw new Error('The initial condition is missing');
+        await act(async () => hook.getCurrent().setFilterClauseValueText(clause.id, '"revised"'));
+        expect(hook.getCurrent().filterClauses[0]?.valueText).toBe('"revised"');
+        await act(async () => hook.getCurrent().removeFilterClause(clause.id));
+        expect(hook.getCurrent().filterClauses).toEqual([]);
+    });
+
     it('keeps the completed source and disclosed webhook when reconfiguration is cancelled', async () => {
         const fixture = eligibleEvent();
         const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
@@ -378,7 +396,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         const seed: PluginEventAutomationEditSeed = { ...editSeed(event), filter: {
             v: 1, all: comparisons.map(([op]) => ({ op, field: '/count', value: 10 })),
         } };
-        const completed: Extract<AutomationTriggerDefinitionInput, { kind: 'pluginEvent' }>[] = [];
+        const completed: AutomationPluginEventDefinitionTrigger[] = [];
         function Composer(props: Readonly<{ seed: PluginEventAutomationEditSeed }>) {
             const model = usePluginEventAutomationComposer({ machineId: WATCHER_MACHINE_ID, serverId,
                 projectionPhase: 'ready', projectionInputs: inputs, initialEditSeed: props.seed });
@@ -404,7 +422,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         const saved = completed[0]!;
         expect(saved.filter).toEqual({ v: 1, all: comparisons.map(([, , op]) => ({ op, field: '/count', value: 42.5 })) });
         await act(async () => screen.unmount());
-        const reopened = await renderScreen(<Composer seed={pluginEventAutomationEditSeedFromCurrentInput(seed, saved)} />);
+        const reopened = await renderScreen(<Composer seed={pluginEventAutomationEditSeedFromCurrentInput(seed, { ...saved, enabled: seed.enabled })} />);
         await waitForHomeGovernance(() => expect(reopened.findByType(InlinePluginEventEditor).props.model.createDraft).not.toBeNull());
         for (const [index, [, , , label]] of comparisons.entries()) {
             const prefix = `automation-event-filter-clause-persisted-${index}`;

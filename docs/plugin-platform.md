@@ -1991,8 +1991,10 @@ independently bundled development SDKs with an earlier strict context grammar.
 
 The development `openAutomationEvent` UI host method seeds the ordinary sentence
 Workflow editor. Plugins supply a qualified Event and source-specific setup
-input, optionally a monitoring Machine and qualified Connected Account. Omitted choices
-remain unselected: the existing watcher chooser admits an explicit current Machine before
+input, optionally a monitoring Machine, qualified Connected Account and initial
+condition in the existing Event filter grammar. The editor validates the
+condition against the selected Event and lets the person edit or remove it.
+Omitted choices remain unselected. The existing watcher chooser admits an explicit current Machine before
 loading its Event catalog, and the Event's Action form owns Connected Account selection. Only an opaque,
 Account-scoped temporary definition seed handle enters the new Workflow route. Partial
 intent retains unselected placement and verb operands. The Event's current

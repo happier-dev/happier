@@ -29,7 +29,9 @@ afterEach(() => {
 
 describe('Automation Event host navigation', () => {
     it.each([seed, { eventRef: seed.eventRef, setupInput: seed.setupInput },
-        { ...seed, sourceInstanceId: 'repository:acme/widgets' }])('hands complete or partial source enrollment to the ordinary sentence editor using only an opaque route handle: %j', async (intent) => {
+        { ...seed, sourceInstanceId: 'repository:acme/widgets' },
+        { ...seed, initialFilter: { v: 1, all: [{ op: 'eq', field: '/observation/kind', value: 'statements' }] } },
+    ])('hands complete or partial source enrollment to the ordinary sentence editor using only an opaque route handle: %j', async (intent) => {
         const navigate = vi.fn<NonNullable<Parameters<typeof createPluginOpenAutomationEventHandler>[0]['navigate']>>();
         const open = createPluginOpenAutomationEventHandler({ accountLifetime: lifetime, isCurrent: () => true, navigate });
         expect(await open(intent)).toBeNull();

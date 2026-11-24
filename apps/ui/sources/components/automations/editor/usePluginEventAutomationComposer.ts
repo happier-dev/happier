@@ -622,7 +622,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, []);
 
-    const chooseEvent = React.useCallback((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1, preserveWatcher = false) => {
+    const chooseEvent = React.useCallback((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1, preserveWatcher = false,
+        filterClauses: ReturnType<typeof readPluginEventAutomationFilterClauses> = []) => {
         const current = eligibleEvents.find((candidate) => sameEligibleEvent(candidate, event)) ?? null;
         if (!current) return;
         setSelectedEvent(current);
@@ -630,7 +631,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSourceStatus('idle');
         setSourceFailure(null);
         if (!preserveWatcher) setSelectedWatcherOrigin(null);
-        setFilterClauses([]);
+        setFilterClauses(filterClauses);
         setObservationTransportState('checkpointedPull');
         setWebhookEndpoint(null);
         advanceRevision();
@@ -646,8 +647,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (matches.length !== 1) return;
         appliedActivityIntentRef.current = true;
         // Selecting intent does not configure a source or supply admission/currentness witnesses.
-        if (selectedEventRef.current === null) chooseEvent(matches[0], true);
-    }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId]);
+        if (selectedEventRef.current === null) {
+            const { identity } = matches[0].event;
+            const seeded = initialSetupSeed && arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, identity);
+            chooseEvent(matches[0], true, readPluginEventAutomationFilterClauses(seeded ? initialSetupSeed.initialFilter ?? null : null));
+        }
+    }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId, initialSetupSeed]);
 
     const nativeSetupProjectionTargets = React.useMemo(() => {
         if (!params.newSourceSetup || !params.serverId) return undefined;

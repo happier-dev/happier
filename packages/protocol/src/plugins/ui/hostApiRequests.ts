@@ -91,6 +91,7 @@ import { PluginUiNewSessionSeedOriginV1Schema } from './newSessionSeedOrigin.js'
 import { VoiceTrackedSessionAddressV1Schema } from '../../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { InboxItemAttentionTypeV1Schema } from '../../sessions/follow/sessionFollowPolicyV1.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
+import { AutomationEventFilterV1Schema } from '../../automations/automationEventFilterV1.js';
 export { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema,
   type PluginUiNewSessionSeedOriginV1 } from './newSessionSeedOrigin.js';
 
@@ -101,6 +102,7 @@ export const PluginUiOpenAutomationEventRequestV1Schema = lazyZodSchema(() => z.
   monitoringMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   connectedAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)),
   setupInput: z.record(z.string(), PluginUiJsonValueV1Schema),
+  initialFilter: z.optional(AutomationEventFilterV1Schema),
 }));
 export type PluginUiOpenAutomationEventRequestV1 = z.infer<typeof PluginUiOpenAutomationEventRequestV1Schema>;
 
