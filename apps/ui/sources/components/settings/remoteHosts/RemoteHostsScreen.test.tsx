@@ -418,10 +418,10 @@ async function seedRemoteHostCatalog() {
     // These cases exercise execution after the Account's user-configured
     // approval policy admits it; policy/approval routing has its own owner suite.
     const settings = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
-        'remote_hosts.save': ['ui'], 'remote_hosts.delete': ['ui'], 'remote_hosts.connect': ['ui'],
+        'remote_hosts.add': ['ui'], 'remote_hosts.save': ['ui'], 'remote_hosts.delete': ['ui'], 'remote_hosts.connect': ['ui'],
         'remote_hosts.setup_as_machine': ['ui'], 'remote_hosts.relay.use': ['ui'],
         'remote_hosts.relay.configure': ['ui'], 'remote_hosts.relay.test': ['ui'],
-        'remote_hosts.tunnel.stop': ['ui'],
+        'remote_hosts.tunnel.list': ['ui'], 'remote_hosts.tunnel.stop': ['ui'],
     } } };
     storage.setState({ profileScope: catalogScope, settingsScope: catalogScope, settings: settingsParse(settings) });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);

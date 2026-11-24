@@ -22,8 +22,10 @@ import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
 import { installNewSessionComponentsCommonModuleMocks } from '../newSessionComponentsTestHelpers';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
-const rpc = vi.hoisted(() => ({ machine: vi.fn(), operation: vi.fn() }));
+const rpc = vi.hoisted(() => ({ operation: vi.fn() }));
+const workerStatus = vi.fn();
 const modal = vi.hoisted(() => ({ show: vi.fn<import('@/modal').IModal['show']>(() => 'copy-modal') }));
 // Substitute Metro's deferred loader only; selection and the admitted Action remain real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
@@ -35,8 +37,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
-    return createServerScopedMachineRpcBoundaryMock(async params => params.method === ACTION_OPERATION_RPC_METHODS_V2.get
-        ? await rpc.operation(params) : await rpc.machine(params));
+    return createServerScopedMachineRpcBoundaryMock(async params => {
+        if (params.method !== ACTION_OPERATION_RPC_METHODS_V2.get) throw new Error(`Unexpected Machine RPC: ${params.method}`);
+        return await rpc.operation(params);
+    });
 });
 installNewSessionComponentsCommonModuleMocks({ modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { show: modal.show } }).module,
@@ -58,6 +62,18 @@ let serverId = '';
 let homeProfileId = '';
 
 async function seedAnsweredMachines(machines: Machine[]) {
+    const owned = machines.filter(machine => machine.isShared !== true && machine.active && machine.availability?.kind === 'available');
+    const [primary, ...additionalMachines] = owned;
+    if (primary) {
+        await answerExternalActionAccountForHome(homes, homeProfileId, {
+            actionId: 'projects.worker.status', machineId: primary.id, tokenEpoch: 0, requesterInvocation: 'required',
+            additionalMachines: additionalMachines.map(machine => ({ machineId: machine.id })),
+            execute: (input, { authorization, target }) => workerStatus({
+                serverIdentityId: authorization.binding.serverIdentityId, accountId: authorization.binding.accountId,
+                machineId: target.machineId, input,
+            }),
+        });
+    }
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, machines);
     for (const machine of machines) {
         const admitted = storage.getState().machineRecordsByServerId[serverId]?.[machine.id];
@@ -82,11 +98,11 @@ beforeEach(async () => {
     // Match the inventory owner harness: complete the actual Action dependency
     // graph after its boundaries are installed, before waiting on a rendered read.
     await import('@/sync/ops/actions/defaultActionExecutor');
-    rpc.machine.mockReset();
+    workerStatus.mockReset();
     rpc.operation.mockReset();
     modal.show.mockClear();
     homeProfileId = await homes.addHome({ name: 'Worker picker', serverUrl: 'https://worker-picker.test', accountId: 'owner',
-        accountEncryptionMode: 'plain', serverIdentityId: 'srv_worker_home' });
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_worker_home', currentAccount: true });
     await setServerProfileIdentityForUrl('https://worker-picker.test', 'srv_worker_home');
     serverId = resolveServerProfileScopeIdForIdentifier(homeProfileId);
     storage.setState((state) => ({
@@ -148,7 +164,7 @@ describe('worker destination list demand', () => {
                 organizations: [], revisionsByPhysicalKey: {} });
         publishRelationships(relationships);
         actionOperationStore.mergeSnapshots({ serverId, snapshots: operations });
-        rpc.machine.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: machine.id },
+        workerStatus.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'unknown' }, explanation: 'load_unknown' } satisfies ProjectWorkerStatusResultV1);
         let renders = 0;
         const hook = await renderHook(() => {
@@ -189,24 +205,24 @@ describe('worker destination list demand', () => {
             await waitForHomeGovernance(() => expect(hook.getCurrent()(machine, serverId).worker?.eligible).toBe(true));
             Object.assign(counts, { operationRecomputations: 0, operationEntries: 0, relationshipRecomputations: 0, relationshipEntries: 0 });
             const settledRenders = renders;
-            rpc.machine.mockClear();
+            workerStatus.mockClear();
             for (let index = 0; index < 20; index++) {
                 await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operations[index === 0 ? 399 : index]!, revision: 2, state: 'succeeded', settledAt: 2 }] }));
                 await act(async () => publishRelationships(relationships.map((row, item) => item === (index === 0 ? 299 : index) ? { ...row, updatedAtMs: 2 } : row)));
             }
-            console.info('WORKER-STATUS-PERF unrelated', JSON.stringify({ ...counts, renders: renders - settledRenders, statusReads: rpc.machine.mock.calls.length }));
-            expect({ ...counts, renders: renders - settledRenders, statusReads: rpc.machine.mock.calls.length }).toEqual({
+            console.info('WORKER-STATUS-PERF unrelated', JSON.stringify({ ...counts, renders: renders - settledRenders, statusReads: workerStatus.mock.calls.length }));
+            expect({ ...counts, renders: renders - settledRenders, statusReads: workerStatus.mock.calls.length }).toEqual({
                 operationRecomputations: 0, operationEntries: 0, relationshipRecomputations: 0, relationshipEntries: 0, renders: 0, statusReads: 0,
             });
             await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operations[0]!, operationId: 'matching', scope: { ...scope, machineId: machine.id } }] }));
-            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledOnce());
-            console.info('WORKER-STATUS-PERF matching operation', JSON.stringify({ statusRecomputations: rpc.machine.mock.calls.length }));
-            rpc.machine.mockClear();
+            await waitForHomeGovernance(() => expect(workerStatus).toHaveBeenCalledOnce());
+            console.info('WORKER-STATUS-PERF matching operation', JSON.stringify({ statusRecomputations: workerStatus.mock.calls.length }));
+            workerStatus.mockClear();
             const matchingTarget = { ...refs[0]!, machineId: machine.id };
             await act(async () => storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
                 workspaceRefs: [source, matchingTarget, ...refs.slice(1)], relationships, organizations: [], revisionsByPhysicalKey: {} }));
-            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledOnce());
-            console.info('WORKER-STATUS-PERF matching relationship', JSON.stringify({ statusRecomputations: rpc.machine.mock.calls.length }));
+            await waitForHomeGovernance(() => expect(workerStatus).toHaveBeenCalledOnce());
+            console.info('WORKER-STATUS-PERF matching relationship', JSON.stringify({ statusRecomputations: workerStatus.mock.calls.length }));
         } finally {
             operationWalk.mockRestore();
             relationshipWalk.mockRestore();
@@ -233,7 +249,7 @@ describe('worker destination list demand', () => {
         storage.getState().activateProjectAccountRowsScope(scope);
         await publish([]);
         let copied = false;
-        rpc.machine.mockImplementation(async () => copied
+        workerStatus.mockImplementation(async () => copied
             ? { eligible: true, candidate: { serverId, machineId: machine.id }, load: { kind: 'unknown' }, explanation: 'load_unknown' }
             : { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'worker_copy_missing',
                 workerCopy: { serverId, sourceWorkspaceRefId: source.id, sourceMachineId: source.machineId, targetMachineId: machine.id } });
@@ -243,14 +259,14 @@ describe('worker destination list demand', () => {
         const status = () => hook.getCurrent()(machine, serverId).worker;
         try {
             await waitForHomeGovernance(() => expect(status()).toMatchObject({ eligible: false, explanation: 'worker_copy_missing' }));
-            rpc.machine.mockClear();
+            workerStatus.mockClear();
             await publish([{ ...relationship, provenance: undefined }]);
             await flushHookEffects({ cycles: 5 });
-            expect(rpc.machine).not.toHaveBeenCalled();
+            expect(workerStatus).not.toHaveBeenCalled();
             copied = true;
             await publish([relationship]);
             await waitForHomeGovernance(() => expect(status()?.eligible).toBe(true));
-            expect(rpc.machine).toHaveBeenCalledOnce();
+            expect(workerStatus).toHaveBeenCalledOnce();
         } finally { await hook.unmount(); }
     });
     it.each([{ testID: 'run-picker', otherHome: false }, { testID: 'workers-picker', otherHome: true }])(
@@ -259,7 +275,7 @@ describe('worker destination list demand', () => {
         await seedAnsweredMachines([machine]);
         const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/source' };
         const onChoose = vi.fn();
-        rpc.machine.mockResolvedValue({ eligible: false, candidate: null, load: { kind: 'unknown' },
+        workerStatus.mockResolvedValue({ eligible: false, candidate: null, load: { kind: 'unknown' },
             explanation: 'worker_copy_missing', workerCopy: { serverId, sourceWorkspaceRefId: workspace.workspaceId,
                 sourceMachineId: workspace.machineId, targetMachineId: machine.id } } satisfies ProjectWorkerStatusResultV1);
         const hook = await renderHook(() => useMachineSelectionListModel<Machine>({
@@ -295,7 +311,7 @@ describe('worker destination list demand', () => {
             id: `worker-${index}`, active: true, activeAt: Date.now(), metadataVersion: 1,
         }));
         await seedAnsweredMachines(machines);
-        rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+        workerStatus.mockImplementation(async ({ machineId }: { machineId: string }) => ({
             eligible: true, candidate: { serverId, machineId },
             load: { kind: 'known', running: 1, queued: 0, accepting: true, runAtMost: 2 }, explanation: 'eligible',
         } satisfies ProjectWorkerStatusResultV1));
@@ -310,10 +326,10 @@ describe('worker destination list demand', () => {
         const status = (index: number) => hook.getCurrent()(machines[index]!, serverId).worker;
         try {
             await waitForHomeGovernance(() => expect(machines.every((_, index) => status(index)?.eligible)).toBe(true));
-            expect(rpc.machine).toHaveBeenCalledTimes(100);
+            expect(workerStatus).toHaveBeenCalledTimes(100);
             const stableStatus = status(1);
             const settledRenders = renders;
-            rpc.machine.mockClear();
+            workerStatus.mockClear();
             await act(async () => {
                 recordMachineRequestFailed({ serverId: 'another-home', accountId: 'owner', machineId: machines[0]!.id });
                 recordMachineRequestFailed({ serverId, accountId: 'another-account', machineId: machines[0]!.id });
@@ -321,18 +337,18 @@ describe('worker destination list demand', () => {
             });
             await flushHookEffects({ cycles: 20 });
             await waitForHomeGovernance(() => expect(status(1)?.eligible).toBe(true));
-            expect(rpc.machine).toHaveBeenCalledTimes(0);
+            expect(workerStatus).toHaveBeenCalledTimes(0);
             expect(renders).toBe(settledRenders);
             expect(status(1)).toBe(stableStatus);
 
             await act(async () => recordMachineRequestFailed({ serverId, accountId: 'owner', machineId: machines[0]!.id }));
             expect(status(0)).toBeUndefined();
             expect(status(1)).toBe(stableStatus);
-            expect(rpc.machine).toHaveBeenCalledTimes(0);
+            expect(workerStatus).toHaveBeenCalledTimes(0);
 
             await act(async () => recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machines[0]!.id }));
             await waitForHomeGovernance(() => expect(status(0)?.eligible).toBe(true));
-            expect(rpc.machine).toHaveBeenCalledTimes(1);
+            expect(workerStatus).toHaveBeenCalledTimes(1);
             expect(status(1)).toBe(stableStatus);
         } finally { await hook.unmount(); clearMachineRequestReachabilityForTest(); }
     });
@@ -348,7 +364,7 @@ describe('worker destination list demand', () => {
         const other = createDeferred<ProjectWorkerStatusResultV1>();
         const current = createDeferred<ProjectWorkerStatusResultV1>();
         const reads = new Map([['worker-a', [old, current]], ['worker-b', [other]]]);
-        rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) =>
+        workerStatus.mockImplementation(async ({ machineId }: { machineId: string }) =>
             await (reads.get(machineId)?.shift()?.promise ?? Promise.resolve(status(machineId, 3))));
         const hook = await renderHook((metadataVersion: number) => useMachineDestinationWorkerStatus({
             purpose: 'finite', workerPlacement: { workspace: { serverId, refId: 'checkout' } },
@@ -357,9 +373,9 @@ describe('worker destination list demand', () => {
         }), { initialProps: 1 });
         const worker = (index: number) => hook.getCurrent()(machines[index]!, serverId).worker;
         try {
-            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledTimes(2));
+            await waitForHomeGovernance(() => expect(workerStatus).toHaveBeenCalledTimes(2));
             await hook.rerender(2);
-            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledTimes(3));
+            await waitForHomeGovernance(() => expect(workerStatus).toHaveBeenCalledTimes(3));
             await act(async () => {
                 old.resolve(status('worker-a', 0));
                 other.resolve(status('worker-b', 1));
@@ -385,7 +401,7 @@ describe('worker destination list demand', () => {
                 });
             });
             await waitForHomeGovernance(() => expect(worker(0)?.load).toMatchObject({ running: 3 }));
-            expect(rpc.machine).toHaveBeenCalledTimes(4);
+            expect(workerStatus).toHaveBeenCalledTimes(4);
             expect(worker(1)).toBe(retained);
         } finally { await hook.unmount(); }
     });
@@ -423,12 +439,12 @@ describe('worker destination list demand', () => {
                 await flushHookEffects();
                 expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBeUndefined();
                 expect(option()?.disabled).toBe(true);
-                expect(rpc.machine).not.toHaveBeenCalled();
+                expect(workerStatus).not.toHaveBeenCalled();
                 return;
             }
             await waitForHomeGovernance(() => expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBe(wake));
             expect(option()?.disabled).toBe(false);
-            expect(rpc.machine).not.toHaveBeenCalled();
+            expect(workerStatus).not.toHaveBeenCalled();
             await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'owner' },
                 [{ ...controller, installationId: 'replacement' }, guest]));
             expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBeUndefined();
@@ -506,7 +522,7 @@ describe('worker destination list demand', () => {
         it('re-classifies when a request-reachability failure arrives without any Machine row change', async () => {
             const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now() });
             await seedAnsweredMachines([machine]);
-            rpc.machine.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: machine.id },
+            workerStatus.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: machine.id },
                 load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible' });
             const hook = await renderHook(() => useMachineSelectionListModel(paramsFor([machine])));
             try {
@@ -522,7 +538,7 @@ describe('worker destination list demand', () => {
         const scopedMachine = await seedAnsweredScopedMachine(machine);
         const worker = { eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'known', running: 2, queued: 7, accepting: true, runAtMost: 2 }, explanation: 'eligible' };
-        rpc.machine.mockResolvedValue(worker);
+        workerStatus.mockResolvedValue(worker);
         const params: BuildMachineSelectionListModelParams = {
             purpose,
             workerPlacement: { workspace: { serverId, refId: 'checkout' } },
@@ -533,9 +549,9 @@ describe('worker destination list demand', () => {
             showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
         };
         const hook = await renderHook(() => useMachineSelectionListModel(params));
-        await vi.waitFor(() => expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({
-            serverId, accountId: 'owner', machineId: 'worker', method: 'projects.worker.status',
-            payload: { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: 'worker' }, purpose },
+        await vi.waitFor(() => expect(workerStatus).toHaveBeenCalledWith(expect.objectContaining({
+            serverIdentityId: 'srv_worker_home', accountId: 'owner', machineId: 'worker',
+            input: { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: 'worker' }, purpose },
         })));
         await vi.waitFor(() => {
             const options = hook.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
@@ -550,8 +566,8 @@ describe('worker destination list demand', () => {
         let finishOld!: (status: unknown) => void;
         const unknown = { eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'unknown' }, explanation: 'load_unknown' };
-        rpc.machine.mockImplementationOnce(async () => await new Promise(resolve => { finishOld = resolve; }));
-        rpc.machine.mockResolvedValue(unknown);
+        workerStatus.mockImplementationOnce(async () => await new Promise(resolve => { finishOld = resolve; }));
+        workerStatus.mockResolvedValue(unknown);
         const hook = await renderHook((refId: string) => useMachineSelectionListModel<Machine>({
             purpose: 'finite', workerPlacement: { workspace: { serverId, refId } },
             groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
@@ -560,10 +576,10 @@ describe('worker destination list demand', () => {
             onSelectMachine: () => {}, onSelectScopedMachine: () => {},
             showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
         }), { initialProps: 'old-checkout' });
-        await vi.waitFor(() => expect(rpc.machine).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(workerStatus).toHaveBeenCalledTimes(1));
         await hook.rerender('new-checkout');
-        await vi.waitFor(() => expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({ workspace: { serverId, refId: 'new-checkout' } }),
+        await vi.waitFor(() => expect(workerStatus).toHaveBeenCalledWith(expect.objectContaining({
+            input: expect.objectContaining({ workspace: { serverId, refId: 'new-checkout' } }),
         })));
         await act(async () => {
             finishOld({ eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'workspace_unavailable' });
@@ -587,7 +603,7 @@ describe('worker destination list demand', () => {
         const bens = shared('bens-worker', true);
         const bensAway = shared('bens-away', false);
         await seedAnsweredMachines([owned, bens, bensAway]);
-        rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+        workerStatus.mockImplementation(async ({ machineId }: { machineId: string }) => ({
             eligible: true, candidate: { serverId, machineId },
             load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible',
         } satisfies ProjectWorkerStatusResultV1));
@@ -605,7 +621,7 @@ describe('worker destination list demand', () => {
             // Owned rows keep their exact status read.
             await waitForHomeGovernance(() => expect(option('own-worker')?.disabled).toBe(false));
             await flushHookEffects({ cycles: 20 });
-            expect(rpc.machine.mock.calls.map(([call]) => call.machineId)).toEqual(['own-worker']);
+            expect(workerStatus.mock.calls.map(([call]) => call.machineId)).toEqual(['own-worker']);
             // Another person's online Machine is listed from what Home publishes: selectable, no load claim, no "checking".
             expect(option('bens-worker')?.disabled).toBe(false);
             for (const key of ['projectWorkers.loading', 'projectWorkers.statusUnavailable', 'projectWorkers.free']) {
@@ -628,7 +644,7 @@ describe('worker destination list demand', () => {
         const bens = shared('bens-worker', 'Ben');
         const unnamed = shared('unnamed-worker', null);
         await seedAnsweredMachines([owned, bens, unnamed]);
-        rpc.machine.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: owned.id },
+        workerStatus.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: owned.id },
             load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible' });
         const hook = await renderHook(() => {
             const list = useMachineSelectionListModel<Machine>({
@@ -657,9 +673,9 @@ describe('worker destination list demand', () => {
     it('rechecks the same exact candidate after its admitted metadata version changes, not a wrapper-only render', async () => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now(), metadataVersion: 1 });
         await seedAnsweredMachines([machine]);
-        rpc.machine.mockResolvedValueOnce({ eligible: true, candidate: { serverId, machineId: machine.id },
+        workerStatus.mockResolvedValueOnce({ eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'unknown' }, explanation: 'load_unknown' });
-        rpc.machine.mockResolvedValue({ eligible: false, candidate: null,
+        workerStatus.mockResolvedValue({ eligible: false, candidate: null,
             load: { kind: 'known', running: 0, queued: 0, accepting: false, runAtMost: 2 }, explanation: 'not_accepting' });
         const hook = await renderHook((metadataVersion: number) => useMachineSelectionListModel<Machine>({
             purpose: 'finite', workerPlacement: { workspace: { serverId, refId: 'checkout' } },
@@ -673,7 +689,7 @@ describe('worker destination list demand', () => {
             .find(option => option.id === 'worker')?.disabled === false;
         await vi.waitFor(() => expect(selectable()).toBe(true));
         await hook.rerender(1);
-        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        expect(workerStatus).toHaveBeenCalledTimes(1);
         await hook.rerender(2);
         // Missing current status is also disabled (buildMachineDestinationModel.ts:57,83).
         // Wait for the completed refusal, not the intermediate checking state.
@@ -682,7 +698,7 @@ describe('worker destination list demand', () => {
             expect(options.find(option => option.id === 'worker')?.subtitle).toContain('projectWorkers.notAccepting');
         });
         await vi.waitFor(() => expect(selectable()).toBe(false));
-        expect(rpc.machine).toHaveBeenCalledTimes(2);
+        expect(workerStatus).toHaveBeenCalledTimes(2);
         await hook.unmount();
     });
 
@@ -714,7 +730,7 @@ describe('worker destination list demand', () => {
         await push(serverId, queued);
         let running = 1;
         let queuedCount = 1;
-        rpc.machine.mockImplementation(async () => ({
+        workerStatus.mockImplementation(async () => ({
             eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'known', running, queued: queuedCount, accepting: true, runAtMost: 3 }, explanation: 'eligible',
         } satisfies ProjectWorkerStatusResultV1));
@@ -742,7 +758,7 @@ describe('worker destination list demand', () => {
                 progress: { kind: 'phase', phase: 'queued', label: 'Queued — waiting for admission' } });
         });
         await vi.waitFor(() => expect(load()).toEqual({ kind: 'known', running: 1, queued: 1, accepting: true, runAtMost: 3 }));
-        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        expect(workerStatus).toHaveBeenCalledTimes(1);
         expect(renders).toBe(stableRenders);
 
         running = 2;
@@ -752,22 +768,22 @@ describe('worker destination list demand', () => {
             progress: { kind: 'phase', phase: 'preparing', label: 'Preparing workspace' } };
         await act(async () => { await push(serverId, preparing); });
         await vi.waitFor(() => expect(load()).toEqual({ kind: 'known', running: 2, queued: 0, accepting: true, runAtMost: 3 }));
-        expect(rpc.machine).toHaveBeenCalledTimes(2);
+        expect(workerStatus).toHaveBeenCalledTimes(2);
         const preparingRenders = renders;
         await act(async () => {
             await push(serverId, { ...preparing, revision: 4,
                 progress: { kind: 'phase', phase: 'preparing', label: 'Preparing reviewed workspace' } });
         });
         expect(load()).toEqual({ kind: 'known', running: 2, queued: 0, accepting: true, runAtMost: 3 });
-        expect(rpc.machine).toHaveBeenCalledTimes(2);
+        expect(workerStatus).toHaveBeenCalledTimes(2);
         expect(renders).toBe(preparingRenders);
 
         running = 3;
         await act(async () => { await push(serverId, snapshot('second-script')); });
         await vi.waitFor(() => expect(load()).toEqual({ kind: 'known', running: 3, queued: 0, accepting: true, runAtMost: 3 }));
-        expect(rpc.machine).toHaveBeenLastCalledWith(expect.objectContaining({
-            serverId, accountId: 'owner', machineId: machine.id,
-            payload: { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: machine.id }, purpose: 'finite' },
+        expect(workerStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+            serverIdentityId: 'srv_worker_home', accountId: 'owner', machineId: machine.id,
+            input: { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: machine.id }, purpose: 'finite' },
         }));
         await hook.unmount();
     });

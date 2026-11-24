@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -158,23 +157,32 @@ it.each([
     { ok: false, errorCode: 'terminal_cwd_denied', error: 'requester_root_unavailable' },
     undefined,
 ])('keeps Shell unavailable when terminal listing has no admitted requester root: %j', async machineShell => {
-    const machine = createMachineFixture({ id: 'unavailable-shell', isShared: false, active: true, activeAt: Date.now() });
-    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'bob', machine });
-    const home = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: `https://unavailable-shell-${machineShell ? 'denied' : 'old'}.test`,
-        accountId: 'bob', currentAccount: true }], route: request => request.path === '/v1/machines/read-batch'
-        ? createMachineReadBatchResponseFixture(request.body, () => row) : undefined });
+    const machineId = 'unavailable-shell';
+    const serverUrl = `https://unavailable-shell-${machineShell ? 'denied' : 'old'}.test`;
+    const serverIdentityId = machineShell ? 'srv_shell_denied' : 'srv_shell_old';
+    const list = vi.fn(() => ({ ok: true, terminals: [], ...(machineShell ? { machineShell } : {}) }));
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'bob',
+        machineId, actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials', execute: list });
+    const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), access: boundary.machine.access,
+        installationPublicKey: boundary.machine.installationPublicKey });
+    const home = await serveActionHomes({ homes: [{ key: 'owner', serverUrl, serverIdentityId,
+        accountId: 'bob', currentAccount: true }], route: async request => await boundary.handle(request.url, {
+        method: request.method, headers: request.headers,
+        body: request.body === undefined ? undefined : JSON.stringify(request.body), signal: request.signal,
+    }) ?? undefined });
     const serverId = home.homes.owner!.id;
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     await publishMachineInventoryForTest({ serverId, accountId: 'bob' }, [machine]);
     rpc.mockReset();
-    rpc.mockResolvedValue({ ok: true, terminals: [], ...(machineShell ? { machineShell } : {}) });
     const screen = await renderScreen(<MachinePageHeader target={{ machineId: machine.id, requestedServerId: serverId,
         serverId, activeServerId: serverId, machine, machineName: 'Box', machineSentenceName: 'Box', isServerSwitching: false,
         isHydratingMachine: false, switchReady: true }} managedIdentity={null} renaming={false} onRename={() => {}} />);
     try {
-        await vi.waitFor(() => expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_LIST)).toHaveLength(1));
+        await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+        expect(list.mock.calls[0]).toEqual([expect.objectContaining({ serverId, machineId, machineShell: true }), expect.anything()]);
         await flushHookEffects();
         expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
+        expect(rpc).not.toHaveBeenCalled();
         if (machineShell) {
             expect(screen.findByType(SurfaceFreshnessLine).props.reason).toBe(t('terminalEmbedded.errors.cwdDenied'));
             await act(async () => screen.findByType(SurfaceFreshnessLine).props.action.onPress());

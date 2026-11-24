@@ -606,7 +606,10 @@ it('refuses finite-Home navigation into another applied Account editor', async (
     ssh: { target: 'dev@private.example', authMode: 'agent' as const } };
   storage.setState({ profileScope: appliedScope, settingsScope: appliedScope, settings: settingsParse({}) });
   publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
-  home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: {} } } });
+  const admittedSettings = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
+    'remote_hosts.add': ['ui'], 'remote_hosts.edit': ['ui'],
+  } } };
+  home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: admittedSettings } } });
   home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) });
   home.answer(serverId, '/v2/account/settings/history', { body: { snapshots: [] } });
   home.answer(serverId, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });
@@ -630,10 +633,11 @@ it('does not navigate a retired Account after its real unsaved-draft decision re
   const serverId = await home.addHome({ name: 'Guarded Home', serverUrl: 'https://remote-host-guarded.test', accountId: 'original' });
   const scope = { serverId, accountId: 'original' };
   resetRemoteHostCatalogSnapshotsForTests();
-  storage.setState({ profileScope: scope, settingsScope: scope, settings: settingsParse({}) });
+  const admittedSettings = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'remote_hosts.add': ['ui'] } } };
+  storage.setState({ profileScope: scope, settingsScope: scope, settings: settingsParse(admittedSettings) });
   publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
   applyRemoteHostCatalogSnapshot(scope, { status: 'ready', revision: 4, hosts: [], diagnostics: [] }, true);
-  home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: {} } } });
+  home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: admittedSettings } } });
   home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) });
   home.answer(serverId, '/v2/account/settings/history', { body: { snapshots: [] } });
   home.answer(serverId, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });

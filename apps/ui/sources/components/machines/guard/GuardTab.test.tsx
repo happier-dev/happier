@@ -278,13 +278,13 @@ describe('GuardTab', () => {
         const text = screen.getTextContent();
         expect(text).toContain('If this were on and leeroy-mbp ran short on memory right now, Happier would:');
         expect(text).toContain('Close idle browsers');
-        expect(text).toContain('frees about 2.3 GB');
+        expect(text).toContain('frees about 2.3 GiB');
         expect(text).toContain('Browser sidecar');
         expect(text).toContain('nothing eligible');
-        expect(text).toContain('That is up to 2.3 GB of the 57 GB in use. The rest is 3 sessions at work, which are never touched and 47 GB that isn’t Happier’s.');
+        expect(text).toContain('That is up to 2.3 GiB of the 57 GiB in use. The rest is 3 sessions at work, which are never touched and 47 GiB that isn’t Happier’s.');
         expect(text).toContain('Off. Nothing is stopped for memory.');
         expect(text).toContain('Off. 1 session here has been idle for over 2 h.');
-        expect(text).toContain('Off. 2 are running on leeroy-mbp right now, holding 1.1 GB.');
+        expect(text).toContain('Off. 2 are running on leeroy-mbp right now, holding 1.1 GiB.');
         expect(text).toContain('Linux only. macOS can’t cap what a session and its processes use together.');
         expect(text).toContain('Nothing yet. Whatever Happier stops on leeroy-mbp by itself is listed here with the reason and a way back.');
         expect(screen.findByTestId('machine-guard-activity-empty')).not.toBeNull();
@@ -476,7 +476,7 @@ describe('GuardTab', () => {
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-activity-e1')).not.toBeNull()); });
         const text = screen.getTextContent();
         expect(text).toContain('Stopped “Review #2481”');
-        expect(text).toContain('540 MB freed');
+        expect(text).toContain('540 MiB freed');
         expect(text).toContain('It wakes on your next message');
         expect(screen.findByTestId('machine-activity-e1-resume')).not.toBeNull();
         expect(screen.findByTestId('machine-activity-e2-resume')).toBeNull();
