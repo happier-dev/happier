@@ -29,6 +29,7 @@ import type { UiSurfaceNetworkPolicyV1 } from '../../plugins/contributions/ui/ho
 import type { TeamCredentialApprovalSource, TeamCredentialSourceSelection } from './teamCredentialApproval.js';
 import type { TeamSetupBatchInputV1 } from '../../teams/setupBatchV1.js';
 import type { TeamMemberApprovalPresentation } from './teamMemberApproval.js';
+import type { HomeLayoutApprovalEffect } from './homeHub.js';
 
 export type SessionVisualCopyApprovalSummaryInput = Readonly<{
   source: string;
@@ -45,7 +46,8 @@ export type ActionApprovalScopeProjectionV1 = (
 export type GovernanceApprovalSummary =
   | Readonly<{ kind: 'teamArchive' | 'nativeCredentialDelivery' | 'machinePresetPrepare' }>
   | Readonly<{ kind: 'teamPolicy'; signIn: 'inherit' | 'inheritMayExpand' | null; clearTeamDefaults: boolean; clearGroupDefaults: boolean }>
-  | Readonly<{ kind: 'teamSetup'; setup: TeamSetupBatchInputV1 }>;
+  | Readonly<{ kind: 'teamSetup'; setup: TeamSetupBatchInputV1 }>
+  | Readonly<{ kind: 'homeLayout'; effect: HomeLayoutApprovalEffect }>;
 
 /** Keep the legacy summary recognizable to a pending card that already carries it. */
 export function formatGovernanceApprovalSummary(context: ApprovalPresentationContext | undefined,

@@ -347,6 +347,23 @@ function readConfirmationWorkspace(workspaceRefId: string, rows: ProjectAccountR
     return endpointFor(workspaceRefId, refs, machineId ? readMachineDisplayNamesById(state, [machineId]) : {}, scope.serverId);
 }
 
+/** A Home approval can name only items from the viewing Account's captured Home. */
+export function useApprovalHomeLayoutItemReading(approvalServerId: string | null, viewerServerId?: string) {
+    const ownHome = areServerProfileIdentifiersEquivalent(viewerServerId, approvalServerId);
+    const layout = useHomeHubLayoutReading(ownHome);
+    const sections = ownHome ? layout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section]) : [];
+    return {
+        resolving: ownHome && layout.status === 'loading',
+        readName: (id: string): string | null => {
+            const section = sections.find(candidate => candidate.id === id);
+            if (!section) return null;
+            return section.kind === 'group'
+                ? describeWidgetGroupAmong(layout.items, section.group, homeChildTitle(layout.sections))
+                : homeHubSectionTitle(section);
+        },
+    };
+}
+
 export function useApprovalReferenceReading(reference: ApprovalReference | undefined, literal: string, approvalServerId: string | null,
     /** A page opened by a link mounts no Session list, so it settles a Session reference with one exact read. */
     options?: Readonly<{ exactRead?: boolean }>): ApprovalReferenceReading {
@@ -446,13 +463,8 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const teamDirectorySourceName = directorySource && governanceScope
         ? readTeamDirectorySourceName(governanceScope, directorySource.teamId, directorySource.id) : null;
     const teamInvitationName = invitation && governanceScope ? readTeamInvitationName(governanceScope, invitation) : null;
-    const homeLayout = useHomeHubLayoutReading(reference?.kind === 'homeLayoutItem' && ownHome);
-    const homeSection = reference?.kind === 'homeLayoutItem' && ownHome
-        ? homeLayout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section])
-            .find(section => section.id === reference.id) : undefined;
-    const homeLayoutItemName = homeSection ? homeSection.kind === 'group'
-        ? describeWidgetGroupAmong(homeLayout.items, homeSection.group, homeChildTitle(homeLayout.sections))
-        : homeHubSectionTitle(homeSection) : null;
+    const homeLayout = useApprovalHomeLayoutItemReading(reference?.kind === 'homeLayoutItem' ? approvalServerId : null, viewer?.serverId);
+    const homeLayoutItemName = reference?.kind === 'homeLayoutItem' ? homeLayout.readName(reference.id) : null;
     return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
@@ -466,7 +478,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         teamDomainName: teamReference ? lookup.value : null,
         teamDomainResolving: teamReference !== null && lookup.resolving,
         homeSetupStepName: reference?.kind === 'homeSetupStep' ? readSetupStepName(reference.id, ownHome ? viewer : null) : null,
-        homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading',
+        homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && homeLayout.resolving,
         machineCatalogName: machineCatalogReference ? lookup.value : null,
         machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
 }

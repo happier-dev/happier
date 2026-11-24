@@ -2,6 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { HomeHubLayoutV1Schema, HomeHubLayoutIntentSchema } from '../../home/homeHubLayoutV1.js';
+import { formatGovernanceApprovalSummary } from './definition.js';
 import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { WidgetSizeV1Schema } from '../../widgets/widgetPresentationV1.js';
@@ -9,6 +10,8 @@ import { WidgetLayoutGroupV1Schema } from '../../widgets/widgetLayoutItemV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 
 export const HOME_HUB_LAYOUT_ACTION_IDS = ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'] as const;
+export const HOME_HUB_LAYOUT_UPDATE_ACTION_ID = HOME_HUB_LAYOUT_ACTION_IDS[1];
+const HOME_LAYOUT_TITLE = 'Customize Home';
 export type HomeHubLayoutActionId = typeof HOME_HUB_LAYOUT_ACTION_IDS[number];
 
 const sectionId = z.string().check(z.minLength(1));
@@ -28,6 +31,55 @@ export const HomeHubLayoutResultSchema = lazyZodSchema(() => z.strictObject({
   availableWidgetIds: z.array(sectionId),
   hiddenSetupStepIds: z.array(sectionId),
 }));
+
+type SimpleHomeLayoutApprovalEffect = 'move' | 'moveIntoGroup' | 'moveOutOfGroup' | 'reorder'
+  | 'hide' | 'show' | 'frame' | 'defaultFrame' | 'hideSetup' | 'showSetup' | 'restoreSetup' | 'reset'
+  | 'addWidget' | 'removeWidget' | 'rename' | 'defaultName' | 'inputs' | 'resetInputs' | 'size'
+  | 'addGroup' | 'ungroup' | 'groupAppearance' | 'groupInputs' | 'removeItem' | 'groupWidth' | 'network';
+
+export type HomeLayoutApprovalEffect =
+  | Readonly<{ kind: SimpleHomeLayoutApprovalEffect }>
+  | Readonly<{ kind: 'groupCreate'; widgetIds: readonly string[] }>;
+
+export function readHomeLayoutApprovalEffect(input: unknown): HomeLayoutApprovalEffect | null {
+  const parsed = HomeHubLayoutUpdateInputSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const { intent } = parsed.data;
+  switch (intent.kind) {
+    case 'move':
+      if ('groupId' in intent && intent.groupId !== undefined) {
+        return { kind: intent.groupId === null ? 'moveOutOfGroup' : 'moveIntoGroup' };
+      }
+      return { kind: 'move' };
+    case 'move_to': return { kind: 'move' };
+    case 'reorder': return { kind: 'reorder' };
+    case 'visibility': return { kind: intent.hidden ? 'hide' : 'show' };
+    case 'frameStyle':
+    case 'frame': return { kind: intent.frameStyle === null ? 'defaultFrame' : 'frame' };
+    case 'setup_visibility': return { kind: intent.hidden ? 'hideSetup' : 'showSetup' };
+    case 'restore_setup': return { kind: 'restoreSetup' };
+    case 'reset': return { kind: 'reset' };
+    case 'widget_add':
+    case 'add': return { kind: 'addWidget' };
+    case 'widget_remove': return { kind: 'removeWidget' };
+    case 'widget_rename':
+    case 'rename': return { kind: intent.displayName ? 'rename' : 'defaultName' };
+    case 'widget_inputs':
+    case 'inputs': return { kind: 'inputs' };
+    case 'widget_inputs_reset':
+    case 'inputs_reset': return { kind: 'resetInputs' };
+    case 'widget_size':
+    case 'size': return { kind: 'size' };
+    case 'group_create': return { kind: 'groupCreate', widgetIds: intent.instanceIds };
+    case 'group_add': return { kind: 'addGroup' };
+    case 'group_ungroup': return { kind: 'ungroup' };
+    case 'group_set': return { kind: 'groupAppearance' };
+    case 'group_inputs': return { kind: 'groupInputs' };
+    case 'remove': return { kind: 'removeItem' };
+    case 'width': return { kind: 'groupWidth' };
+    case 'network': return { kind: 'network' };
+  }
+}
 
 function createHomeHubLayoutActionSpecs() {
   return [
@@ -61,7 +113,7 @@ function createHomeHubLayoutActionSpecs() {
     examples: { voice: { argsExample: '{}' } },
   },
   {
-    id: 'home.hub.layout.update', approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'required'}, title: 'Customize Home',
+    id: HOME_HUB_LAYOUT_UPDATE_ACTION_ID, approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'required'}, title: HOME_LAYOUT_TITLE,
     description: 'Reorder, move, show or hide Home sections and layout items, create and edit groups, set or clear a frame style override, mark or dismiss individual setup steps, restore them or reset the layout. Start and attention stay visible.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     safetyForInput: (input: unknown) => {
@@ -77,8 +129,16 @@ function createHomeHubLayoutActionSpecs() {
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: HomeHubLayoutUpdateInputSchema, outputSchema: HomeHubLayoutResultSchema,
     approvalPresentation: {
+      summary: (input, context) => {
+        const effect = readHomeLayoutApprovalEffect(input);
+        return effect ? formatGovernanceApprovalSummary(context, { kind: 'homeLayout', effect }, () => HOME_LAYOUT_TITLE) : null;
+      },
+      inputHints: { fields: [
+        { path: 'intent', title: 'Customization intent', widget: 'json', required: true },
+        { path: 'intent.instanceIds', title: 'projects.dashboard.widgets', widget: 'json' },
+      ] },
       technicalInputPaths: [
-        'intent.instance.id', 'intent.group.id', 'intent.group.children.[].instance.id',
+        'intent.kind', 'intent.instance.id', 'intent.group.id', 'intent.group.children.[].instance.id',
         'intent.expectedInstance.id', 'intent.expectedInstance.definition.id', 'intent.expectedInstance.definition.artifactId',
         'intent.expectedPresentation.groupId',
         { path: 'intent.groupId', when: { path: 'intent.kind', equals: 'group_create' } },

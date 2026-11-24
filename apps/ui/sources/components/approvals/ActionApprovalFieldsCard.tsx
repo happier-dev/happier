@@ -342,7 +342,8 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
         return { kind: 'entries', key: row.path, label: row.title, entries: readableApprovalEntries(row.entries).map((entry): HappierApprovalFieldEntry<ApprovalValueSource> => {
             const declaration = entry.homeSetting && homeSettingsRegistry?.get(entry.homeSetting.key);
             return {
-                label: declaration ? homeSettingTitle(declaration) : entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key) : entry.label,
+                label: declaration ? homeSettingTitle(declaration) : entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key)
+                    : readApprovalFieldLabel(entry.label),
                 depth: entry.depth,
                 value: entry.homeSetting?.cleared ? t('homeSettings.row.notSet')
                     : entry.value === null ? null
@@ -352,7 +353,7 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
             };
         }) };
     }
-    const title = typeof getTranslationValue(row.title) === 'string' ? tLoose(row.title) : row.title;
+    const title = readApprovalFieldLabel(row.title);
     const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? title;
     const value = row.valueFormat === 'clear' ? literalApprovalValue(row, label)
         : governance && isGovernancePrincipal(row.reference)
@@ -519,6 +520,10 @@ function nameApprovalReferenceLabel(label: string, reference: ApprovalReference 
     return reference.kind === 'home' && /^server$/i.test(stem) ? t('common.home') : stem;
 }
 
+function readApprovalFieldLabel(label: string): string {
+    return typeof getTranslationValue(label) === 'string' ? tLoose(label) : label;
+}
+
 export type ApprovalTechnicalLine = TechnicalDetailsLine;
 
 /**
@@ -537,12 +542,12 @@ function collectApprovalTechnicalLines(rows: readonly ApprovalFieldRow[]): reado
         const trail: string[] = [];
         row.entries.forEach((entry, index) => {
             trail.length = entry.depth;
-            if (entry.value === null) { trail.push(entry.label); return; }
+            if (entry.value === null) { trail.push(readApprovalFieldLabel(entry.label)); return; }
             // Versions and empty values do not identify the effect. Exact ids behind resolved
             // names do, so the disclosure retains only those references.
             if (entry.reference || entry.technical && entry.label !== 'V'
                 && !['', '{}', '[]', 'null'].includes(entry.value)) {
-                lines.push({ key: `${row.path}:${index}`, label: [row.title, ...trail, entry.label].join(' › '), value: entry.value });
+                lines.push({ key: `${row.path}:${index}`, label: [row.title, ...trail, readApprovalFieldLabel(entry.label)].join(' › '), value: entry.value });
             }
         });
     }

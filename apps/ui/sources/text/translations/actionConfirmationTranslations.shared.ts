@@ -2,6 +2,8 @@
 
 export type ActionConfirmationTranslations = Readonly<{
     governance: Readonly<{
+        homeLayout: Readonly<Record<Exclude<import('@happier-dev/protocol/actions/specs/homeHub').HomeLayoutApprovalEffect['kind'], 'groupCreate'>, string>
+            & { groupCreate: (params: Readonly<{ widgets: string }>) => string }>;
         teamArchive: string;
         teamPolicyInherit: string;
         teamPolicyInheritMayExpand: string;
@@ -36,6 +38,35 @@ export type ActionConfirmationTranslations = Readonly<{
 
 export const actionConfirmationTranslationsEnglish = { en: {
         governance: {
+            homeLayout: {
+                move: "Moves an item on Home.",
+                moveIntoGroup: "Moves an item into a group.",
+                moveOutOfGroup: "Moves an item to the top level of Home.",
+                reorder: "Changes the order of items on Home.",
+                hide: "Hides an item on Home.",
+                show: "Shows an item on Home.",
+                frame: "Changes the frame style.",
+                defaultFrame: "Restores the default frame style.",
+                hideSetup: "Hides a setup step.",
+                showSetup: "Shows a setup step.",
+                restoreSetup: "Shows all setup steps again.",
+                reset: "Restores the default Home layout.",
+                addWidget: "Adds a widget to Home.",
+                removeWidget: "Removes a widget from Home.",
+                rename: "Changes the name.",
+                defaultName: "Restores the default name.",
+                inputs: "Changes what a widget uses.",
+                resetInputs: "Resets what a widget uses.",
+                size: "Changes a widget’s size.",
+                addGroup: "Adds a group to Home.",
+                ungroup: "Ungroups the widgets and keeps them on Home.",
+                groupAppearance: "Changes a group’s appearance.",
+                groupInputs: "Changes the group’s shared inputs.",
+                removeItem: "Removes the selected item from Home, including its widgets if it’s a group.",
+                groupWidth: "Changes a group’s width.",
+                network: "Changes a widget’s network access.",
+                groupCreate: ({ widgets }) => `Adds a group with ${widgets}.`,
+            },
             teamArchive: "Waiting invitations are permanently revoked. Restoring the Team does not restore them.",
             teamPolicyInherit: "Use the Home’s sign-in policy.",
             teamPolicyInheritMayExpand: "Use the Home’s sign-in policy. This may allow more sign-in methods.",

@@ -12,7 +12,9 @@ import { formatSettledSessionTeamApproval, readActionApprovalSubject, readApprov
 import { readSettledSessionTeamApproval, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { useApprovalPrincipalName } from './approvalPrincipalReading';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
-import { useApprovalReferenceReading } from './approvalReferenceReading';
+import { useApprovalHomeLayoutItemReading, useApprovalReferenceReading } from './approvalReferenceReading';
+import { HOME_HUB_LAYOUT_UPDATE_ACTION_ID, readHomeLayoutApprovalEffect } from '@happier-dev/protocol/actions/specs/homeHub';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
 import { SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -45,6 +47,13 @@ export const ApprovalPreviewSummary = React.memo(function ApprovalPreviewSummary
     if (settledTeamChange && props.request) {
         const settled = readSettledSessionTeamApproval(props.request);
         return settled ? <SettledSessionTeamPreview approval={settled} serverId={props.serverId ?? null} /> : null;
+    }
+    if (props.request?.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID
+        && (props.request.status === undefined || props.request.status === 'open')) {
+        const effect = readHomeLayoutApprovalEffect(props.request.actionArgs);
+        if (effect?.kind === 'groupCreate') {
+            return <HomeLayoutGroupPreview {...props} request={props.request} widgetIds={effect.widgetIds} />;
+        }
     }
     if (props.request?.actionId === 'scm.diffSummary.result.clear') return <ClearApprovalPreview {...props} request={props.request} />;
     return <ApprovalPreviewText summary={summary} />;
@@ -142,12 +151,21 @@ function SettledSessionTeamPreview(props: Readonly<{ approval: SettledSessionTea
     return <ApprovalPreviewText summary={formatSettledSessionTeamApproval(approval, name)} />;
 }
 
-function ApprovalPreviewText(props: Readonly<{ summary: string | null }>) {
+function HomeLayoutGroupPreview(props: Readonly<{
+    preview: unknown; request: ApprovalSummaryInput; serverId?: string | null; widgetIds: readonly string[];
+}>) {
+    const viewer = useAccountSettingsScope();
+    const layout = useApprovalHomeLayoutItemReading(props.serverId ?? null, viewer?.serverId);
+    const widgets = props.widgetIds.map(id => layout.readName(id) ?? t('common.unavailable'));
+    return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, undefined, widgets)} numberOfLines={2} />;
+}
+
+function ApprovalPreviewText(props: Readonly<{ summary: string | null; numberOfLines?: number }>) {
     if (!props.summary) return null;
 
     return (
         <View style={styles.card}>
-            <Text style={styles.summary}>{props.summary}</Text>
+            <Text style={styles.summary} numberOfLines={props.numberOfLines}>{props.summary}</Text>
         </View>
     );
 }

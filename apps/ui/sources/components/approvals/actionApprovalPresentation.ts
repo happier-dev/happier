@@ -1,5 +1,6 @@
 import { CurrentUiContextCommandInvokeOutputSchema, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { HOME_HUB_LAYOUT_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/specs/homeHub';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { ActionIdSchema, CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -39,6 +40,7 @@ export type ActionApprovalPresentationInput = Readonly<{
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1'];
     incomingDiscussionNames?: IncomingDiscussionApprovalNames;
     role?: RoleCatalogEntry | null;
+    homeLayoutWidgets?: readonly string[];
     /** The target Machine's readable path form (home-relative), when the presenting app knows its home. */
     formatPath?: ((path: string) => string) | null;
 }>;
@@ -69,7 +71,11 @@ export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unkn
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; execution?: ApprovalRequest['execution'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
-export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null): string | null {
+export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null,
+    homeLayoutWidgets?: readonly string[]): string | null {
+    if (request?.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID && (request.status === undefined || request.status === 'open')) {
+        return presentActionApproval({ ...request, preview, subject, homeLayoutWidgets }).summary;
+    }
     if (request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1) {
         if (request.execution?.ok || request.status === 'executed') {
             const settled = readSettledSessionTeamApproval(request);
@@ -263,7 +269,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         ...(input.status === undefined || input.status === 'open' || input.kind === 'confirmation' ? {
             formatGovernanceSummary: (review, legacy) => {
                 canonicalGovernanceSummary = legacy()?.trim() ?? null;
-                return formatPendingGovernanceSummary(review);
+                return formatPendingGovernanceSummary(review, input.homeLayoutWidgets);
             },
         } : {}),
         formatSessionVisualCopySummary: summary => {

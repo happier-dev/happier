@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
+import type { HomeHubLayoutIntent } from '@happier-dev/protocol/actions/specs/homeHub';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { t } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
@@ -16,6 +17,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
+const { readApprovalPreviewSummary } = await import('./actionApprovalPresentation');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { storage } = await import('@/sync/domains/state/storage');
@@ -23,10 +25,63 @@ const { storage } = await import('@/sync/domains/state/storage');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 beforeEach(async () => { standardCleanup(); await harness.reset(); });
 afterEach(async () => {
+    setPreferredLanguageFromSettings('en');
     standardCleanup();
     await connection?.dispose();
     connection = undefined;
     await harness.reset();
+});
+
+const summaryWidget = { v: 1, id: 'widget-1', definition: { kind: 'builtin', id: 'usage_capacity' }, bindings: {} } as const;
+const summaryCases = {
+    move: [{ kind: 'move', sectionId: 'reviews', step: 1 }, 'Moves an item on Home.'],
+    move_to: [{ kind: 'move_to', sectionId: 'reviews', position: { nativeIndex: 0 } }, 'Moves an item on Home.'],
+    reorder: [{ kind: 'reorder', sectionIds: ['start', 'reviews'] }, 'Changes the order of items on Home.'],
+    visibility: [{ kind: 'visibility', sectionId: 'reviews', hidden: true }, 'Hides an item on Home.'],
+    frameStyle: [{ kind: 'frameStyle', sectionId: 'reviews', frameStyle: null }, 'Restores the default frame style.'],
+    setup_visibility: [{ kind: 'setup_visibility', stepId: 'addPhone', hidden: false }, 'Shows a setup step.'],
+    restore_setup: [{ kind: 'restore_setup' }, 'Shows all setup steps again.'],
+    reset: [{ kind: 'reset' }, 'Restores the default Home layout.'],
+    widget_add: [{ kind: 'widget_add', instance: summaryWidget }, 'Adds a widget to Home.'],
+    widget_remove: [{ kind: 'widget_remove', instanceId: 'widget-1' }, 'Removes a widget from Home.'],
+    widget_rename: [{ kind: 'widget_rename', instanceId: 'widget-1' }, 'Restores the default name.'],
+    widget_inputs: [{ kind: 'widget_inputs', instanceId: 'widget-1', bindings: {} }, 'Changes what a widget uses.'],
+    widget_inputs_reset: [{ kind: 'widget_inputs_reset', instanceId: 'widget-1' }, 'Resets what a widget uses.'],
+    widget_size: [{ kind: 'widget_size', instanceId: 'widget-1', size: 'medium' }, 'Changes a widget’s size.'],
+    group_create: [{ kind: 'group_create', groupId: 'group-1', instanceIds: ['widget-1'] }, 'Adds a group with Unavailable.'],
+    group_add: [{ kind: 'group_add', group: { kind: 'group', id: 'group-1', width: 'full',
+        children: [{ kind: 'widget', instance: summaryWidget }] } }, 'Adds a group to Home.'],
+    group_ungroup: [{ kind: 'group_ungroup', instanceId: 'group-1' }, 'Ungroups the widgets and keeps them on Home.'],
+    group_set: [{ kind: 'group_set', instanceId: 'group-1', width: 'full' }, 'Changes a group’s appearance.'],
+    group_inputs: [{ kind: 'group_inputs', instanceId: 'group-1', bindings: {} }, 'Changes the group’s shared inputs.'],
+    add: [{ kind: 'add', instance: summaryWidget }, 'Adds a widget to Home.'],
+    remove: [{ kind: 'remove', instanceId: 'group-1' }, 'Removes the selected item from Home, including its widgets if it’s a group.'],
+    rename: [{ kind: 'rename', instanceId: 'group-1', displayName: 'Status' }, 'Changes the name.'],
+    size: [{ kind: 'size', instanceId: 'widget-1', size: 'medium' }, 'Changes a widget’s size.'],
+    width: [{ kind: 'width', instanceId: 'group-1', width: 'full' }, 'Changes a group’s width.'],
+    frame: [{ kind: 'frame', instanceId: 'widget-1', frameStyle: 'plain' }, 'Changes the frame style.'],
+    inputs: [{ kind: 'inputs', instanceId: 'widget-1', bindings: {} }, 'Changes what a widget uses.'],
+    inputs_reset: [{ kind: 'inputs_reset', instanceId: 'widget-1' }, 'Resets what a widget uses.'],
+    network: [{ kind: 'network', instanceId: 'widget-1', network: { network: 'none' } }, 'Changes a widget’s network access.'],
+} as const satisfies { readonly [K in HomeHubLayoutIntent['kind']]: readonly [Extract<HomeHubLayoutIntent, { kind: K }>, string] };
+
+it.each([
+    ...Object.values(summaryCases),
+    [{ kind: 'move', instanceId: 'widget-1', groupId: 'group-1', toIndex: 0 }, 'Moves an item into a group.'],
+    [{ kind: 'move', instanceId: 'widget-1', groupId: null, toIndex: 0 }, 'Moves an item to the top level of Home.'],
+] as readonly (readonly [HomeHubLayoutIntent, string])[])('describes the effect of %j', (intent, expected) => {
+    const actionId = 'home.hub.layout.update';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent });
+    expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'open' })).toBe(expected);
+});
+
+it('presents a Home group request in French even when the stored summary is English', async () => {
+    await preloadTranslations('fr');
+    setPreferredLanguageFromSettings('fr');
+    const actionId = 'home.hub.layout.update';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: summaryCases.group_create[0] });
+    expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'open' }, undefined,
+        ['Machines', 'Services locaux'])).toBe('Ajoute un groupe avec Machines et Services locaux.');
 });
 
 it.each([
@@ -137,24 +192,35 @@ it('keeps an allocated Home Group ID technical and names a saved destination on 
     const instanceId = '9e9b44d4-2167-4837-adb5-92dc43f3b481';
     const title = 'Capacity lab';
     const actionId = 'home.hub.layout.update';
-    const createIntent = { kind: 'group_create', groupId: allocatedGroupId, instanceIds: [instanceId], title };
+    const secondId = '84e0d949-bef5-494c-8c48-4bcb43ec4e2a';
+    const createIntent = { kind: 'group_create', groupId: allocatedGroupId, instanceIds: [instanceId, secondId], title };
     const account = await captureLazyActionAccountContext(serverId);
     try {
         const layout = createHomeHubArtifactPortV1(account.homeHubArtifactTransport, { accountId });
         await layout.apply({ kind: 'widget_add', instance: { v: 1, id: instanceId,
             definition: { kind: 'builtin', id: 'usage_capacity' }, displayName: 'Capacity Widget', bindings: {} }, size: 'medium' });
-        await layout.apply({ ...createIntent, kind: 'group_create', groupId });
+        await layout.apply({ kind: 'widget_add', instance: { v: 1, id: secondId,
+            definition: { kind: 'builtin', id: 'usage_capacity' }, displayName: 'Budget Widget', bindings: {} }, size: 'medium' });
+        await layout.apply({ kind: 'group_create', groupId, instanceIds: [instanceId], title });
     } finally { account.dispose(); }
-    const review = (intent: unknown) => <InjectedAuthProvider credentials={credentials}>
+    const review = (intent: unknown, capturedHomeId: string | null = scope.serverId) => <InjectedAuthProvider credentials={credentials}>
         <ApprovalReviewFacts actionId={actionId} actionArgs={getActionSpec(actionId).inputSchema.parse({ intent })}
-            preview={null} status="open" serverId={scope.serverId} testID="home-layout-group-review" />
+            preview={null} status="open" serverId={capturedHomeId} testID="home-layout-group-review" />
     </InjectedAuthProvider>;
     const create = await renderScreen(review(createIntent));
     try {
+        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain('Adds a group with Capacity Widget and Budget Widget.'));
         expect(create.getTextContent()).toContain(title);
+        expect(create.getTextContent()).toContain('Widgets');
+        expect(create.getTextContent()).not.toContain('Instance ids');
+        expect(create.getTextContent()).not.toContain('Group create');
         expect(create.getTextContent()).not.toContain(allocatedGroupId);
+        await create.update(review(createIntent, null));
+        expect(create.getTextContent()).toContain('Adds a group with Unavailable and Unavailable.');
+        expect(create.getTextContent()).not.toContain('Capacity Widget');
         await create.pressByTestIdAsync('approvals.technical-details.header');
         expect(create.getTextContent()).toContain(allocatedGroupId);
+        expect(create.getTextContent()).toContain(secondId);
     } finally { await create.unmount(); }
     const move = await renderScreen(review({ kind: 'move', instanceId, toIndex: 0, groupId }));
     try {

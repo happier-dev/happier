@@ -3,6 +3,7 @@ import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { t } from '@/text';
 import { resolveActionTitle } from '@/text/actionTitles';
+import { joinList } from '@/utils/text/joinList';
 
 function formatSetupSummary(setup: Extract<GovernanceApprovalSummary, { kind: 'teamSetup' }>['setup']): string {
     const checkoutLabels = {
@@ -41,9 +42,15 @@ function formatSetupSummary(setup: Extract<GovernanceApprovalSummary, { kind: 't
 }
 
 /** The spec selects the consequences. The UI owns the words used to review them. */
-export function formatPendingGovernanceSummary(summary: GovernanceApprovalSummary): string {
+export function formatPendingGovernanceSummary(summary: GovernanceApprovalSummary, homeLayoutWidgets?: readonly string[]): string {
     switch (summary.kind) {
         case 'teamArchive': return t('actionConfirmations.governance.teamArchive');
+        case 'homeLayout': {
+            const { effect } = summary;
+            if (effect.kind !== 'groupCreate') return t(`actionConfirmations.governance.homeLayout.${effect.kind}`);
+            const widgets = homeLayoutWidgets ?? effect.widgetIds.map(() => t('common.unavailable'));
+            return t('actionConfirmations.governance.homeLayout.groupCreate', { widgets: joinList(widgets) });
+        }
         case 'nativeCredentialDelivery': return t('actionConfirmations.governance.nativeCredentialDelivery');
         case 'machinePresetPrepare': return t('actionConfirmations.governance.machinePresetPrepare');
         case 'teamPolicy': return [
