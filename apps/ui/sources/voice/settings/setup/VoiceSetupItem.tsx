@@ -92,7 +92,9 @@ export function useVoiceSetupBlock(input: Readonly<{
     const microphone = useObservedMicrophonePermission(executeValue);
     const homeConversationSessionAddress = useVoiceHomeConversationAddress();
     const voice = useVoiceAttemptControl(input.attemptTarget ?? VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
-    const conversationSessionAddress = voice.conversationSessionAddress ?? homeConversationSessionAddress;
+    const conversationSessionAddress = voice.conversationSessionAddress ?? voice.targetSessionAddress
+        ?? homeConversationSessionAddress
+        ?? (input.attemptTarget?.kind === 'session' ? input.attemptTarget.sessionAddress : null);
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle') ?? null;
     const phone = !useIsTablet();
     // m-core's owner: the facts and the dismissal. The block is built here from its facts.

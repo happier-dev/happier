@@ -353,6 +353,20 @@ describe('createLocalVoiceCaptureOwner', () => {
             vi.unstubAllGlobals();
         }
     });
+    it('exposes only the live browser capture track label after acquisition and retires it on stop', async () => {
+        const browser = installBrowserCaptureBoundary();
+        Object.defineProperty(browser.micTrack, 'label', { value: 'MacBook Pro Microphone' });
+        const owner = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {} });
+
+        expect(owner.getInputDeviceLabel?.('try')).toBeUndefined();
+        await owner.startCapture({ sessionId: 'try', provider: 'device', handsFree: false });
+        expect(owner.getInputDeviceLabel('try')).toBe('MacBook Pro Microphone');
+        expect(owner.getInputDeviceLabel?.('other')).toBeUndefined();
+
+        await owner.stopSession('try');
+        expect(owner.getInputDeviceLabel?.('try')).toBeUndefined();
+    });
+
     const previousWindow = (globalThis as { window?: object }).window;
     const previousDocument = (globalThis as { document?: object }).document;
 

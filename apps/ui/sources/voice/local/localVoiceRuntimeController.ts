@@ -3,6 +3,7 @@ import {
   abortLocalVoiceTurn,
   commitLocalVoiceInput,
   isLocalVoiceInputEndpointDriven,
+  readLocalVoiceInputDeviceLabel,
   prepareLocalVoiceForReadAloud,
   announceLocalVoiceAgentAssistantText,
   appendLocalVoiceAgentAttemptContextUpdate,
@@ -23,6 +24,7 @@ export type LocalVoiceRuntimeController = Readonly<{
   commitInput: (sessionId: string) => Promise<void>;
   prepareForReadAloud: () => Promise<void>;
   isInputEndpointDriven: () => boolean;
+  getInputDeviceLabel: (sessionId: string) => string | undefined;
   announceAgentAssistantText: (sessionId: string, text: string) => void;
   /** Explicit current-attempt context; synchronized Session updates do not use this seam. */
   appendAgentContextUpdate: (sessionId: string, update: string) => void;
@@ -51,6 +53,7 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
     commitInput: async (sessionId) => await commitLocalVoiceInput(sessionId),
     prepareForReadAloud: async () => await prepareLocalVoiceForReadAloud(),
     isInputEndpointDriven: () => isLocalVoiceInputEndpointDriven(),
+    getInputDeviceLabel: readLocalVoiceInputDeviceLabel,
     announceAgentAssistantText: (sessionId, text) => announceLocalVoiceAgentAssistantText(sessionId, text),
     appendAgentContextUpdate: (sessionId, update) => appendLocalVoiceAgentAttemptContextUpdate(sessionId, update),
     appendAgentAutomaticUiContextUpdate: (sessionId, update) => appendLocalVoiceAgentAutomaticUiContextUpdate(sessionId, update),

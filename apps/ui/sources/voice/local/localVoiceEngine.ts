@@ -1309,6 +1309,10 @@ async function persistLocalVoiceAgentAssistantText(sessionId: string, text: stri
   });
 }
 
+export function readLocalVoiceInputDeviceLabel(controlSessionId: string): string | undefined {
+  return localVoiceCaptureOwner.getInputDeviceLabel(controlSessionId);
+}
+
 export function announceLocalVoiceAgentAssistantText(sessionId: string, text: string): void {
   const settings = storage.getState().settings;
   const controlSessionId = resolveLocalConversationControlSessionId(settings, sessionId);

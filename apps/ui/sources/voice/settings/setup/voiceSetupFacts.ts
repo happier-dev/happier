@@ -87,6 +87,8 @@ export function readVoiceSetupTryTurn(input: Readonly<{
 
 export function hasRetainedVoiceInputAndReply(messages: readonly Message[]): boolean {
     const attempts = new Map<string, { inputSeq: number | null; replySeq: number | null }>();
+    const directTurns: { seq: number; kind: 'spoken' | 'typed' | 'reply' }[] = [];
+    let hasDirectInput = false;
     let hasLocalCaptureInput = false;
     let hasLocalAgentReply = false;
     for (const message of messages) {
@@ -96,11 +98,22 @@ export function hasRetainedVoiceInputAndReply(messages: readonly Message[]): boo
         if (!message.text.trim() || (message.kind === 'agent-text' && message.isThinking)) continue;
         const origin = readConversationTurnOriginV1FromMessageMeta(message.meta);
         const agentTurn = readVoiceAgentTurnPayloadFromMeta(message.meta);
-        if ((origin?.channel !== 'realtime_conversation' || origin.modality !== 'voice') && !agentTurn) continue;
         const role = message.kind === 'user-text' ? 'user' : 'assistant';
         const id = message.localId ?? message.id;
         const retainedAttempt = readCanonicalVoiceTranscriptAttemptKey(id, role);
         if (id.startsWith('voice-realtime:') && !retainedAttempt) continue;
+        if ((origin?.channel !== 'realtime_conversation' || origin.modality !== 'voice') && !agentTurn) {
+            if (!retainedAttempt && origin?.channel === 'agent_thread') {
+                if (role === 'user') {
+                    const spoken = isSpokenInput(message.meta);
+                    hasDirectInput ||= spoken;
+                    directTurns.push({ seq, kind: spoken ? 'spoken' : 'typed' });
+                } else {
+                    directTurns.push({ seq, kind: 'reply' });
+                }
+            }
+            continue;
+        }
         // Local capture's ordinary Voice-marked user row and the daemon reply
         // have different envelopes. The reply carries voice_agent_turn.v1,
         // not a realtime attempt id. Pending settles that input after daemon
@@ -122,8 +135,23 @@ export function hasRetainedVoiceInputAndReply(messages: readonly Message[]): boo
         else attempt.replySeq = Math.max(attempt.replySeq ?? seq, seq);
         attempts.set(key, attempt);
     }
-    return (hasLocalCaptureInput && hasLocalAgentReply)
-        || [...attempts.values()].some(({ inputSeq, replySeq }) => inputSeq !== null && replySeq !== null && replySeq > inputSeq);
+    if ((hasLocalCaptureInput && hasLocalAgentReply)
+        || [...attempts.values()].some(({ inputSeq, replySeq }) => inputSeq !== null && replySeq !== null && replySeq > inputSeq)) {
+        return true;
+    }
+    if (!hasDirectInput) return false;
+
+    // A direct Session's regular coding agent answers through its ordinary
+    // Session timeline. The next user input ends that input's reply window.
+    let spokenSeq: number | null = null;
+    for (const turn of directTurns.sort((left, right) => left.seq - right.seq)) {
+        if (turn.kind === 'reply') {
+            if (spokenSeq !== null && turn.seq > spokenSeq) return true;
+        } else {
+            spokenSeq = turn.kind === 'spoken' ? turn.seq : null;
+        }
+    }
+    return false;
 }
 
 export type VoiceSetupFacts = ReturnType<typeof deriveVoiceSetupFacts>;

@@ -34,6 +34,19 @@ describe('Voice setup facts', () => {
         expect(facts([{ ...input, localId: 'voice-realtime:other:user:input' }, output])).toBe(false);
         expect(facts([{ ...input, meta: undefined }, output])).toBe(false);
     });
+    it('completes step four from an admitted direct-Session spoken row and its later ordinary reply', () => {
+        const spoken: Message = { ...user, meta: { happierProvenanceV1: { v: 1, kind: 'voice' } } };
+        const ordinaryReply: Message = { ...reply, meta: undefined };
+        const facts = (messages: Message[]) => deriveVoiceSetupFacts({
+            providerId: 'test.service', readiness: ready, microphonePermission: 'granted', messages,
+        });
+        expect(facts([ordinaryReply, spoken])).toMatchObject({ doneCount: 4, firstTurnComplete: true });
+        expect(facts([spoken])).toMatchObject({ doneCount: 3, firstTurnComplete: false });
+        expect(facts([spoken, { ...ordinaryReply, seq: 0 }]).firstTurnComplete).toBe(false);
+        expect(facts([spoken, { ...ordinaryReply, isThinking: true }]).firstTurnComplete).toBe(false);
+        expect(facts([spoken, { ...user, seq: 2, meta: undefined }, { ...ordinaryReply, seq: 3 }]).firstTurnComplete).toBe(false);
+    });
+
     it('projects only observed step progress and the readiness owner’s blocked or installing state', () => {
         const base = { providerId: 'test.service', microphonePermission: 'unknown' as const, messages: [] };
         expect(deriveVoiceSetupFacts({ ...base, readiness: null }).steps.map((step) => step.state)).toEqual(['done', 'current', 'upcoming', 'upcoming']);

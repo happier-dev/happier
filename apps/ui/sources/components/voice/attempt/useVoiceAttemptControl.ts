@@ -142,6 +142,8 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     recoveryLabel: string | null;
     /** The recovery's glyph, chosen with its label: microphone to allow, gear to set up, arrow to retry. */
     recoveryIcon: VoiceRecoveryIcon | null;
+    /** Display-only label of the active input track, when known by capture. */
+    inputDeviceLabel?: string;
     /** Placement-neutral, privacy-safe microphone status copy. */
     micStateLabel: string;
     /** The sheet caption selected from recovery and microphone status facts. */
@@ -869,6 +871,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             recoveryLabel,
             recoveryIcon,
             micStateLabel,
+            inputDeviceLabel: snap.inputDeviceLabel,
             captionLabel,
             failureMessage,
             onPrimaryAction,
@@ -891,6 +894,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             serviceTitle,
             snap.status,
             snap.inUseVoice,
+            snap.inputDeviceLabel,
             snap.preparedInstructionsFor,
             targetSessionAddress,
             pendingRequestSessionAddress,

@@ -98,6 +98,7 @@ export type VoiceSessionSnapshot = Readonly<{
   /** The owned realtime reconnect scheduler has a pending backoff slot. */
   reconnectRetryAvailable?: boolean;
   /** The current connected adapter's accepted application snapshot. Unknown is omitted. */
+  inputDeviceLabel?: string;
   inUseVoice?: VoiceConversationInUseVoice;
   /** Exact Session instructions accepted by this attempt's supported carrier; unknown is omitted. */
   preparedInstructionsFor?: SessionAddress;

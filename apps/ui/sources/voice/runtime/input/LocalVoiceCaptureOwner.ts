@@ -67,6 +67,7 @@ export type StopLocalVoiceCaptureResult =
 export type LocalVoiceCaptureOwner = Readonly<{
     /** Whether the session still owns active microphone input. */
     isCaptureActive: (sessionId: string) => boolean;
+    getInputDeviceLabel: (sessionId: string) => string | undefined;
     resolveManualBargeInAction: (args: Readonly<{
         bargeInEnabled: boolean;
         currentSessionId: string | null;
@@ -782,6 +783,13 @@ export function createLocalVoiceCaptureOwner(
         isCaptureActive: (sessionId) => activeCaptureStarted
             && activeCaptureSessionId === normalizeSessionId(sessionId)
             && !activeCaptureErrored,
+        getInputDeviceLabel: (sessionId) => {
+            if (!activeCaptureStarted || activeCaptureErrored || activeCaptureSessionId !== normalizeSessionId(sessionId)) {
+                return undefined;
+            }
+            const mic = activeCaptureProvider === 'recorded_audio' ? recordingMicSession : liveMicSession;
+            return mic?.getStream()?.getAudioTracks()[0]?.label?.trim() || undefined;
+        },
         resolveManualBargeInAction: (args) => runtimeTurnPolicyController.resolveManualBargeInAction(args),
         resolveEndpointSignalAction: (args) => runtimeTurnPolicyController.resolveEndpointSignalAction(args),
         isHandsFreeCaptureSession: ({ sessionId, provider }) =>
