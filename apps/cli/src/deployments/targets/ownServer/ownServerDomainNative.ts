@@ -11,7 +11,8 @@ import {
     type DeploymentDomainObservationBodyV1,
 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { observeTailscaleForwardedSource } from '@happier-dev/cli-common/tailscale';
+import { deploymentCollectorTailscaleSourceFailureV1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomainDiscoverChildRpcV1 } from '@happier-dev/protocol';
 import type { DeploymentDomainDnsChildRpcV1, DeploymentDomainReviewChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -328,8 +329,9 @@ export function createOwnServerDomainNative(host: Readonly<{
                 caddy = await observeCaddy(settledPrivateBinding);
             }
             let privatePlacementRefusal: Extract<NonNullable<DeploymentDomainObservationBodyV1['networkExposure']>, { kind: 'unavailable' }> | undefined;
-            if (collectorPlacement && caddy.status === 'ready' && !caddy.privateOrigins?.some(origin =>
-                origin.serverId === collectorPlacement.placement.nativeServer)) {
+            const matchingPrivateOrigin = collectorPlacement && caddy.status === 'ready' && caddy.privateOrigins?.some(origin =>
+                origin.serverId === collectorPlacement.placement.nativeServer);
+            if (collectorPlacement && caddy.status === 'ready' && !matchingPrivateOrigin) {
                 const reason = 'private_scope_unenforceable';
                 if (job.kind === 'domain' && isDeploymentDomainAddActionIdV1(job.actionId) && !namedTunnel) {
                     // Settle this capture as unavailable so the controller can still apply its public sibling.
@@ -344,6 +346,18 @@ export function createOwnServerDomainNative(host: Readonly<{
             if (job.kind === 'domain' && caddy.status === 'ready' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
                 && (job.capture.listener === 'public' ? server.tls : !server.tls && server.automaticHttpsDisabled))) return refuse('target_mismatch');
             let telemetryBridge: { host: string; port: number; networkId: string } | undefined;
+            if (matchingPrivateOrigin && job.kind === 'domain' && !reviewing
+                && (settledPrivateBinding ?? savedBinding)?.exposure.providerId === 'tailscale') {
+                const observation = await observeTailscaleForwardedSource({ signal });
+                if (observation === 'rewritten') {
+                    const { requiredFact, phase } = deploymentCollectorTailscaleSourceFailureV1;
+                    const reason = 'private_scope_unenforceable';
+                    const { remedy } = projectDeploymentFailureRecoveryV1({ requiredFact }, reason);
+                    if (job.observeTopology) return refuse(reason, { requiredFact, remedy },
+                        { phase, errorClass: 'Error', errorCode: reason, httpStatus: null });
+                    privatePlacementRefusal = { kind: 'unavailable', reason, requiredFact, remedy };
+                }
+            }
             if (!privatePlacementRefusal && !reviewing && telemetry && !telemetryApp && member && !withoutWorkload && caddy.status === 'ready') {
                 const networkId = caddy.networkNames[0];
                 const acquireEndpoint = lease?.registry.acquireTelemetryCollectorDomainEndpoint;

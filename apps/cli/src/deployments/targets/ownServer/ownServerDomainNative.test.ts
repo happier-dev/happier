@@ -113,6 +113,8 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'settled' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'rewritesSource' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'unreadableSource' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'missing' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'ask' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'wrongAddress' },
@@ -130,6 +132,13 @@ it.each([
     const publicListener = 'publicListener' in scenario && scenario.publicListener;
     const listener = publicListener ? 'public' as const : 'privateOrigin' as const;
     const collectorTopology = 'collectorTopology' in scenario && scenario.collectorTopology;
+    if (collectorTopology) {
+        const tailscale = join(directory, 'tailscale');
+        const prefs = collectorTopology === 'unreadableSource' ? '{}' :
+            JSON.stringify({ NetfilterMode: 2, NoSNAT: collectorTopology !== 'rewritesSource' });
+        await writeFile(tailscale, '#!/bin/sh\n[ "$*" = "debug prefs" ] || exit 1\nprintf "%s" \'' + prefs + '\'\n', { mode: 0o700 });
+        vi.stubEnv('HAPPIER_TAILSCALE_BIN', tailscale);
+    }
     const collectorAdd = collectorTopology === 'userspaceAdd' || collectorTopology === 'boundAdd' || collectorTopology === 'userspacePublicAdd';
     const userspaceAdd = collectorTopology === 'userspaceAdd' || collectorTopology === 'userspacePublicAdd';
     const network: MachinePrivateNetworkObservationV1 = {
@@ -455,7 +464,19 @@ it.each([
             };
             // The installed leg is healthy and its exact Docker publication exists.
             // Verify must independently establish the private origin before launch can use it.
-            if (collectorTopology !== 'settled' && collectorTopology !== 'ask') {
+            if (collectorTopology === 'rewritesSource') {
+                const requiredFact = 'collectorTailscalePreservedSource';
+                const observation = DeploymentDomainObservationV1Schema.parse(await native(job, {}));
+                expect(observation).toMatchObject({ state: 'warning', networkExposure: {
+                    kind: 'unavailable', reason: 'private_scope_unenforceable', requiredFact,
+                } });
+                expect(await readTelemetryCollectorDomainForHost(input)).toMatchObject({
+                    kind: 'unavailable', reason: 'private_scope_unenforceable', failure: { details: { requiredFact } },
+                });
+                expect(captureNativeSetup).not.toHaveBeenCalled();
+                return;
+            }
+            if (collectorTopology !== 'settled' && collectorTopology !== 'ask' && collectorTopology !== 'unreadableSource') {
                 expect(await readTelemetryCollectorDomainForHost(input)).toEqual({ kind: 'unavailable', reason: 'private_scope_unenforceable' });
                 expect(captureNativeSetup).not.toHaveBeenCalled();
                 return;
