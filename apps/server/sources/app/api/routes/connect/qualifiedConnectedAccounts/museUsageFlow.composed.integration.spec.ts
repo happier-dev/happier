@@ -192,7 +192,9 @@ describe('Muse qualified usage publication through Home', () => {
                     resolvePath: async path => typeof path === 'string' ? path : directory, resolveExecutable: native.resolveExecutable }),
             } } as ConnectedAccountReadContext;
             const quota = await museConnectedAccountRuntime.quota!(context);
-            expect(quota.limits.map(l => l.used)).toEqual([16, 2]);
+            // Muse reports utilization only; it supplies no raw allowance quantity.
+            expect(quota.limits.map(l => l.utilizationPct)).toEqual([16, 2]);
+            expect(quota.limits.map(l => l.used)).toEqual([undefined, undefined]);
             return quota;
         } finally { await rm(directory, { recursive: true, force: true }); }
     }
