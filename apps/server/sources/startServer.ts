@@ -433,7 +433,6 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             registerSessionHumanPresenceAccessChangePublisher(workerRoomEmitter);
 
             await startPresenceConsumer();
-            await presenceTimeouts.start();
         }
 
         // Expose health + metrics in all roles (metrics server can be disabled via METRICS_ENABLED=false).
@@ -452,13 +451,16 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             });
             apiListenerOwner = api;
             await startPresenceConsumer();
-            await presenceTimeouts.start();
             await composeHomeIroh({
                 listener: resolveBoundServerListener(api),
                 ingressPort: api.getDecorator<number | null>('homeIrohIngressPort'),
                 continuityStore: homeConnectionDescriptorContinuityStore,
             });
         }
+
+        // Realtime delivery is ready. The presence owner drains bootstrap on shutdown
+        // and recovers failed enrollment on its normal deadline wake.
+        void presenceTimeouts.start();
 
         if (role === 'all' || role === 'worker') {
             const enterpriseIdentitySyncWorker = startEnterpriseIdentitySyncWorker({ env: process.env });

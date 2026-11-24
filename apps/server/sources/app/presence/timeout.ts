@@ -11,6 +11,7 @@ import {
     eventRouter,
 } from "@/app/events/eventRouter";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { readDatabaseErrorCode } from "@/storage/transactionErrors";
 import { warn } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
@@ -281,11 +282,12 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
 
 }
 
-/** One next-due Session wake, parked when empty, not a periodic census. */
+/** One next-due Session wake also carries failed startup enrollment until it succeeds. */
 export function createSessionPresenceDeadlineOwner(config = resolvePresenceTimeoutConfig()) {
     let timer: NodeJS.Timeout | null = null;
     let deadline = Number.POSITIVE_INFINITY;
     let stopped = false;
+    let seedMachines: (() => Promise<void>) | undefined;
     const inFlight = new Set<Promise<void>>();
     const scheduleAt = (next: number): void => {
         if (stopped || timer && deadline <= next) return;
@@ -294,12 +296,7 @@ export function createSessionPresenceDeadlineOwner(config = resolvePresenceTimeo
         timer = setTimeout(() => {
             timer = null;
             deadline = Number.POSITIVE_INFINITY;
-            const expiry = runPresenceTimeoutTick(config).then(seed).catch(error => {
-                warn({ module: 'presence-timeout', error }, 'Session deadline failed');
-                scheduleAt(Date.now() + config.tickMs);
-            }).finally(() => { inFlight.delete(expiry); });
-            inFlight.add(expiry);
-            return expiry;
+            return reconcile(runPresenceTimeoutTick(config).then(seed));
         }, Math.max(0, Math.min(2_147_483_647, next - Date.now())));
         timer.unref?.();
     };
@@ -309,9 +306,36 @@ export function createSessionPresenceDeadlineOwner(config = resolvePresenceTimeo
             orderBy: { lastActiveAt: 'asc' }, select: { lastActiveAt: true } });
         if (next) scheduleAt(next.lastActiveAt.getTime() + config.sessionTimeoutMs);
     };
+    const retry = (error: unknown, message: string): void => {
+        warn({ module: 'presence-timeout', code: readDatabaseErrorCode(error), error }, message);
+        scheduleAt(Date.now() + config.tickMs);
+    };
+    const reconcile = (sessionWork: Promise<void>): Promise<void> => {
+        const work = (async () => {
+            const sessions = sessionWork.catch(error => retry(error, 'Session deadline reconciliation failed'));
+            const enroll = seedMachines;
+            if (enroll) {
+                // Claim the seed while it runs so a Session wake cannot repeat the Machine census.
+                seedMachines = undefined;
+                try {
+                    await enroll();
+                } catch (error) {
+                    seedMachines = enroll;
+                    retry(error, 'Machine deadline enrollment failed');
+                }
+            }
+            await sessions;
+        })().finally(() => { inFlight.delete(work); });
+        inFlight.add(work);
+        return work;
+    };
     return {
         schedule(lastActiveAt: Date): void { scheduleAt(lastActiveAt.getTime() + config.sessionTimeoutMs); },
-        start: seed,
+        async start(enrollMachines?: () => Promise<void>): Promise<void> {
+            if (stopped) return;
+            seedMachines = enrollMachines;
+            await reconcile(seed());
+        },
         async stop(): Promise<void> {
             stopped = true;
             if (timer) clearTimeout(timer);
@@ -338,7 +362,7 @@ export function preparePresenceTimeouts(): { start(): Promise<void>; stop(): Pro
     const machines = localMachineDeadlineOwner ??= createMachinePresenceDeadlineOwner();
     const sessions = sessionDeadlineOwner ??= createSessionPresenceDeadlineOwner();
     return {
-        async start() { await Promise.all([machines.start(), sessions.start()]); },
+        start: () => sessions.start(machines.start),
         async stop() {
             await Promise.all([stopLocalMachinePresenceTimeout(), sessions.stop()]);
             if (sessionDeadlineOwner === sessions) sessionDeadlineOwner = null;
