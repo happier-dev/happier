@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
-import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { createVoiceSettingsAccountTestHarness } from '../../../voiceSettingsAccountTestHarness';
@@ -41,8 +42,21 @@ async function restoreAccount() {
     if (!accountHttp) throw new Error('Account HTTP boundary missing');
     account.request.mockImplementation(async (url, init) => boundary.answerMachineHttpRequest(url, 'tts-machine', account.scope.accountId, init)
       ?? accountHttp(url, init));
-    const machine = createMachineFixture({ id: 'tts-machine', activeAt: Date.now() });
-    storage.getState().applyMachines([machine], true, { sourceServerId: account.scope.serverId });
+    // The bound Machine RPC reads the admitted row projected by Sync.
+    await fetchAndApplyMachines({
+      credentials: account.credentials,
+      expectedAccountMode: 'plain',
+      encryption: null,
+      machineDataKeys: new Map(),
+      sourceServerId: account.scope.serverId,
+      throwOnError: true,
+      replace: true,
+      applyMachines: (machines, replace, rows) => storage.getState().applyMachines(machines, replace, {
+        sourceServerId: account.scope.serverId,
+        activityUpdates: rows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+      }),
+      onListComplete: () => storage.getState().markMachineListSettled(account.scope.serverId),
+    });
 }
 
 describe('localNeuralTtsProviderSpec', () => {

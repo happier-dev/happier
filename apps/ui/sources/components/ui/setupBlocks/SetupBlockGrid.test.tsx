@@ -97,7 +97,7 @@ describe('SetupBlockGrid', () => {
         expect(setVoiceSetupOpen(true)).toBe(false);
     });
     it('keeps setup paper, expanded frames and path columns within their containing material', async () => {
-        const { AppShellMaterialFrame } = await import('@/components/navigation/shell/AppShellMaterialFrame');
+        const { AppShellMaterialPlane } = await import('@/components/navigation/shell/appShellMaterialPlane');
         const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
         const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
         const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
@@ -110,13 +110,13 @@ describe('SetupBlockGrid', () => {
         for (const reduceTransparency of [false, true]) {
             const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency }}>
                 <GlassMaterialSettingsProvider value={{ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
-                    <AppShellMaterialFrame showChrome={false} dragEnabled={false} leftOffsetPx={0} sidebarWidth={320} titleStrip={null} rail={null} column={null} peek={null}>
+                    <AppShellMaterialPlane group="content" color={theme.colors.surface.base} translucentColor="transparent" style={{ flex: 1 }}>
                         <SetupBlockGrid testID="material-setup" openId="machine" items={[{ id: 'machine',
                             renderTile: () => <SetupBlockPaper testID="material-setup-paper" layout="card"><Text>Machine</Text></SetupBlockPaper>,
                             renderPanel: ({ close }) => <SetupPathPanel testID="material-setup-path" title="Add machine" active="local" onChoose={() => {}} onClose={close}
                                 paths={[{ id: 'local', title: 'Local', subtitle: 'This machine', glyph: null }]} pane={<Text>Details</Text>} />,
                         }]} />
-                    </AppShellMaterialFrame>
+                    </AppShellMaterialPlane>
                 </GlassMaterialSettingsProvider>
             </GlassRuntimeEnvironmentProvider>);
             // A setup card is an Element: its paint lies on the material layer under its content.
