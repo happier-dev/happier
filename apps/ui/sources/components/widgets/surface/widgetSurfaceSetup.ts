@@ -33,6 +33,7 @@ export type WidgetSurfaceContextSlot = Readonly<{
     value: Readonly<{ value: JsonValue; label: WidgetBindingValueLabel; description?: string }> | null;
     /** A runtime scope value can remain admitted without being offered as an editor input. */
     offered?: false;
+    group?: true;
     /** A saved group alias takes precedence over the intrinsic Session offer. */
     groupAlias?: true;
 }>;
@@ -86,6 +87,7 @@ export function widgetGroupSurfaceContext(
         const label = alias ? readWidgetSurfaceSlotLabel(base, binding.slot) : readings?.labels[slot] ?? null;
         slots[slot] = {
             label: t('widgetFrame.followingGroup'),
+            group: true,
             ...(alias ? { groupAlias: true } : {}),
             value: value === undefined ? null : { value, label },
         };
@@ -221,7 +223,10 @@ export function widgetSetupFieldsForCandidate(
         }
         if (field.contextMode !== 'own' && slot?.value) {
             const label = slot.groupAlias ? describeWidgetPageBindingValue(field, slot.value.value, slot.value.label) : slot.value.label;
-            return { field, follow: { slot: name, label: slot.label, values: [{ ...slot.value, label: label ?? field.title }] } };
+            return { field, follow: {
+                slot: name, label: slot.label, ...(slot.group ? { group: true } : {}),
+                values: [{ ...slot.value, label: label ?? field.title }],
+            } };
         }
         // On a shared surface a connection is each viewer's own; it is never stored in shared content.
         const purpose = candidate.connectedAccountPurposeBindings?.find(binding => binding.path === field.path)?.purpose;

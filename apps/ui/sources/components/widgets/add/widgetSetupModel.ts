@@ -36,6 +36,7 @@ export type WidgetSetupContextOffer = Readonly<{
     slot: string;
     /** "This session", "This page", "The checkout you're on". */
     label: string;
+    group?: true;
     /** One value follows quietly; two or three are shown in place; none leaves the field needed. */
     values: readonly WidgetSetupValue[];
 }>;

@@ -7,7 +7,7 @@ import type { ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createInputTypePickerPort } from '@/components/sessions/actions/inputTypePickerPort';
 import { selectBuiltinWidgetCandidates } from '@/components/widgets/widgetCatalog';
-import { buildWidgetCandidateSetup } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { buildWidgetCandidateSetup, widgetGroupSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { describeWidgetSetupRow, setWidgetSetupBinding } from './widgetSetupModel';
 
 import {
@@ -47,6 +47,41 @@ const declared: ResolvedInputTypeV1 = {
 const review = { repositoryId: 'example/review-assistant' };
 
 describe('widget setup fields share the typed-field owners', () => {
+    it('keeps the resolved group value at the leading edge of the Edit inputs trigger and option', async () => {
+        const value = { relative: '90days' };
+        const ownValue = { relative: 'today' };
+        const valueLabel = 'Last 90 days';
+        const ownOption = { value: ownValue, label: 'Today' };
+        const candidate = selectBuiltinWidgetCandidates().find(candidate => candidate.definition?.kind === 'builtin'
+            && candidate.definition.id === 'usage_period_summary')!;
+        const instance = {
+            v: 1 as const, id: 'summary', definition: { kind: 'builtin' as const, id: 'usage_period_summary' },
+            bindings: { period: { kind: 'context' as const, slot: 'period' } },
+        };
+        const context = widgetGroupSurfaceContext({}, { period: { kind: 'value', value } }, {
+            fields: [], byChild: new Map(), labels: { period: valueLabel },
+        });
+        const setup = buildWidgetCandidateSetup({
+            candidate, context, audience: 'personal', mode: { kind: 'edit', instance }, submit: async () => ({ ok: true }),
+        });
+        const entry = setup.fields.find(({ field }) => field.path === 'period')!;
+        const options = [ownOption];
+        const render = (draft = setup.initial, plainValue?: typeof ownValue) => <WidgetSetupFieldRow entry={entry}
+            row={describeWidgetSetupRow({ entry, draft, resolution: setup.resolve(draft), options })}
+            options={options} optionsStatus="ready" plainValue={plainValue} phone={true}
+            onChange={() => {}} testID="edit.period" />;
+        const screen = await renderScreen(render());
+        const reading = 'Last 90 days (widgetFrame.followingGroup)';
+        expect.soft(bindingText(screen, 'edit.period')).toEqual([reading]);
+        expect.soft(screen.findByTestId('edit.period.trigger')?.props.accessibilityLabel).toBe(`Period, ${reading}`);
+        await screen.pressByTestIdAsync('edit.period.trigger');
+        expect.soft(screen.findByType(DropdownMenu).props.items[0]).toMatchObject({ id: 'follow', title: reading });
+        expect.soft(screen.getTextContent()).toContain(reading);
+        await screen.update(render({ ...setup.initial, bindings: { period: { kind: 'value', value: ownValue } } }, ownValue));
+        expect(bindingText(screen, 'edit.period')).toEqual(['widgetAdd.ownValue']);
+        expect(screen.getTextContent()).toContain('Today');
+    });
+
     describe('inherited group readings', () => {
         const single = { kind: 'single', valueLabel: 'Resolved value' } as const;
         const several = { kind: 'several' } as const;

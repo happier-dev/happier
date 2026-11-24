@@ -24,12 +24,20 @@ import { t } from '@/text';
 import { isNothingToChoose, readOptionSourceEmptyState } from './optionSourceEmptyState';
 import {
     type WidgetSetupField,
+    type WidgetSetupInheritedReading,
     type WidgetSetupRow,
     type WidgetSetupValue,
 } from './widgetSetupModel';
 
 const FOLLOW_ID = 'follow';
 const OWN_ID = 'own';
+
+function formatGroupReading(reading: WidgetSetupInheritedReading): string {
+    return t('widgetAdd.inheritedValue', {
+        value: reading.kind === 'single' ? reading.valueLabel : t('widgetAdd.severalValues'),
+        source: t('widgetFrame.followingGroup'),
+    });
+}
 
 /** Whether the input reads the surface's value (one control) rather than its own (control + editor). */
 function followsSurface(row: WidgetSetupRow): boolean {
@@ -96,9 +104,12 @@ function NeededTag(): React.ReactElement {
 function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const follow = props.entry.follow;
+    const valueLabel = follow?.values[0]?.label;
+    const groupReading = follow?.group && valueLabel && valueLabel !== follow.label
+        ? formatGroupReading({ kind: 'single', valueLabel }) : undefined;
     const [open, setOpen] = React.useState(false);
     const following = followsSurface(props.row);
-    const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground);
+    const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
     const commands = useCurrentUiContextLocalCommands(follow && !props.disabled ? [{ key: 'open',
         title: [props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', '),
         invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }] : [], { unbound: 'local' });
@@ -107,8 +118,8 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         testID={props.testID}
         open={open}
         onOpenChange={next => { void commands.invoke('open', next); }}
-        items={[{ id: FOLLOW_ID, title: follow.label, checked: following, testID: `${props.testID}.binding.follow`,
-            ...(follow.values[0] ? { subtitle: follow.values[0].label } : {}),
+        items={[{ id: FOLLOW_ID, title: groupReading ?? follow.label, checked: following, testID: `${props.testID}.binding.follow`,
+            ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
             icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
         { id: OWN_ID, title: t('widgetAdd.ownValue'), subtitle: t('widgetAdd.ownValueHint'), checked: !following,
             testID: `${props.testID}.binding.own`,
@@ -154,7 +165,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     />;
 }
 
-function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string): Readonly<{
+function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string): Readonly<{
     detail: string | null;
     spoken: string;
     field: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
@@ -165,9 +176,10 @@ function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string)
             // reads the same as its source is said once.
             const value = row.valueLabel === row.label ? null : row.valueLabel;
             return {
-                detail: row.label,
-                spoken: [row.label, value].filter(Boolean).join(' '),
-                field: { leading: <Icon name="link" size={15} color={secondary} />, secondary: value, quietValue: true },
+                detail: groupReading ?? row.label,
+                spoken: groupReading ?? [row.label, value].filter(Boolean).join(' '),
+                field: { leading: <Icon name="link" size={15} color={secondary} />,
+                    secondary: groupReading ? null : value, quietValue: true },
             };
         }
         case 'invalid':
@@ -243,8 +255,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     })), [choicesOptions, props.testID]);
     const presentation = resolveHappierActionFieldPresentation(entry.field, value, selection);
     const inherited = row.kind === 'needed' && value === undefined && entry.inherited
-        ? t('widgetAdd.inheritedValue', { value: entry.inherited.kind === 'single' ? entry.inherited.valueLabel : t('widgetAdd.severalValues'),
-            source: t('widgetFrame.followingGroup') })
+        ? formatGroupReading(entry.inherited)
         : undefined;
     const subtitleOnly = inherited !== undefined && (presentation.kind === 'toggle'
         || (presentation.kind === 'select' && entry.field.allowCustomValue !== true
