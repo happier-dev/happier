@@ -637,7 +637,6 @@ test.describe('ui e2e: automations authoring', () => {
         expect(created.ok).toBe(true);
         await gotoDomContentLoadedWithRetries(page, `${context.uiBaseUrl}/workflows/${definitionId}`);
         const renamed = `Keep my edit ${run.runId}`;
-        await page.getByTestId('workflow-editor-name').fill(renamed);
         const readTriggers = async () => {
             const response = await invokeP04Action(context, 'f2-read-triggers', 'workflow.trigger.list', { workflow: definitionId });
             expect(response.ok).toBe(true);
@@ -671,6 +670,7 @@ test.describe('ui e2e: automations authoring', () => {
         const initial = await mounted('f2-before-placement');
         const placement = await invokeP04Action(context, 'f2-placement', 'workflow.authoring.draft.edit', {
             ...address, expectedDraftRevision: initial.draftRevision,
+            ops: [{ kind: 'rename', name: renamed }],
             settings: { projectTarget: { machineId: context.machineId, directory: context.cliHomeDir } },
         });
         expect(WorkflowDraftMutationResultV1Schema.parse(placement.data)).toMatchObject({ status: 'applied' });
@@ -695,8 +695,9 @@ test.describe('ui e2e: automations authoring', () => {
         expect(WorkflowDefinitionGetResultV1Schema.parse(beforeSave.data).metadata.title).toBe('Companion workflow');
         await page.getByTestId('workflow-editor-undo').click();
         await expect(pending).toHaveCount(0);
-        await expect(page.getByTestId('workflow-editor-name')).toHaveValue(renamed);
-        expect((await mounted('f2-after-undo')).incompleteTriggers?.pending ?? []).toEqual([]);
+        const undone = await mounted('f2-after-undo');
+        expect(undone.name).toBe(renamed);
+        expect(undone.incompleteTriggers?.pending ?? []).toEqual([]);
         await page.getByTestId('workflow-editor-redo').click();
         await expect(pending).toHaveCount(1);
         await page.getByTestId('workflow-editor-save').click();
