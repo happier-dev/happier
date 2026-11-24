@@ -177,6 +177,12 @@ and its reasons. An optional ordered trend gives `{ at, value }` points in the
 declared unit, with null points representing gaps. The public SDK exports the
 input and result schemas from `@happier-dev/plugin-sdk/ui`.
 
+A Resource-backed `byline: true` field uses the same demand batch and scalar
+admission. It reads `facts[field.id]` from each matched row for the second
+line. The host sends `includeTrend: false` when the batch has only byline
+consumers. Column demand keeps the existing trend. Telemetry publishes p95
+and error rate with their coverage in the same read as Requests.
+
 Services Apps' optional **Requests · 24 h** field uses this declaration and is
 off by default. Its row is an Environment: the existing telemetry metric owner
 totals HTTP requests across all of that Environment's emitted service names.

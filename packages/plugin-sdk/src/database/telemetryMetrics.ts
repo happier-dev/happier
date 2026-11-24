@@ -33,6 +33,7 @@ export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
     trend: z.array(DatabaseTelemetryMetricIntervalV1Schema), usage: z.optional(UsageAnalyticsQueryResponseSchema) });
 const environmentBatch = { serverId: text, environmentIds: z.array(text).check(z.minLength(1)) };
 export const TelemetryEnvironmentMetricsReadInputV1Schema = z.strictObject({ ...environmentBatch, since: time, until: time,
+    includeTrend: z.optional(z.literal(false)),
     measure: z.strictObject({ kind: z.literal('http'), statistic: z.literal('requests') }) });
 export const TelemetryEnvironmentMetricsReadResultV1Schema = z.strictObject({ items: z.array(z.strictObject({
     environmentId: text, ...TelemetryMetricsReadResultV1Schema.shape,

@@ -44,7 +44,7 @@ function unknown(input: Pick<KeyFlowReadInput, 'measure' | 'since' | 'until'>, r
 }
 
 /** One selected-window read. No stored check results or background analysis are involved. */
-export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficReadInput) {
+export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficReadInput, includeTrend = true) {
     const worktree = telemetryPartition(input.environmentId);
     const name = input.measure.kind === 'runtime' ? input.measure.metricName : 'http.server.request.duration';
     const points = await runtime.store.metricPoints({ worktree, since: input.since, until: input.until, name,
@@ -76,6 +76,7 @@ export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficR
         ? { ...measurement, completeness: 'unknown', reasons: ['capture_coverage_lost', ...measurement.reasons] } : measurement;
     const measurements = withCoverage(analyzeKeyFlow({ ...selection, points: selectedPoints, spans }));
     const routes: Array<{ method: string; route: string; measurements: KeyFlowMeasurements }> = [];
+    if (!includeTrend) return { measurements, routes, trend: [] as MetricInterval[] };
     let trend: readonly MetricInterval[];
     if (input.measure.kind !== 'runtime') {
         if (input.measure.kind === 'route') {
@@ -235,7 +236,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
                     const selectedInput = { environmentId, since: input.since, until: input.until, measure: input.measure };
                     const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);
                     const selected = reason ? { measurements: unknown(selectedInput, reason), routes: [], trend: [] }
-                        : await readKeyFlowWindow(runtime!, selectedInput);
+                        : await readKeyFlowWindow(runtime!, selectedInput, input.includeTrend !== false);
                     return { environmentId, result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
                         routes: [], trend: selected.trend };
                 }));

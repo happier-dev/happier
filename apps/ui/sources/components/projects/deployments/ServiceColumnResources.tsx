@@ -75,8 +75,10 @@ function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly Se
   const projection = account ? props.projection : current.pluginUiProjection;
   const declaration = readPluginUiResourceProjection(projection?.resourcesById, first.resource);
   const environmentIds = [...new Set(props.demands.map(demand => demand.environmentId))].sort();
+  const trendRequested = props.demands.some(demand => !demand.field.declaration.byline);
   const context = { kind: 'surface' as const, mountInstanceKey: `services:${JSON.stringify([first.resource, first.collectorMachineId])}`,
-    launchInput: { entity: 'service', serverId: props.lifetime.scope.serverId, environmentIds } };
+    launchInput: { entity: 'service', serverId: props.lifetime.scope.serverId, environmentIds,
+      ...(trendRequested ? {} : { includeTrend: false }) } };
   const binding = declaration && resolvePluginContextualResourceBinding({ projection, accountLifetime: props.lifetime,
     machineId: first.collectorMachineId, serverId: props.lifetime.scope.serverId, requireReadAuthority: true,
     isCurrent: () => account || current.interactionEnabled }, declaration, context);

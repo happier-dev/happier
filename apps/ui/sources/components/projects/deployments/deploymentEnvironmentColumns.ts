@@ -30,6 +30,7 @@ export type DeploymentEnvironmentResourceColumn = Readonly<{
   field: AdmittedPluginListFilterFieldV1;
 }>;
 export type DeploymentEnvironmentColumn = DeploymentEnvironmentBuiltinColumn | DeploymentEnvironmentResourceColumn;
+export type DeploymentEnvironmentBylineFact = Pick<DeploymentEnvironmentResourceColumn, 'title' | 'source' | 'field' | 'pluginId'>;
 
 /**
  * An Environment row's columns, as the rows draw them and the Columns menu names them: one declaration, so the menu
@@ -38,23 +39,35 @@ export type DeploymentEnvironmentColumn = DeploymentEnvironmentBuiltinColumn | D
 export function deploymentEnvironmentColumns(hereMachine: boolean, projection?: PluginUiProjectionModel | null,
   localize: PluginLocalizedTextResolver = (_pluginId, value) => resolvePluginLocalizedStringV2Text(value)):
   readonly DeploymentEnvironmentColumn[] {
+  return deploymentEnvironmentFields(hereMachine, projection, localize).columns;
+}
+
+export function deploymentEnvironmentFields(hereMachine: boolean, projection: PluginUiProjectionModel | null | undefined,
+  localize: PluginLocalizedTextResolver) {
+  const byline: DeploymentEnvironmentBylineFact[] = [];
   const pluginColumns = Object.values(projection?.listExtensionsById ?? {}).flatMap(extension => extension.listExtension.entity !== 'service' ? []
     : (extension.listExtension.filterFields ?? []).flatMap(field => {
       const admitted = admitPluginListFilterFieldV1({ pluginId: extension.pluginId, field, factKeys: NO_FACT_KEYS });
-      if (admitted.kind !== 'admitted' || !admitted.field.declaration.column) return [];
+      if (admitted.kind !== 'admitted') return [];
+      const source = projection?.installedPackagesById[extension.pluginId]?.displayName ?? extension.pluginId;
+      if (admitted.field.declaration.byline) {
+        byline.push({ title: localize(extension.pluginId, field.title), source, pluginId: extension.pluginId, field: admitted.field });
+        return [];
+      }
       const { column } = admitted.field.declaration;
+      if (!column) return [];
       const subtitle = column.qualifier === undefined ? undefined : localize(extension.pluginId, column.qualifier);
       return [{ key: admitted.field.id, title: localize(extension.pluginId, column.title ?? field.title),
         ...(subtitle === undefined ? {} : { subtitle }),
         description: subtitle ?? localize(extension.pluginId, field.title),
-        source: projection?.installedPackagesById[extension.pluginId]?.displayName ?? extension.pluginId,
+        source,
         ...(column.width === undefined ? {} : { minWidth: column.width, maxWidth: column.width }),
         ...(column.align === undefined ? {} : { align: column.align }),
         ...(column.priority === undefined ? {} : { priority: column.priority }),
         ...(column.defaultHidden === undefined ? {} : { defaultHidden: column.defaultHidden }),
         listColumn: true as const, pluginId: extension.pluginId, field: admitted.field }];
     }));
-  return [
+  const columns: readonly DeploymentEnvironmentColumn[] = [
     // "469b2bb · 10m ago": the version and its age whole at a desktop width (lab envRow "ver · age").
     { key: 'lastDeploy', title: t('projects.deployments.services.columnLastDeploy'),
       description: t('projects.deployments.services.columnLastDeployDescription'), minWidth: 152, priority: 4, listColumn: true },
@@ -65,6 +78,7 @@ export function deploymentEnvironmentColumns(hereMachine: boolean, projection?: 
     { key: 'state', title: t('projects.deployments.services.columnState'),
       description: t('projects.deployments.services.columnStateDescription'), minWidth: 136, priority: 30, align: 'end', listColumn: true },
   ];
+  return { columns, byline };
 }
 
 const NO_FACT_KEYS: ReadonlySet<string> = new Set();

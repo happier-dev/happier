@@ -439,6 +439,38 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('renders a declared Services column before an Account is available to read its values', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
+    const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui/declarationProjection');
+    const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const pluginId = 'com.acme.observability';
+    const manifest = PluginManifestV2Schema.parse(definePlugin({ id: pluginId, version: '1.0.0',
+      ui: { listExtensions: { traffic: { entity: 'service', filterFields: [{
+        id: 'traffic', title: 'Traffic', source: { resource: 'traffic' },
+        value: { kind: 'number', unit: '{request}' }, column: { title: 'Traffic', priority: 10 },
+      }] } } },
+    }).manifest);
+    const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
+      id: pluginId, displayName: 'Observability', version: '1.0.0', enabled: true,
+      source: { kind: 'bundled', locator: pluginId } });
+    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]));
+    try {
+      const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: projection, accountLifetime: null, pluginBrowserProjection: null,
+        phase: 'current', interactionEnabled: false, serverId: 'home', machineId: null, platform: 'web',
+        clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
+      }}><Page controller={controller} /></AppShellPluginUiProjectionValueProvider>);
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-shop'), node => node !== null);
+      });
+      expect(screen.findByTestId(`all-deployments.row.env-shop:column:${pluginId}/traffic`)).not.toBeNull();
+    } finally {
+      controller.retire();
+    }
+  });
+
   it('says a row’s status in one short line on a phone, leaving its Machine to the Environment', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');

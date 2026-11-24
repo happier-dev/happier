@@ -43,7 +43,7 @@ describe('capture demanded Resource through real public Actions', () => {
             vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(until);
             await lease.runtime.store.write(['web', 'worker'].map((serviceName, index) => ({ id: serviceName,
                 kind: 'span' as const, spanKind: 2, source: 'otlp' as const, worktree: 'environment:app', at: 1500 + index,
-                serviceName, durationMs: 1 })));
+                serviceName, durationMs: index + 1 })));
             const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
             if (!resource?.createProducer) throw new Error('Resource registration missing');
             const producer = await resource.createProducer(options);
@@ -52,8 +52,11 @@ describe('capture demanded Resource through real public Actions', () => {
             try {
                 const first = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(await producer.read(options))));
                 expect(first).toMatchObject({ items: [
-                    { environmentId: 'app', value: 2, provenance: { basis: 'sampled_spans', window: { since: 1000, until } } },
-                    { environmentId: 'empty', value: null, provenance: { completeness: 'unknown' }, trend: [] },
+                    { environmentId: 'app', value: 2, provenance: { basis: 'sampled_spans', window: { since: 1000, until } },
+                        facts: { 'http-p95': { value: 2, provenance: { basis: 'sampled_spans' } },
+                            'http-error-rate': { value: 0, provenance: { basis: 'sampled_spans' } } } },
+                    { environmentId: 'empty', value: null, provenance: { completeness: 'unknown' }, trend: [],
+                        facts: { 'http-p95': { value: null }, 'http-error-rate': { value: null } } },
                 ] });
                 expect(reads).toBe(1);
                 await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
@@ -70,6 +73,20 @@ describe('capture demanded Resource through real public Actions', () => {
                     { environmentId: 'empty', value: 1 },
                 ] });
                 expect(reads).toBe(2);
+                const summaryOptions: PluginDynamicResourceInvocationOptionsV1 = { ...options, context: {
+                    kind: 'surface', mountInstanceKey: 'summary', launchInput: {
+                        entity: 'service', serverId: 'home', environmentIds: ['app'], includeTrend: false,
+                    },
+                } };
+                const summary = await resource.createProducer(summaryOptions);
+                try {
+                    expect(JSON.parse(String(await summary.read(summaryOptions)))).toMatchObject({ items: [{
+                        environmentId: 'app', value: 3, trend: [], facts: {
+                            'http-p95': { value: 2 }, 'http-error-rate': { value: 0 },
+                        },
+                    }] });
+                    expect(reads).toBe(3);
+                } finally { await summary.dispose(); }
                 await observation.dispose(); await producer.dispose();
                 await lease.runtime.clear('environment:app');
                 expect(invalidations).toBe(1);

@@ -8,7 +8,7 @@ import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
 import { createCaptureActionProducers, createCaptureActions, createCapturePublicActionProducers } from './actions.js';
-import { createCaptureResourceRuntime } from './resources.js';
+import { createCaptureResourceRuntime, TELEMETRY_SERVICE_SUMMARY_FIELDS } from './resources.js';
 import { captureSourcePartition } from './partition.js';
 import { telemetryHealthActions } from './health.js';
 import { keyFlowConfigSchema } from './healthSchemas.js';
@@ -76,7 +76,10 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
   entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests',
    source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number', unit: '{request}' },
    column: { title: 'Requests', qualifier: '24 h', width: 112, align: 'end', priority: 20, defaultHidden: true },
-  }],
+  }, ...Object.entries(TELEMETRY_SERVICE_SUMMARY_FIELDS).map(([id, { title, unit }]) => ({
+   id, title, source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number' as const, unit },
+   byline: true as const,
+  }))],
  } }, views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
   ...TELEMETRY_WIDGET_RENDERERS,
   // The detail reads occurrences and writes lifecycle through this plugin's own Actions.

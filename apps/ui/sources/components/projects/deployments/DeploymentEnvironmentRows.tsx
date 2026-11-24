@@ -22,7 +22,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
 import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
@@ -34,10 +34,10 @@ import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { deploymentProjectBands } from './deploymentProjectGroups';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark } from './rows/DeploymentEnvironmentRow';
 
-import { deploymentEnvironmentColumns, type DeploymentEnvironmentBuiltinColumn } from './deploymentEnvironmentColumns';
+import { deploymentEnvironmentFields, type DeploymentEnvironmentBuiltinColumn } from './deploymentEnvironmentColumns';
 import { useAppShellPluginUiDeclarationSources, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ServiceColumnResources } from './ServiceColumnResources';
-import { ServiceColumnCell } from './ServiceColumnCell';
+import { ServiceBylineFact, ServiceColumnCell } from './ServiceColumnCell';
 export { deploymentEnvironmentColumns } from './deploymentEnvironmentColumns';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
@@ -108,8 +108,12 @@ export function DeploymentEnvironmentRows(
   const { theme } = useUnistyles();
   const declarations = useAppShellPluginUiDeclarationSources();
   const localize = useProjectedPluginLocalizedTextResolver();
-  const contributedColumns = React.useMemo(() => deploymentEnvironmentColumns(props.hereMachine === true,
-    props.columns ? declarations.projection : null, localize), [props.hereMachine, props.columns, declarations.projection, localize]);
+  const serviceLifetime = props.columns &&
+    areServerAccountScopesEqual(props.lifetime?.scope, declarations.accountLifetime?.scope)
+    ? declarations.accountLifetime : null;
+  const serviceProjection = props.columns ? declarations.projection : null;
+  const contributed = React.useMemo(() => deploymentEnvironmentFields(props.hereMachine === true,
+    serviceProjection, localize), [props.hereMachine, serviceProjection, localize]);
   const router = useRouter();
   const parts = useDeploymentEnvironmentRowParts(
     props.items,
@@ -192,7 +196,7 @@ export function DeploymentEnvironmentRows(
       state: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord}
         testID={`${props.testID}.row.${row.environmentId}.stateWord`} /> : null,
     };
-    const fields: CollectionField<Row>[] = contributedColumns.map(column => ({ ...column, render: 'field' in column
+    const fields: CollectionField<Row>[] = contributed.columns.map(column => ({ ...column, render: 'field' in column
       ? row => <ServiceColumnCell column={column} environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />
       : renders[column.key] }));
     return {
@@ -202,7 +206,15 @@ export function DeploymentEnvironmentRows(
       // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
-      byline: (row, layout) => deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine }),
+      byline: (row, layout) => {
+        const line = deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine });
+        if (contributed.byline.length === 0) return line;
+        return <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.s8 }}>
+          {line ? <Text variant="meta" style={meta} numberOfLines={1}>{line}</Text> : null}
+          {contributed.byline.map(fact => <ServiceBylineFact key={fact.field.id} fact={fact}
+            environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />)}
+        </View>;
+      },
       bylineLead: (row, layout) =>
         deploymentEnvironmentRowLeadState(row, { columns: layout?.fieldColumns === true }) ? <EnvironmentStateWord row={row} /> : null,
       fields,
@@ -223,7 +235,7 @@ export function DeploymentEnvironmentRows(
       // The name (then its reason, ellipsized) narrows to this floor before a chosen column gives way (UI refinements 11-17).
       titleMinWidth: DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH,
     };
-  }, [hereMachine, contributedColumns, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  }, [hereMachine, contributed, props.testID, theme.colors.text.secondary, theme.space.s2, theme.space.s8]);
   const list = <ServicesPageList<Row>
         testID={props.testID}
         model={model}
@@ -234,7 +246,7 @@ export function DeploymentEnvironmentRows(
       />;
   return (
     <EnvironmentRowMenuContext.Provider value={openTab}>
-      {props.columns ? <ServiceColumnResources projection={declarations.projection} lifetime={declarations.accountLifetime}>
+      {serviceLifetime ? <ServiceColumnResources projection={serviceProjection} lifetime={serviceLifetime}>
         {list}
       </ServiceColumnResources> : list}
     </EnvironmentRowMenuContext.Provider>

@@ -5,9 +5,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
-import type { DeploymentEnvironmentResourceColumn } from './deploymentEnvironmentColumns';
+import type { DeploymentEnvironmentBylineFact, DeploymentEnvironmentResourceColumn } from './deploymentEnvironmentColumns';
 import { useServiceColumnValue } from './ServiceColumnResources';
-import { serviceCheckWindowEnds } from './serviceCheckPresentation';
+import { formatServiceCheckLatency, formatServiceCheckShare, serviceCheckWindowEnds } from './serviceCheckPresentation';
 import { ServiceTrendChart } from './ServiceTrendChart';
 
 /** A scalar and its picture. The tooltip and accessible text preserve the producer's full value and window. */
@@ -44,4 +44,28 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
         numberOfLines={1}>{text}</Text>
     </View>
   </Tooltip>;
+}
+
+export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentBylineFact;
+  environmentId: string; collectorMachineId: string | null }>) {
+  const value = useServiceColumnValue({ ...props, pluginId: props.fact.pluginId, field: props.fact.field });
+  const { theme } = useUnistyles();
+  const locale = getPreferredLanguage();
+  const scalar = value?.value;
+  if (scalar == null) return null;
+  const declared = props.fact.field.declaration.value;
+  const text = typeof scalar === 'number' && declared.kind === 'number'
+    ? declared.unit === 'ms' ? formatServiceCheckLatency(scalar)
+      : declared.unit === '1' ? formatServiceCheckShare(scalar)
+        : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
+    : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
+  const label = `${props.fact.title} ${text}`;
+  const measurement = value?.provenance;
+  const windowEnds = measurement && serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now());
+  const accessibilityLabel = [label, props.fact.source, windowEnds?.join(' – '),
+    measurement?.basis === 'sampled_spans' ? t('deploymentTelemetry.measurement.sampled') : null,
+    measurement?.completeness === 'partial' ? t('deploymentTelemetry.measurement.partial') : null,
+  ].filter(Boolean).join(' · ');
+  return <Text variant="meta" style={{ color: theme.colors.text.secondary }} accessibilityLabel={accessibilityLabel}
+    numberOfLines={1}>{label}</Text>;
 }

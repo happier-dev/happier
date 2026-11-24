@@ -11,6 +11,11 @@ import { telemetryPartition } from './telemetry/assignments.js';
 
 type ResourceContext = Parameters<NonNullable<PluginDynamicResourceRuntime['createProducer']>>[0];
 
+export const TELEMETRY_SERVICE_SUMMARY_FIELDS = {
+    'http-p95': { property: 'p95Ms', title: 'p95', unit: 'ms' },
+    'http-error-rate': { property: 'errorRate', title: 'Errors', unit: '1' },
+} as const;
+
 /** The finite Action owns source admission and the existing database lease for every demanded read. */
 async function readCaptureAction(context: ResourceContext, actionId: database.DatabaseActionIdV1, input: JsonValue,
     signal: AbortSignal): Promise<unknown> {
@@ -28,17 +33,26 @@ async function readServiceColumnSnapshot(context: ResourceContext, input: Plugin
             serverId: input.serverId, environmentIds: input.environmentIds,
             since: Math.max(0, until - database.TELEMETRY_REQUESTS_WINDOW_MS_V1), until,
             measure: { kind: 'http', statistic: 'requests' },
+            ...(input.includeTrend === false ? { includeTrend: false } : {}),
         }, signal));
     return { items: result.items.map(({ environmentId, result, trend }) => {
         const measurement = result.measurements;
+        const provenance = measurement && {
+            basis: measurement.basis, producers: measurement.producers, window: measurement.window,
+            ...(measurement.observedWindow ? { observedWindow: measurement.observedWindow } : {}),
+            completeness: measurement.completeness, reasons: measurement.reasons,
+        };
+        // The mixed request count includes both populations. Its latency and error share cover only the histogram.
+        const facts = Object.fromEntries(Object.entries(TELEMETRY_SERVICE_SUMMARY_FIELDS).map(([id, field]) => {
+            const value = result.status === 'unknown' || measurement?.basis === 'mixed_telemetry'
+                ? null : measurement?.[field.property] ?? null;
+            return [id, { value, ...(value !== null && provenance ? { provenance } : {}) }];
+        }));
         return {
             environmentId,
             value: result.status === 'unknown' ? null : measurement?.value ?? null,
-            ...(measurement ? { provenance: {
-                basis: measurement.basis, producers: measurement.producers, window: measurement.window,
-                ...(measurement.observedWindow ? { observedWindow: measurement.observedWindow } : {}),
-                completeness: measurement.completeness, reasons: measurement.reasons,
-            } } : {}),
+            ...(provenance ? { provenance } : {}),
+            facts,
             trend: trend.map(interval => ({ at: interval.until, value: interval.value ?? null })),
         };
     }) };

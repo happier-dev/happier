@@ -33,6 +33,7 @@ export const PluginListFilterFieldV1Schema = lazyZodSchema(() => z.strictObject(
         priority: z.optional(z.number()),
         defaultHidden: z.optional(z.boolean()),
     })),
+    byline: z.optional(z.literal(true)),
 }));
 export type PluginListFilterFieldV1 = z.infer<typeof PluginListFilterFieldV1Schema>;
 export type AdmittedPluginListFilterFieldV1 = Readonly<{ id: string; declaration: PluginListFilterFieldV1 }>;
@@ -44,6 +45,7 @@ export const PluginServiceListFieldResourceInputV1Schema = lazyZodSchema(() => z
     entity: z.literal('service'),
     serverId: z.string().check(z.minLength(1)),
     environmentIds: z.array(z.string().check(z.minLength(1))),
+    includeTrend: z.optional(z.literal(false)),
 }));
 export type PluginServiceListFieldResourceInputV1 = z.infer<typeof PluginServiceListFieldResourceInputV1Schema>;
 /** Facts and their optional presentation evidence. The existing scalar ingress owns field value semantics. */
@@ -52,6 +54,10 @@ export const PluginServiceListFieldResourceResultV1Schema = lazyZodSchema(() => 
         environmentId: z.string().check(z.minLength(1)),
         value: EntityFilterFactValueV1Schema,
         provenance: z.optional(MeasurementProvenanceV1Schema),
+        facts: z.optional(z.record(asProtocolZod(PluginContributionLocalIdSchema), z.strictObject({
+            value: EntityFilterFactValueV1Schema,
+            provenance: z.optional(MeasurementProvenanceV1Schema),
+        }))),
         trend: z.optional(z.array(z.strictObject({
             at: z.number().check(z.nonnegative()),
             value: z.nullable(z.number()),

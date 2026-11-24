@@ -34,3 +34,20 @@ it('retains public producer coverage and trend beside zero or an unknown measure
   expect(values.get('zero')).toEqual({ value: 0, provenance, trend });
   expect(values.get('unknown')).toMatchObject({ value: null, provenance: { window: provenance.window, reasons: ['no_traffic'] } });
 });
+
+it('projects the declared byline fact without using the Requests column value as a fallback', () => {
+  const admitted = admitPluginListFilterFieldV1({ pluginId: 'com.acme.requests', factKeys: new Set(), field: {
+    id: 'errors', title: 'Errors', source: { resource: 'requests' }, value: { kind: 'number', unit: '1' },
+    byline: true,
+  } });
+  if (admitted.kind !== 'admitted') throw new Error('Expected public byline admission');
+  const result = PluginServiceListFieldResourceResultV1Schema.parse({ items: [
+    { environmentId: 'zero', value: 12, trend: [{ at: 50, value: 12 }], facts: { errors: { value: 0 } } },
+    { environmentId: 'unknown', value: 8, facts: { errors: { value: null } } },
+    { environmentId: 'unreported', value: 42 },
+  ] });
+  const values = projectServiceColumnResourceValues(admitted.field, result.items);
+  expect(values.get('zero')).toEqual({ value: 0 });
+  expect(values.get('unknown')).toEqual({ value: null });
+  expect(values.get('unreported')).toBeUndefined();
+});
