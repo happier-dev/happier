@@ -19,6 +19,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SelectionListFilterChip, type SelectionListFilter } from '@/components/ui/selectionList';
+import type { HeaderFoldedChooser } from '@/components/ui/layout/NavigationHeaderActions';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveHomeDisplayNameForServerIdentity } from '@/components/settings/server/homeDisplayName';
 import { isAddressOnlyName } from '@/sync/domains/server/serverProfiles';
@@ -542,6 +543,34 @@ function MachineTargetChip(props: MachineAdministrationTargetSelectorProps) {
     const filter = useMachineAdministrationTargetFilter(props);
     return <SelectionListFilterChip filter={filter} />;
 }
+
+/**
+ * Folded into a phone bar's "⋯", the chip reads as one row: the desktop glyph and the chip's own words ("Machine ·
+ * Studio Mac", or "Choose a machine" with none). Choosing the row opens this same chooser's list, under the bar's
+ * control of its existing `chipOpen`, so the selection is the chip's own.
+ */
+MachineAdministrationTargetSelector.happierHeaderFold = (
+    props: MachineAdministrationTargetSelectorProps,
+): HeaderFoldedChooser<MachineAdministrationTargetSelectorProps> | null => {
+    if (props.presentation !== 'chip') return null;
+    const current = presentCurrentTarget(props.selection.state, props.unselectedTitle, props.missingTargetTitle,
+        props.missingTargetSubtitle, props.resolveCandidatePresentation, props.resolveCandidateAvailability, true,
+        props.selection.pickerRows);
+    const hasTarget = props.selection.selectedTarget !== null && !current.gone;
+    const label = props.chipLabel ?? t('sessionsList.filtersMachine');
+    const testID = `${props.testIDPrefix ?? 'machine-administration-target'}.folded`;
+    return {
+        id: testID,
+        testID,
+        icon: 'desktop',
+        title: hasTarget ? `${label} · ${current.title}` : current.title,
+        ...(props.disabled ? { disabled: true } : {}),
+        controlledOpen: (open, onOpenChange) => ({
+            chipOpen: open || props.chipOpen === true,
+            onChipOpenChange: (next: boolean) => { onOpenChange(next); props.onChipOpenChange?.(next); },
+        }),
+    };
+};
 
 /**
  * The chip's popover body: the one machine list new session uses, with the launch-only concepts

@@ -295,6 +295,51 @@ describe('PageHeader primary action placement', () => {
         await phone.unmount();
     });
 
+    // A chooser folded into the phone "⋯" reads as one of its rows (icon, "Machine · …"), not a chip inside the menu,
+    // and the row opens the chooser's own machine list, where choosing a machine selects it (UI refinements delta 11).
+    it('folds the machine chooser into "⋯" as a menu row that opens its own machine list and selects from it', async () => {
+        const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+        const { resolveMachineAdministrationTargetState } = await import('@/sync/domains/machines/administration/targetSelection');
+        const target = { serverIdentityId: 'portable-server-b', machineId: 'machine-b' };
+        const candidate = { target, displayName: 'Machine B', serverLabel: 'Server B', availability: 'online' as const,
+            observation: 'live' as const, observedAt: 100 };
+        const machine = { id: target.machineId, updatedAt: 100, active: true, activeAt: 100, metadataVersion: 1,
+            metadata: { displayName: 'Machine B', host: 'host-b' } };
+        const selectTarget = vi.fn();
+        const state = resolveMachineAdministrationTargetState({ storedTarget: target, candidates: [candidate] });
+        const selection = { candidates: [candidate], pickerRows: [{ candidate, serverId: 'local-profile-b', serverName: 'Server B', machine }],
+            state, selectedTarget: target, selectedTargetServerMatchesActiveAccount: false, canExecute: true,
+            selectTarget, clearTarget: vi.fn(), resolveExecutionTarget: () => null } as never;
+        // The phone's own destination chrome draws the bar, as on a phone: the row is pressed where the person presses it.
+        const screen = await renderScreen(
+            <DestinationInstanceHost tabId="profile" ref={{ kind: 'settings', params: {} }} pathname="/settings" focused visible phone
+                navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+                <PageHeader title="Launch profile" primaryAction={{ title: 'Save', onPress: () => {}, testID: 'fold-save' }}
+                    actions={<MachineAdministrationTargetSelector presentation="chip" selection={selection} testIDPrefix="fold.target" />}
+                    menu={<PageHeaderMenu testID="fold-menu" actions={[{ id: 'duplicate', title: 'Duplicate', onSelect: () => {} }]} />} />
+            </DestinationInstanceHost>,
+        );
+        try {
+            await openContextActions(screen);
+            // One ordinary row for the chooser, beside the page's own rows; no chip drawn inside the menu.
+            const rows = screen.findAllByType(SelectableRow as never);
+            expect(rows.map(row => row.props.testID)).toContain('fold.target.folded');
+            expect(rows.find(row => row.props.testID === 'fold.target.folded')?.props.title).toContain('Machine B');
+            expect(screen.findHostByTestId('fold.target.picker-list')).toBeNull();
+            await screen.pressByTestIdAsync('fold.target.folded');
+            // The menu runs its row after it closes; the chooser's own list then opens (a phone sheet).
+            // Wait render by render: the menu's deferred row and the chooser's opening each commit on their own.
+            for (let attempt = 0; attempt < 20 && screen.findHostByTestId('fold.target.picker-list') === null; attempt += 1) {
+                await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 50)); });
+            }
+            expect(screen.findHostByTestId('fold.target.picker-list')).not.toBeNull();
+            await screen.pressByTestIdAsync('fold.target.picker-option:machine-b');
+            expect(selectTarget).toHaveBeenCalledWith(target);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('hands the primary action to the native header on phones instead of stacking it under the purpose', async () => {
         const onPress = vi.fn();
         const screen = await renderScreen(header(true, onPress));

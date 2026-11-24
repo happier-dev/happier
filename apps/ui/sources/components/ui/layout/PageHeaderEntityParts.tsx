@@ -8,6 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { t } from '@/text';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 
@@ -42,6 +44,10 @@ export type PageHeaderMenuAction = Readonly<{
     subtitle?: string;
     /** Rows of one kind sit together; the menu draws a divider between kinds. */
     category?: string;
+    /** The row's glyph: a chooser folded into the menu keeps its own (a Machine's desktop). */
+    icon?: IconName;
+    /** The row opens a chooser (a folded Machine chooser): it draws the field chevron, as the chooser's row form does. */
+    opensChooser?: boolean;
 }>;
 
 /**
@@ -88,10 +94,14 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
         ...(action.subtitle ? { subtitle: action.subtitle } : {}),
         ...(action.category ? { category: action.category } : {}),
         ...(action.checked === undefined ? {} : { checked: action.checked }),
+        ...(action.icon ? { icon: <Icon name={action.icon} size={16} color={theme.colors.text.secondary} /> } : {}),
         // The menu draws the check of a checked row.
         ...(action.loading
             ? { rightElement: <ActivitySpinner size="small" color={theme.colors.text.secondary} /> }
-            : {}),
+            : action.opensChooser
+                ? { rightElement: renderDropdownItemTriggerRightElement({ detail: null, open: false,
+                    detailColor: theme.colors.text.secondary, chevronColor: theme.colors.text.secondary }) }
+                : {}),
         ...(action.children && action.children.length > 0
             ? { submenu: { items: action.children.map((child) => toItem(child)), showCategoryTitles: false } }
             : {}),
