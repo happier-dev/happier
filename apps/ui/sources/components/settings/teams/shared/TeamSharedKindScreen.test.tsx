@@ -72,6 +72,12 @@ const { TeamSharedKindScreen } = await import('./TeamSharedKindScreen');
 const { TeamSharedKindRoute } = await import('@/app/(app)/settings/teams/[serverId]/[teamId]/shared');
 const { TeamSection } = await import('../TeamSection');
 const { TeamSharedResourcesSection } = await import('../TeamSharedResourcesSection');
+const { useTeamSharedResourcesSummary } = await import('@/hooks/teams/useTeamSharedResourcesSummary');
+/** The overview owns the one summary read and hands it to the section. */
+function SharedSection(props: Readonly<{ context: React.ComponentProps<typeof TeamSharedResourcesSection>['context'] }>) {
+  const summary = useTeamSharedResourcesSummary({ scope: props.context.scope, address: props.context.address, enabled: true });
+  return <TeamSharedResourcesSection context={props.context} summary={summary} />;
+}
 const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
 const { createPluginSurfaceDestinationNavigationBinding, PluginSurfaceDestinationNavigationBindingProvider } =
   await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
@@ -286,7 +292,7 @@ describe('Team shared kind list', () => {
     const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
     harness.answer(serverId, summary.path, { body: { teamId: 'team-1', kinds: [selected, other] } });
     const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="Shared">
-      {context => <TeamSharedResourcesSection context={context} />}
+      {context => <SharedSection context={context} />}
     </TeamSection>);
     const row = `team-overview-shared:${teamSharedResourceSummaryRowKeyV1(selected)}`;
     await vi.waitFor(() => expect(ids(screen)).toContain(row));

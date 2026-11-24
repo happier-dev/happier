@@ -138,6 +138,11 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * page keeps its shape when the Team arrives. Without it the wait is one state under the header.
      */
     renderLoading?: () => React.ReactNode;
+    /**
+     * An entity page's own header while the Team is read: what is already known of it (its mark, its Home), so
+     * the header that arrives stands where this one stood. Without it the page title stands above the wait.
+     */
+    renderLoadingHeader?: (homeName: string | undefined) => React.ReactNode;
     /** Quiet actions at the head of a sub-page whose content has no section title to carry them. */
     renderHeaderActions?: (context: TeamSectionContext) => React.ReactNode;
     /**
@@ -204,17 +209,21 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const plainHeader = renderPlainHeader();
 
     // A page with nothing to show but its condition: the header, then the condition.
-    const conditionPage = (condition: React.ReactNode) => embedded ? condition : (
+    const conditionPage = (condition: React.ReactNode, header: React.ReactNode = plainHeader) => embedded ? condition : (
         <ItemList pageColumn={props.pageColumn}>
-            {plainHeader}
+            {header}
             {condition}
         </ItemList>
+    );
+    const loadingPage = (testID: string) => conditionPage(
+        props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID={testID} />,
+        props.renderLoadingHeader?.(projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined)) ?? plainHeader,
     );
 
     if (!projection) {
         switch (binding.kind) {
             case 'resolving':
-                return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-resolving" />);
+                return loadingPage('team-resolving');
             case 'signed_out':
                 return conditionPage(<TeamStateCard kind="unavailable" title={t('homeGovernance.signedOutTitle')} testID="team-signed-out" />);
             case 'credential_unreadable':
@@ -227,7 +236,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const { state, homeName, address, refresh } = projection;
 
     if (state.kind === 'unobserved' || state.kind === 'loading') {
-        return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-loading" />);
+        return loadingPage('team-loading');
     }
 
     if (state.kind === 'unavailable' && state.error.code === 'team_authentication_required') {

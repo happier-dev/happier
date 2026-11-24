@@ -187,8 +187,23 @@ export type PageHeaderProps = Readonly<{
  * `PageHeader` renders too; this adapter supplies Happier's navigation chrome (title suppression and
  * the back control), the content column width and its own text owner.
  */
-export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps) {
+/** The header's meta facts as its presentation draws them: one icon size and ink for every header. */
+function usePageHeaderMeta(facts: readonly PageHeaderMetaFact[] | undefined) {
     const { theme } = useUnistyles();
+    return React.useMemo(() => facts?.map((fact) => ({
+        key: fact.key,
+        text: fact.text,
+        ...(fact.mono ? { mono: true } : {}),
+        ...(fact.testID === undefined ? {} : { testID: fact.testID }),
+        ...(fact.onPress === undefined ? {} : { onPress: fact.onPress }),
+        ...(fact.accessibilityLabel === undefined ? {} : { accessibilityLabel: fact.accessibilityLabel }),
+        ...(fact.icon
+            ? { icon: <Icon name={fact.icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> }
+            : {}),
+    })), [facts, theme.colors.text.secondary]);
+}
+
+export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps) {
     const maxWidth = useLayoutMaxWidth();
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const chromeShowsBack = useNavigationChromeShowsBack();
@@ -266,17 +281,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     // On phones the page's controls and its menu rows fold into the bar's one `⋯`, which the bar draws after the primary.
     const barActions = React.useMemo(() => props.actionsPlacement === 'page' ? undefined
         : props.menu == null ? props.actions : <>{props.actions}{props.menu}</>, [props.actions, props.actionsPlacement, props.menu]);
-    const meta = React.useMemo(() => props.meta?.map((fact) => ({
-        key: fact.key,
-        text: fact.text,
-        ...(fact.mono ? { mono: true } : {}),
-        ...(fact.testID === undefined ? {} : { testID: fact.testID }),
-        ...(fact.onPress === undefined ? {} : { onPress: fact.onPress }),
-        ...(fact.accessibilityLabel === undefined ? {} : { accessibilityLabel: fact.accessibilityLabel }),
-        ...(fact.icon
-            ? { icon: <Icon name={fact.icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> }
-            : {}),
-    })), [props.meta, theme.colors.text.secondary]);
+    const meta = usePageHeaderMeta(props.meta);
 
     const titleMaxLines = usePageTitleMaxLines();
     const { descriptionLines } = props;
@@ -338,9 +343,17 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
 /**
  * A page header whose page is not known yet: the header owner's own geometry with a quiet bar on the title's
  * line, so a real header lands where this one stood. Navigation chrome that draws the title keeps it there.
+ * An entity page passes what it already knows of its header (the mark, the meta facts) so those stand still too;
+ * it then shows its own title, as the arriving header does.
  */
-export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(props: Readonly<{ testID?: string }>) {
+export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(props: Readonly<{
+    testID?: string;
+    leading?: React.ReactNode;
+    meta?: readonly PageHeaderMetaFact[];
+    alwaysShowTitle?: boolean;
+}>) {
     const { theme } = useUnistyles();
+    const meta = usePageHeaderMeta(props.meta);
     const maxWidth = useLayoutMaxWidth();
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const largeTitle = useNavigationLeavesLargeTitle();
@@ -349,10 +362,12 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
         <HappierPageHeaderPlaceholder
             color={theme.colors.surface.skeleton}
             reducedMotion={reducedMotion}
-            largeTitle={largeTitle}
-            showTitle={!chromeShowsTitle}
+            largeTitle={largeTitle && props.leading == null}
+            showTitle={props.alwaysShowTitle === true || !chromeShowsTitle}
             columnMaxWidthPx={maxWidth}
             renderText={renderPageHeaderText}
+            leading={props.leading}
+            meta={meta}
             testID={props.testID}
         />
     );

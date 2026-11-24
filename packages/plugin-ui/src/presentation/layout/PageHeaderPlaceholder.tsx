@@ -4,12 +4,15 @@ import { HappierPageHeader, type HappierPageHeaderProps } from './PageHeader.js'
 import { happierPageTextMetrics } from './pageText.js';
 
 export type HappierPageHeaderPlaceholderProps = Pick<HappierPageHeaderProps,
-  'testID' | 'showTitle' | 'largeTitle' | 'columnMaxWidthPx' | 'renderText'> & Readonly<{
+  'testID' | 'showTitle' | 'largeTitle' | 'columnMaxWidthPx' | 'renderText' | 'leading' | 'meta'> & Readonly<{
   color: string;
   reducedMotion?: boolean;
 }>;
 
-/** The page header's own geometry, reserving its title line before the destination is known. */
+/**
+ * The page header's own geometry, reserving its title line before the destination is known. An entity page that
+ * already knows its mark and meta facts (a Team's artwork and Home) passes them, so they stand where they land.
+ */
 export function HappierPageHeaderPlaceholder({ color, reducedMotion, ...props }: HappierPageHeaderPlaceholderProps) {
   const lineHeight = happierPageTextMetrics(props.largeTitle ? 'heroTitle' : 'pageTitle').lineHeight;
   return <HappierPageHeader {...props} title={<View style={{ height: lineHeight, justifyContent: 'center' }}>

@@ -12,7 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
-import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
+import type { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { t } from '@/text';
 
@@ -22,8 +22,11 @@ import { teamReadFailureLabel } from './teamMutationPresentation';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import { teamCredentialsPath, teamSessionsPath, teamSharedCollectionPath, teamSharedKindPath } from './teamsRoutes';
 
-/** The rows the section reserves while its one summary read runs (lab L12-loading). */
-const LOADING_ROWS = 8;
+/**
+ * While its one summary read runs the section holds its first row: there is always one (a shared kind, or the
+ * invitation to share), but how many follow is not known, so no more are guessed.
+ */
+const LOADING_ROWS = 1;
 
 /** Sessions and Credentials keep their shipped Team pages; every other listed kind opens its own Team list. */
 function kindDestination(
@@ -57,17 +60,14 @@ export const TeamSharedResourcesSection = React.memo(
   function TeamSharedResourcesSection(
     props: Readonly<{
       context: TeamSectionContext;
+      /** The overview's one summary read (`useTeamSharedResourcesSummary`); the sections after this one wait on it. */
+      summary: TeamSharedSummaryState;
       /** Wide layouts: the Team overview shows a kind's list in its details pane instead of pushing its page. */
       besidePage?: Readonly<{ openKey: string | null; onOpen: (row: TeamSharedResourceSummaryRowV1, teamName: string) => void }>;
     }>,
   ) {
-    const { context, besidePage } = props;
+    const { context, besidePage, summary } = props;
     const router = useRouter();
-    const summary = useTeamSharedResourcesSummary({
-      scope: context.scope,
-      address: context.address,
-      enabled: true,
-    });
     const destinationOf = React.useCallback((row: TeamSharedResourceSummaryRowV1) => kindDestination(row, context), [context]);
     const open = React.useCallback((destination: NonNullable<ReturnType<typeof kindDestination>>) => router.push(destination), [router]);
     const openBeside = besidePage?.onOpen;
@@ -84,6 +84,12 @@ export const TeamSharedResourcesSection = React.memo(
 );
 
 type TeamSharedSummaryState = Pick<ReturnType<typeof useTeamSharedResourcesSummary>, 'status' | 'kinds' | 'error' | 'reload'>;
+
+/** No answer and nothing last-known yet: the section holds its first row and what follows it waits. */
+export function isTeamSharedResourcesSummaryPending(summary: TeamSharedSummaryState): boolean {
+  const answered = summary.status === 'ready' || summary.status === 'refreshing' || summary.status === 'error';
+  return !answered && summary.kinds.length === 0;
+}
 type KindDestination = NonNullable<ReturnType<typeof kindDestination>>;
 
 /** "Shared with this Team" for one summary state; the specimen mounts it with fixture summaries. */
@@ -114,8 +120,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
     const hasAnswer = props.summary.status === 'ready' || props.summary.status === 'refreshing';
     const failedWithNothing =
       props.summary.status === 'error' && props.summary.kinds.length === 0;
-    const loadingWithNothing =
-      !hasAnswer && !failedWithNothing && props.summary.kinds.length === 0;
+    const loadingWithNothing = isTeamSharedResourcesSummaryPending(props.summary);
     // Last-known kinds stay in place while a refresh runs, including "nothing shared yet".
     const empty = (hasAnswer || props.summary.kinds.length > 0) && rows.length === 0;
 

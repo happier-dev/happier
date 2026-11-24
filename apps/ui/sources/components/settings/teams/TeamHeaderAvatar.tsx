@@ -9,19 +9,20 @@ const TEAM_HEADER_AVATAR_SIZE = 44;
 /**
  * The Team's lockup at the head of a Team page (overview, setup). The avatar owner derives the
  * monogram and accent from the immutable Team id, never from the name: two Teams may share a name.
+ * While the Team is read (`team` null) its artwork already stands; the letter and logo join it.
  */
 export const TeamHeaderAvatar = React.memo(function TeamHeaderAvatar(props: Readonly<{
     address: TeamAddress;
-    team: Pick<TeamSummaryV1, 'name' | 'logo'>;
+    team: Pick<TeamSummaryV1, 'name' | 'logo'> | null;
 }>) {
     return (
         <Avatar
             id={props.address.teamId}
-            monogram={props.team.name}
+            monogram={props.team?.name ?? null}
             square
             size={TEAM_HEADER_AVATAR_SIZE}
-            imageUrl={props.team.logo?.url ?? null}
-            thumbhash={props.team.logo?.thumbhash ?? null}
+            imageUrl={props.team?.logo?.url ?? null}
+            thumbhash={props.team?.logo?.thumbhash ?? null}
         />
     );
 });

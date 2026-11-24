@@ -256,6 +256,41 @@ describe('Team overview: Shared with this Team', () => {
     ).toEqual([]);
   });
 
+  it('holds the Team identity while the Team is read, and lets the shared rows arrive above nothing on screen', async () => {
+    const serverId = await addHome([
+      { kind: 'machines', status: 'available', count: 2 },
+      { kind: 'sessions', status: 'available', count: 5 },
+    ]);
+    let answerTeam!: () => void;
+    let answerSummary!: () => void;
+    harness.answer(serverId, '/v1/teams/get', {
+      body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }),
+      respondAfter: new Promise<void>((resolve) => { answerTeam = resolve; }),
+    });
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [{ kind: 'machines', status: 'available', count: 2 }, { kind: 'sessions', status: 'available', count: 5 }] },
+      respondAfter: new Promise<void>((resolve) => { answerSummary = resolve; }),
+    });
+    const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
+    const reserved = () => ids(screen).filter((id) => /-skeleton:\d+$/.test(id));
+
+    // The Team is not known yet: its identity holds the header, and no section below it is guessed.
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity-loading'));
+    expect(ids(screen)).not.toContain('team-page-header');
+    expect(reserved()).toEqual([]);
+
+    // The Team answered: the shared section holds its one known row, and the Team section waits below it.
+    await act(async () => { answerTeam(); });
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity'));
+    expect(reserved()).toEqual(['team-overview-shared-loading-skeleton:0']);
+    expect(ids(screen)).not.toContain('team-overview-members');
+
+    await act(async () => { answerSummary(); });
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:sessions'));
+    expect(ids(screen)).toContain('team-overview-members');
+    expect(reserved()).toEqual([]);
+  });
+
   it('keeps the last-known invitation to share while a refresh runs', async () => {
     const serverId = await addHome([
       { kind: 'sessions', status: 'available', count: 0 },

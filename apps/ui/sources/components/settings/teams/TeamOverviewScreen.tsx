@@ -14,16 +14,18 @@ import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/se
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { TeamHeaderAvatar } from './TeamHeaderAvatar';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { createTeamAddress, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeader, PageHeaderPlaceholder } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
+import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { t } from '@/text';
 
@@ -31,7 +33,7 @@ import { askTeamManagersText } from './collection/teamsCreateGuidanceText';
 import { directorySourcePresentationState } from './identity/directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
-import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
+import { TeamSharedResourcesSection, isTeamSharedResourcesSummaryPending } from './TeamSharedResourcesSection';
 import { TeamSharedKindBody, TeamSharedKindShareAction, useTeamSharedPresetScroll } from './shared/TeamSharedKindScreen';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
@@ -353,6 +355,11 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
   ).length;
   const directoryNames = sources.map((source) => source.displayName);
   const faces = roster.rows.slice(0, MEMBER_PREVIEW_COUNT);
+  // How many kinds are shared is not known until the summary answers: the Team section waits for it, so the
+  // shared rows arrive above nothing that is already on screen.
+  const sharing = setupSteps === null;
+  const sharedSummary = useTeamSharedResourcesSummary({ scope: context.scope, address, enabled: sharing });
+  const sharedPending = sharing && isTeamSharedResourcesSummaryPending(sharedSummary);
 
   // A just-created Team's page is its setup: only the destinations the steps lead to stay.
   const shown = (id: (typeof destinations)[number]) =>
@@ -377,10 +384,10 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
       {setupSteps ? (
         <TeamSetupSection context={context} steps={setupSteps} />
       ) : (
-        <TeamSharedResourcesSection context={context} besidePage={props.sharedBeside} />
+        <TeamSharedResourcesSection context={context} summary={sharedSummary} besidePage={props.sharedBeside} />
       )}
 
-      <ItemGroup
+      {sharedPending ? null : <ItemGroup
         title={t('teams.overview.teamSection')}
         description={
           manages
@@ -469,37 +476,30 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
             onPress={() => router.push(teamSettingsPath(address))}
           />
         ) : null}
-      </ItemGroup>
+      </ItemGroup>}
 
     </>
   );
 });
 
-/** The Overview's known sections, holding their rows while the Team is read (lab `tsOverview-L`). */
-function TeamOverviewLoading() {
+/**
+ * While the Team is read only its identity is known: its mark (the artwork comes from the Team id) and its Home.
+ * The header holds them with the title's line; which sections follow (setup or shared, attention) is the Team's
+ * answer, so one quiet line waits where they begin and nothing below the header is guessed.
+ */
+function renderTeamOverviewLoadingHeader(address: TeamAddress | null, homeName: string | undefined) {
   return (
-    <>
-      <ItemGroup title={t('teams.overview.shared.title')}>
-        <ItemLoadStateRows
-          state={{ kind: 'loading' }}
-          rows={8}
-          lines={1}
-          hasLeadingMark
-          accessibilityLabel={t('teams.loading')}
-        />
-      </ItemGroup>
-      <ItemGroup title={t('teams.overview.teamSection')}>
-        <ItemLoadStateRows
-          testID="team-loading"
-          state={{ kind: 'loading' }}
-          rows={5}
-          lines={2}
-          hasLeadingMark
-          accessibilityLabel={t('teams.loading')}
-        />
-      </ItemGroup>
-    </>
+    <PageHeaderPlaceholder
+      testID="team-overview-identity-loading"
+      alwaysShowTitle
+      leading={address ? <TeamHeaderAvatar address={address} team={null} /> : undefined}
+      meta={homeName ? [{ key: 'home', testID: 'team-overview-home', icon: 'house', text: homeName }] : undefined}
+    />
   );
+}
+
+function TeamOverviewLoading() {
+  return <SurfaceStateCard testID="team-loading" size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />;
 }
 
 /**
@@ -557,6 +557,7 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
       teamId={props.teamId}
       renderHeader={(context) => <TeamOverviewHeader context={context} />}
       renderLoading={TeamOverviewLoading}
+      renderLoadingHeader={(homeName) => renderTeamOverviewLoadingHeader(createTeamAddress(props.serverId, props.teamId), homeName)}
     >
       {(context) => (
         <>
