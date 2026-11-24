@@ -322,6 +322,7 @@ export function createSessionDetailsSurfaceRenderers(
             canRender: (input) => readResourceKind(input) === 'simulatorPreview' || readResourceKind(input) === 'computerScreen',
             render: (input) => renderSessionSurfaceTab({
                 sessionId: options.sessionId,
+                scopeId: options.scopeId,
                 serverId: options.serverId,
                 machineId: options.machineId,
                 simulatorViewerId: options.simulatorViewerId,

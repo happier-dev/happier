@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 
 import { useSimulatorLiveStreamRelaySocket } from '@/components/devices/simulator/relay/useSimulatorLiveStreamRelaySocket';
 import { useSimulatorPreviewLiveSurface } from '@/components/devices/simulator/relay/useSimulatorPreviewLiveSurface';
@@ -88,6 +89,8 @@ function resolveSimulatorPreviewViewModel(params: Readonly<{
 
 function SessionSimulatorSurface(props: Readonly<{
     sessionId: string;
+    scopeId?: string;
+    tabKey: string;
     machineId?: string | null;
     serverId?: string | null;
     simulatorViewerId?: string;
@@ -95,6 +98,14 @@ function SessionSimulatorSurface(props: Readonly<{
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     nowMs?: () => number;
 }>) {
+    const pane = useOptionalAppPaneContext(context => {
+        const state = props.scopeId ? context.state.scopes[props.scopeId]?.details.tabState[props.tabKey] : null;
+        return {
+            dispatch: context.dispatch,
+            selectedSimulatorId: state && typeof state === 'object' && 'selectedSimulatorId' in state
+                ? readOptionalNullableString(state.selectedSimulatorId) : undefined,
+        };
+    });
     // Mount below the tab's presentation owner so the runtime observes its own visibility.
     const enabled = props.simulatorPreview === undefined;
     const socket = useSimulatorLiveStreamRelaySocket({
@@ -104,20 +115,33 @@ function SessionSimulatorSurface(props: Readonly<{
         runtime: {
             machineId: props.machineId, serverId: props.serverId, enabled,
             viewerId: props.simulatorViewerId ?? readOptionalString(props.resource.viewerId) ?? 'session-simulator-viewer',
+            selectedSimulatorId: pane?.selectedSimulatorId ?? readOptionalNullableString(props.resource.selectedSimulatorId),
             nowMs: props.nowMs,
         },
         relay: { socket },
     });
     const runtime = props.simulatorPreview !== undefined ? props.simulatorPreview : livePreview;
+    const actions = React.useMemo(() => ({
+        ...(runtime?.actions ?? EMPTY_SIMULATOR_PREVIEW_ACTIONS),
+        selectDevice: (selectedSimulatorId: string) => {
+            // The tab outlives the presented runtime; closing it must still release all live work.
+            if (props.scopeId && pane?.dispatch) pane.dispatch({
+                type: 'patchDetailsTabState', scopeId: props.scopeId, tabKey: props.tabKey,
+                patch: { selectedSimulatorId },
+            });
+            runtime?.actions.selectDevice(selectedSimulatorId);
+        },
+    }), [runtime?.actions, pane?.dispatch, props.scopeId, props.tabKey]);
     return <SessionSimulatorPreviewPane
         sessionId={props.sessionId}
         viewModel={resolveSimulatorPreviewViewModel({ resource: props.resource, runtime, nowMs: props.nowMs })}
-        actions={runtime?.actions ?? EMPTY_SIMULATOR_PREVIEW_ACTIONS}
+        actions={actions}
     />;
 }
 
 export function renderSessionSurfaceTab(params: Readonly<{
     sessionId: string;
+    scopeId?: string;
     serverId?: string | null;
     machineId?: string | null;
     simulatorViewerId?: string;
@@ -132,6 +156,8 @@ export function renderSessionSurfaceTab(params: Readonly<{
     if (!isSimulatorPreviewSessionSurfaceResource(params.tab.resource)) return null;
     return <SessionSimulatorSurface
         sessionId={params.sessionId}
+        scopeId={params.scopeId}
+        tabKey={params.tab.key}
         machineId={params.machineId}
         serverId={params.serverId}
         simulatorViewerId={params.simulatorViewerId}

@@ -80,6 +80,69 @@ await import('./SessionDetailsPanel');
 
 describe('SessionDetailsPanel simulator runtime wiring', () => {
 
+    it('keeps device choices separate when the mounted panel retargets between pane scopes', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { SessionSimulatorPreviewPane } = await import('@/components/sessions/simulator/SessionSimulatorPreviewPane');
+        const { createSimulatorPreviewDetailsTab } = await import('@/components/sessions/simulator/simulatorPreviewDetailsTab');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        let retarget!: (scopeId: string) => void;
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        function RetargetedPanel() {
+            const [scopeId, setScopeId] = React.useState('session:s1');
+            retarget = setScopeId;
+            pane = useAppPaneScope(scopeId);
+            return <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId={scopeId} nowMs={nowMs} />;
+        }
+        const screen = await renderScreen(<runtime.Wrapper><RetargetedPanel /></runtime.Wrapper>);
+        const tab = createSimulatorPreviewDetailsTab({ title: 'Simulator' });
+        await act(async () => pane.openDetailsTab(tab, { intent: 'pinned' }));
+        await waitForHomeGovernance(() => expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.devices).toHaveLength(2));
+        await act(async () => screen.tree.findByType(SessionSimulatorPreviewPane).props.actions.selectDevice('sim_2'));
+        await act(async () => retarget('session:other-pane'));
+        await act(async () => pane.openDetailsTab(tab, { intent: 'pinned' }));
+        await waitForHomeGovernance(() => expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.selectedSimulatorId).toBe('sim_1'));
+        await act(async () => retarget('session:s1'));
+        await waitForHomeGovernance(() => expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.selectedSimulatorId).toBe('sim_2'));
+    });
+
+    it.each([false, true])('retains the pane device across close and reopen (removed: %s) without hidden work', async removed => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { SessionSimulatorPreviewPane } = await import('@/components/sessions/simulator/SessionSimulatorPreviewPane');
+        const { createSimulatorPreviewDetailsTab } = await import('@/components/sessions/simulator/simulatorPreviewDetailsTab');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        let renders = 0;
+        function PresentedPanel() {
+            const pane = useAppPaneScope('session:s1');
+            return pane.scopeState?.details.isOpen ? <React.Profiler id="simulator" onRender={() => { renders++; }}>
+                <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" nowMs={nowMs} />
+            </React.Profiler> : null;
+        }
+        const screen = await renderScreen(<runtime.Wrapper><PresentedPanel /></runtime.Wrapper>);
+        const tab = createSimulatorPreviewDetailsTab({ title: 'Simulator' });
+        await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'pinned' }));
+        await waitForHomeGovernance(() => expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.devices).toHaveLength(2));
+        await act(async () => screen.tree.findByType(SessionSimulatorPreviewPane).props.actions.selectDevice('sim_2'));
+        expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.selectedSimulatorId).toBe('sim_2');
+        await act(async () => runtime.pane.closeDetails());
+        expect(screen.tree.findAllByType(SessionSimulatorPreviewPane)).toHaveLength(0);
+        const readsBefore = rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT).length;
+        const rendersBefore = renders;
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        try {
+            await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+            expect(renders - rendersBefore).toBe(0);
+            expect(rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT).length - readsBefore).toBe(0);
+        } finally { vi.useRealTimers(); }
+        if (removed) snapshotResponse = async () => DaemonSimulatorPreviewSnapshotResponseV1Schema.parse({
+            protocolVersion: 1, snapshot: { ...snapshot, resources: snapshot.resources.slice(0, 1) },
+        });
+        await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'pinned' }));
+        await waitForHomeGovernance(() => expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.devices).toHaveLength(removed ? 1 : 2));
+        const model = screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel;
+        expect(model.selectedSimulatorId).toBe(removed ? 'sim_1' : 'sim_2');
+        expect(model.devices.filter((device: { selected: boolean }) => device.selected).map((device: { simulatorId: string }) => device.simulatorId)).toEqual([removed ? 'sim_1' : 'sim_2']);
+    });
+
     it('acquires Simulator facts only for its presented tab, never a Browser sibling', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
