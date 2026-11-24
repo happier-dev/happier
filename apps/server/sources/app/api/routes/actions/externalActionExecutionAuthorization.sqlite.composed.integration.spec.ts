@@ -8843,6 +8843,72 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('reads accepted Team Setup under the admitted Project Open through the credential HTTP read carrier', async () => {
+        const { default: credentialAxios } = await importTestModule<typeof import('../../../../../../cli/src/api/client/credentialAxios')>(
+            '../../../../../../cli/src/api/client/credentialAxios');
+        const { ArtifactHttpReadV1Schema } = await import('@happier-dev/protocol/artifacts/artifactAccessV1');
+        const { setArtifactAccessGrantInTx } = await import('@/app/artifacts/artifactAccessService');
+        const fixture = await createFixture({ qualifiedPat: false });
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Accepted Project Setup' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: custodian.id, role: 'owner' },
+            { teamId: team.id, accountId: fixture.account.id, role: 'member' },
+        ] });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: { accountId: custodian.id } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            machineId: fixture.machine.id, principal: { kind: 'team', teamId: team.id }, level: 'admin' })))
+            .toMatchObject({ kind: 'saved', readiness: 'ready' });
+        const createSetup = async () => {
+            const result = await createArtifact({ actorUserId: custodian.id, artifactId: crypto.randomUUID(),
+                header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'project_setup.v1', title: 'Accepted Setup' })),
+                body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1' }) })),
+                dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!result.ok) throw new Error(result.error);
+            return result.artifact.id;
+        };
+        const acceptedId = await createSetup();
+        const foreignId = await createSetup();
+        expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            artifactId: acceptedId, principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })))
+            .toMatchObject({ ok: true });
+        const homeId = await getOrCreateServerIdentityId();
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, artifactsRoutes);
+        try {
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const root = await mint(app, fixture, 'projects.open', { ...fixture.envelope,
+                input: getActionSpec('projects.open').inputSchema.parse({ serverId: homeId, machineId: fixture.machine.id,
+                    source: { kind: 'folder', path: '/home/custodian/ready-b' }, materialization: { kind: 'attach' } }) }, token);
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target: root.binding.target,
+                installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey, rootAdmitted: true });
+            const request = async (method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown) => {
+                const headers = await projected?.requesterHttpProjection?.createRequestHeaders({
+                    effectActionId: root.binding.actionId, method, path, ...(body === undefined ? {} : { body }) });
+                if (!headers) throw new Error('Expected admitted Project Open requester proof');
+                // Real credentialAxios frames the signed logical GET as the production POST read carrier.
+                return credentialAxios.request({ method, url: `${origin}${path}`, headers,
+                    ...(body === undefined ? {} : { data: body }), validateStatus: () => true });
+            };
+            const read = (id: string) => request('GET', `/v1/artifacts/${encodeURIComponent(id)}`);
+            const accepted = await read(acceptedId);
+            expect(accepted.status).toBe(200);
+            expect(ArtifactHttpReadV1Schema.parse(accepted.data)).toMatchObject({ id: acceptedId, access: 'view' });
+            expect((await read(foreignId)).status).toBe(404);
+            for (const [method, path, body] of [
+                ['GET', '/v1/artifacts', undefined],
+                ['POST', `/v1/artifacts/${acceptedId}`, {}],
+                ['DELETE', `/v1/artifacts/${acceptedId}`, undefined],
+            ] as const) {
+                await expect(request(method, path, body)).rejects.toMatchObject({
+                    code: 'action_forbidden', authorizationRefusal: 'verification_purpose',
+                });
+            }
+            expect((await read(acceptedId)).status).toBe(200);
+        } finally { await app.close(); }
+    });
+
     it.each(['owner', 'shared'] as const)('admits the original Project Open requester HTTP port for only its exact execution Machine via %s access', async access => {
         const fixture = await createFixture({ qualifiedPat: false });
         if (access === 'shared') {

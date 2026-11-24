@@ -21,6 +21,9 @@ describe('accepted Project setup detail boundary', () => {
 
   it('refuses mismatched selected detail and tampered accepted declarations', async () => {
     for (const altered of [
+      { ...artifact, artifactId: 'another-private-copy' },
+      { ...artifact, header: { ...artifact.header, kind: 'another-artifact-kind' } },
+      { ...artifact, revision: { ...artifact.revision, headerVersion: 2 } },
       { ...artifact, revision: { ...artifact.revision, bodyVersion: 2 } },
       { ...artifact, body: artifact.body.replace('echo accepted', 'echo tampered') },
       { ...artifact, body: JSON.stringify({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1 }) },
