@@ -241,7 +241,12 @@ export async function executeMemoryWriteV1(args: Readonly<{
     const request = decisionRequest ?? MemoryRememberInputV1Schema.parse(args.input);
     if (!('ref' in request) && admission.target === null) {
       if (!store.create || (admission.createScope === 'bot' ? !args.sessionStateFieldSet : !(admission.attachMemory ?? admission.attachAccountMemory))) refuse('memory_target_unavailable');
-      const created = await createMemoryDocInLibrary({ store, request: {
+      const creationSource = !decisionRequest && context.actionRequestId
+        ? JSON.stringify(['happier:memory-remember-create:v1', context.actionRequestId, admission.createScope,
+          'projectRef' in request ? request.projectRef.projectKey
+            : admission.createScope === 'bot' && 'sessionRef' in request ? request.sessionRef.sessionId : null])
+        : undefined;
+      const created = await createMemoryDocInLibrary({ store, creationSource, request: {
         title: admission.createScope === 'bot' ? 'Bot memory' : admission.createScope === 'project' ? 'Project memory' : 'Account memory', text: request.text,
         ...(request.topic === undefined ? {} : { topic: request.topic }),
         ...(request.expiresAtMs === undefined ? {} : { expiresAtMs: request.expiresAtMs }),

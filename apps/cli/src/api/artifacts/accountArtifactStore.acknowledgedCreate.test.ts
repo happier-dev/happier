@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { artifactIdScopeMatchesAccountV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from './accountArtifactStore';
 import { readCarrierMutation } from './accountArtifactStore.testkit';
@@ -51,6 +52,38 @@ describe('acknowledged Account Artifact creation', () => {
     expect(await transport.create({ artifactId: 'created', header: { title: 'Replacement' }, body: 'replacement bytes' }))
       .toMatchObject({ header: { title: 'Incumbent' }, body: 'incumbent bytes', revision: { headerVersion: 3, bodyVersion: 4 } });
     expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it.each(['plain', 'e2ee'] as const)('rejoins an Account-scoped %s creation from its acknowledgement', async mode => {
+    const encryption = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(5) };
+    const storeFor = (accountId: string) => createAccountArtifactStore({ accountContent: { accountId, encryption },
+      getAccountEncryptionMode: async () => mode });
+    const store = storeFor('owner');
+    let actorAccountId = 'owner';
+    const committed = new Map<string, unknown>();
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => {
+      const write = readCarrierMutation(wire);
+      const artifactId = String(write.id);
+      expect(artifactIdScopeMatchesAccountV1({ artifactId, accountId: actorAccountId, idScope: write.idScope })).toBe(true);
+      expect(artifactIdScopeMatchesAccountV1({ artifactId, accountId: 'foreign', idScope: write.idScope })).toBe(false);
+      if (!committed.has(artifactId)) committed.set(artifactId, {
+        ...write, ownerAccountId: actorAccountId, access: 'owner', encryptionMode: mode, publicAudience: 'none',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      });
+      return { status: 200, data: committed.get(artifactId) };
+    });
+    const input = { creationSource: 'request-identity', includeAcknowledgedContent: true,
+      header: { title: 'Notes' }, body: 'committed bytes', authorizationHeaders: async () => ({ Authorization: 'Bearer test' }) };
+    const first = await store.create(input);
+    const retry = await store.create({ ...input, body: 'attempted bytes' });
+    expect(retry).toMatchObject({ artifactId: first.artifactId, acknowledged: { body: 'committed bytes' } });
+    expect(committed.size).toBe(1);
+    expect(mockGet).not.toHaveBeenCalled();
+
+    actorAccountId = 'another-owner';
+    const other = await storeFor(actorAccountId).create(input);
+    expect(other.artifactId).not.toBe(first.artifactId);
+    expect(committed.size).toBe(2);
   });
 
   it('honors explicit absent attribution instead of falling back to the account actor', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { deriveAccountPrivateArtifactCreateIdentityV1 } from '../artifacts/idScope.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { projectConfirmedActionHttpRefusal } from './executor/actionFailureEnvelope.js';
 import { RpcError } from '../rpc/errors.js';
@@ -1059,6 +1060,57 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect([...artifacts.keys()]).toEqual(['memory-1']);
   });
 
+  it.each(['plain', 'e2ee'] as const)('rejoins the committed %s Memory document after an interrupted first attachment', async mode => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>();
+    const attachments: unknown[] = [];
+    let failAttachment = true;
+    let fact = 0;
+    const executor = createExecutor({
+      memoryLibrary: {
+        serverId: 'home', randomId: () => `fact-${++fact}`,
+        store: {
+          read: async id => artifacts.get(id) ?? null,
+          create: async (input: { header: Readonly<Record<string, unknown>>; body: string; creationSource?: string }) => {
+            const id = input.creationSource
+              ? deriveAccountPrivateArtifactCreateIdentityV1('owner', input.creationSource,
+                  mode === 'plain' ? null : new Uint8Array(32).fill(5)).artifactId
+              : `memory-${artifacts.size + 1}`;
+            const incumbent = artifacts.get(id);
+            if (incumbent) return { artifactId: id, revision: incumbent.revision, acknowledgedBody: incumbent.body };
+            artifacts.set(id, { id, header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } });
+            return { artifactId: id, revision: artifacts.get(id)!.revision, acknowledgedBody: input.body };
+          },
+          update: async () => { throw new Error('Unexpected update'); },
+        },
+        readExposure: async () => { throw new Error('Unexpected exposure read'); },
+        readSession: async () => ({ revision: 3, metadata: { bot: { kind: 'bot' }, work: { memoryEnabled: true, promptStack: attachments } } }),
+      },
+      sessionStateFieldSet: async write => {
+        if (failAttachment) throw Object.assign(new Error('Attachment interrupted'), { code: 'memory_target_unavailable' });
+        if (write.fieldId !== 'intent.context' || !write.value || typeof write.value !== 'object' || !('entry' in write.value)) {
+          throw new Error('Expected Session Memory attachment');
+        }
+        attachments.push(write.value.entry);
+        return { ok: true };
+      },
+    });
+    const input = { sessionRef: { serverId: 'home', sessionId: 'session' }, expectedMetadataRevision: 3, text: 'Preference' };
+    const context = { surface: 'cli', authority: 'account_automation', defaultSessionId: 'session', serverId: 'home',
+      actionRequestId: 'remember-request' } as const;
+    const first = await executor.execute('memory.remember', input, context);
+    const [artifactId] = artifacts.keys();
+    expect(first).toMatchObject({ ok: true, result: { artifactId, factId: 'fact-1', attachment: 'conflict',
+      attachmentFailure: { errorCode: 'memory_target_unavailable' } } });
+    expect([...artifacts]).toHaveLength(1);
+    expect(attachments).toEqual([]);
+
+    failAttachment = false;
+    const retried = await executor.execute('memory.remember', input, context);
+    expect([...artifacts]).toHaveLength(1);
+    expect(retried).toMatchObject({ ok: true, result: { artifactId, factId: 'fact-1', attachment: 'attached' } });
+    expect(attachments).toEqual([expect.objectContaining({ ref: { artifactId, serverId: 'home', kind: 'doc' } })]);
+  });
+
   it('creates memory only on first remember, reuses the reserved attachment and retains an attach-conflicted fact', async () => {
     const artifacts = new Map<string, PromptLibraryStoredArtifact>();
     let metadata: Record<string, unknown> = { bot: { kind: 'bot' }, work: { memoryEnabled: true, promptStack: [] } };
@@ -1137,7 +1189,9 @@ describe('createActionExecutor (prompt library actions)', () => {
       memoryLibrary: { serverId: 'home', randomId: () => `fact-${artifacts.get('project-memory')?.revision.bodyVersion}-${creates}`,
         store: { read: async id => artifacts.get(id) ?? null,
           create: async input => { const id = `created-${++creates}`;
-            artifacts.set(id, { id, header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
+            const revision = { headerVersion: 1, bodyVersion: 1 };
+            artifacts.set(id, { id, header: input.header, body: input.body, revision });
+            return { artifactId: id, revision, acknowledgedBody: input.body }; },
           update: async input => { const current = artifacts.get(input.artifactId)!;
             artifacts.set(current.id, { ...current, body: input.body, revision: {
               headerVersion: current.revision.headerVersion + 1, bodyVersion: current.revision.bodyVersion + 1 } }); },
@@ -1189,7 +1243,9 @@ describe('createActionExecutor (prompt library actions)', () => {
       memoryLibrary: { serverId: 'home', randomId: () => `scope-fact-${++ids}`,
         store: { read: async id => artifacts.get(id) ?? null,
           create: async input => { const id = `scope-memory-${++creates}`;
-            artifacts.set(id, { id, ...input, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
+            const revision = { headerVersion: 1, bodyVersion: 1 };
+            artifacts.set(id, { id, header: input.header, body: input.body, revision });
+            return { artifactId: id, revision, acknowledgedBody: input.body }; },
           update: async input => { const old = artifacts.get(input.artifactId)!;
             artifacts.set(old.id, { ...old, body: input.body, revision: {
               headerVersion: old.revision.headerVersion + 1, bodyVersion: old.revision.bodyVersion + 1 } }); },

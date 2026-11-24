@@ -19,6 +19,8 @@ import { createAccountArtifactStoredEnvelope, openArtifactPrivateRevisionMetadat
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { captureLazyActionAccountContext } from './actionAccountContext';
+import { artifactIdScopeMatchesAccountV1 } from '@happier-dev/protocol/artifacts/idScope';
+import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { createUiArtifactAction } from './artifactActionDeps';
 import { createUiBotTemplateAction } from './botTemplateActionDeps';
 import { projectBotTemplateArtifactHeaderV1, type BotTemplateDraftV1, type BotTemplateArtifactV1, projectBotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
@@ -1116,6 +1118,14 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(committed?.id).toBe(artifactId);
             expect(reads).toEqual([]);
             expect(await account.workflowArtifacts.create({ artifactId, header: {}, body: 'workflow body' })).toBe(artifactId);
+            const promptStore = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account);
+            const create = { creationSource: 'request-identity', header: { title: 'Attempted' }, body: 'attempted body' };
+            const first = await promptStore.create!(create);
+            expect(first).toMatchObject({ acknowledgedBody: 'incumbent body', revision: { headerVersion: 3, bodyVersion: 4 } });
+            expect(await promptStore.create!(create)).toEqual(first);
+            const write = JSON.parse(String(runtimeFetch.mock.calls.filter(([, init]) => init?.method === 'POST').at(-1)?.[1]?.body)) as ArtifactCreateRequest;
+            expect(artifactIdScopeMatchesAccountV1({ artifactId: write.id, idScope: write.idScope, accountId: 'artifact-account' })).toBe(true);
+            expect(artifactIdScopeMatchesAccountV1({ artifactId: write.id, idScope: write.idScope, accountId: 'other-account' })).toBe(false);
             expect(reads).toEqual([]);
         } finally { account.dispose(); }
     });

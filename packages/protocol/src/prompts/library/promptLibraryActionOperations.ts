@@ -40,7 +40,7 @@ import type { ReadOnlySkillV1 } from './skills/firstPartySkillsV1.js';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
 import type { CoordinationMessageRefV1 } from '../../discussions/messageRefs.js';
 import type { ArtifactCoarseKindV1 } from '../../artifacts/artifactKindV1.js';
-import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
+import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 
 export type PromptLibraryStoredArtifact = Readonly<{
   id: string;
@@ -80,12 +80,14 @@ export type PromptLibraryArtifactStore = Readonly<{
     signal?: AbortSignal;
   }>): Promise<void | Readonly<{ revision: PromptLibraryStoredArtifact['revision'] }>>;
   create?(input: Readonly<{
+    /** Non-content operation identity for an exact-id create at the Account Artifact owner. */
+    creationSource?: string;
     header: Readonly<Record<string, unknown>>;
     body: string;
     savedBy?: ArtifactSavedByV1;
     memoryDecisionSource?: CoordinationMessageRefV1;
     signal?: AbortSignal;
-  }>): Promise<string | Readonly<{ artifactId: string; revision: PromptLibraryStoredArtifact['revision'] }>>;
+  }>): Promise<string | Readonly<{ artifactId: string; revision: PromptLibraryStoredArtifact['revision']; acknowledgedBody?: ArtifactBodyV1 | null }>>;
   delete?(input: Readonly<{ artifactId: string; expectedRevision: PromptLibraryStoredArtifact['revision']; signal?: AbortSignal }>): Promise<void>;
 }>;
 
@@ -282,6 +284,7 @@ function authorMemoryFact(params: MemoryFactAuthorParams, request: Readonly<{ te
 /** Lazy scope creation uses the same fact author and topic decision as later remembers. */
 export async function createMemoryDocInLibrary(params: MemoryFactAuthorParams & Readonly<{
   store: PromptLibraryArtifactStore; request: Readonly<{ title: string; text: string; topic?: string; expiresAtMs?: number }>;
+  creationSource?: string;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: true; artifactId: string; factId: string; revision?: PromptLibraryStoredArtifact['revision'] }>> {
   throwIfAborted(params.signal);
@@ -291,10 +294,23 @@ export async function createMemoryDocInLibrary(params: MemoryFactAuthorParams & 
   const header = MemoryDocArtifactHeaderV1Schema.parse({ v: 1, kind: 'memory_doc.v1', title: params.request.title });
   throwIfAborted(params.signal);
   const created = await params.store.create({ header, body: JSON.stringify(body),
+    ...(params.creationSource ? { creationSource: params.creationSource } : {}),
     ...(params.decision ? { memoryDecisionSource: params.decision.sourceMessageRef } : {}),
     ...(params.signal ? { signal: params.signal } : {}) });
   const artifactId = typeof created === 'string' ? created : created.artifactId;
-  return { ok: true, artifactId, factId: fact.id, ...(typeof created === 'string' ? {} : { revision: created.revision }) };
+  if (!params.creationSource) {
+    return { ok: true, artifactId, factId: fact.id, ...(typeof created === 'string' ? {} : { revision: created.revision }) };
+  }
+  if (typeof created === 'string' || typeof created.acknowledgedBody !== 'string') throw memoryFailure('memory_doc_invalid');
+  const acknowledged = parseArtifactBody(created.acknowledgedBody, value => {
+    const parsed = MemoryDocBodyV1StoredSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  });
+  const topic = params.request.topic;
+  const acknowledgedFact = topic === undefined ? acknowledged?.index[0]
+    : acknowledged?.topics.find(candidate => candidate.title === topic)?.facts[0];
+  if (!acknowledgedFact) throw memoryFailure('memory_doc_invalid');
+  return { ok: true, artifactId, factId: acknowledgedFact.id, revision: created.revision };
 }
 
 export async function rememberMemoryFactInLibrary(params: MemoryMutationParams & MemoryFactAuthorParams & Readonly<{

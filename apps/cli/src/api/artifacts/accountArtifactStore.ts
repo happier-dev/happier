@@ -9,7 +9,8 @@ import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resou
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { z } from 'zod/mini';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1 } from '@happier-dev/transfers';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { deriveAccountPrivateArtifactCreateIdentityV1, derivePrivateArtifactSourceIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { isDeepStrictEqual } from 'node:util';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -270,20 +271,12 @@ function accountNoticeOccurrence(accountId: string, notice: Pick<AccountNoticeAr
   return JSON.stringify(['happier:plugin-notice:v1', accountId, notice.source]);
 }
 
+function artifactSourceContentKey(mode: 'plain' | 'e2ee', credentials: ContentEncryption): Uint8Array | null {
+  return mode === 'plain' ? null : resolveAccountContentSecretKey(requireCredentials(credentials).encryption);
+}
+
 function privateArtifactSourceId(params: Readonly<{ occurrence: string; mode: 'plain' | 'e2ee'; credentials: ContentEncryption }>): string {
-  let bytes: Buffer;
-  if (params.mode === 'plain') {
-    bytes = createHash('sha1').update(params.occurrence).digest().subarray(0, 16);
-  } else {
-    const material = requireCredentials(params.credentials).encryption;
-    // This is the Account content private key, not the per-machine data key.
-    const accountKey = resolveAccountContentSecretKey(material);
-    bytes = createHmac('sha256', accountKey).update(params.occurrence).digest().subarray(0, 16);
-  }
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return derivePrivateArtifactSourceIdV1(params.occurrence, artifactSourceContentKey(params.mode, params.credentials));
 }
 
 /** Account-mode refusals stay typed through Action projection; .code remains for existing readers. */
@@ -1398,12 +1391,13 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(kindCoverage ? { kindCoverage } : {}),
         ...(hasUnclassified === undefined ? {} : { hasUnclassified }) };
     },
-    create: async (input: Readonly<{ includeAcknowledgedContent?: boolean; artifactId?: string; idScope?: ArtifactIdScopeV1; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; reviewMetadata?: ReviewMetadataWriteV1; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
+    create: async (input: Readonly<{ includeAcknowledgedContent?: boolean; creationSource?: string; artifactId?: string; idScope?: ArtifactIdScopeV1; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; reviewMetadata?: ReviewMetadataWriteV1; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
       input.signal?.throwIfAborted();
       if (input.memoryDecisionSource && typeof input.body !== 'string')
         throw Object.assign(new Error('memory_decision_source_unsupported'), { code: 'memory_decision_source_unsupported' });
       const codec = await createCodec({ credentials: contentCredentials, mode: await readAccountMode({ signal: input.signal, authorizationHeaders: input.authorizationHeaders }) });
       let artifactId: string;
+      let idScope = input.idScope;
       if (input.header.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 || input.noticeAccountId !== undefined) {
         const notice = readAccountNoticeArtifactV1({ header: input.header, body: input.body });
         const accountId = contentAccountId;
@@ -1419,6 +1413,10 @@ export function createAccountArtifactStore(params: Readonly<{
           || await findRetainedNotice(accountId, accountNoticeOccurrence(accountId, notice), input.signal)) {
           throw Object.assign(new Error('conflict'), { code: 'conflict' });
         }
+      } else if (input.creationSource !== undefined) {
+        if (!contentAccountId) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+        ({ artifactId, idScope } = deriveAccountPrivateArtifactCreateIdentityV1(contentAccountId, input.creationSource,
+          artifactSourceContentKey(codec.mode, contentCredentials)));
       } else artifactId = input.artifactId ?? randomUUID();
       await validateHtmlContent(input.header, input, artifactId, input.signal);
       const content = await prepareWriteContent(codec, input);
@@ -1443,7 +1441,7 @@ export function createAccountArtifactStore(params: Readonly<{
         }, content.blob.content)) : {
         id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
         ...(input.reviewMetadata ? { reviewMetadata: input.reviewMetadata } : {}),
-        ...(input.idScope === undefined ? {} : { idScope: input.idScope }),
+        ...(idScope === undefined ? {} : { idScope }),
         ...(kind === undefined ? {} : { kind, ...(artifactKindCarriesApprovalSessionHintV1(nextHeader.kind)
           ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }),
         ...(input.memoryDecisionSource ? { memoryDecisionSource: input.memoryDecisionSource } : {}),

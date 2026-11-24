@@ -3,6 +3,7 @@ import type {
   PromptLibraryStoredArtifact,
 } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PromptArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
+import { deriveAccountPrivateArtifactCreateIdentityV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { listArtifactHeadersV1, selectArtifactHeaderPageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { WorkflowDefinitionArtifactOperations } from '@happier-dev/protocol/actions';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -220,8 +221,17 @@ export function createUiPromptLibraryArtifactStore(
       const artifact = await (account ? account.readArtifactContent(id, options) : artifacts.read(id, options));
       return storedArtifact(artifact);
     },
-    create: async (input) => {
+    create: async ({ creationSource, ...input }) => {
       throwIfAborted(input.signal);
+      if (creationSource !== undefined) {
+        if (!account) throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
+        const { accountMode, encryption } = await account.resolveAccountEncryption(input.signal);
+        if (accountMode === 'e2ee' && !encryption) throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
+        const identity = deriveAccountPrivateArtifactCreateIdentityV1(account.accountId, creationSource,
+          accountMode === 'e2ee' && encryption ? encryption.getContentPrivateKey() : null);
+        const created = await account.createArtifactDocument({ ...input, ...identity });
+        return { artifactId: created.artifactId, revision: created.revision, acknowledgedBody: created.artifact.body };
+      }
       const artifactId = randomUUID();
       if (account) {
         const created = await account.createArtifactDocument({ ...input, artifactId });

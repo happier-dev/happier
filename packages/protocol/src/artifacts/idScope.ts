@@ -1,3 +1,6 @@
+import { hmac } from '@noble/hashes/hmac';
+import { sha1 } from '@noble/hashes/legacy';
+import { sha256 } from '@noble/hashes/sha2';
 import { z } from '../zodRuntimePolicy.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
 
@@ -12,6 +15,20 @@ export type ArtifactIdScopeV1 = z.infer<typeof ArtifactIdScopeV1Schema>;
 export function deriveAccountScopedArtifactIdV1(accountId: string, sourceId: string): string {
     const digest = computeCanonicalDomainSeparatedHexDigest('happier.artifact.account-scoped-id.v1', [accountId, sourceId]);
     return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+/** A stable source identity. Plain Accounts supply null and have no client content key. */
+export function derivePrivateArtifactSourceIdV1(occurrence: string, accountContentKey: Uint8Array | null): string {
+    const bytes = (accountContentKey === null ? sha1(occurrence) : hmac(sha256, accountContentKey, occurrence)).subarray(0, 16);
+    bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function deriveAccountPrivateArtifactCreateIdentityV1(accountId: string, occurrence: string, accountContentKey: Uint8Array | null) {
+    const sourceId = derivePrivateArtifactSourceIdV1(JSON.stringify([accountId, occurrence]), accountContentKey);
+    return { artifactId: deriveAccountScopedArtifactIdV1(accountId, sourceId), idScope: { v: 1, sourceId } satisfies ArtifactIdScopeV1 };
 }
 
 /** Check every new Artifact, regardless of its claimed or encrypted kind. */

@@ -216,10 +216,13 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
             owned: artifact.access === 'owner', access: artifact.access };
         }));
       },
-      create: async ({ header, body, savedBy, memoryDecisionSource, signal }) => {
-        const created = await accountArtifactStore.create({ header, body, savedBy, memoryDecisionSource, signal,
+      create: async ({ header, body, savedBy, memoryDecisionSource, creationSource, signal }) => {
+        const created = await accountArtifactStore.create({ header, body, savedBy, memoryDecisionSource, creationSource, signal,
+          includeAcknowledgedContent: creationSource !== undefined,
           ...(authorizationHeaders ? { authorizationHeaders } : {}) });
-        return created;
+        if (creationSource === undefined) return created;
+        if (!created.acknowledged) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+        return { artifactId: created.artifactId, revision: created.revision, acknowledgedBody: created.acknowledged.body };
       },
       update: async ({ artifactId, expectedRevision, header, body, savedBy, memoryDecisionSource, signal }) => {
         const updated = await accountArtifactStore.update({ artifactId,
