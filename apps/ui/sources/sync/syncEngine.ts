@@ -929,17 +929,17 @@ function logSessionTranscriptReadFailure(sessionId: string, error: unknown, issu
 }
 
 function createSessionMessageSubmitFailureError(
-    errorCode: string | undefined,
-    errorMessage: string | undefined,
+    result: SubmitSessionUserMessageResult,
     fallbackMessage: string,
 ): Error {
+    const { errorCode, errorMessage, wakeFailureReceipt } = result;
     const resolvedMessage = errorCode === 'action-conflict'
         ? t('session.pendingMessages.errors.actionConflict')
         : errorMessage ?? fallbackMessage;
     if (!errorCode) return new Error(resolvedMessage);
     return Object.assign(new Error(resolvedMessage, {
         cause: { ok: false, errorCode, error: resolvedMessage },
-    }), { code: errorCode });
+    }), { code: errorCode, ...(wakeFailureReceipt ? { details: wakeFailureReceipt } : {}) });
 }
 
 type SyncSocketSessionHydrationReason = SocketSessionHydrationReason;
@@ -5303,11 +5303,7 @@ class Sync {
                         cause: { ok: false, errorCode: result.errorCode, error: message },
                     });
                 }
-                throw createSessionMessageSubmitFailureError(
-                    result.errorCode,
-                    result.errorMessage,
-                    'Message send rejected',
-                );
+                throw createSessionMessageSubmitFailureError(result, 'Message send rejected');
             }
 
             if (result.persistence === 'provider_direct' || result.persistence === 'transcript_committed') {
@@ -5795,11 +5791,7 @@ class Sync {
             if (result.type === 'wake_failed') {
                 log.log(`submitMessage wake failed for ${sessionId}: ${result.errorMessage ?? 'Failed to wake session'}`);
             }
-            throw createSessionMessageSubmitFailureError(
-                result.errorCode,
-                result.errorMessage,
-                'Failed to submit message',
-            );
+            throw createSessionMessageSubmitFailureError(result, 'Failed to submit message');
         }
         return result;
     }
