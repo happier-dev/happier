@@ -510,18 +510,26 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
     slow = false;
     exporterVersion = 'exporter-fixture-fixed';
     await readTrafficWindow(Date.now(), 'F16 same route exercises the fixed version for the authored comparison window');
-    const recovered = await account.execute('action.invoke', { action: { pluginId: 'happier.telemetry',
-      localId: databaseActionLocalIdV1(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1) },
-      input: { ...address, serviceName: 'checkout', windowMs,
-        measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
-    }, onMachine);
-    if (!recovered.ok) throw new Error(`F16 recovery comparison refused (${recovered.errorCode})`);
-    const recovery = regressionCompareResultSchema.parse(recovered.result);
-    expect(recovery, recovery.status === 'inconclusive' ? recovery.reasons.join(', ') : undefined)
-      .toMatchObject({ status: 'comparable', liveDeploymentId: fixedId, previousDeploymentId: liveId });
-    if (recovery.status !== 'comparable') throw new Error('F16 fixed-version comparison was inconclusive');
-    expect(recovery.changePercent).not.toBeNull();
-    expect(recovery.changePercent!).toBeLessThan(0);
+    const readDirectComparison = async (requestedWindowMs: number) => {
+      const result = await account.execute('action.invoke', { action: { pluginId: 'happier.telemetry',
+        localId: databaseActionLocalIdV1(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1) },
+        input: { ...address, serviceName: 'checkout', windowMs: requestedWindowMs,
+          measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
+      }, onMachine);
+      if (!result.ok) throw new Error(`F16 direct comparison refused (${result.errorCode})`);
+      const comparison = regressionCompareResultSchema.parse(result.result);
+      expect(comparison, comparison.status === 'inconclusive' ? comparison.reasons.join(', ') : undefined)
+        .toMatchObject({ liveDeploymentId: fixedId, previousDeploymentId: liveId });
+      return comparison;
+    };
+    for (const result of [await readDirectComparison(windowMs), await readDirectComparison(windowMs)]) {
+      if (result.status === 'inconclusive') throw new Error(`F16 recovery was inconclusive (${result.reasons.join(', ')})`);
+      expect(result.changePercent).not.toBeNull();
+      expect(result.changePercent!).toBeLessThan(0);
+    }
+    // The mounted Metric widget uses this same Action with its selected chart window.
+    await readDirectComparison(24 * 60 * 60 * 1000);
+    console.info('P7-F16 direct recovery, repeat comparison and 24-hour widget request passed');
     expect((await runs(saved.set.automationId)).map(row => row.id).sort(),
       'Disarming prevents a new deployment or further app traffic from evaluating the Workflow').toEqual(settledRunIds);
     const afterDisarm = await readTriggerSet();
