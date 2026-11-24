@@ -243,12 +243,15 @@ describe('createHomeActionApprovalContinuation', () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             approvalsCreate: async ({ request }) => { recordedInput = request.actionArgs; return { artifactId: 'approval-1' }; },
         }));
-        const execution = await executor.execute(boardActionId, input, { surface: 'ui', authority: 'present_user', serverId: 'home-1',
+        // Explicit deferred requests produce receipts; a person's run-now UI press uses local confirmation.
+        const execution = await executor.execute('approval.request.create', {
+            actionId: boardActionId, actionArgs: input, summary: 'Save the Board note', createdBy: { surface: 'system' },
+        }, { surface: 'ui', authority: 'present_user', serverId: 'home-1',
             runtimeAccountId: 'account-1', actionRequestId: 'request-1',
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                 actions: { [boardActionId]: { approvalRequiredSurfaces: ['ui'] } } }),
         });
-        expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { artifactId: 'approval-1' } });
         const admitted = SessionBoardItemUpsertInputV1Schema.parse(recordedInput);
         expect(admitted).toMatchObject(input);
         const result = SessionBoardMutationActionResultV1Schema.parse({ v: 1, serverId: 'home-1', sessionId: 'session-1',
@@ -398,10 +401,13 @@ describe('createHomeActionApprovalContinuation', () => {
             expect(computeActionInputApprovalDigestV1('agents.acp.backends.upsert', input)).toBe(
                 computeActionInputApprovalDigestV1('agents.acp.backends.upsert', JSON.parse(JSON.stringify(input))),
             );
-            const created = await executor.execute('agents.acp.backends.upsert', input, context);
+            const created = await executor.execute('approval.request.create', {
+                actionId: 'agents.acp.backends.upsert', actionArgs: JSON.parse(JSON.stringify(input)),
+                summary: 'Save the ACP agent', createdBy: { surface: 'system' },
+            }, context);
             expect(created.ok, created.ok ? undefined : created.errorCode).toBe(true);
             expect(created).toMatchObject({
-                ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-1' },
+                ok: true, result: { artifactId: 'approval-1' },
             });
             expect(catalog.backends).toEqual([]);
             if (admission !== 'current') {
@@ -411,22 +417,24 @@ describe('createHomeActionApprovalContinuation', () => {
                     ...(admission === 'account_changed' ? { accountId: 'another-account' } : { serverId: 'another-home' }),
                 } });
             }
-            await expect(executor.execute('approval.request.decide', { artifactId: 'approval-1', decision: 'approve' }, context))
-                .resolves.toMatchObject({ ok: true });
+            const decision = await executor.execute('approval.request.decide', { artifactId: 'approval-1', decision: 'approve' }, context);
             const request = StoredApprovalRequestSchema.parse(storedRequest);
+            if (admission !== 'current') {
+                expect(decision).toMatchObject({
+                    ok: false, errorCode: 'approval_stale', effectAttempted: false, details: { reason: admission },
+                });
+                expect(request).toMatchObject({ status: 'approved' });
+                expect(request.execution).toBeUndefined();
+                expect(catalogMutations).toBe(0);
+                expect(catalog.backends).toEqual([]);
+                return;
+            }
+            expect(decision).toMatchObject({ ok: true });
             const artifact: ReadableArtifact = { id: 'approval-1', title: null,
                 header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
                 headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true,
             };
             const terminal = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
-            if (admission !== 'current') {
-                expect(terminal).toMatchObject({ family: 'built_in', request: { status: 'failed', execution: {
-                    ok: false, errorCode: 'approval_stale', effectAttempted: false, details: { reason: admission },
-                } } });
-                expect(catalogMutations).toBe(0);
-                expect(catalog.backends).toEqual([]);
-                return;
-            }
             expect(terminal).toMatchObject({ family: 'built_in', request: { status: 'executed', execution: { ok: true } } });
             if (terminal?.family !== 'built_in') throw new Error('Invalid stored approval fixture');
             const result = AgentsAcpBackendsUpsertOutputV1Schema.parse(terminal.request.execution?.result);
@@ -722,11 +730,13 @@ describe('createActionApprovalContinuation', () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             approvalsCreate: async ({ request }) => { recorded = request; return { artifactId: 'approval-1' }; },
         }));
-        expect(await executor.execute(actionId, input, {
+        expect(await executor.execute('approval.request.create', {
+            actionId, actionArgs: input, summary: 'Save the Profile', createdBy: { surface: 'system' },
+        }, {
             surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
             actionRequestId: 'request-1', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                 actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
-        })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        })).toMatchObject({ ok: true, result: { artifactId: 'approval-1' } });
         if (!recorded) throw new Error('Expected the real executor to produce an approval');
         const result = { status: 'updated', id: input.id, revision: 5 };
         const artifact = executedArtifact({ actionId, actionArgs: recorded.actionArgs, preview: recorded.preview, result });
