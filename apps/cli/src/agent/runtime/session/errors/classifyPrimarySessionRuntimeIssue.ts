@@ -747,8 +747,8 @@ export function classifyPrimarySessionRuntimeIssue(
         ...(failureCause.success ? failureCause.data : {}),
         phase: 'authentication', failureReason: 'authentication_required' },
     } : failureCause.success ? { failureCause: {
-      ...(failureCause.data.failureReason === 'unclassified_provider_error' && source === 'agent_session_error'
-        && !startupFailureCode ? nativeStartupDetail : {}),
+      ...((failureCause.data.launchKind !== undefined || (failureCause.data.failureReason === 'unclassified_provider_error'
+        && source === 'agent_session_error' && !startupFailureCode)) ? nativeStartupDetail : {}),
       ...failureCause.data,
       ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } } : input.startupPhase ? {
       failureCause: { phase: input.startupPhase,

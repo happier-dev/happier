@@ -29,6 +29,8 @@ import type { McpRequestAuthPort } from './mcpRequestAuth';
 import { McpServerCatalogV1Schema, projectStoredMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { diffMcpServerConfigOverride } from '../../../../ui/sources/components/settings/mcpServers/detail/mcpMachineOverride';
 import { logger } from '@/ui/logger';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { resolveRunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
@@ -267,9 +269,10 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     const resolve = (isolationEnabled: boolean) => resolveRunnerMcpServers({ session: requesterSession, credentials: requesterCredentials,
       accountCredentials: requesterCredentials, accountSettings: null, accountSettingsSnapshot: selected,
       machineId: 'machine-1', directory: process.cwd(), env: processEnv, isolationEnabled, includeHappierMcpServer: false });
+    const refusal = accountId === 'member' ? await resolve(true).catch((error: unknown) => error) : undefined;
     if (accountId === 'member') {
-      // Isolation on keeps a Use guest's stdio off the daemon, before any material read.
-      await expect(resolve(true)).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+      expect(refusal).toMatchObject({ code: 'agent_isolation_unavailable', retryable: false,
+        details: { reason: 'agent_launch_kind_unavailable', launchKind: 'mcp_stdio' } });
       expect({ materialReads, machineReads }).toEqual({ materialReads: 0, machineReads: 0 });
     }
     // Isolation off runs the requester's own stdio where its Agent runs, a Use
@@ -278,6 +281,14 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']); expect(materialReads).toBeGreaterThan(0); }
     finally { await admitted.happierMcpServer.stop(); }
     expect(machineReads).toBe(1);
+    if (accountId === 'member') {
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: refusal, startupPhase: 'client_start',
+      }));
+      expect(issue).toMatchObject({ code: 'agent_isolation_unavailable', source: 'dependency_failure',
+        failureCause: { phase: 'client_start', failureReason: 'agent_launch_kind_unavailable', launchKind: 'mcp_stdio',
+          providerErrorMessage: (refusal as Error).message } });
+    }
   });
 
   it.runIf(process.platform === 'linux')('joins an in-flight custom list and its child before retiring the Session endpoint', async () => {

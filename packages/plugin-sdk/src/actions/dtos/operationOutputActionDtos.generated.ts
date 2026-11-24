@@ -558,11 +558,12 @@ export type OperationOutputActionResultById = {
                             };
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                failureReason: 'account_changed' | 'agent_launch_kind_unavailable' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'requester_authority_unavailable' | 'session_configuration_invalid' | 'session_requester_unavailable' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                                 actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
+                                launchKind?: 'mcp_stdio' | undefined;
                                 preparationCause?: undefined | {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
@@ -2107,11 +2108,12 @@ export type OperationOutputActionResultById = {
                         };
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            failureReason: 'account_changed' | 'agent_launch_kind_unavailable' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'requester_authority_unavailable' | 'session_configuration_invalid' | 'session_requester_unavailable' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                             actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
+                            launchKind?: 'mcp_stdio' | undefined;
                             preparationCause?: undefined | {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
@@ -3373,11 +3375,12 @@ export type OperationOutputActionResultById = {
                             };
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                failureReason: 'account_changed' | 'agent_launch_kind_unavailable' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'requester_authority_unavailable' | 'session_configuration_invalid' | 'session_requester_unavailable' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                                 actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
+                                launchKind?: 'mcp_stdio' | undefined;
                                 preparationCause?: undefined | {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
@@ -4922,11 +4925,12 @@ export type OperationOutputActionResultById = {
                         };
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            failureReason: 'account_changed' | 'agent_launch_kind_unavailable' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'requester_authority_unavailable' | 'session_configuration_invalid' | 'session_requester_unavailable' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                             actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
+                            launchKind?: 'mcp_stdio' | undefined;
                             preparationCause?: undefined | {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';

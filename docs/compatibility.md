@@ -14855,6 +14855,11 @@ frontier at `52d077ee67fdcf7b5f6dfb64be5af9e9893887e4` has no
 `failureCause` or native-code fields in the corresponding runtime issue schema;
 that path has no local diff against its HEAD.
 
+Runner MCP stdio startup refusals retain the admission reason and optional
+`launchKind` in the existing V1 runtime failure cause. The reason and launch
+kind are closed diagnostics. Earlier records can omit them. Matching 0.3
+development readers and writers are required because older strict failure-cause
+readers reject unfamiliar reason values and fields.
 
 ## Environment secret request and Compose use review facts (unreleased 0.3)
 

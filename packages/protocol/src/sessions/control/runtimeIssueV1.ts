@@ -393,6 +393,11 @@ export const SessionRuntimeCarrierFailureV1Schema = lazyZodSchema(() => z.strict
 }));
 export type SessionRuntimeCarrierFailureV1 = z.infer<typeof SessionRuntimeCarrierFailureV1Schema>;
 
+const MCP_STDIO_STARTUP_REFUSAL_REASONS = [
+  'agent_launch_kind_unavailable', 'requester_authority_unavailable', 'session_requester_unavailable',
+] as const;
+const McpStdioStartupRefusalReasonSchema = lazyZodSchema(() => z.enum(MCP_STDIO_STARTUP_REFUSAL_REASONS));
+
 /** Failure diagnostics, never an authority/retry decision. Provider messages are redacted by their producer. */
 export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
   actionCause: z.optional(ActionFailureCauseV1Schema),
@@ -400,6 +405,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
   retryable: z.optional(z.boolean()),
   requestId: z.optional(NonBlankOpaqueIdentifierSchema),
   phase: z.enum(['authentication', 'client_start', 'thread_open', 'turn_start', 'turn']),
+  launchKind: z.optional(z.literal('mcp_stdio')),
   preparationCause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
   carrierFailure: z.optional(SessionRuntimeCarrierFailureV1Schema),
   connectedServicesDefault: z.optional(ConnectedServicesDefaultUnavailableDetailsV1Schema),
@@ -409,7 +415,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
     'account_changed', 'refresh_failed', 'permission_denied', 'plan', 'unknown',
     'authentication_required', 'workspace_routing_unauthorized', 'context_window_exceeded',
     'auth_account_changed', 'unclassified_provider_error', 'model_selection_required',
-    'model_selection_invalid', 'session_configuration_invalid',
+    'model_selection_invalid', 'session_configuration_invalid', ...MCP_STDIO_STARTUP_REFUSAL_REASONS,
   ]),
   providerErrorCode: z.optional(z.union([
     // Native codes are presentation evidence, never an authority or retry decision.
@@ -500,6 +506,13 @@ export function readSessionRuntimeFailureCause(
       : {}),
   });
   if (parsed.success) return parsed.data;
+  if (phase === 'client_start' && readDataField(error, 'code') === 'agent_isolation_unavailable'
+    && readDataField(details, 'launchKind') === 'mcp_stdio') {
+    const reason = McpStdioStartupRefusalReasonSchema.safeParse(readDataField(details, 'reason'));
+    if (reason.success) return {
+      phase, code: reason.data, failureReason: reason.data, launchKind: 'mcp_stdio',
+    };
+  }
   // Provider launch/turn admission uses Action diagnostics; translate once at the runtime envelope owner.
   const action = ActionFailureCauseV1Schema.safeParse(cause);
   const code = (phase ? z.optional(SessionRuntimeFailureCauseCodeV1Schema) : ProviderErrorCodeV1Schema)
