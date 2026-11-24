@@ -8,6 +8,7 @@ import {
   type ProjectSharedSetupChangeRowV1,
 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 import { Modal } from '@/modal';
 import type { CustomModalChromeCardConfig, CustomModalInjectedProps } from '@/modal/types';
@@ -44,6 +45,9 @@ import { useProjectSharedSetupReview } from './useProjectSharedSetupReview';
 import { useProjectSetupRow } from './useProjectSetupRow';
 import type { ProjectSharedSetupReviewSnapshot } from './projectSharedSetupReview';
 import { PROJECT_OPEN_SHARED_SETUP_PARAM } from './sharedSetupRoute';
+import { ProjectEnvironmentBindings } from './ProjectEnvironmentBindings';
+import { useProjectEnvironmentBindings } from './useProjectEnvironmentBindings';
+import type { ProjectManifestActionClient } from './projectManifestActionClient';
 
 type Decide = (
   request: ProjectSharedSetupUpdateRequest,
@@ -59,6 +63,7 @@ export type ProjectSharedSetupUpdateInput = Readonly<{
   decide: Decide;
   /** A shared setup the Project has but this checkout has not taken yet: the same review, for first use. */
   pending?: boolean;
+  bindingClient?: ProjectManifestActionClient | null;
 }>;
 
 /**
@@ -145,6 +150,7 @@ function ProjectSharedSetupUpdateBody(
   const [failure, setFailure] = React.useState<string | null>(null);
   const snapshot = review.snapshot;
   const request = snapshot?.kind === 'ready' ? snapshot.request : null;
+  const firstUseManifest = props.pending ? request?.review.after.effectiveManifest : null;
   const rows = React.useMemo(() => readProjectSharedSetupUpdateRows(snapshot), [snapshot]);
   const changed = snapshot?.kind === 'ready' && snapshot.change.kind === 'changed';
   useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, changed, props.pending),
@@ -184,6 +190,10 @@ function ProjectSharedSetupUpdateBody(
       sourceName={props.sourceName}
       machineName={props.machineName}
       pending={props.pending}
+      environmentBindings={firstUseManifest && review.signal && props.bindingClient ? (
+        <FirstUseEnvironmentBindings manifest={firstUseManifest} workspace={workspace} binding={binding}
+          client={props.bindingClient} signal={review.signal} />
+      ) : null}
       targetCheckout={props.pending ? workspace.rootPath : undefined}
       onChangeTarget={props.pending ? changeTarget : undefined}
       scope={scope}
@@ -197,6 +207,17 @@ function ProjectSharedSetupUpdateBody(
   );
 }
 
+function FirstUseEnvironmentBindings(props: Readonly<{
+  manifest: ProjectManifestV1;
+  workspace: WorkspaceAddressV1;
+  binding: ServerCredentialAccountScopeBinding;
+  client: ProjectManifestActionClient;
+  signal: AbortSignal;
+}>) {
+  const controller = useProjectEnvironmentBindings(props.workspace, props.binding, props.client, props.signal);
+  return <ProjectEnvironmentBindings testID="project-shared-setup-update.environment" manifest={props.manifest} controller={controller} />;
+}
+
 /** What the update sheet shows for one review state; the specimen mounts it with fixture reviews. */
 export function ProjectSharedSetupUpdateView(props: Readonly<{
   snapshot: ProjectSharedSetupReviewSnapshot | null;
@@ -204,6 +225,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   sourceName: string | null;
   machineName: string;
   pending?: boolean;
+  environmentBindings?: React.ReactNode;
   targetCheckout?: string;
   onChangeTarget?: () => void;
   scope: ProjectSetupScope;
@@ -294,6 +316,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
         >
           <ProjectSetupEffectLines testID="project-shared-setup-update.after" lines={afterLines} framed />
         </ItemGroup> : null}
+        {props.environmentBindings}
         {failure ? (
           <AttentionBanner
             testID="project-shared-setup-update.failure"

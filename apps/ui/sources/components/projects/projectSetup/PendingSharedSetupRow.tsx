@@ -44,6 +44,7 @@ export function PendingSharedSetupRow(
     binding: ServerCredentialAccountScopeBinding | null;
     pending: ProjectPendingSharedSetupV1;
     decide: ProjectSharedSetupUpdateInput['decide'];
+    bindingClient: ProjectSharedSetupUpdateInput['bindingClient'];
     testID: string;
   }>,
 ) {
@@ -55,7 +56,7 @@ export function PendingSharedSetupRow(
       selectMachineName,
     ) ?? props.workspace.machineId;
   const adds = describePendingSharedSetupSummary(props.pending.summary);
-  const { binding, workspace, pending, decide } = props;
+  const { binding, workspace, pending, decide, bindingClient } = props;
   const review = React.useCallback(() => {
     if (!binding) return;
     openProjectSharedSetupUpdate({
@@ -66,6 +67,7 @@ export function PendingSharedSetupRow(
       machineName,
       decide,
       pending: true,
+      bindingClient,
     });
   }, [
     binding,
@@ -74,6 +76,7 @@ export function PendingSharedSetupRow(
     pending.source.name,
     machineName,
     decide,
+    bindingClient,
   ]);
   return (
     <Item

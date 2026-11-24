@@ -18,6 +18,7 @@ export function useProjectSharedSetupReview(workspace: WorkspaceAddressV1, bindi
     const { projectRef, expectedRevision, sourceId } = selection;
     const [mounted, setMounted] = React.useState<Readonly<{
         key: string; binding: ServerCredentialAccountScopeBinding; model: ReturnType<typeof createProjectSharedSetupReview>;
+        signal: AbortSignal;
     }> | null>(null);
     React.useEffect(() => {
         if (!binding?.isCurrent()) { setMounted(null); return; }
@@ -25,15 +26,16 @@ export function useProjectSharedSetupReview(workspace: WorkspaceAddressV1, bindi
         const client = createProjectManifestActionClient({ workspace, expectedAccountId: binding.accountId,
             execute, onApprovalPending, signal: controller.signal });
         const model = createProjectSharedSetupReview({ client, projectRef, expectedRevision, sourceId });
-        setMounted({ key, binding, model });
+        setMounted({ key, binding, model, signal: controller.signal });
         const dispose = () => { controller.abort(); model.dispose(); };
         const retirement = binding.onRetire(dispose);
         return () => { retirement.dispose(); dispose(); };
         // Explicit qualified selection owns review; no ambient Account, Source inventory, or polling.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, binding, execute, onApprovalPending]);
-    const owner = mounted?.key === key && mounted.binding === binding && binding?.isCurrent() ? mounted.model : null;
+    const current = mounted?.key === key && mounted.binding === binding && binding?.isCurrent() ? mounted : null;
+    const owner = current?.model ?? null;
     const subscribe = React.useCallback((listener: () => void) => owner?.subscribe(listener) ?? (() => {}), [owner]);
     const snapshot = React.useSyncExternalStore(subscribe, () => owner?.getSnapshot() ?? null, () => null);
-    return React.useMemo(() => ({ snapshot, controller: owner }), [snapshot, owner]);
+    return React.useMemo(() => ({ snapshot, controller: owner, signal: current?.signal ?? null }), [snapshot, owner, current]);
 }

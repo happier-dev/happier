@@ -36,6 +36,7 @@ export function SharedSetupRouteContinuation(
     /** The checkout's definition is read, so the review opens over a settled page. */
     ready: boolean;
     decide: ProjectSharedSetupUpdateInput['decide'];
+    bindingClient: ProjectSharedSetupUpdateInput['bindingClient'];
   }>,
 ): null {
   const router = useRouter();
@@ -60,6 +61,7 @@ export function SharedSetupRouteContinuation(
       machineName,
       decide,
       pending: true,
+      bindingClient: props.bindingClient,
     });
     // The request is consumed once; a later Source name or Machine label does not reopen it.
     // eslint-disable-next-line react-hooks/exhaustive-deps

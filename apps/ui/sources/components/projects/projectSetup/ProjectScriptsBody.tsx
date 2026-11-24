@@ -345,7 +345,7 @@ export function ProjectScriptsBody({
   return (
     <ProjectCommandOutputHost scopeId={outputScopeId}>
       <SharedSetupRouteContinuation workspace={workspace} binding={binding} ready={read?.key === key && 'value' in read}
-        decide={controller.decideSharedSetupUpdate} />
+        decide={controller.decideSharedSetupUpdate} bindingClient={controller.client} />
       <ItemList testID={testID}>
         {approval}
         {read && 'value' in read ? inspectionFailure : null}
@@ -428,7 +428,8 @@ export function ProjectScriptsContent(
   const pendingShared = effective.kind === 'available' && !props.glance ? effective.value.pendingSharedSetup ?? null : null;
   const pendingSharedRow = pendingShared ? (
     <PendingSharedSetupRow workspace={props.workspace} binding={props.binding ?? null} pending={pendingShared}
-      decide={props.controller.decideSharedSetupUpdate} testID={`${props.testID}.pendingShared`} />
+      decide={props.controller.decideSharedSetupUpdate} bindingClient={props.controller.client}
+      testID={`${props.testID}.pendingShared`} />
   ) : null;
   if (document?.status === 'invalid') {
     const diagnostic = document.diagnostics[0];

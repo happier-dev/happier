@@ -23,7 +23,7 @@ import {
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowMutationRequestV1Schema,
+import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowReadRequestV1Schema,
   ProjectAccountOrganizationV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { ProjectOrganizationRow } from '@/sync/domains/workspaces/projectAccountRows';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -554,6 +554,13 @@ async function render(
           organizations: shared.organizations,
           workspaceRefs,
         }));
+      if (path === '/v1/account/project-rows/read') {
+        const { key } = ProjectAccountRowReadRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        const identity = buildProjectAccountRowPhysicalKeyV1(key);
+        const { rows } = createPlainProjectAccountRowListFixture({ organizations: shared.organizations, workspaceRefs });
+        const row = rows.find(entry => buildProjectAccountRowPhysicalKeyV1(entry.key) === identity);
+        return Response.json(row ? { status: 'present', row } : { status: 'absent' });
+      }
       if (path === '/v1/account/project-rows/mutate') {
         const request = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
         const mutation = request.mutations[0]!;
@@ -2848,7 +2855,7 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
           return <DestinationInstanceHost key={checkout.workspaceId} tabId={checkout.workspaceId}
             ref={{ kind: 'project', params: { workspaceRefId: checkout.workspaceId, ...(selected ? request : {}) } }}
             pathname={`/projects/${checkout.workspaceId}/scripts`} focused={selected} visible={selected} navigation={navigation}>
-            <SharedSetupRouteContinuation workspace={checkout} binding={binding} ready decide={decide} />
+            <SharedSetupRouteContinuation workspace={checkout} binding={binding} ready decide={decide} bindingClient={null} />
           </DestinationInstanceHost>;
         })}
       </CurrentRouteLocationProvider>;
@@ -3138,6 +3145,41 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     };
     const screen = await render('page', 'scripts.environment.ACME_TOKEN.choose');
     expect(screen.findByTestId('scripts.noProjectFile')).toBeNull();
+  });
+  it('binds a reviewed first-use requirement to the exact Project before accepting its setup', async () => {
+    isolateManifestDrafts();
+    const selection = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash };
+    const manifest: ProjectManifestV1 = { version: 1,
+      environmentVariables: [{ name: 'ACME_TOKEN', kind: 'secret', required: true }],
+    };
+    const change = reviewProjectSharedSetupChangeV1({ repositoryManifest: null, acceptedSetup: { kind: 'ready' },
+      publication: { ...selection, manifest } });
+    if (change.kind !== 'changed') throw new Error('The fixture needs an unaccepted shared setup');
+    shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection, importCandidates: [],
+      effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: null, pendingSharedSetup: {
+        source: { id: selection.sourceId, name: 'Acme web' }, setup: selection, manifest,
+      } }),
+      sharedSetupChange: { ...change, setupReadiness: { kind: 'notRequired', reviewedEffectDigest: hash } },
+    };
+    const screen = await render('page', 'scripts.pendingShared');
+    await act(async () => { await screen.pressByTestIdAsync('scripts.pendingShared.review'); });
+    const [dialog] = showModal.mock.lastCall!;
+    const review = await renderScreen(<dialog.component {...dialog.props} onClose={() => {}} />);
+    const choose = 'project-shared-setup-update.environment.ACME_TOKEN.choose';
+    await vi.waitFor(() => expect(review.findByTestId(choose)).not.toBeNull());
+    await review.pressByTestIdAsync(choose);
+    expect(showModal.mock.lastCall?.[0]).toMatchObject({ chrome: { testID: 'saved-secret-picker-sheet' } });
+    const picker = showModal.mock.lastCall?.[0]?.props as Readonly<{
+      referenceSelection: { onSelect: (value: unknown) => void };
+    }>;
+    const reference = 'happier:shared-secret:v1:acme-token';
+    await act(async () => picker.referenceSelection.onSelect({ ref: reference, resourceRevision: 2 }));
+    await vi.waitFor(() => expect(shared.organizations, review.getTextContent()).toContainEqual({
+      key: { kind: 'project-organization', serverId: workspace.serverId, projectKey: workspace.workspaceId },
+      revision: 0,
+      value: { environmentBindings: { v: 1, bindings: { ACME_TOKEN: { ref: reference, revision: 2 } } } },
+    }));
+    expect(shared.calls.some(call => call.actionId === 'projects.setup.set' || call.actionId === 'projects.prepare')).toBe(false);
   });
   it('keeps a pending shared setup review actionable when personal setup masks its effective edits', async () => {
     isolateManifestDrafts();
