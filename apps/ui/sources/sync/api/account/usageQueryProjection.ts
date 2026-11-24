@@ -224,8 +224,6 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
     const detail = new Map(input.howYouWork?.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
     const pools = new Map(input.pools.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
     const previous = new Map(input.previous?.results.map(slice => [slice.key, slice]));
-    const baseDetailStatus = input.settledHowYouWorkQueries.size < input.evidenceQueries.length ? 'pending'
-        : input.evidenceQueries.length === 0 ? 'not_loaded' : undefined;
     const inputsFor = (query: UsageQuery, key: string, slice: UsageQueryResultSlice | undefined): ProjectionInputs => {
         const snapshot = accounting.get(key);
         // The comparison owner chooses the actual witnessed window. Observe its
@@ -245,7 +243,7 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
             oldComparison: oldComparison ? accounting.get(getUsageQueryKey(oldComparison.query)) : undefined,
             priorAccounting: priorAccounting.get(key), calendar: calendarQueryKeys.has(key), previous: previous.get(key), prior: input.priorSlices.get(key),
             accountingNowMs, work: work.get(key), detail: detail.get(key), stages: input.howYouWorkSourcesByQuery.get(key),
-            settled: input.settledHowYouWorkQueries.has(key), baseDetailStatus: query.includeSessionEvidence ? baseDetailStatus : undefined,
+            settled: input.settledHowYouWorkQueries.has(key),
             quota: query.includeQuota !== false ? resolveUsageQuotaSourceSnapshot({ quota: input.quota,
                 quotaByQuery: input.quota.quotaByQuery }, query) : undefined,
             pools: query.includeQuota !== false ? pools.get(key) : undefined,
@@ -320,30 +318,21 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         accountSettings,
         coachPreferences: input.coachSuppressions ? accountSettings.usageCoachPreferencesV1 : null,
         quota, quotaByQuery: quota.quotaByQuery, pools, work, howYouWork, nowMs: accountingNowMs,
-        sources: [...(quota.sources ?? []), ...(settledHowYouWorkQueries.size < evidenceQueries.length
-            ? [{ source: 'how_you_work', status: 'pending' as const }]
-            : evidenceQueries.length === 0 ? [{ source: 'how_you_work', status: 'not_loaded' as const }] : [])] }, bundledUsageModelPriceCatalog);
-    // The base source remains pending until the complete private read
-    // settles. Its staged facts and reading phases belong to this query,
-    // never a held sibling in the same batch.
-    const staged = { ...batch, results: batch.results.map(slice => {
-        const sources = howYouWorkSourcesByQuery.get(slice.key);
-        if (!sources) return slice;
-        const pending = !settledHowYouWorkQueries.has(slice.key);
-        const observed = [...slice.sources].reverse().find(source => source.source === 'how_you_work');
-        return { ...slice, pending: slice.pending || pending,
-            sources: [...slice.sources.filter(source => source.source !== 'how_you_work'),
-                { ...observed, source: 'how_you_work', status: pending ? 'pending' as const : observed?.status ?? 'unknown' },
-                ...sources] };
-    }) };
-    const preferredDetails = applyCoachPreferences(staged, howYouWork ?? [], context.accountLifetime.scope, mcpCatalog, input.coachSuppressions, previous);
+        howYouWorkProgress: new Map(evidenceQueries.map(query => {
+            const key = getUsageQueryKey(query);
+            return [key, { pending: !settledHowYouWorkQueries.has(key), sources: howYouWorkSourcesByQuery.get(key) }];
+        })),
+        sources: quota.sources,
+    }, bundledUsageModelPriceCatalog);
+    const preferredDetails = applyCoachPreferences(batch, howYouWork ?? [], context.accountLifetime.scope, mcpCatalog, input.coachSuppressions, previous);
     const preferred = { ...preferredDetails, results: preferredDetails.results.map(projectUsageQueryProfileEvidence) };
     return { ...preferred, results: preferred.results.map(rawSlice => {
         const slice = projectAccountingDelivery(rawSlice, accounting, priorSlices.get(rawSlice.key), accountingNowMs);
         const priorSources = priorSlices.get(slice.key)?.sources;
         if (!priorSources) return slice;
         return { ...slice, sources: slice.sources.map(source => {
-            if (source.status !== 'pending') return source;
+            if (source.status !== 'pending' || source.source === 'accounting'
+                || source.source === 'how_you_work' || source.source.startsWith('how_you_work:')) return source;
             const prior = priorSources.find(candidate => candidate.source === source.source);
             // Keep the admitted observation's date and failure metadata while
             // reporting this source's admitted replacement as pending. Consumers

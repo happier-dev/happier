@@ -212,12 +212,12 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
     context.addIssue({ code: 'custom', path: ['work'], message: 'Unavailable Work sources cannot disclose private evidence' });
   }
   const intervals = slice.howYouWork?.intervals;
-  // A pending detail read may carry the same rolling query's previously
-  // witnessed window while accounting has already advanced.
+  // A pending or ordinarily failed detail replacement may carry the same
+  // rolling query's witnessed window while accounting has already advanced.
   const retainedDetailPeriod = intervals && 'relative' in slice.shownQuery.period
     && witnessedPeriod?.endMs !== undefined && intervals.period.endMs < witnessedPeriod.endMs
     && intervals.period.startMs === (resolveUsageQueryPeriod(slice.shownQuery, intervals.period.endMs).startMs ?? 0)
-    && slice.sources.some(source => source.status === 'pending'
+    && slice.sources.some(source => (source.status === 'pending' || (source.status === 'stale' && source.errorCode !== undefined))
       && isUsageDetailSourceReadable(source) && source.asOfMs !== undefined && intervals.period.endMs <= source.asOfMs)
     ? intervals.period : undefined;
   const detailPeriod = retainedDetailPeriod ?? witnessedPeriod;
@@ -654,6 +654,10 @@ export function isUsageQuerySourceOutstanding(query: UsageQuery, source: UsageQu
       : source.source === 'how_you_work' ? query.includeSessionEvidence === true : true);
 }
 
+function isUsageDetailPhase(source: UsageQuerySourceState): boolean {
+  return source.source.startsWith('how_you_work:');
+}
+
 export function canRetainUsageReadFailure(errorCode?: string): boolean {
   return !['denied', 'permission_denied', 'unauthorized', 'forbidden', 'ownership_unproven', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
     RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED,
@@ -673,6 +677,17 @@ export function retainAccountingOnReadFailure(observed: UsageAccountingSourceSna
   return { ...observed, value, ...(asOfMs === undefined ? {} : { asOfMs }), ...(readAtMs === undefined ? {} : { readAtMs }) };
 }
 
+function projectUsageAccountingReadState(source: 'accounting' | 'comparison', snapshot: UsageAccountingSourceSnapshot | undefined,
+  previous: UsageQuerySourceState | undefined): UsageQuerySourceState {
+  const retained = snapshot?.value && (snapshot.status === 'pending' || snapshot.status === 'stale') ? previous : undefined;
+  const asOfMs = snapshot?.asOfMs ?? retained?.asOfMs;
+  const errorCode = snapshot?.errorCode ?? retained?.errorCode;
+  return { source, status: snapshot?.status ?? 'not_loaded',
+    ...(asOfMs === undefined ? {} : { asOfMs }),
+    ...(errorCode === undefined ? {} : { errorCode }),
+    ...(retained?.updateRequired === undefined ? {} : { updateRequired: retained.updateRequired }) };
+}
+
 /**
  * One deterministic page composition over already-authorized owner snapshots.
  * No accounting, vendor refresh, transport, cache or authority is invented here.
@@ -690,6 +705,8 @@ export type UsagePageAggregationInput = Readonly<{
   accounting?: readonly UsageAccountingSourceSnapshot[];
   work?: readonly UsageWorkSourceSnapshot[];
   howYouWork?: readonly UsageHowYouWorkSourceSnapshot[];
+  /** Per-query progress for the staged private evidence read. */
+  howYouWorkProgress?: ReadonlyMap<string, Readonly<{ pending: boolean; sources?: readonly UsageQuerySourceState[] }>>;
   /** Account preference is available independently of private Session detail; null explicitly clears it. */
   nightHours?: UsageWorkIntervalsInput['nightHours'] | null;
   nowMs?: number;
@@ -842,8 +859,9 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, quota, pools, prior?.pools);
     const sourceStates = (input.sources ?? []).filter(source => !source.source.startsWith('quota:')
       || query.includeQuota !== false && !input.quotaByQuery && !quota?.sources);
+    const priorAccountingSource = prior?.accounting ? prior.sources.find(source => source.source === 'accounting') : undefined;
     const snapshot = projectPrices(retainAccountingOnReadFailure(observed, prior?.accounting,
-      prior?.sources.find(source => source.source === 'accounting')?.asOfMs, prior && readUsageAccountingReadAtMs(prior)));
+      priorAccountingSource?.asOfMs, prior && readUsageAccountingReadAtMs(prior)));
     const readPeriod = observed?.period ?? (input.nowMs !== undefined ? resolveUsageQueryPeriod(query, input.nowMs)
       : 'relative' in query.period ? snapshot?.value?.coverage?.range ?? query.period : query.period);
     // A failed refresh retains the prior accounting window as well as its
@@ -851,6 +869,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const period = 'relative' in query.period ? readBoundedAccountingPeriod(snapshot?.value) ?? readPeriod : readPeriod;
     const workSnapshot = work.get(key);
     const detailSnapshot = howYouWork.get(key);
+    const detailProgress = input.howYouWorkProgress?.get(key);
+    const initialDetailSource = sourceStates.find(source => source.source === 'how_you_work');
     const detailAuthorized = canRetainUsageReadFailure(detailSnapshot?.errorCode);
     const readDetail = detailAuthorized ? detailSnapshot?.detail : undefined;
     const priorDetail = admitted?.howYouWork.inputs.detail as UsageHowYouWorkDetailInput | undefined;
@@ -858,7 +878,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // phases rebuild equal arrays; retaining only facts still re-runs every
     // downstream detail reducer for those unchanged publications.
     const observedDetail = readDetail && priorDetail ? retainUsageMembers(readDetail, priorDetail) : readDetail;
-    const pendingDetail = !detailSnapshot && input.sources?.some(source => source.source === 'how_you_work' && source.status === 'pending');
+    const pendingDetail = !detailSnapshot && (detailProgress?.pending ?? initialDetailSource?.status === 'pending');
     // A failed replacement has no new admission. A supplied detail (including
     // an unknown/refused result) supersedes old facts even if another read failed.
     const failedDetail = detailSnapshot?.errorCode !== undefined && !detailSnapshot.detail && detailAuthorized;
@@ -1005,30 +1025,38 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       && getUsageQueryKey(prior.comparison.query) === getUsageQueryKey(comparisonQuery) ? prior.comparison : undefined;
     const comparisonSnapshot = comparisonQuery ? projectPrices(retainAccountingOnReadFailure(accounting.get(getUsageQueryKey(comparisonQuery)),
       previousComparison?.accounting, previousComparison?.source.asOfMs)) : undefined;
-    const comparisonSource: UsageQuerySourceState = { source: 'comparison', status: comparisonSnapshot?.status ?? 'not_loaded',
-      ...(comparisonSnapshot?.asOfMs === undefined ? {} : { asOfMs: comparisonSnapshot.asOfMs }),
-      ...(comparisonSnapshot?.errorCode === undefined ? {} : { errorCode: comparisonSnapshot.errorCode }) };
-    const detailSourceStatus: UsageQuerySourceState['status'] = !detailSnapshot?.errorCode ? detailProjection?.detailStatus ?? 'unknown'
-      : detailAuthorized && (retainedDetail?.howYouWork || retainedDetail?.publicProfileEvidence || observedDetail && observedDetail.status !== 'unknown') ? 'stale' : 'error';
-    const detailAsOfMs = detailSnapshot?.asOfMs ?? retainedDetail?.sources.find(source => source.source === 'how_you_work')?.asOfMs;
+    const comparisonSource = projectUsageAccountingReadState('comparison', comparisonSnapshot,
+      previousComparison?.accounting ? previousComparison.source : undefined);
+    // The accounting-only envelope is not a private observation. Copy this
+    // metadata only when the retained private detail was actually projected.
+    const retainedPrivateDetail = detailProjection && detailProjection.detailStatus !== 'unknown' ? retainedDetail : undefined;
+    const priorDetailSource = retainedPrivateDetail?.sources.find(source => source.source === 'how_you_work');
+    const detailSourceStatus: UsageQuerySourceState['status'] = detailProgress?.pending ? 'pending'
+      : !detailSnapshot?.errorCode ? detailProjection?.detailStatus ?? 'unknown'
+        : detailAuthorized && (retainedDetail?.howYouWork || retainedDetail?.publicProfileEvidence || observedDetail && observedDetail.status !== 'unknown') ? 'stale' : 'error';
+    const detailAsOfMs = detailSnapshot?.asOfMs ?? priorDetailSource?.asOfMs;
+    const detailErrorCode = detailSnapshot?.errorCode ?? priorDetailSource?.errorCode;
+    const detailUpdateRequired = detailSnapshot?.updateRequired ?? priorDetailSource?.updateRequired;
+    const detailSource: UsageQuerySourceState | undefined = !query.includeSessionEvidence ? { source: 'how_you_work', status: 'not_loaded' }
+      : detailSnapshot || detailProgress ? {
+        source: 'how_you_work', status: detailSourceStatus,
+        ...(detailErrorCode === undefined ? {} : { errorCode: detailErrorCode }),
+        ...(detailUpdateRequired === undefined ? {} : { updateRequired: detailUpdateRequired }),
+        ...(detailAsOfMs === undefined ? {} : { asOfMs: detailAsOfMs }),
+      } : initialDetailSource && { ...priorDetailSource, ...initialDetailSource };
+    // The base source reports replacement progress or a new failure. The
+    // qualified phases must describe the same admission as the private detail.
+    const detailPhases = !query.includeSessionEvidence ? [] : retainedPrivateDetail
+      ? retainedPrivateDetail.sources.filter(isUsageDetailPhase)
+      : detailProgress?.sources ?? sourceStates.filter(isUsageDetailPhase);
     const sources: UsageQuerySourceState[] = [
-      { source: 'accounting', status: snapshot?.status ?? 'not_loaded',
-        ...(snapshot?.asOfMs === undefined ? {} : { asOfMs: snapshot.asOfMs }),
-        ...(snapshot?.errorCode === undefined ? {} : { errorCode: snapshot.errorCode }) },
+      projectUsageAccountingReadState('accounting', snapshot, priorAccountingSource),
       ...projectUsageAccountingSourceStates(snapshot?.value),
       ...quotaSources,
       workSource,
-      // An exact-query detail snapshot supersedes the batch-wide initial
-      // source. Retaining both lets an unfinished sibling keep this slice
-      // pending after its own private evidence has answered.
-      ...(query.includeSessionEvidence ? sourceStates.filter(source => !detailSnapshot || source.source !== 'how_you_work') : [
-        ...sourceStates.filter(source => source.source !== 'how_you_work'),
-        { source: 'how_you_work', status: 'not_loaded' as const },
-      ]),
-      ...(detailSnapshot ? [{ source: 'how_you_work', status: detailSourceStatus,
-        ...(detailSnapshot.errorCode === undefined ? {} : { errorCode: detailSnapshot.errorCode }),
-        ...(detailSnapshot.updateRequired === undefined ? {} : { updateRequired: detailSnapshot.updateRequired }),
-        ...(detailAsOfMs === undefined ? {} : { asOfMs: detailAsOfMs }) }] : []),
+      ...sourceStates.filter(source => source.source !== 'how_you_work' && !isUsageDetailPhase(source)),
+      ...(detailSource ? [detailSource] : []),
+      ...detailPhases,
     ];
     // Inputs are admitted owner snapshots; this projection is not a wire boundary.
     // Parsing here clones the same full history for every widget on every source
@@ -1107,7 +1135,10 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       ...(publicProfileEvidence === undefined ? {} : { publicProfileEvidence }),
       ...(mergedFacts.value === undefined ? {} : { mergedOutcomes: mergedFacts.value }),
       sources,
-      pending: [...sources, ...(comparisonQuery ? [comparisonSource] : [])].some(source => isUsageQuerySourceOutstanding(query, source)),
+      // Qualified phases describe the observations behind the base source,
+      // whose own status owns whether this query is still reading.
+      pending: sources.some(source => !isUsageDetailPhase(source) && isUsageQuerySourceOutstanding(query, source))
+        || (comparisonQuery !== null && isUsageQuerySourceOutstanding(query, comparisonSource)),
     };
     return slice;
   });

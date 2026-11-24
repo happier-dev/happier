@@ -4,12 +4,19 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageScore } from '@happier-dev/plugin-ui/presentation';
+import { UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { executeUsageAction } from '@happier-dev/protocol/actions/executor/usageActions';
+import { resolveUsagePageAggregation, type UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { projectUsageQueryWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 
-import { expandDisclosureAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, expandDisclosureAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -47,9 +54,9 @@ vi.mock('socket.io-client', async (importOriginal) =>
 
 const { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } =
   await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-const { retireActiveServerAccountScopeLifetime } =
+const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } =
   await import('@/sync/domains/scope/activeServerAccountScope');
-const { invalidateUsageQueryResources } =
+const { captureUiUsageQueryAccountContext, getUsageQueryResourceStore, invalidateUsageQueryResources } =
   await import('@/sync/api/account/usageQueryResource');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { MainAppTabStateProvider } =
@@ -62,6 +69,8 @@ const { WidgetAreaLayoutBar } =
   await import('@/components/widgets/area/WidgetAreaLayoutBar');
 const { UsageFilterBar } = await import('./UsageFilterBar');
 const { UsageWidgetPage } = await import('./UsageWidgetPage');
+const { UsageScoreBody } = await import('./widgets/UsageChartStyleBodies');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { UsageBodyReadFailed, UsageCoverageLine, usageSourceTitle } = await import('./widgets/usageBodyKit');
 const { SurfaceFreshnessLine } =
   await import('@/components/ui/surfaces/SurfaceFreshnessLine');
@@ -129,6 +138,11 @@ async function renderUsagePage(
     viewsReads: number;
     batch: (queries: readonly UsageAnalyticsQueryRequest[]) => Response;
   },
+  privateEvidence?: {
+    period: ReturnType<typeof normalizeUsageQuery>['period'];
+    timeZoneOffsetMinutes: number;
+    read: (body: unknown) => Promise<Response>;
+  },
 ) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
@@ -143,7 +157,9 @@ async function renderUsagePage(
       },
     ],
     route: (request) =>
-      request.path === '/v1/features' ||
+      request.path === '/v2/usage/session-evidence' && privateEvidence
+        ? privateEvidence.read(request.body)
+        : request.path === '/v1/features' ||
       request.path === '/v1/features/authenticated'
         ? Response.json(createRootLayoutFeaturesResponse())
         : request.path === '/v1/kv/bulk'
@@ -183,11 +199,14 @@ async function renderUsagePage(
     sessionId={sessionId}
     initialFilters={{
       layoutId,
-      period: '7days',
+      period: privateEvidence ? '30days' : '7days',
       metric: layoutId === 'costs' ? 'cost' : 'tokens',
       costMode: 'auto',
       focus: null,
-      scope: sources ? { period: { relative: '7days' }, agents: [], machines: [], projects: [], sources, session: null, costBasis: 'auto' } : undefined,
+      scope: privateEvidence || sources
+        ? { period: privateEvidence?.period ?? { relative: '7days' }, agents: [], machines: [], projects: [], sources: sources ?? [], session: null, costBasis: 'auto' }
+        : undefined,
+      queryOverrides: privateEvidence ? { timeZoneOffsetMinutes: privateEvidence.timeZoneOffsetMinutes } : undefined,
     }}
   />);
   const renderOptions = {
@@ -485,4 +504,162 @@ it('dates the header by the read and shows the older source date in Details', as
   expect(line()!.props.asOf).toBe(readAt);
   expect(line()!.props.reason).toContain(usageSourceTitle('claude-sdk-result', undefined, 'coverage'));
   expect(line()!.props.reason).toContain(formatUsageObservedAt(sourceAt));
+});
+
+const hour = Date.UTC(2026, 10, 15, 14);
+const exact = normalizeUsageQuery({
+  period: { startMs: Date.UTC(2026, 9, 24, 23), endMs: Date.UTC(2026, 10, 23, 23) },
+  granularity: 'day', timeZoneOffsetMinutes: 60, activityResolution: 'both',
+  includeAccounting: true, includeActivity: true, includeSessionEvidence: true,
+  includeTranscriptEvidence: false, includeWorkEvidence: false, includeQuota: false, includeCoach: false,
+});
+const firstStart = hour + 60_000;
+const spans = [
+  { subject: 'fixture-observed', startMs: firstStart, endMs: firstStart + 495_019 },
+  { subject: 'fixture-unread', startMs: hour + 700_000, endMs: hour + 742_151 },
+];
+const raw = spans.map(span => {
+  const record = createPlainSessionWithDisplayRecordFixture({
+    id: span.subject, createdAt: span.startMs, updatedAt: span.endMs,
+    seq: 1, active: false, activeAt: span.endMs, metadataVersion: 1, agentStateVersion: 1,
+  });
+  const turns = { v: 1 as const, sessionId: span.subject, updatedAt: span.endMs, turns: [{
+    turnId: 'fixture-turn', agentId: 'muse', status: 'completed' as const,
+    startedAt: span.startMs, terminalAt: span.endMs, updatedAt: span.endMs,
+  }] };
+  return { record, turns };
+});
+function evidenceResponse(body: unknown) {
+  const { requests } = UsageSessionEvidenceRequestSchema.parse(body);
+  const selections = requests.map(demand => ({ query: demand.query,
+    sessionIds: demand.sessionIds ?? spans.map(span => span.subject) }));
+  const selected = new Set(selections.flatMap(row => row.sessionIds));
+  return Response.json({ requests: selections, results: raw.flatMap(({ record, turns }, index) => {
+    if (!selected.has(record.id)) return [];
+    return [index === 1
+      ? { sessionId: record.id, detail: { status: 403, body: { error: 'encrypted_access_pending' } } }
+      : { sessionId: record.id, detail: { status: 200, body: { session: record } },
+          turns: { status: 200, body: turns },
+          ...(requests.some(request => request.query.includeTranscriptEvidence)
+            ? { messageEvidence: {}, messagesComplete: false } : {}) }];
+  }) });
+}
+
+it('keeps the typed cause with the mounted Score hour while its exact replacement is pending', async () => {
+  vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-60);
+  let holdEvidence: ReturnType<typeof createDeferred<void>> | undefined;
+  const screen = await renderUsagePage('agents', accounting, undefined, undefined, undefined, undefined, {
+    period: exact.period, timeZoneOffsetMinutes: exact.timeZoneOffsetMinutes,
+    read: async body => {
+      await holdEvidence?.promise;
+      return evidenceResponse(body);
+    },
+  });
+  await waitForHomeGovernance(() => {
+    const props = screen.findAllByType(UsageScoreBody)[0]?.props;
+    expect({
+      chart: screen.findAllByType(UsageScore).length > 0,
+      body: Boolean(props),
+      offset: props?.query.timeZoneOffsetMinutes,
+      period: props?.query.period,
+      sources: props?.slice.sources.map(({ source, status, errorCode }: { source: string; status: string; errorCode?: string }) => ({source, status, errorCode})),
+      busy: props?.slice.howYouWork?.agentCalendar?.coverage.busy,
+      recorded: props?.slice.howYouWork?.agentCalendar?.hours.find((bucket: { startMs: number }) => bucket.startMs === hour)?.agents.map((agent: { metrics: { busyMs: number } }) => agent.metrics.busyMs),
+    }).toMatchObject({ chart: true });
+  });
+  const chart = screen.findAllByType(UsageScore)[0]!;
+  const displayed = chart.props.model.rows.find((row: { agentId: string }) => row.agentId === 'muse');
+  expect(chart.props.model.byWeekday).toBe(true);
+  const pageMs = displayed.hours[6][15] * 60_000;
+  expect(displayed.hours[6][16]).toBeNull();
+  expect(pageMs).toBeCloseTo(495_019, 5);
+  await waitForHomeGovernance(() => expect(screen.findAllByType(SurfaceFreshnessLine)
+    .some(line => line.props.testID === 'usage-page.header.partial')).toBe(true));
+  const notice = screen.findAllByType(SurfaceFreshnessLine).find(line => line.props.testID === 'usage-page.header.partial')!;
+  if (notice.props.actions?.length) {
+    await act(async () => notice.props.actions[0].onPress());
+  }
+  expect(screen.findAllByType(SurfaceFreshnessLine).find(line => line.props.testID === 'usage-page.header.partial')!.props.reason)
+    .toMatch(/some sessions.+activity|showing what arrived|not every session/i);
+
+  const page = screen.findAllByType(UsageScoreBody)[0]!.props;
+  expect(page.slice.pending).toBe(false);
+  expect(page.slice.sources).toContainEqual(expect.objectContaining({
+    source: 'how_you_work:sessions', status: 'partial', errorCode: 'encrypted_access_pending',
+  }));
+  const scope = captureActiveServerAccountScopeLifetime()!.scope;
+  const executeMounted = createFrontDoorActionExecute();
+  const usageInput = { queries: [page.query] };
+  const invokeMounted = () => executeMounted('usage.query', usageInput, {
+    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    serverId: scope.serverId, expectedAccountId: scope.accountId,
+  });
+  // The exact Action batch can reuse the page’s admitted hour while its own
+  // evidence response is still open. Keep that read in flight for this check.
+  holdEvidence = createDeferred<void>();
+  const gate = holdEvidence;
+  let firstMounted: Awaited<ReturnType<typeof invokeMounted>>;
+  try {
+    firstMounted = await invokeMounted();
+  } finally {
+    gate.resolve();
+    holdEvidence = undefined;
+  }
+  if (!firstMounted.ok) throw new Error(firstMounted.errorCode);
+  const readSlice = (result: unknown) => (result as UsageQueryBatchResult).results[0]!;
+  const opening = readSlice(firstMounted.result);
+  const readMuseHour = (result: UsageQueryBatchResult['results'][number]) => result.howYouWork?.agentCalendar?.hours
+    .find(bucket => bucket.startMs === hour)?.agents.find(agent => agent.agentId === 'muse');
+  expect(opening.pending).toBe(true);
+  expect(readMuseHour(opening)?.coverage.busy).toBe('partial');
+  expect(readMuseHour(opening)?.metrics.busyMs).toBe(495_019);
+  const openingCause = opening.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode;
+  const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+  const account = captureUiUsageQueryAccountContext(credentials)!;
+  const { projectNativeJsonValueForTransport } = await import('@happier-dev/protocol/json/strictJsonValue');
+  const entry = getUsageQueryResourceStore(account).getEntry({
+    hostRead: 'usage.query', input: projectNativeJsonValueForTransport(usageInput),
+  });
+  if (opening.pending) {
+    expect(opening.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
+    const settled = await entry.acquire();
+    expect(settled.error).toBeUndefined();
+  }
+  const mounted = await invokeMounted();
+  if (!mounted.ok) throw new Error(mounted.errorCode);
+  const mountedResult = readSlice(mounted.result);
+  expect(mountedResult.pending).toBe(false);
+  expect(mountedResult.sources).toContainEqual(expect.objectContaining({
+    source: 'how_you_work:sessions', status: 'partial', errorCode: 'encrypted_access_pending',
+  }));
+  const mountedHour = readMuseHour(mountedResult);
+  expect(mountedHour?.coverage.busy).toBe('partial');
+  expect(mountedHour?.metrics.busyMs).toBe(495_019);
+  expect(mountedHour).toEqual(readMuseHour(page.slice));
+  expect(mountedResult.howYouWork?.agentCalendar?.weekdayHourBuckets.find(bucket => bucket.weekday === 0 && bucket.hour === 15)
+    ?.agents.find(agent => agent.agentId === 'muse')?.metrics.busyMs).toBe(495_019);
+
+  const sessions = raw.map(({ record, turns }) => ({
+    id: record.id, metadata: null, agentState: null, sessionTurns: turns,
+  }));
+  // Same Action executor and aggregation as the CLI, with its independently opened native evidence supplied at the read port.
+  const action = await executeUsageAction('usage.query', usageInput, {
+    query: async ({ queries }) => resolveUsagePageAggregation({
+      queries, nowMs: Date.UTC(2026, 10, 24, 16),
+      accounting: queries.map(query => ({ query, value: accounting, status: 'available' })),
+      howYouWork: queries.map(query => ({ query, detail: projectUsageQueryWorkEvidence({ query, sessions }) })),
+    }, bundledUsageModelPriceCatalog),
+  }, { surface: 'cli' });
+  expect(action.ok).toBe(true);
+  if (!action.ok) return;
+  const slice = action.result.results[0]!;
+  const actionMs = slice.howYouWork?.agentCalendar?.hours.find(bucket => bucket.startMs === hour)
+    ?.agents.find(agent => agent.agentId === 'muse')?.metrics.busyMs;
+  expect(actionMs).toBe(537_170);
+  expect(slice.pending).toBe(false);
+  expect(actionMs! - pageMs).toBeCloseTo(42_151, 5);
+
+  await screen.unmount();
+  expect(openingCause, 'a pending Action with a retained partial hour carries the typed cause').toBe('encrypted_access_pending');
 });

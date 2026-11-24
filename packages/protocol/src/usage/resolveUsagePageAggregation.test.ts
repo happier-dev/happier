@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as coachEvaluation from './coach/evaluateUsageCoach.js';
-import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
+import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
 import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
@@ -1706,6 +1706,12 @@ describe('resolveUsagePageAggregation', () => {
     expect(UsageQueryBatchResultSchema.safeParse({ ...inProgress, results: [{ ...slice,
       sources: slice.sources.map(source => source.source === 'how_you_work' ? { ...source, asOfMs: firstEnd - 1 } : source),
     }] }).success).toBe(false);
+    const failed = resolveUsagePageAggregation({ queries: [query], previous: inProgress, nightHours, nowMs: nextEnd,
+      accounting: [readAccounting(nextEnd, 2)], howYouWork: [{ query, errorCode: 'timeout' }],
+    }, bundledUsageModelPriceCatalog);
+    expect(failed.results[0]?.howYouWork?.intervals).toEqual(previousIntervals);
+    expect(failed.results[0]?.sources).toContainEqual({ source: 'how_you_work', status: 'stale', asOfMs: firstEnd + 10, errorCode: 'timeout' });
+    expect(UsageQueryBatchResultSchema.safeParse(failed)).toMatchObject({ success: true });
     const settled = resolveUsagePageAggregation({ queries: [query], previous: inProgress, nightHours, nowMs: nextEnd,
       accounting: [readAccounting(nextEnd, 2)],
       howYouWork: [{ query, detail: { ...detail, activityAtMs: [firstEnd - 100, firstEnd + 100] }, asOfMs: nextEnd + 10 }],
@@ -1797,6 +1803,67 @@ describe('resolveUsagePageAggregation', () => {
     expect(failedReplacement.results[0]?.workSummary?.mergedPrCount).toBeUndefined();
     expect(failedReplacement.results[0]?.publicProfileEvidence?.facts.mergedPrs).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(failedReplacement).success).toBe(true);
+  });
+
+  it.each(['sessions', 'transcripts'] as const)('keeps the retained partial %s cause through failure, refusal and recovery', phase => {
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeComparison: false,
+      includeActivity: true, includeSessionEvidence: true, includeCoach: false, includeQuota: false, includeWorkEvidence: false });
+    const cause = { source: `how_you_work:${phase}`, status: 'partial', errorCode: 'encrypted_access_pending' } as const;
+    const source = 'how_you_work';
+    const detail = { status: 'partial', facts: [{ workId: 'work', evidenceId: 'busy',
+      agentId: 'codex', machineId: null, kind: 'busy', startMs: 200, endMs: 600 }] } as const;
+    const read = (input: Partial<Parameters<typeof resolveUsagePageAggregation>[0]>) => resolveUsagePageAggregation({
+      queries: [query], accounting: [{ query, value: accounting, status: 'available' }], ...input,
+    }, bundledUsageModelPriceCatalog);
+    const partial = read({ howYouWork: [{ query, detail }], sources: [cause] });
+    expect(partial.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial', intervals: { agentTimeMs: 400 } });
+    const failed = read({ previous: partial, howYouWork: [{ query, errorCode: 'timeout' }],
+      sources: [{ source: cause.source, status: 'error', errorCode: 'timeout' }] });
+    expect(failed.results[0]?.howYouWork?.intervals).toEqual(partial.results[0]?.howYouWork?.intervals);
+    expect.soft(failed.results[0]?.sources).toContainEqual(cause);
+    expect(failed.results[0]?.sources).toContainEqual({ source, status: 'stale', errorCode: 'timeout' });
+    const refused = read({ previous: failed, howYouWork: [{ query, errorCode: 'permission_denied' }] });
+    expect(refused.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null });
+    expect(refused.results[0]?.sources).toContainEqual({ source, status: 'error', errorCode: 'permission_denied' });
+    expect(refused.results[0]?.sources).not.toContainEqual(cause);
+    const pending = read({ previous: refused, sources: [{ source, status: 'pending' }] });
+    expect(pending.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null });
+    expect(pending.results[0]?.sources.filter(state => state.source.startsWith(source))).toEqual([{ source, status: 'pending' }]);
+    const recovered = read({ previous: pending, howYouWork: [{ query, detail: { ...detail, status: 'available' } }] });
+    expect(recovered.results[0]?.howYouWork).toMatchObject({ detailStatus: 'available', intervals: { agentTimeMs: 400 } });
+    expect(recovered.results[0]?.sources.filter(state => state.source.startsWith(source))).toEqual([{ source, status: 'available' }]);
+  });
+
+  it('keeps the retained partial accounting cause on current and comparison reads only while holding their values', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, includeComparison: true,
+      includeSessionEvidence: false, includeCoach: false, includeQuota: false, includeWorkEvidence: false });
+    const comparison = resolveUsagePageAccountingRequests([query], 2000)[1]!;
+    const subjects = [query, comparison];
+    const read = (input: Partial<Parameters<typeof resolveUsagePageAggregation>[0]>) =>
+      resolveUsagePageAggregation({ queries: [query], ...input }, bundledUsageModelPriceCatalog);
+    const valueFor = (query: UsageQuery) => UsageAnalyticsQueryResponseSchema.parse({ ...accounting, coverage: {
+      status: 'partial', reasons: ['incomplete_history'], sources: [], ranked: [], missingDimensions: [],
+      range: { ...query.period, complete: false },
+    } });
+    const observed = subjects.map(query => ({ query, value: valueFor(query), status: 'partial' as const, errorCode: 'dependency_unavailable' }));
+    const partial = read({ accounting: observed });
+    const pending = read({ previous: partial, accounting: observed.map(({ query, value }) => ({ query, value, status: 'pending' })) });
+    const first = pending.results[0]!;
+    expect(first.accounting).toMatchObject({ coverage: { status: 'partial', reasons: ['incomplete_history'] } });
+    expect(first.comparison?.accounting).toEqual(partial.results[0]?.comparison?.accounting);
+    expect.soft(first.sources).toContainEqual({ source: 'accounting', status: 'pending', errorCode: 'dependency_unavailable' });
+    expect.soft(first.comparison?.source).toEqual({ source: 'comparison', status: 'pending', errorCode: 'dependency_unavailable' });
+    const failed = read({ previous: pending, accounting: subjects.map(query => ({ query, status: 'error', errorCode: 'timeout' })) });
+    expect(failed.results[0]?.accounting).toEqual(first.accounting);
+    expect(failed.results[0]?.comparison?.accounting).toEqual(first.comparison?.accounting);
+    expect(failed.results[0]?.sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'timeout' });
+    const refused = read({ previous: failed, accounting: subjects.map(query => ({ query, status: 'error', errorCode: 'permission_denied' })) });
+    expect(refused.results[0]?.accounting).toBeUndefined();
+    expect(refused.results[0]?.comparison?.accounting).toBeUndefined();
+    const next = read({ previous: refused, accounting: subjects.map(query => ({ query, status: 'pending' })) });
+    expect(next.results[0]?.accounting).toBeUndefined();
+    expect(next.results[0]?.sources).toContainEqual({ source: 'accounting', status: 'pending' });
+    expect(next.results[0]?.comparison?.source).toEqual({ source: 'comparison', status: 'pending' });
   });
 
   it('settles admitted private detail independently of a pending sibling source', () => {

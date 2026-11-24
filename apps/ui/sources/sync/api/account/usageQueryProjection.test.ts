@@ -119,27 +119,30 @@ it('retains Coach as stale when a new finite read replaces its private evidence'
     expect(replacement.results[0]?.coach?.currentness).toBe('stale');
 });
 
-it('keeps prior failure metadata while reporting pending and then settled source activity', async () => {
+it('clears prior refusal metadata when a replacement holds no accounting or private evidence', async () => {
     const f = await fixture();
-    const initial = f.run();
-    const previous = { ...initial, results: initial.results.map(slice => ({ ...slice,
-        sources: slice.sources.map(source => source.source === 'how_you_work'
-            ? { ...source, status: 'stale' as const, asOfMs: 2000, errorCode: 'usage_query_failed' } : source) })) };
-    const replacement = projectUsageQueryBatch({ ...f.input(), previous, admittedPrevious: undefined,
+    const refused = [...f.input().accounting].map(([key, snapshot]) =>
+        [key, { query: snapshot.query, status: 'error' as const, errorCode: 'permission_denied' }] as const);
+    f.update({ accounting: new Map(refused),
+        howYouWork: f.queries.map(query => ({ query, errorCode: 'permission_denied' })),
+        settledHowYouWorkQueries: new Set(f.queries.map(getUsageQueryKey)) });
+    const previous = f.run();
+    for (const slice of previous.results) {
+        expect(slice.accounting).toBeUndefined();
+        expect(slice.howYouWork?.intervals).toBeNull();
+        expect(slice.sources.filter(source => source.source === 'accounting' || source.source === 'how_you_work'))
+            .toEqual(['accounting', 'how_you_work'].map(source => ({ source, status: 'error', errorCode: 'permission_denied' })));
+    }
+    const accounting = new Map(refused.map(([key, snapshot]) => [key, { query: snapshot.query, status: 'pending' as const }]));
+    const replacement = projectUsageQueryBatch({ ...f.input(), accounting, previous, admittedPrevious: undefined,
+        settledHowYouWorkQueries: new Set(), howYouWork: undefined,
         priorSlices: new Map(previous.results.map(slice => [slice.key, slice])) });
     for (const slice of replacement.results) {
         expect(slice.pending, 'the read itself remains visibly in flight').toBe(true);
-        expect(slice.sources.find(source => source.source === 'how_you_work')).toMatchObject({
-            status: 'pending', asOfMs: 2000, errorCode: 'usage_query_failed',
-        });
-    }
-    const settled = projectUsageQueryBatch({ ...f.input(), previous, admittedPrevious: replacement,
-        settledHowYouWorkQueries: new Set(f.queries.map(getUsageQueryKey)),
-        priorSlices: new Map(previous.results.map(slice => [slice.key, slice])) });
-    for (const slice of settled.results) {
-        const source = slice.sources.find(source => source.source === 'how_you_work');
-        expect(source?.status).not.toBe('pending');
-        expect(source?.errorCode).toBeUndefined();
+        expect(slice.accounting).toBeUndefined();
+        expect(slice.howYouWork?.intervals).toBeNull();
+        expect(slice.sources.filter(source => source.source === 'accounting' || source.source === 'how_you_work'))
+            .toEqual(['accounting', 'how_you_work'].map(source => ({ source, status: 'pending' })));
     }
 });
 
