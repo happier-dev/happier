@@ -51,7 +51,9 @@ const repository = ProjectSourceRepositorySelectorV1Schema.parse({
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
-  it.each(['compose', 'image'] as const)('reviews a repository-free Project with its %s Environment only at final confirmation', async kind => {
+  it.each(['compose', 'image', 'unconfirmed image'] as const)('settles a repository-free Project with its %s Environment only at final confirmation', async scenario => {
+    const kind = scenario === 'compose' ? 'compose' : 'image';
+    const unknown = scenario === 'unconfirmed image';
     const { useDeploymentProjectChoice } = await import('./DeploymentProjectChoice');
     const serverId = await homes.addHome({ name: 'New app', serverUrl: `https://draft-new-project-${kind}.test`, accountId: 'alice',
       serverIdentityId: `srv_${(kind === 'compose' ? 'b' : 'c').repeat(32)}`, currentAccount: true });
@@ -60,10 +62,14 @@ describe('Environment draft Machine Home', () => {
     const authored: Record<string, unknown>[] = [];
     const committed: unknown[] = [];
     const saved: unknown[] = [];
+    const discard = vi.fn();
     try {
       homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
-        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        failure: result => result === 'lost-create-reply'
+          ? { errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: true } : null,
+        execute: input => {
           if (typeof input === 'object' && input !== null && 'mode' in input) {
             const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
             authored.push(intent);
@@ -74,6 +80,7 @@ describe('Environment draft Machine Home', () => {
                 sources: { controllerMachineId: 'explicit', retainPreviousDeployments: 'builtin' } } } });
           }
           committed.push(DeploymentEnvironmentCreateInputV1Schema.parse(input));
+          if (unknown) return 'lost-create-reply';
           return { ok: true, environmentId: 'created-environment', projectSourceId: 'created-project', revision: 1 };
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
@@ -81,7 +88,7 @@ describe('Environment draft Machine Home', () => {
         const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true });
         return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
           definitionKind={kind} phone={false} actions={createDeploymentActions(account.accountLifetime)}
-          onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />;
+          onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={discard} />;
       }
       const screen = await renderScreen(<NewProjectDraft />);
       const header = () => screen.findAllByType(PageHeader)[0]!;
@@ -105,10 +112,23 @@ describe('Environment draft Machine Home', () => {
       expect(committed).toEqual([]);
       expect(homes.requests.some(request => request.method === 'POST' && request.path === '/v1/projects/sources')).toBe(false);
       await act(async () => header().props.primaryAction.onPress());
-      await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved).toHaveLength(1); });
+      if (unknown) {
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          expect(screen.findAllByType(AttentionBanner).find(node =>
+            node.props.testID === 'project-deployments.draft.outcome-unknown')).toBeDefined();
+        });
+        const { t } = await import('@/text');
+        expect(header().props.primaryAction.title).toBe(t('projects.deployments.createOutcomeCheck'));
+        await act(async () => header().props.primaryAction.onPress());
+        expect(discard).toHaveBeenCalledOnce();
+        expect(saved).toHaveLength(0);
+      } else {
+        await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved).toHaveLength(1); });
+        expect(saved).toEqual([['created-environment', { projectSourceId: 'created-project' }]]);
+      }
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({ newProject: authored[0]!.newProject });
-      expect(saved).toEqual([['created-environment', { projectSourceId: 'created-project' }]]);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });

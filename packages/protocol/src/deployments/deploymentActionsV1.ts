@@ -1112,6 +1112,12 @@ export function readDeploymentActionOperationRequestIdV1(actionId: string, input
   return readDeploymentEnvironmentOperationRequestIdV1(parsed.data);
 }
 
+/** Only the catalog Apply continuation owns a finite Create operation on the Machine. */
+export function isDeploymentCatalogCreateApplyV1(input: unknown): boolean {
+  const parsed = DeploymentEnvironmentCreateIntentInputV1Schema.safeParse(input);
+  return parsed.success && parsed.data.mode !== 'preview' && parsed.data.definition?.from === 'catalogApp';
+}
+
 /** Template preview has an operation declaration but never creates a host receipt. */
 export function isDeploymentTemplatePreviewInputV1(actionId: string, input: unknown): boolean {
   if (actionId !== 'deployments.templates.instantiate') return false;

@@ -177,6 +177,12 @@ pinned Store listing for Review. Template preparation Actions return
 `template_needs_review` with field diagnostics and the pinned
 `registries.items.read` request in `details.nextAction`.
 
+A confirmed catalog Create on a Machine retains its terminal Action result
+through the reviewed first Deploy. If the reply is lost, the wizard observes
+the original Create by request identity. If that result still cannot be
+confirmed, it links to the known Environment or Receipt when possible, or
+to Services on the selected Home, so the person can check before creating again.
+
 Saving a token alongside a Saved Secret publishes the connected Account profile
 after the credential and resource commit together. Configure waits for that
 exact connection before loading provider choices. If the profile is unavailable

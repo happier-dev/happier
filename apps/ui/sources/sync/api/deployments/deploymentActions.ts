@@ -1,4 +1,4 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinksListResultV1Schema, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinksListResultV1Schema, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentCatalogCreateApplyV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -72,7 +72,8 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
     // The root returned its failed step and recovery; an uncertain child is not a lost root reply.
     if (readDeploymentTemplateInstantiationPartialV1(execution)) return execution;
     const spec = getActionSpec(actionId);
-    if (!spec.operation || isDeploymentTemplatePreviewInputV1(actionId, input)) return execution;
+    if (!spec.operation || isDeploymentTemplatePreviewInputV1(actionId, input)
+        || (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && !isDeploymentCatalogCreateApplyV1(input))) return execution;
     try {
         const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
             serverId: account.serverId, accountId: account.accountId, machineId, signal,

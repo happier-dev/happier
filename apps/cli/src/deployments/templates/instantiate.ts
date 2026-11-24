@@ -83,7 +83,7 @@ type TemplatePreparationInput = Omit<DeploymentTemplateInstantiateInputV1, 'envi
 }>;
 type TemplateAppliedResult = Extract<DeploymentTemplateInstantiateResultV1, { kind: 'applied' }>;
 type TemplatePreparationResult = Exclude<DeploymentTemplateInstantiateResultV1, TemplateAppliedResult>
-    | Omit<TemplateAppliedResult, 'targetLinkId'> & { targetLinkId?: string }
+    | Omit<TemplateAppliedResult, 'targetLinkId'> & { targetLinkId?: string; projectSourceId: string }
     | ActionExecuteFailure;
 function materializeTemplateBindings(current: readonly EnvironmentSecretBindingV1[],
     bindings: readonly EnvironmentVariableBindingInputV1[]) {
@@ -96,8 +96,9 @@ function materializeTemplateBindings(current: readonly EnvironmentSecretBindingV
     });
 }
 function projectTemplateResult(result: TemplatePreparationResult): DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure {
-    return 'kind' in result && result.kind === 'applied'
-        ? { ...result, targetLinkId: result.targetLinkId ?? refuse('target_mismatch') } : result;
+    if (!('kind' in result) || result.kind !== 'applied') return result;
+    const { projectSourceId: _projectSourceId, ...applied } = result;
+    return { ...applied, targetLinkId: applied.targetLinkId ?? refuse('target_mismatch') };
 }
 type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; machineId: string; serverHttpBaseUrl: string;
@@ -547,7 +548,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     if (settled.data.domain.state === 'failed') return refuse('native_route_unavailable');
                 }
             }
-            return { kind: 'applied', environmentId: environmentId!, revision: revision!, targetLinkId, definition: appliedDefinition, savedSecrets,
+            return { kind: 'applied', environmentId: environmentId!, revision: revision!, projectSourceId: created.environment.projectSourceId,
+                targetLinkId, definition: appliedDefinition, savedSecrets,
                 ...(deployment ? { deployment } : {}) };
         } catch (error) {
             const code = context.signal?.aborted && !effectIssued ? 'cancelled' : errorCode(error);
@@ -591,7 +593,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if ('kind' in result && result.kind === 'partial') return { ok: false as const, effectAttempted: true,
             errorCode: result.errorCode, error: result.errorCode, details: result };
         return 'errorCode' in result ? result : result.kind === 'applied'
-            ? { ok: true as const, environmentId: result.environmentId, revision: result.revision }
+            ? { ok: true as const, environmentId: result.environmentId, revision: result.revision, projectSourceId: result.projectSourceId }
             : deploymentOutputValidationFailure('templates/instantiate', undefined);
     }
     function admittedPreparation(plan: Awaited<ReturnType<typeof prepareInput>>, create: boolean): HostReviewedChildrenPreparationV1 {

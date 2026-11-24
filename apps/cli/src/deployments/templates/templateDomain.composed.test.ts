@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readHomeRequestArtifactReference } from '../homeRequestBody.testkit';
 import { delimiter, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -52,7 +54,7 @@ import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvaila
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create replay'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
+it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create replay', 'approved Create with occupied Caddy port'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
     await withConfiguredDaemonTestHome({ prefix: 'template-domain-child-' }, async () => {
         const origin = 'https://template-domain.test', serverId = 'srv_template_domain', machineId = 'target';
         const identity = await readOrCreateInstallationIdentity();
@@ -89,6 +91,10 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
         const artifacts = new Map<string, Record<string, unknown>>();
         const domainWrites: string[] = [];
         const trace: string[] = [];
+        const approvedCreate = admission === 'approved Create replay' || admission === 'approved Create with occupied Caddy port';
+        const occupiedCaddy = admission === 'occupied Caddy port' || admission === 'approved Create with occupied Caddy port';
+        const deployArrived = Promise.withResolvers<void>();
+        const releaseDeploy = Promise.withResolvers<void>();
         const httpPaths: string[] = [];
         let rootInput: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse> | ReturnType<typeof DeploymentEnvironmentCreateIntentInputV1Schema.parse> | undefined;
         let rootAuthorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
@@ -206,6 +212,10 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
             }
             if (path.endsWith('/deploy')) {
                 trace.push('deployed');
+                if (approvedCreate) {
+                    deployArrived.resolve();
+                    await releaseDeploy.promise;
+                }
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, deploymentId: 'receipt',
                     revision: ++environment.environment.revision, deploymentRevision: 2, state: 'succeeded' } };
             }
@@ -244,7 +254,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
             if (!admitted) { acknowledge({ ok: false, error: 'action_forbidden' }); return; }
             if (job.kind === 'domainDiscover') {
                 expect(domainWrites).toContain(job.input.contentArtifactId);
-                if (admission === 'occupied Caddy port') {
+                if (occupiedCaddy) {
                     acknowledge({ ok: true, result: { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed',
                         details: DeploymentDomainFailureDetailsV1Schema.parse({ environmentId: job.input.environmentId,
                             domainId: job.input.domainId, step: 'native_execution', requiredFact: 'caddyAdminConfig',
@@ -278,7 +288,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                     deployerMode: 'managers', controllerMachineId: machineId }, target: { kind: 'new', installationId: identity.installationId },
                 destination: { kind: 'stored' }, bindings: [], domainBindings: [{ templateDomainId: 'web', hostname: 'app.example.test' }],
                 deploy: { requestKey: 'deploy-app' } });
-            const actionId = admission === 'approved Create replay' ? 'deployments.environments.create' : 'deployments.templates.instantiate';
+            const actionId = approvedCreate ? 'deployments.environments.create' : 'deployments.templates.instantiate';
             const input = actionId === 'deployments.templates.instantiate' ? templateInput
                 : DeploymentEnvironmentCreateIntentInputV1Schema.parse({ mode: 'apply', serverId, projectSourceId: 'project',
                     requestKey: 'create-app', name: 'App', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -317,22 +327,46 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                 } });
             if (!requester) throw new Error('Expected original requester custody');
             const executor = requester.executor;
-            const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
+            const operations = createHostActionOperationRuntime({ serverId, machineId, resolveAccountId: async () => 'owner' });
+            const executing = executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
                 runtimeAccountId: 'owner', serverId, serverIdentityId: serverId, actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
                 actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined),
                     actionId, surface: 'ui', approvalRequired: false }),
                 actionRequestId: envelope.requestId, executionRunTargetMachineId: machineId, externalActionTarget: target,
-                ...(admission === 'approved Create replay' ? { approvedActionReplay: { artifactId: 'approved-create' } } : {}),
+                ...(approvedCreate ? { approvedActionReplay: { artifactId: 'approved-create' } } : {}),
                 presentUserConfirmation: { actionId,
                     inputDigest: computeActionInputApprovalDigestV1(actionId, input),
                     accountId: 'owner', serverId, requestId: envelope.requestId, target },
                 originalActionEnvelope: envelope, externalActionExecutionAuthorization: requester.authorization,
-                operationAcceptance: { operationId: 'template-operation', accept() {} } });
+                ...(approvedCreate ? { runActionOperation: operations.runActionOperation }
+                    : { operationAcceptance: { operationId: 'template-operation', accept() {} } }) });
+            let observedCreate: Awaited<ReturnType<typeof operations.runner.waitForTerminal>> = null;
+            if (approvedCreate) {
+                const scope = { accountId: 'owner', machineId };
+                await Promise.race([deployArrived.promise, executing]);
+                const root = operations.store.findByRequestIdentity(scope, actionId, envelope.requestId);
+                const observation = root && operations.runner.waitForTerminal(scope, root.operationId);
+                releaseDeploy.resolve();
+                observedCreate = await observation;
+            }
+            const result = await executing;
+            if (approvedCreate) {
+                const terminal = observedCreate && readActionOperationTerminalResultV1(observedCreate);
+                if (occupiedCaddy) {
+                    expect(terminal).toMatchObject({ ok: false, errorCode: 'native_effect_failed', details: {
+                        kind: 'partial', phase: 'domains', environmentId: environment.environment.id,
+                        failure: { step: 'native_execution', failure: { containerError: 'port_in_use' } },
+                    } });
+                } else {
+                    expect(terminal).toMatchObject({ ok: true, result: { ok: true, environmentId: environment.environment.id,
+                        projectSourceId: 'project' } });
+                }
+            }
             expect(trace, JSON.stringify({ result, httpPaths })).toContain('deployed');
             if (admission === 'denied Domain') {
                 expect(result).toMatchObject({ ok: false, errorCode: 'action_forbidden', failureCause: { httpStatus: 401 } });
                 expect(domainWrites).toEqual([]); expect(domain).toBeUndefined();
-            } else if (admission === 'occupied Caddy port') {
+            } else if (occupiedCaddy) {
                 expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed', details: {
                     kind: 'partial', phase: 'domains', environmentId: environment.environment.id,
                     failure: { step: 'native_execution', failure: { containerError: 'port_in_use', containerExitCode: 128 } },

@@ -75,7 +75,7 @@ import { dispatchCode } from './executor/code.js';
 import type { CoreInvocation, CoreOptions, PreparedCoreAdmission, PrivatePrepareResult, ActionHomeEquivalence, DispatchFacts, DiscussionPublicationPolicy } from './executor/coreInvocation.js';
 import { DeploymentTemplateInstantiationReviewV1Schema, areDeploymentTemplateReviewFactsEqualV1, projectDeploymentTemplateInstantiationResultV1 } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { deploymentMoveToRepositoryChildRoleV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
-import { DeploymentEnvironmentCreationReviewV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentEnvironmentCreationReviewV1Schema, isDeploymentCatalogCreateApplyV1 } from '../deployments/deploymentActionsV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
 import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, hasDeferredApprovalSessionResult, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
@@ -86,7 +86,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentRolloutActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentRolloutActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { projectDeploymentReviewedCandidateV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
@@ -4588,13 +4588,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         semanticInput,
         ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
       };
+      const catalogCreateApply = actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+        && isDeploymentCatalogCreateApplyV1(admittedInput);
       const startActionOperation = !requesterAppReview && spec.operation && !existingAdmission?.operationObserved
+        && (actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || catalogCreateApply)
         && ctx.operationAcceptance?.actionId !== actionId ? ctx.runActionOperation ?? deps.runActionOperation : undefined;
       // The repository template continuation performs the write itself and
       // its checkout lifecycle consumes the containing Action operation.
       const repositoryTemplateApply = actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
         && readRecord(admittedInput).mode === 'apply' && readRecord(readRecord(admittedInput).destination).kind === 'repositoryPullRequest';
-      if (executeAdmittedAction && !existingAdmission?.admittedExecutionContinued && !(startActionOperation && repositoryTemplateApply)) {
+      // Catalog Create owns its terminal result through first Deploy, including when the requester loses the reply.
+      if (executeAdmittedAction && !existingAdmission?.admittedExecutionContinued
+        && !(startActionOperation && (repositoryTemplateApply || catalogCreateApply))) {
         return await executeAdmittedAction({ actionId, input: admittedInput, context: ctx,
           execute: (executionContext, target) => {
             const originalContext = target ? { ...executionContext, admittedMachineTarget: {

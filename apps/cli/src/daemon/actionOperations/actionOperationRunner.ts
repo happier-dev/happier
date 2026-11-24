@@ -6,7 +6,7 @@ import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/action
 import { createPendingSessionBirth } from './pendingSessionBirth';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -33,6 +33,7 @@ import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/
 import { MachineRebootResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/reboot';
 import { MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 
+import { readDeploymentTemplateInstantiationPartialV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentActionOutputSchemasV1, projectDeploymentTargetLinkFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
@@ -619,6 +620,7 @@ export function createActionOperationRunner(deps: Readonly<{
               || isMachineSetupCombinedActionIdV1(action.actionId)
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
               || action.actionId === 'deployments.templates.instantiate'
+              || (action.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && readDeploymentTemplateInstantiationPartialV1(executionResult))
               || isDeploymentDomainChildActionIdV1(action.actionId)
               ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
             deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, failureResult);

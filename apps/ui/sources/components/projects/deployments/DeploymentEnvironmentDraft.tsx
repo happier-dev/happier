@@ -29,6 +29,8 @@ import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/Select
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildDeploymentEnvironmentHref, SERVICES_ROUTE } from './deploymentNavigation';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -244,6 +246,18 @@ export const DeploymentEnvironmentDraft = React.memo(
     const refusedVariableKey = typeof refusedVariable === 'string' ? refusedVariable : undefined;
     const refusedDomainKey = catalogTemplate?.variables.find(variable => variable.key === refusedVariableKey)?.valueFrom?.domainKey;
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
+    const createOutcomeUnknown = refusal?.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(refusal.code);
+    const recoveryEnvironmentId = partial?.environmentId;
+    const recoveryReceipt = partial?.deployment;
+    const recoveryDeploymentId = recoveryReceipt && 'deploymentId' in recoveryReceipt ? recoveryReceipt.deploymentId : undefined;
+    const checkCreatedEnvironment = () => {
+      const href = props.lifetime && sourceId && recoveryEnvironmentId
+        ? buildDeploymentEnvironmentHref({ serverId: props.lifetime.scope.serverId, projectSourceId: sourceId,
+            environmentId: recoveryEnvironmentId, ...(recoveryDeploymentId ? { deploymentId: recoveryDeploymentId } : {}) })
+        : props.lifetime ? `${SERVICES_ROUTE}?serverId=${encodeURIComponent(props.lifetime.scope.serverId)}` : SERVICES_ROUTE;
+      props.onDiscard();
+      router.push(href as never);
+    };
     const [retention, setRetention] =
       React.useState<DeploymentRetentionChoiceValue>('alwaysOn');
     const draftTitle = useCollectionDraftTitle();
@@ -379,6 +393,10 @@ export const DeploymentEnvironmentDraft = React.memo(
         answerStepConfirmation(true);
         return;
       }
+      if (createOutcomeUnknown) {
+        checkCreatedEnvironment();
+        return;
+      }
       if (partial) {
         if (partial.environmentId) onSaved(partial.environmentId, { tab: deploymentPartialRecoveryTab(partial) });
         return;
@@ -481,7 +499,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         if (stepped) props.onDiscard();
         router.push(PLUGINS_APP_ROUTE);
     };
-    const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
+    const draftStep: DeploymentDraftStep = stepReview || prepared || partial || createOutcomeUnknown ? 'review' : formStep;
     const whereScope = props.lifetime?.scope;
     const ownServerWhere = stepped && draftStep === 'where' && !props.copyFrom;
     const catalogProvidesCompose = ownServerWhere && props.catalogApp != null;
@@ -550,7 +568,9 @@ export const DeploymentEnvironmentDraft = React.memo(
       setTargetKey(next);
     };
 
-    const saveTitle = partial
+    const saveTitle = createOutcomeUnknown
+        ? sourceId && recoveryEnvironmentId ? t('projects.deployments.openEnvironment') : t('projects.deployments.createOutcomeCheck')
+        : partial
         ? t('projects.deployments.openEnvironment')
         : props.copyFrom
         // On the review itself the primary says what it does, as Create does (PAGE-ACCEPT-176 R13-D8).
@@ -563,7 +583,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       onPress: () => {
         void save();
       },
-      disabled: stepReview ? false : partial ? !partial.environmentId || saving : !valid || !actions || saving,
+      disabled: stepReview ? false : createOutcomeUnknown ? saving : partial ? !partial.environmentId || saving : !valid || !actions || saving,
       loading: saving && !stepReview,
       testID: 'project-deployments.draft.save',
     };
@@ -587,11 +607,12 @@ export const DeploymentEnvironmentDraft = React.memo(
     const backStep = useEventCallback(() => {
       if (draftStep === 'configure') { setFormStep('where'); return; }
       if (draftStep === 'where') { props.steps?.onExit(); return; }
-      if (partial) props.onDiscard();
+      if (partial || createOutcomeUnknown) props.onDiscard();
       else if (stepReview) answerStepConfirmation(false);
       else setPrepared(null);
     });
     const toWhere = useEventCallback(() => {
+      if (createOutcomeUnknown) { props.onDiscard(); return; }
       if (stepReview) answerStepConfirmation(false);
       setPrepared(null);
       setFormStep('where');
@@ -617,10 +638,10 @@ export const DeploymentEnvironmentDraft = React.memo(
       waitingFor: whereWaitingFor,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
       appName,
-      refused: draftStep === 'review' && !partial && refusal?.kind === 'refused',
+      refused: draftStep === 'review' && !partial && !createOutcomeUnknown && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, appName, partial, refusal, primary.title, primary.disabled,
+    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, appName, partial, createOutcomeUnknown, refusal, primary.title, primary.disabled,
       primary.loading, primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;
@@ -679,7 +700,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     }) : null;
     // The shared deployment failure presenter gives the reason (any refusal but a taken name) and the technical details.
     const platformOutcome = platformRefusal?.failure ? presentActionFailureOutcome(platformRefusal.failure, 'deployment') : null;
-    const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure && !platformRefusal
+    const partialProgress = !createOutcomeUnknown && partial && refusal?.kind === 'refused' && refusal.failure && !platformRefusal
       ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
     // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
     // target refusal and the setup failure that both come from it (journey-deploy revFail).
@@ -692,7 +713,12 @@ export const DeploymentEnvironmentDraft = React.memo(
     // The recovery owner names where a refusal is fixed: a Machine cause, or the unavailable target, is that Machine.
     const machineCausedRefusal = awayMachine !== null && refusal?.kind === 'refused' && (refusal.code === 'target_unavailable'
       || readDeploymentRefusalRecovery(refusal.code)?.nextAction.destination === 'machines');
-    const refusalBanner = machineCausedRefusal ? null
+    const refusalBanner = createOutcomeUnknown ? (
+      <AttentionBanner testID="project-deployments.draft.outcome-unknown" tone="neutral"
+        title={t(recoveryEnvironmentId ? 'projects.deployments.createResultUnknownTitle' : 'projects.deployments.createOutcomeUnknownTitle')}
+        description={t('projects.deployments.createOutcomeUnknownBody')}
+        details={refusal?.kind === 'refused' ? [refusal.code] : undefined} />
+    ) : machineCausedRefusal ? null
       : refusal && refusal.kind === 'approval' ? (
             <AttentionBanner
               testID="project-deployments.draft.approval"
@@ -776,7 +802,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       </ItemGroup>
     ) : null;
     // What Happier creates leads; the build runtime is a developer detail after it (PAGE-ACCEPT-176 R10-D7).
-    const reviewBody = platformNotice || platformRuntime ? <>{platformNotice}{reviewFacts}{platformRuntime}</> : reviewFacts;
+    const reviewBody = createOutcomeUnknown ? null : platformNotice || platformRuntime ? <>{platformNotice}{reviewFacts}{platformRuntime}</> : reviewFacts;
     const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
             description={t('capabilities.store.appPage.projectDescription')}
