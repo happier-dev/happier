@@ -2803,7 +2803,8 @@ describe("managed acquisition durable authority", () => {
         const retained = (await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput;
         const identity = { computeInput: projected.input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest } };
         expect(retained).toEqual({ ...identity, enrollmentAccountId: fixture.account.id,
-            requestEnvelopeDigest: request.requestEnvelopeDigest, guestCli: expect.objectContaining({ source: 'home-payload' }) });
+            requestEnvelopeDigest: request.requestEnvelopeDigest, guestCli: expect.objectContaining({ source: 'home-payload' }),
+            acquireProvisioner: { provisioner: fixture.manifest.contributes?.machineProvisioners?.[0], accountAcquire: false } });
         expect(JSON.stringify(retained)).not.toContain("private-managed-initial-message");
         expect(JSON.stringify(retained)).not.toContain("private-managed-startup-instructions");
         // Historical rows retained the continuation digest without the newer
