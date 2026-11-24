@@ -7,6 +7,8 @@ import { createCodexAppServerTurnFailure } from '@happier-dev/plugins-codex/agen
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 describe('Run startup failure redaction', () => {
     it('redacts private evidence from a thrown structured native cause before public Run projection', () => {
@@ -104,6 +106,19 @@ describe('Run startup failure redaction', () => {
             code: 'provider_endpoint_unavailable', failureCause: { phase: 'client_start' },
         } });
         expect(JSON.stringify(projected)).not.toContain('PRIVATE_');
+    });
+
+    it('publishes the Account snapshot refusal subphase through native Run redaction', () => {
+        const failureCause = {
+            phase: 'account_snapshot.requester_not_current', errorClass: 'Error',
+            errorCode: 'provider_authorization_changed', httpStatus: null,
+        } as const;
+        const refusal = createProviderErrorV1(failureCause.errorCode, { failureCause });
+        const sanitized = sanitizeExecutionRunError(refusal, value => value);
+        const published = ExecutionRunErrorSchema.parse(projectExecutionRunError(sanitized));
+        expect(published).toMatchObject({ code: failureCause.errorCode, runtimeIssueV1: {
+            failureCause: { actionCause: failureCause },
+        } });
     });
 
     it('retains the daemon preparation stage through Codex startup and public Run publication', () => {

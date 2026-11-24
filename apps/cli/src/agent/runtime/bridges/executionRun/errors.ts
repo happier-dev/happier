@@ -6,6 +6,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readAgentStartupFailureDetails, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { ExecutionRunState } from './executionRunTypes';
@@ -106,6 +107,10 @@ export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<Execut
   if (!error || typeof error !== 'object') return undefined;
   const issue = sanitizeSessionRuntimeIssueV1('runtimeIssueV1' in error ? error.runtimeIssueV1 : undefined);
   if (issue) return issue;
+  const provider = ProviderErrorV1Schema.safeParse(error);
+  if (provider.success && provider.data.failureCause?.phase.startsWith('account_snapshot.')) {
+    return classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error: provider.data });
+  }
   const details = 'details' in error && error.details && typeof error.details === 'object' ? error.details : null;
   if (details && 'failureCause' in details) {
     const agent = AgentIdV1Schema.safeParse(details && 'agentId' in details ? details.agentId : undefined);
