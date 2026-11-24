@@ -56,6 +56,31 @@ const { createDefaultActionExecutor, executeDefaultActionInCapturedAccount } = a
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it('withholds Memory Save discovery and dispatch for a bound Session with Memory off', async () => {
+    const serverId = await home.addHome({ name: 'Voice Memory policy', serverUrl: 'https://voice-memory-policy.test',
+      accountId: 'alice', currentAccount: true });
+    const session = createSessionFixture({ id: 'voice-memory-target', serverId });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const setMemory = (memoryEnabled: boolean) => storage.getState().applySessions([{
+      ...session, metadata: { ...session.metadata, work: { memoryEnabled } },
+    }]);
+    setMemory(false);
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => session.id, currentServerId: serverId,
+      resolveCurrentSessionAddress: async () => ({ serverId, sessionId: session.id }) });
+    const discover = (id: string) => handlers.action_execute!({ actionId: 'action.spec.get', input: { id } })
+      .then(raw => JSON.parse(raw));
+    const save = handlers.action_execute!({ actionId: 'memory.remember',
+      input: { scope: 'account', text: 'Keep the silver compass.' } },
+    { serverId, effectId: 'voice-save-with-memory-off', turnOrigin: 'person' }).then(raw => JSON.parse(raw));
+    const writeDiscovery = await discover('memory.remember');
+    expect(await save).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(writeDiscovery).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(await discover('memory.read')).toMatchObject({ ok: true });
+    expect(home.artifacts(serverId).list()).toEqual([]);
+    setMemory(true);
+    expect(await discover('memory.remember')).toMatchObject({ ok: true });
+  });
+
   it('reads the bound child’s real failed turn through the canonical Voice status tool', async () => {
     const serverId = await home.addHome({ name: 'Child status', serverUrl: 'https://child-status.test',
       accountId: 'alice', currentAccount: true });
