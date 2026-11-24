@@ -1870,6 +1870,59 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
+    it.each(['machines.managed.power.set', 'machines.managed.bootstrap.retry'] as const)(
+        'relays the controller custodian\'s terminal %s root on a Machine another Account created', async actionId => {
+        const custodian = await fixture(true);
+        const creator = await fixture(false);
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.account.id,
+            machineId: custodian.controller.machineId, principal: { kind: 'account', accountId: creator.account.id }, level: 'admin' }));
+        const created = await admitManagedAcquire({ custodianAccountId: custodian.account.id, requesterAccountId: creator.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, requestEnvelopeDigest: 'sponsored-admission',
+            input: { input: custodian.input, requestId: crypto.randomUUID(), continuationPresent: false } });
+        const token = await auth.createToken(custodian.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const headers = { authorization: `Bearer ${token}`, [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(),
+            target: { kind: 'machine' as const, machineId: custodian.controller.machineId },
+            input: actionId === 'machines.managed.power.set'
+                ? { homeId, managedId: created.machine.id, intent: 'stop', when: 'now', expectedRevision: 0 }
+                : { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } };
+        const delivered: string[] = [];
+        const instance = await app(async request => {
+            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            delivered.push(admitted.actionId);
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: { kind: 'accepted' } },
+            })) };
+        });
+        try {
+            const minted = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers, payload: { v: 1, machineId: custodian.controller.machineId, envelope } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const relayed = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers,
+                payload: { v: 1, machineId: custodian.controller.machineId, envelope, executionAuthorization } });
+            // Stop is the passing control: the same person's Retry reaches the controller (L73).
+            expect(relayed.statusCode, relayed.body).toBe(200);
+            expect(delivered).toEqual([actionId]);
+            if (actionId === 'machines.managed.bootstrap.retry') {
+                // The controller's first Retry effect reads its retained context under this same root.
+                const contextPath = '/v1/machines/managed/controller/context';
+                const contextBody = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, controller: custodian.controller };
+                const context = await instance.inject({ method: 'POST', url: contextPath, payload: contextBody, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: executionAuthorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(executionAuthorization.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: executionAuthorization.token, effectActionId: actionId,
+                        target: executionAuthorization.binding.target, installationId: executionAuthorization.binding.installationId,
+                        requestId: executionAuthorization.binding.requestId, method: 'POST', path: contextPath, body: contextBody,
+                        privateKey: custodian.keys.secretKey }),
+                } });
+                expect(context.statusCode, context.body).toBe(200);
+            }
+        } finally { await instance.close(); }
+    });
+
     it.each(['same-account', 'shared-manage'] as const)(
         'dispatches an original Session acquire to a selected foreign controller with %s provenance', async access => {
         const requester = await fixture(true);

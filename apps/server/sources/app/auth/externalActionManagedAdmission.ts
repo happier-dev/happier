@@ -5,7 +5,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionReque
 import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1,
     type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -111,6 +111,10 @@ export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
             ? await readExternalActionManagedAcquireResourceInTx(reader, binding)
             : recovery.success ? await readManagedMachineInTx(reader, recovery.data.input) : null;
         if (!row) return null;
+        // The controller custodian's Retry of a Machine another Account created is its own Manage
+        // work under current credentials, like its Stop and Start; only the creator retains the job.
+        if (binding.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && binding.accountId === binding.custodianAccountId
+            && row.custodianAccountId === binding.custodianAccountId && readManagedEnrollmentAccountId(row) !== binding.accountId) return null;
         const retainedDigest = readManagedAdmissionState(row.admittedInput).requestEnvelopeDigest;
         if (readManagedEnrollmentAccountId(row) !== binding.accountId || row.custodianAccountId !== binding.custodianAccountId
             || row.controllerMachineId !== null && (row.controllerMachineId !== binding.machineId
