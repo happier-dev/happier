@@ -35,11 +35,10 @@ import { REVIEW_START_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, WORKFLOW_RUN_
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, readExternalActionManagedAcquireAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import { isSessionStopChildRootV1, isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
@@ -83,7 +82,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { isProjectCheckoutRemovalActionIdV1, PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { isProjectCheckoutRemovalActionIdV1, PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -154,6 +153,8 @@ import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendi
 import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
 import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { isBackupReceiverSetupChildOperandV1, readBackupReceiverMachineIdV1,
+    readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema,
@@ -195,7 +196,7 @@ import { WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protoco
 import { MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_LIST_ACTION_ID_V1,
     isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
-import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1, readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -2365,9 +2366,8 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
  * (Deployment preparation targets, a Backup's receiver). Derived from the root, never a purpose list. */
 function readReviewedSetupMachineIds(binding: ExternalActionExecutionAuthorizationBindingV1): readonly string[] {
     const scope = binding.deploymentPreparationAdmission;
-    const backup = binding.deploymentNativeAdmission;
-    return [binding.machineId, ...(scope?.operation === 'setup' ? scope.machineTargets ?? [] : []),
-        ...(isDeploymentBackupConfigureNativeAdmissionV1(backup) && backup.receiverMachineId ? [backup.receiverMachineId] : [])];
+    const receiver = readBackupReceiverMachineIdV1(binding);
+    return [binding.machineId, ...(scope?.operation === 'setup' ? scope.machineTargets ?? [] : []), ...(receiver ? [receiver] : [])];
 }
 
 /** A reviewed Setup spends its root at its original Home and admitted Machines. */
@@ -2388,7 +2388,7 @@ function readReviewedMachineSetupHttpPurpose(verified: Pick<VerifiedExternalActi
         : verified.effectActionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
             && proof.path === '/v1/machines/setup/report' ? MachineSetupReportInputV1Schema.safeParse(proof.body) : null;
     return input?.success === true && input.data.homeId === verified.binding.serverIdentityId
-        && 'machineId' in input.data && input.data.machineId === verified.binding.machineId ? {} : null;
+        && 'machineId' in input.data && readReviewedSetupMachineIds(verified.binding).includes(input.data.machineId) ? {} : null;
 }
 
 /** Canonical Artifact detail/header reads retain the Artifact owner's per-record access checks. */
@@ -5715,36 +5715,39 @@ export async function verifyExternalActionMachineRpcExecution(
     }
     if (request.paramsPresent !== undefined || request.paramsDigest !== undefined) return null;
 
-    const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
-        effectActionId: execution.effectActionId, method: request.method.slice(separator + 1) });
-    const setupSetChild = readProjectSetupSetChildRpcEffectV1(binding.actionId, request.method.slice(separator + 1)) === execution.effectActionId;
+    // The one cross-Machine child owner names the family; this verifier keeps its operand checks.
+    const childFamily = separator < 1 ? null : readReviewedMachineRpcChildFamilyV1({ binding, effectActionId: execution.effectActionId,
+        method: request.method.slice(separator + 1),
+        target: { machineId: request.method.slice(0, separator), installationId: execution.installationId },
+        reviewedChild: execution.reviewedChild });
+    const setupPlanChild = childFamily === 'setup_plan';
+    const setupSetChild = childFamily === 'project_setup_set';
+    const backupReceiverChild = childFamily === 'backup_receiver_setup';
     if (setupSetChild && !request.originalActionEnvelope) return null;
-    const creationEffect = readSessionActionChildCreationRpcEffectV1(request.method.slice(separator + 1), binding,
-        { machineId: request.method.slice(0, separator), installationId: execution.installationId }, execution.reviewedChild);
-    if ((binding.actionId === 'projects.service.relocate' || creationEffect !== null
-        || isSessionStopChildRootV1(binding.actionId) || setupPlanChild || setupSetChild) && request.originalActionEnvelope) {
+    // Readiness keeps its own branch below; the deployment family was decided above.
+    if (childFamily !== null && childFamily !== 'readiness' && childFamily !== 'deployment' && request.originalActionEnvelope) {
         const envelope = ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
-        const separator = request.method.indexOf(':');
         const machineId = request.method.slice(0, separator);
         const opinionChild = binding.actionId === 'discussion.second_opinion.start';
-        const stopChild = isSessionStopChildRootV1(binding.actionId);
+        const stopChild = childFamily === 'stop';
+        const moveChild = childFamily === 'service_move';
         const effect = stopChild ? isSessionStopChildV1({ rootActionId: binding.actionId,
             effectActionId: execution.effectActionId, method: request.method.slice(separator + 1), target: execution.target,
             params: request.params, ...(envelope.success && envelope.data.v === 1 ? { rootInput: envelope.data.input } : {}) }) ? 'session.stop' : null
-            : setupPlanChild ? 'machines.setup.plan'
-            : setupSetChild ? PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
-            : creationEffect !== null ? creationEffect
-            : readProjectServiceMoveChildEffectV1(request.method.slice(separator + 1));
-        if (!envelope.success || separator < 1 || effect !== execution.effectActionId
+            : execution.effectActionId;
+        if (!envelope.success || effect !== execution.effectActionId
             || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
             || request.workspaceSyncSourceRouting || request.workspaceSyncTargetRouting || request.workspaceSyncSourceWriterTargetRouting
             || request.workspaceSyncSeedRouting || request.workspaceSyncSourceExecution
             || execution.installationId !== binding.installationId
             || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId,
                 machineId: binding.machineId, envelope: envelope.data })
-            || creationEffect === null && !stopChild && !setupPlanChild && !setupSetChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
-            || creationEffect === null && !stopChild && !setupPlanChild && !setupSetChild && envelope.data.v === 1 && typeof request.params !== 'string'
-                && !isProjectServiceMoveChildInputV1(envelope.data.input, effect, machineId, request.params)) return null;
+            || moveChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
+            || moveChild && envelope.data.v === 1 && typeof request.params !== 'string'
+                && !isProjectServiceMoveChildInputV1(envelope.data.input, effect, machineId, request.params)
+            // The receiver is named by the root's signed native admission; plaintext operands must be the reviewed child.
+            || backupReceiverChild && typeof request.params !== 'string' && !isBackupReceiverSetupChildOperandV1({ binding,
+                reviewedChild: execution.reviewedChild, machineId, params: request.params })) return null;
         if (setupSetChild && envelope.data.v === 1) {
             const root = ProjectSetupSetInputV1Schema.safeParse(envelope.data.input);
             const wrapper = TargetedActionRpcRequestV1Schema.safeParse(request.params);
@@ -5779,7 +5782,8 @@ export async function verifyExternalActionMachineRpcExecution(
                 || !sameStrictJsonValue(slot.modelLaunch, derived.launch)) return null;
         }
         const machine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
-        const destination = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId, requiredRole: setupPlanChild ? 'manage' : 'use' });
+        const destination = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId,
+            requiredRole: setupPlanChild || backupReceiverChild ? 'manage' : 'use' });
         const current = await verifyCurrentExternalActionPrincipal(binding);
         const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
         const bindingAction = ActionIdSchema.safeParse(binding.actionId);

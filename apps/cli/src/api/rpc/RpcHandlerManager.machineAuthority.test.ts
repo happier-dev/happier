@@ -16,6 +16,10 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 it.each([
   { authority: 'present_user', mode: 'plain' }, { authority: 'account_automation', mode: 'plain' },
@@ -304,5 +308,56 @@ it.each([
   }
   homeAdmits = false;
   expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+  expect(effects).toBe(1);
+});
+
+it('admits a Backup receiver Setup child only on the Manage receiver its root review named', async () => {
+  const homeId = 'srv_backup_home';
+  const target = { kind: 'machine' as const, machineId: 'source' };
+  const rootInput = { serverId: homeId, environmentId: 'environment', expectedRevision: 3, intent: 'test' as const,
+    destinationSetup: { kind: 'anotherMachine' as const, machineId: 'receiver', expectedInstallationId: 'receiver-installation', receiverInputs: {} },
+    configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' }, occurrenceId: 'destination',
+      config: { path: '/private/repository' }, credentialBindings: [],
+      sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
+      ownership: { environmentId: 'environment', prefix: 'owner-prefix' }, retention: { kind: 'keepEverything' as const } } };
+  const envelope = { v: 1 as const, requestId: 'backup-configure', target, input: rootInput };
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-backup', binding: {
+    accountId: 'person', custodianAccountId: 'person', authentication: { kind: 'account', tokenEpoch: 1 },
+    accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId: 'source', installationId: 'source-installation',
+    actionId: 'deployments.backups.configure', requestId: envelope.requestId, target, environmentId: 'environment',
+    deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.backups.configure', rootInput),
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const plan = (machineId: string) => ({ homeId, machineId });
+  const reviewedChild = (params: unknown) => ({ actionId: 'machines.setup.plan' as const, role: BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.role,
+    inputDigest: computeActionInputApprovalDigestV1('machines.setup.plan', params) });
+  let effects = 0;
+  const logs: string[] = [];
+  const receiver = (machineId: string) => {
+    const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain',
+      logger: (...entry: unknown[]) => { logs.push(JSON.stringify(entry)); },
+      // Home verified the source signature and Manage on this Machine; local child matching stays real.
+      authorizeRequest: async () => ({ ok: true }) });
+    rpc.registerHandler(RPC_METHODS.MACHINE_SETUP_PLAN, () => { effects += 1; return { planned: true }; });
+    return rpc;
+  };
+  const request = (machineId: string, params: unknown = plan(machineId), child = reviewedChild(params), role: 'manage' | 'use' = 'manage') => {
+    const method = `${machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}`;
+    return { method, requestId: 'receiver-plan', params, originalActionEnvelope: envelope,
+      workspaceSyncSourceExecution: { method, requestId: 'receiver-plan', params, originalActionEnvelope: envelope,
+        externalActionExecution: { v: 1 as const, authorization: root, effectActionId: 'machines.setup.plan', target,
+          installationId: 'source-installation', reviewedChild: child, machineSignature: 'A'.repeat(86) } },
+      callerInputAuthorization: root, callerAuthority: 'account_automation' as const,
+      machineAdmission: { actorAccountId: 'person', custodianAccountId: 'bob', machineId,
+        installationId: `${machineId}-installation`, role, encryptionMode: 'plain' as const } };
+  };
+  const admitted = await receiver('receiver').handleRequest(request('receiver'));
+  expect(admitted, logs.join('\n')).toEqual({ planned: true });
+  for (const refused of [
+    // A receiver shared only for Use, a Machine the review did not name, and a changed operand.
+    request('receiver', plan('receiver'), reviewedChild(plan('receiver')), 'use'),
+    { ...request('receiver', { ...plan('receiver'), mode: 'effects' }, reviewedChild(plan('receiver'))) },
+  ]) expect(await receiver('receiver').handleRequest(refused)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  expect(await receiver('elsewhere').handleRequest(request('elsewhere'))).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
   expect(effects).toBe(1);
 });

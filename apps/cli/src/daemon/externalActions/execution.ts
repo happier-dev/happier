@@ -1,8 +1,7 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
-import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { projectSessionSpawnNewActionAuthoringInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -32,8 +31,6 @@ import type { RpcActionExecutorContext } from "@/rpc/handlers/_actionDispatchAda
 import { sameStrictJsonValue } from "@happier-dev/protocol/json/strictJsonValue";
 import { arePluginMachineMaterializationRefsEqual } from "@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1";
 import { getActionSpec } from "@happier-dev/protocol/actions/actionSpecs";
-import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actions/executor/dispatch";
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
 import { isRpcError } from '@happier-dev/protocol/rpcErrors';
@@ -68,7 +65,7 @@ import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeAct
 import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
 import { dispatchManagedSessionStart, dispatchManagedWorkflowStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, managedChildRequiresRequesterMaterial,
-  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
+  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedMachineRpcChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
 import type { ActionExecutorDeps, RuntimeActionExecute } from "@happier-dev/protocol/actions";
@@ -309,32 +306,31 @@ resolveServerFeaturesSnapshot?: () =>
         observedServerIdentityId = origin.serverIdentityId;
         const binding = context.externalActionExecutionAuthorization.binding;
         const movePacket = context.workspaceSyncSourceExecution;
-        const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
-          effectActionId: actionId, method: RPC_METHODS.MACHINE_SETUP_PLAN });
-        const creationChild = movePacket && actionId === readSessionActionChildCreationRpcEffectV1(RPC_METHODS.SESSION_SPAWN_NEW,
-          binding, context.machineAdmission, movePacket.externalActionExecution.reviewedChild);
+        // The one cross-Machine child owner names the family of this signed packet's child.
+        const childMethod = movePacket ? getActionSpec(actionId).bindings?.rpcMethod : undefined;
+        const childFamily = movePacket && childMethod && movePacket.method === `${params.machineId}:${childMethod}`
+          ? readReviewedMachineRpcChildFamilyV1({ binding, effectActionId: actionId, method: childMethod,
+            target: context.machineAdmission, reviewedChild: movePacket.externalActionExecution.reviewedChild }) : null;
+        const setupChild = childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup';
         // A Move child is deliberately SOURCE-bound. The receiving RPC owner
         // has already opened its exact requester/recipient custody; keep that
         // root while executing the reviewed child at this installed native owner.
-        const admittedMoveChild = (binding.machineId !== params.machineId || setupPlanChild)
-          && (binding.actionId === 'projects.service.relocate' || creationChild
-            || isSessionStopChildRootV1(binding.actionId) && actionId === 'session.stop' || setupPlanChild) && movePacket
+        const admittedMoveChild = childFamily !== null && (binding.machineId !== params.machineId || setupChild) && movePacket
           && context.machineAdmission?.machineId === params.machineId
           && context.machineAdmission.installationId === readInstallationIdentityIfExistsSync()?.installationId
           && context.machineAdmission.actorAccountId === binding.accountId
-          && (!setupPlanChild || context.machineAdmission.role === 'manage')
+          && (!setupChild || context.machineAdmission.role === 'manage')
           && context.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()
-          && movePacket.method === `${params.machineId}:${getActionSpec(actionId).bindings?.rpcMethod}`
           && movePacket.externalActionExecution.authorization.token === context.externalActionExecutionAuthorization.token
           && sameStrictJsonValue(movePacket.externalActionExecution.authorization.binding, binding)
           && sameStrictJsonValue(movePacket.originalActionEnvelope, context.originalActionEnvelope)
-          && await (setupPlanChild ? isReviewedMachineSetupPlanChild : isSessionStopChildRootV1(binding.actionId) ? isReviewedSessionStopChild
-            : creationChild ? isReviewedSessionActionCreationChild : isReviewedServiceMoveChild)({ authorization: context.externalActionExecutionAuthorization,
+          && await isReviewedMachineRpcChild(childFamily, { authorization: context.externalActionExecutionAuthorization,
             envelope: context.originalActionEnvelope, actionId, machineId: params.machineId, params: input,
-            ...(creationChild ? { reviewedChild: movePacket.externalActionExecution.reviewedChild } : {}),
-            ...(isSessionStopChildRootV1(binding.actionId) ? { target: context.externalActionTarget } : {}),
+            ...(childFamily === 'creation' || childFamily === 'backup_receiver_setup'
+              ? { reviewedChild: movePacket.externalActionExecution.reviewedChild } : {}),
+            ...(childFamily === 'stop' ? { target: context.externalActionTarget } : {}),
             ...(context.signal ? { signal: context.signal } : {}) });
-        if (setupPlanChild && movePacket && !admittedMoveChild) {
+        if (setupChild && movePacket && !admittedMoveChild) {
           return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
         }
         if (binding.machineId !== params.machineId && !admittedMoveChild) {

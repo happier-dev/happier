@@ -20,8 +20,8 @@ import { buildMachineAdmissionFactsSelect, resolveMachineAdmission, resolveMachi
 import { hasCurrentMachineWorkspaceSyncStorageInTx, readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
-import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { inTx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -58,21 +58,18 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             const packet = workspaceSyncSourceExecution;
             const archiveMethod = packet.externalActionExecution.deploymentChildExecution
                 ? readDeploymentArchiveRpcEffectV1(method.slice(method.indexOf(':') + 1)) : null;
-            if (!callerInputAuthorization || !(callerInputAuthorization.binding.actionId === 'projects.service.relocate'
-                || readSessionAgentReadinessChildActionV1(callerInputAuthorization.binding,
-                    packet.externalActionExecution.reviewedChild, context) === packet.externalActionExecution.effectActionId
-                || (callerInputAuthorization.binding.deploymentChildRoot === true)
-                    && (packet.externalActionExecution.deploymentChildRouting !== undefined
-                        && method === `${request.params.id}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}` || archiveMethod !== null)
-                || callerInputAuthorization.binding.actionId === 'discussion.second_opinion.start'
-                    && packet.externalActionExecution.effectActionId === 'session.spawn_new'
-                    && (method === `${request.params.id}:${RPC_METHODS.SESSION_SPAWN_NEW}`
-                      || method === `${request.params.id}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)
-                || isSessionStopChildRootV1(callerInputAuthorization.binding.actionId)
-                    && method === `${request.params.id}:${RPC_METHODS.STOP_SESSION}`
-                    && isSessionStopChildV1({ rootActionId: callerInputAuthorization.binding.actionId,
-                        effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.STOP_SESSION,
-                        target: packet.externalActionExecution.target, params: packet.params }))
+            // The one cross-Machine child owner names the family; the archive packet keeps its own path.
+            const childFamily = callerInputAuthorization ? readReviewedMachineRpcChildFamilyV1({ binding: callerInputAuthorization.binding,
+                effectActionId: packet.externalActionExecution.effectActionId, method: method.slice(method.indexOf(':') + 1),
+                target: context, reviewedChild: packet.externalActionExecution.reviewedChild }) : null;
+            const childOperand = childFamily === 'stop' ? isSessionStopChildV1({ rootActionId: callerInputAuthorization?.binding.actionId ?? '',
+                    effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.STOP_SESSION,
+                    target: packet.externalActionExecution.target, params: packet.params })
+                : childFamily === 'deployment' ? packet.externalActionExecution.deploymentChildRouting !== undefined
+                : childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup' ? context.role === 'manage'
+                : childFamily !== null;
+            if (!callerInputAuthorization || !(childOperand
+                || (callerInputAuthorization.binding.deploymentChildRoot === true) && archiveMethod !== null)
                 || !isDeepStrictEqual(packet.externalActionExecution.authorization, callerInputAuthorization)
                 || packet.method !== method || !method.startsWith(`${request.params.id}:`)
                 || context.machineId !== request.params.id

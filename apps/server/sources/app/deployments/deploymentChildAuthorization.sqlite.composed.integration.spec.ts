@@ -6747,6 +6747,7 @@ describe('deployment children retain their controller Action authority', () => {
                 config: { path: '/private/repository' }, credentialBindings: [],
                 sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
                 ownership: { environmentId: f.environment.id, prefix: 'private-owner-prefix' }, retention: { kind: 'keepEverything' as const } } };
+        const envelopes = new Map<string, ExternalActionRequestEnvelope>();
         const mint = async (input: DeploymentBackupConfigureInputV1 = original, machine = f.controller, account = f.account,
             admittedMachineRole?: 'manage') => {
             const target = { kind: 'machine' as const, machineId: machine.id };
@@ -6757,6 +6758,7 @@ describe('deployment children retain their controller Action authority', () => {
                 material: { type: 'dataKey', machineKey: machine.contentKey }, randomBytes: nacl.randomBytes })
                 : { v: 1 as const, requestId, target, input };
             const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+            envelopes.set(requestId, envelope);
             return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: account.id,
                 authentication, actionId, machineId: machine.id, target, requestId,
                 ...(admittedMachineRole ? { admittedMachineRole } : {}),
@@ -6797,6 +6799,55 @@ describe('deployment children retain their controller Action authority', () => {
             'machines.setup.plan', managed, receiverPlan)).toMatchObject({ effectActionId: 'machines.setup.plan',
             deploymentChildMachineRead: { machineId: f.outsider.id, installationId: f.outsider.installationId } });
         expect(await verify('GET', `/v1/machines/${foreign.outsider.id}`, undefined, { id: foreign.outsider.id },
+            'machines.setup.plan', managed, receiverPlan)).toBeNull();
+        // The receiver Setup Plan RPC itself: the source signs it under the root; Home admits only the named Manage receiver.
+        const receiverRpc = (machineId: string, params: unknown, reviewedChild: ReviewedActionChildHttpProofV1 = receiverPlan) => {
+            const method = `${machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}`;
+            const execution = { v: 1 as const, authorization: managed, effectActionId: 'machines.setup.plan', target,
+                installationId: f.controller.installationId, reviewedChild,
+                machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: managed.token, effectActionId: 'machines.setup.plan',
+                    target, installationId: f.controller.installationId, reviewedChild, method, requestId: 'receiver-plan', params,
+                    privateKey: f.controller.keys.secretKey }) };
+            return verifyExternalActionMachineRpcExecution(execution, { method, requestId: 'receiver-plan', params,
+                originalActionEnvelope: envelopes.get(managed.binding.requestId) });
+        };
+        const receiverRead = { homeId: serverId, machineId: f.outsider.id };
+        expect(await receiverRpc(f.outsider.id, receiverRead)).toMatchObject({ effectActionId: 'machines.setup.plan' });
+        const foreignRead = { homeId: serverId, machineId: foreign.outsider.id };
+        expect(await receiverRpc(foreign.outsider.id, foreignRead, { ...receiverPlan,
+            inputDigest: computeActionInputApprovalDigestV1('machines.setup.plan', foreignRead) })).toBeNull();
+        expect(await receiverRpc(f.outsider.id, { ...receiverRead, mode: 'effects' })).toBeNull();
+        // The receiver asks Home whether its admission for this child is current; only a Manage receiver the review names.
+        await withAuthenticatedTestApp(registerMachineAdmissionRoutes, async app => {
+            const method = `${f.outsider.id}:${RPC_METHODS.MACHINE_SETUP_PLAN}`;
+            const source = { method, requestId: 'receiver-plan', params: receiverRead,
+                originalActionEnvelope: envelopes.get(managed.binding.requestId),
+                externalActionExecution: { v: 1 as const, authorization: managed, effectActionId: 'machines.setup.plan', target,
+                    installationId: f.controller.installationId, reviewedChild: receiverPlan,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: managed.token, effectActionId: 'machines.setup.plan',
+                        target, installationId: f.controller.installationId, reviewedChild: receiverPlan, method, requestId: 'receiver-plan',
+                        params: receiverRead, privateKey: f.controller.keys.secretKey }) } };
+            const admit = (role: 'manage' | 'use') => {
+                const context = { actorAccountId: f.account.id, machineId: f.outsider.id, installationId: f.outsider.installationId,
+                    custodianAccountId: f.outsider.accountId, role, encryptionMode: mode };
+                const proof = signMachineInstallationProof({ payload: { version: 1, accountId: f.outsider.accountId,
+                    machineId: f.outsider.id, installationId: f.outsider.installationId, rpcAdmission: {
+                        context, method, callerInputAuthorization: managed, workspaceSyncSourceExecution: source } },
+                    privateKey: f.outsider.keys.secretKey });
+                return app.inject({ method: 'POST', url: `/v1/machines/${f.outsider.id}/admission/verify`,
+                    headers: { 'x-test-user-id': f.outsider.accountId },
+                    payload: { v: 1, context, method, callerInputAuthorization: managed, workspaceSyncSourceExecution: source, proof } });
+            };
+            const admitted = await admit('manage');
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            // A receiver shared only for Use cannot even form the receiver's admission proof for this child.
+            expect(() => admit('use')).toThrow('Retained source execution requires an exact source workspace purpose');
+        });
+        // The receiver Setup resolves its sources at Home for the receiver the review names, never another Machine.
+        const resolve = (machineId: string) => ({ homeId: serverId, machineId, sources: [{ kind: 'direct' as const, setup: {} }] });
+        expect(await verify('POST', '/v1/machines/setup/resolve', resolve(f.outsider.id), resolve(f.outsider.id),
+            'machines.setup.plan', managed, receiverPlan)).not.toBeNull();
+        expect(await verify('POST', '/v1/machines/setup/resolve', resolve(foreign.outsider.id), resolve(foreign.outsider.id),
             'machines.setup.plan', managed, receiverPlan)).toBeNull();
         // Setup on the receiver is Manage; a receiver shared for Use is refused at the root's admission.
         const shared = await fixture('account', 'account', { contentMode: mode });

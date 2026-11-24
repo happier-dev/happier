@@ -8,8 +8,7 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol
 import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isReviewedMachineSetupChildRootV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { isSessionAgentReadinessRootActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
@@ -1073,8 +1072,7 @@ async function executeExternalActionRequest(input: Readonly<{
             || isWorkspaceSyncRelationshipWriteActionId(actionId.data)
             || executionAuthorization.data.binding.deploymentChildRoot === true
             || actionId.data === 'deployments.teardown'
-            || isMachineSetupPlanRpcChildV1({ rootActionId: actionId.data,
-              effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
+            || isReviewedMachineSetupChildRootV1(executionAuthorization.data.binding)
             ? { originalActionEnvelope: envelope.data } : {}),
           signExternalActionApprovalInput: ({ actionId: approvalActionId, input: approvalInput, target: approvalTarget, requesterConfirmation, sessionTargetsV1 }) =>
             signExternalActionApprovalInputV1({

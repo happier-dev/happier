@@ -5,7 +5,6 @@ import { SocketRpcContinuationReturnV1Schema } from '@happier-dev/protocol/socke
 import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
 import { isExecutionRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isReviewScmPreparationEffectV1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
-import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 /**
  * Generic RPC handler manager for session and machine clients
  * Manages RPC method registration, encryption/decryption, and handler execution
@@ -57,21 +56,19 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schem
     WorkspaceSyncSeedRoutingV1Schema, isWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
-import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
-import { readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { resolveExternalActionRootInvocationAuthority, isReviewedMachineRpcChild } from '@/api/externalActionExecutionAuthorization';
 import { doesWorkspaceSyncCopyRetirementRootMatchV1, WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { openRetainedCheckoutTeardownV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentOperationForRootActionV1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
-import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRoleActionIdV1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
 import { isWorkspaceSyncTargetInstalledContent, openWorkspaceSyncTargetContent } from './workspaceSyncTargetContent';
@@ -79,7 +76,7 @@ import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObs
 import { timeWebLatencyPhase, withStorageReadTrace, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { AgentModelsProbeObservationSchema, type AgentModelsProbeObservation } from '@happier-dev/protocol/capabilities';
 import { SpawnFailureV1Schema, type SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
-import { ManagedInstallationServerOriginV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { invokeReviewedServiceMoveChild } from './reviewedServiceMoveChild';
 import { readCapabilityRefusalDetails } from '@/capabilities/errors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -655,33 +652,16 @@ export class RpcHandlerManager {
                 || request.callerAuthority === 'present_user'
                     && resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data) === 'present_user')
             && isDeepStrictEqual(request.sessionActionOrigin, parsedInputAuthorization.data.binding.sessionActionOrigin));
-        const sessionAgentReadinessChild = parsedInputAuthorization?.success && workspaceSyncSourceExecution?.success && machineAdmission?.success
-            ? readSessionAgentReadinessChildActionV1(parsedInputAuthorization.data.binding,
-                workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild, machineAdmission.data) : null;
-        const readinessEffect = sessionAgentReadinessChild && parsedInputAuthorization?.success && workspaceSyncSourceExecution?.success
-            ? resolveMachineRpcExternalActionEffectV1(targetMethod, parsedInputAuthorization.data.binding,
-                machineAdmission?.success ? machineAdmission.data : undefined, workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild) : null;
+        // The one cross-Machine child owner names the family; Setup families also need Manage here.
+        const childFamily = parsedInputAuthorization?.success && workspaceSyncSourceExecution?.success && machineAdmission?.success
+            ? readReviewedMachineRpcChildFamilyV1({ binding: parsedInputAuthorization.data.binding,
+                effectActionId: workspaceSyncSourceExecution.data.externalActionExecution.effectActionId, method: targetMethod,
+                target: machineAdmission.data, reviewedChild: workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild }) : null;
+        const sessionAgentReadinessChild = childFamily === 'readiness';
         const serviceMoveChild = Boolean(parsedInputAuthorization?.success && originalActionEnvelope?.success
             && workspaceSyncSourceExecution?.success && machineAdmission?.success && this.authorizeRequest
-            && (sessionAgentReadinessChild !== null && readinessEffect === sessionAgentReadinessChild
-                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === sessionAgentReadinessChild
-              || parsedInputAuthorization.data.binding.actionId === 'projects.service.relocate'
-                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectServiceMoveChildEffectV1(targetMethod)
-              || workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectSetupSetChildRpcEffectV1(parsedInputAuthorization.data.binding.actionId, targetMethod)
-              || workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
-                targetMethod, parsedInputAuthorization.data.binding, machineAdmission.data,
-                workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild)
-              || isSessionStopChildRootV1(parsedInputAuthorization.data.binding.actionId)
-                && targetMethod === RPC_METHODS.STOP_SESSION
-                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === 'session.stop'
-              || machineAdmission.data.role === 'manage' && isMachineSetupPlanRpcChildV1({
-                rootActionId: parsedInputAuthorization.data.binding.actionId, method: targetMethod,
-                effectActionId: workspaceSyncSourceExecution.data.externalActionExecution.effectActionId })
-              || (parsedInputAuthorization.data.binding.deploymentChildRoot === true)
-                && targetMethod === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
-                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === deploymentChildEffectActionIdForRootV1(
-                    parsedInputAuthorization.data.binding.actionId, parsedInputAuthorization.data.binding.deploymentPreparationAdmission,
-                    workspaceSyncSourceExecution.data.externalActionExecution.effectActionId))
+            && childFamily !== null
+            && (childFamily !== 'setup_plan' && childFamily !== 'backup_receiver_setup' || machineAdmission.data.role === 'manage')
             && workspaceSyncSourceExecution.data.externalActionExecution.installationId === parsedInputAuthorization.data.binding.installationId
             && isDeepStrictEqual(workspaceSyncSourceExecution.data.externalActionExecution.authorization, parsedInputAuthorization.data)
             && isDeepStrictEqual(workspaceSyncSourceExecution.data.originalActionEnvelope, originalActionEnvelope.data)
@@ -1271,43 +1251,22 @@ export class RpcHandlerManager {
                 requesterInvocation = prepared.invocation;
             }
 
-            if (serviceMoveChild && callerInputAuthorization?.binding.actionId !== 'projects.service.relocate') {
-                if (!callerInputAuthorization || !originalActionEnvelope?.success) return await deny('caller_input_authorization');
-                const creationChild = readSessionActionChildCreationRpcEffectV1(targetMethod, callerInputAuthorization.binding,
-                    machineAdmission?.success ? machineAdmission.data : undefined, workspaceSyncSourceExecution?.success
-                        ? workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild : undefined);
-                const stopChild = isSessionStopChildRootV1(callerInputAuthorization.binding.actionId);
-                const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: callerInputAuthorization.binding.actionId,
-                    effectActionId: workspaceSyncSourceExecution?.success
-                        ? workspaceSyncSourceExecution.data.externalActionExecution.effectActionId : undefined, method: targetMethod });
+            if (serviceMoveChild && childFamily !== null && childFamily !== 'service_move') {
+                if (!callerInputAuthorization || !originalActionEnvelope?.success || !workspaceSyncSourceExecution?.success) {
+                    return await deny('caller_input_authorization');
+                }
                 const deploymentChild = decryptedDeploymentChild;
-                const setupSetChild = readProjectSetupSetChildRpcEffectV1(callerInputAuthorization.binding.actionId, targetMethod);
                 if (deploymentChild && (deploymentChild.machineId !== this.scopePrefix
                     || !machineAdmission?.success || deploymentChild.installationId !== machineAdmission.data.installationId)) {
                     return await deny('caller_input_authorization');
                 }
-                const child = sessionAgentReadinessChild ?? setupSetChild ?? (setupPlanChild ? 'machines.setup.plan'
-                    : deploymentChild ? deploymentChild.actionId : stopChild ? targetMethod === RPC_METHODS.STOP_SESSION ? 'session.stop' : null
-                    : creationChild !== null ? creationChild
-                    : readProjectServiceMoveChildEffectV1(targetMethod));
-                const review = sessionAgentReadinessChild ? isReviewedSessionAgentReadinessChild : setupSetChild ? isReviewedProjectSetupSetChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
-                    : creationChild !== null ? isReviewedSessionActionCreationChild : isReviewedServiceMoveChild;
-                if (!child || !await review({ authorization: callerInputAuthorization,
+                const execution = workspaceSyncSourceExecution.data.externalActionExecution;
+                if (!await isReviewedMachineRpcChild(childFamily, { authorization: callerInputAuthorization,
                     envelope: originalActionEnvelope.data, signal: controller.signal,
-                    actionId: child, machineId: this.scopePrefix, params: decryptedParams,
-                    ...((creationChild !== null || deploymentChild || sessionAgentReadinessChild) && workspaceSyncSourceExecution?.success
-                        ? { reviewedChild: workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild } : {}),
-                    ...(stopChild ? { target: workspaceSyncSourceExecution?.success
-                        ? workspaceSyncSourceExecution.data.externalActionExecution.target : undefined } : {}),
-                    ...(creationChild !== null || deploymentChild || setupPlanChild || setupSetChild || sessionAgentReadinessChild ? { method: targetMethod } : {}) })) {
+                    actionId: childFamily === 'deployment' && deploymentChild ? deploymentChild.actionId : execution.effectActionId,
+                    machineId: this.scopePrefix, params: decryptedParams, method: targetMethod,
+                    target: execution.target, reviewedChild: execution.reviewedChild })) {
                     return await deny('caller_input_authorization');
-                }
-                if (child === 'localServices.launcher.start') {
-                    const claim = await claimReviewedServiceMoveStart({ authorization: callerInputAuthorization,
-                        envelope: originalActionEnvelope.data, signal: controller.signal });
-                    if (claim.kind !== 'claimed') return await respond(request, {
-                        ok: false, error: claim.reasonCode, errorCode: claim.reasonCode,
-                    });
                 }
             }
 
@@ -1383,7 +1342,7 @@ export class RpcHandlerManager {
                     verifyMachineAdmissionCurrent: async () => !controller.signal.aborted,
                 } : {}),
             });
-            const result = serviceMoveChild && callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
+            const result = serviceMoveChild && childFamily === 'service_move'
                 ? await invokeReviewedServiceMoveChild({ method: targetMethod, params: decryptedParams, context: handlerContext,
                     execute: context => Promise.resolve(handler(decryptedParams, context)) })
                 : await handler(decryptedParams, handlerContext);

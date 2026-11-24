@@ -1,4 +1,4 @@
-import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { readSessionStopChildTargetV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -19,7 +19,6 @@ import axios from '@/api/client/credentialAxios';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SessionRequesterBootstrapRpcRequestV1Schema, sealSessionRequesterBootstrapRpcRequestV1,
   SessionRequesterHandoffBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffBootstrapRpcRequestV1,
@@ -46,19 +45,15 @@ import {
   createExternalActionMachineRpcExecution,
   createExternalActionSourceMachineRpcExecution,
   readExternalActionSourceMachineRpcSigner,
-  isReviewedServiceMoveChild,
-  isReviewedMachineSetupPlanChild,
+  isReviewedMachineRpcChild,
   isReviewedSessionActionCreationChild,
-  isReviewedSessionStopChild,
-  isReviewedDeploymentChild,
-  isReviewedSessionAgentReadinessChild,
   dispatchOriginalAccountAction,
   readExternalActionRequesterInvocation,
   type ExternalActionMachineRequestSigningKey,
   type DeploymentArchiveOriginForHost,
   type DeploymentChildDerivationRefusal,
 } from '@/api/externalActionExecutionAuthorization';
-import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import {
   callSocketRpc,
   isSocketIoAckTimeoutError,
@@ -70,7 +65,6 @@ import {
 } from '@happier-dev/sync-client';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -230,7 +224,6 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   expectedRunnerMachineContentKeyBinding?: ExpectedRunnerMachineContentKeyBindingScope;
   requireCurrentMachine?: boolean;
   requiredMachineKind?: 'persistent' | 'ephemeral_session_runner';
-  deploymentChild?: Readonly<{ machineId: string; installationId: string }>;
   deploymentSetupExecution?: WorkspaceSyncSourceExecutionV1;
   deploymentArchiveExecution?: WorkspaceSyncSourceExecutionV1;
   expectedInstallationId?: string;
@@ -242,21 +235,13 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
     && readDeploymentReferenceServiceListEnvironmentIdV1(externalAuthorization?.binding.actionId, params.externalAction?.effectActionId,
       readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined);
-  const readinessAction = readSessionAgentReadinessChildActionV1(externalAuthorization?.binding,
-    readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined,
-    params.externalAction ? { machineId: params.machineId, installationId: params.externalAction.installationId } : undefined);
-  const moveChildRead = (externalAuthorization?.binding.actionId === 'projects.service.relocate'
-    && params.externalAction?.effectActionId !== externalAuthorization.binding.actionId)
-    || Boolean(externalAuthorization && params.externalAction
-      && params.externalAction.effectActionId === readSessionActionChildCreationRpcEffectV1(params.method,
-        externalAuthorization.binding, { machineId: params.machineId, installationId: params.externalAction.installationId },
-        readHostAdmittedReviewedChildV1(params.externalAction.context) ?? undefined))
-    || isSessionStopChildRootV1(externalAuthorization?.binding.actionId)
-      && params.externalAction?.effectActionId === 'session.stop'
-    || isMachineSetupPlanRpcChildV1({ rootActionId: externalAuthorization?.binding.actionId,
-      effectActionId: params.externalAction?.effectActionId, method: RPC_METHODS.MACHINE_SETUP_PLAN })
-    || params.deploymentChild !== undefined
-    || Boolean(readinessAction && readinessAction === params.externalAction?.effectActionId);
+  const childFamily = params.externalAction ? readReviewedMachineRpcChildFamilyV1({ binding: externalAuthorization?.binding,
+    effectActionId: params.externalAction.effectActionId, method: params.method,
+    target: { machineId: params.machineId, installationId: params.externalAction.installationId },
+    reviewedChild: readHostAdmittedReviewedChildV1(params.externalAction.context) ?? undefined }) : null;
+  // A Backup receiver read spends its reviewed child's own requester projection
+  // (Home admits it by that proof); other cross-Machine families read under the signed root carrier.
+  const moveChildRead = childFamily !== null && childFamily !== 'backup_receiver_setup';
   if (params.externalAction && (!externalAuthorization || !externalTarget)) {
     throw new Error('External Action Machine HTTP authorization is unavailable');
   }
@@ -354,8 +339,8 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
     throw new MachineRpcMachineKindMismatchError(params.machineId, params.requiredMachineKind);
   }
   const access = raw?.access === undefined ? undefined : AccessibleMachineAccessV1Schema.parse(raw.access);
-  if (isMachineSetupPlanRpcChildV1({ rootActionId: externalAuthorization?.binding.actionId,
-    effectActionId: params.externalAction?.effectActionId, method: RPC_METHODS.MACHINE_SETUP_PLAN }) && access?.role !== 'manage') {
+  // Setup on a Machine is Manage work, for each Setup family the owner names.
+  if ((childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup') && access?.role !== 'manage') {
     throw new MachineRpcTargetNotCurrentError(params.machineId, 'setup_manage_required');
   }
   if (access && access.accessState !== 'ready') throw new MachineRpcEncryptionModeMismatchError(params.machineId);
@@ -467,22 +452,19 @@ export async function callExactMachineRpc(params: Readonly<{
     const machineId = params.machineId.trim();
     if (!machineId) throw new Error('Machine id is required');
     const moveAuthorization = params.externalAction?.context.externalActionExecutionAuthorization;
-    const stopChild = isSessionStopChildRootV1(moveAuthorization?.binding.actionId)
-      && params.externalAction?.effectActionId === 'session.stop' && params.method === RPC_METHODS.STOP_SESSION;
-    const stopChildTarget = stopChild ? readSessionStopChildTargetV1(params.request) : null;
-    const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: moveAuthorization?.binding.actionId,
-      effectActionId: params.externalAction?.effectActionId, method: params.method });
     const reviewedChild = readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined;
+    // The one owner decides whether this reviewed child may reach another Machine.
+    const childFamily = params.externalAction ? readReviewedMachineRpcChildFamilyV1({ binding: moveAuthorization?.binding,
+      effectActionId: params.externalAction.effectActionId, method: params.method,
+      target: { machineId, installationId: params.externalAction.installationId }, reviewedChild }) : null;
+    const stopChild = childFamily === 'stop';
+    const stopChildTarget = stopChild ? readSessionStopChildTargetV1(params.request) : null;
+    const setupPlanChild = childFamily === 'setup_plan';
     const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
       && readDeploymentReferenceServiceListEnvironmentIdV1(moveAuthorization?.binding.actionId, params.externalAction?.effectActionId, reviewedChild);
     const referenceExecution = referenceServiceList ? readRequesterAccountActionContext(moveAuthorization)?.deploymentChildExecution : undefined;
-    const creationChild = params.externalAction?.effectActionId === readSessionActionChildCreationRpcEffectV1(params.method,
-      moveAuthorization?.binding, params.externalAction ? { machineId, installationId: params.externalAction.installationId } : undefined, reviewedChild);
-    const readinessAction = readSessionAgentReadinessChildActionV1(moveAuthorization?.binding, reviewedChild,
-      params.externalAction ? { machineId, installationId: params.externalAction.installationId } : undefined);
-    const readinessChild = readinessAction !== null && readinessAction === params.externalAction?.effectActionId
-      && resolveMachineRpcExternalActionEffectV1(params.method, moveAuthorization?.binding,
-        params.externalAction ? { machineId, installationId: params.externalAction.installationId } : undefined, reviewedChild) === readinessAction;
+    const creationChild = childFamily === 'creation';
+    const readinessChild = childFamily === 'readiness';
     const deploymentChild = moveAuthorization && params.externalAction ? readDeploymentChildRpcV1({ deploymentChildRoot: moveAuthorization.binding.deploymentChildRoot,
       rootActionId: moveAuthorization.binding.actionId, effectActionId: params.externalAction.effectActionId,
       rootPreparationAdmission: moveAuthorization.binding.deploymentPreparationAdmission, reviewedChild,
@@ -506,8 +488,7 @@ export async function callExactMachineRpc(params: Readonly<{
       || archiveEffect === 'daemon.filesystem.copy' && machineId !== deploymentArchive.job.machineId)) {
       throw new MachineRpcTargetNotCurrentError(machineId, 'archive_origin_mismatch');
     }
-    const moveChild = (moveAuthorization?.binding.actionId === 'projects.service.relocate'
-      && params.externalAction?.effectActionId !== moveAuthorization.binding.actionId) || creationChild || stopChild || setupPlanChild || deploymentChild !== null || readinessChild;
+    const moveChild = childFamily !== null;
     const timeoutMs = params.timeoutMs === null ? null
       : typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_MACHINE_RPC_TIMEOUT_MS;
     const setupTimeoutMs = timeoutMs ?? DEFAULT_MACHINE_RPC_TIMEOUT_MS;
@@ -573,7 +554,6 @@ export async function callExactMachineRpc(params: Readonly<{
         ...(params.requireCurrentMachine ? { requireCurrentMachine: true } : {}),
         ...(params.requiredMachineKind ? { requiredMachineKind: params.requiredMachineKind } : {}),
         ...(params.externalAction ? { externalAction: params.externalAction } : {}),
-        ...(deploymentChild ? { deploymentChild } : {}),
         ...(deploymentSetupExecution ? { deploymentSetupExecution } : {}),
         ...(deploymentArchive ? { deploymentArchiveExecution: deploymentArchive.execution } : {}),
         ...(archiveInstallationId ? { expectedInstallationId: archiveInstallationId } : {}),
@@ -581,7 +561,7 @@ export async function callExactMachineRpc(params: Readonly<{
       });
       const accountRpc = machineTarget.machineRpcAuthorization === 'account';
       if (!accountRpc && moveChild && params.externalAction && moveAuthorization) {
-        if (moveAuthorization.binding.actionId === 'projects.service.relocate') {
+        if (childFamily === 'service_move') {
           const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
           const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
           // Execution stamps Stop's derived confirmation nonce after review; the receiver
@@ -595,17 +575,11 @@ export async function callExactMachineRpc(params: Readonly<{
         if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
         if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
         if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');
-        const review = readinessChild ? isReviewedSessionAgentReadinessChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
-          : creationChild ? isReviewedSessionActionCreationChild : isReviewedServiceMoveChild;
         let derivationReason: DeploymentChildDerivationRefusal | undefined;
-        const reviewInput = { authorization: moveAuthorization,
+        if (!childFamily || !await isReviewedMachineRpcChild(childFamily, { authorization: moveAuthorization,
           envelope: params.externalAction.context.originalActionEnvelope, signal,
-          actionId: params.externalAction.effectActionId, machineId, params: params.request,
-          ...(stopChild ? { target: stopChildTarget } : {}),
-          ...(creationChild || deploymentChild || setupPlanChild || readinessChild ? { method: params.method } : {}),
-          ...(creationChild || deploymentChild || readinessChild ? { reviewedChild, onRefused: (reason: DeploymentChildDerivationRefusal) => { derivationReason = reason; } } : {}),
-        };
-        if (!await review(reviewInput)) {
+          actionId: params.externalAction.effectActionId, machineId, params: params.request, method: params.method,
+          target: stopChildTarget, reviewedChild, onRefused: reason => { derivationReason = reason; } })) {
           throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
         }
       }
@@ -701,7 +675,7 @@ export async function callExactMachineRpc(params: Readonly<{
             if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_invalid');
             const sealed = await seal({ authorization: transportAuthorization,
               purpose: { kind: 'machine_rpc', method: params.method, params: request,
-                ...(creationChild && reviewedChild ? { reviewedChild } : {}),
+                ...((creationChild || childFamily === 'backup_receiver_setup') && reviewedChild ? { reviewedChild } : {}),
                 ...(moveChild && !readinessChild ? { recipient: { machineId, installationId: machineTarget.installationId } } : {}) }, installationPublicKey: publicKey });
             if (!sealed || !sealed.requesterAccountContext) throw new Error('Requester Account custody unavailable');
             transportAuthorization = sealed;

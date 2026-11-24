@@ -5,9 +5,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { RoleArtifactV1Schema } from '../../prompts/roles/roleArtifactV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
-import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
-import { RPC_METHODS } from '../../rpc/methods.js';
+import { readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -37,10 +35,11 @@ import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourc
 import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema } from '../../projects/projectAccountRowsV1.js';
 import { ProjectSetupContentV1Schema } from '../../projects/projectSetupV1.js';
 import { ProjectTrustValueV1Schema, QualifiedProjectTrustProjectV1Schema } from '../../workspaces/projectSetup/projectTrustRowV1.js';
-import { readSessionActionChildCreationRpcEffectV1 } from './sessionCreationActionIdsV1.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/projectActionIdsV1.js';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
-import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
+import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { isBackupReceiverSetupChildOperandV1, readReviewedMachineRpcChildFamilyV1 } from '../../machines/peer/mediation/rpc/reviewedChildFamilyV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
@@ -678,7 +677,7 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
     throw new Error('managed_controller_credentials_forbidden');
   const preparation = input.purpose.kind === 'workspace_sync_prepare' ? input.purpose : undefined;
   const moveRecipient = input.purpose.kind === 'machine_rpc' ? input.purpose.recipient : undefined;
-  if (moveRecipient && !isReviewedChildRecipientPurpose(authorization, input.purpose)) throw new Error('requester_account_move_root_mismatch');
+  if (moveRecipient && !isReviewedChildRecipientPurposeV1(authorization, input.purpose)) throw new Error('requester_account_move_root_mismatch');
   if (preparation && !isWorkspaceSyncPreparationRoot(authorization)) throw new Error('requester_account_prepare_root_mismatch');
   const wake = input.purpose.kind === 'managed_finite_wake' ? authorization.managedFiniteWake : undefined;
   if (input.purpose.kind === 'managed_finite_wake' && (!wake?.target.controller
@@ -750,7 +749,7 @@ function openInstallationContext(input: Omit<OpenRequesterAccountContextInput, '
     const authorization = parsed.data;
     const preparation = input.purpose.kind === 'workspace_sync_prepare' ? input.purpose : undefined;
     const moveRecipient = input.purpose.kind === 'machine_rpc' ? input.purpose.recipient : undefined;
-    if (input.purpose.kind === 'machine_rpc' && moveRecipient && !isReviewedChildRecipientPurpose(authorization, input.purpose)) return null;
+    if (input.purpose.kind === 'machine_rpc' && moveRecipient && !isReviewedChildRecipientPurposeV1(authorization, input.purpose)) return null;
     if (preparation && !isWorkspaceSyncPreparationRoot(authorization)) return null;
     const wake = input.purpose.kind === 'managed_finite_wake' ? authorization.managedFiniteWake : undefined;
     if (input.purpose.kind === 'managed_finite_wake' && (!wake
@@ -773,30 +772,35 @@ function openInstallationContext(input: Omit<OpenRequesterAccountContextInput, '
   } catch { return null; }
 }
 
-function isReviewedChildRecipientPurpose(authorization: ExternalActionExecutionAuthorizationV1,
+/** Whether this purpose may seal requester custody to a recipient other than the root's own installation. */
+export function isReviewedChildRecipientPurposeV1(authorization: ExternalActionExecutionAuthorizationV1,
   purpose: ExternalActionRequesterAccountContextPurposeV1): boolean {
-  if (purpose.kind === 'machine_rpc') {
-    if (isMachineSetupPlanRpcChildV1({ rootActionId: authorization.binding.actionId,
-      effectActionId: 'machines.setup.plan', method: purpose.method })) {
+  if (purpose.kind !== 'machine_rpc' || !purpose.recipient) return false;
+  const { binding } = authorization;
+  const recipient = purpose.recipient;
+  // Custody leaves the root's own installation only for a child the one cross-Machine owner names.
+  switch (readReviewedMachineRpcChildFamilyV1({ binding, method: purpose.method, target: recipient,
+    reviewedChild: purpose.reviewedChild })) {
+    case 'setup_plan': {
       const input = MachineSetupPlanInputV1Schema.safeParse(purpose.params);
-      return input.success && input.data.homeId === authorization.binding.serverIdentityId
-        && purpose.recipient?.machineId === input.data.machineId;
+      return input.success && input.data.homeId === binding.serverIdentityId && recipient.machineId === input.data.machineId;
     }
-    const requestedChild = DeploymentChildRpcV1Schema.safeParse(purpose.params);
-    const child = readDeploymentChildRpcV1({ deploymentChildRoot: authorization.binding.deploymentChildRoot, rootActionId: authorization.binding.actionId,
-      rootPreparationAdmission: authorization.binding.deploymentPreparationAdmission,
-      effectActionId: deploymentChildEffectActionIdForRootV1(authorization.binding.actionId,
-        authorization.binding.deploymentPreparationAdmission, requestedChild.success ? requestedChild.data.actionId : undefined) ?? '',
-      method: purpose.method, params: purpose.params });
-    if (child) return purpose.recipient?.machineId === child.machineId
-      && purpose.recipient.installationId === child.installationId;
+    case 'backup_receiver_setup':
+      return isBackupReceiverSetupChildOperandV1({ binding, reviewedChild: purpose.reviewedChild,
+        machineId: recipient.machineId, params: purpose.params });
+    case 'deployment': {
+      const requested = DeploymentChildRpcV1Schema.safeParse(purpose.params);
+      const child = readDeploymentChildRpcV1({ deploymentChildRoot: binding.deploymentChildRoot, rootActionId: binding.actionId,
+        rootPreparationAdmission: binding.deploymentPreparationAdmission, effectActionId: deploymentChildEffectActionIdForRootV1(binding.actionId,
+          binding.deploymentPreparationAdmission, requested.success ? requested.data.actionId : undefined) ?? '',
+        ...(purpose.reviewedChild ? { reviewedChild: purpose.reviewedChild } : {}), method: purpose.method, params: purpose.params });
+      return child !== null && recipient.machineId === child.machineId && recipient.installationId === child.installationId;
+    }
+    case 'stop': return readSessionStopChildTargetV1(purpose.params) !== null;
+    case 'service_move': case 'creation': case 'project_setup_set': return true;
+    // Readiness stays on the root's own installation; no recipient is sealed for it.
+    case 'readiness': case null: return false;
   }
-  return authorization.binding.actionId === 'projects.service.relocate'
-    || purpose.kind === 'machine_rpc' && readSessionActionChildCreationRpcEffectV1(
-      purpose.method, authorization.binding, purpose.recipient, purpose.reviewedChild) !== null
-    || isSessionStopChildRootV1(authorization.binding.actionId)
-      && purpose.kind === 'machine_rpc' && purpose.method === RPC_METHODS.STOP_SESSION
-      && readSessionStopChildTargetV1(purpose.params) !== null;
 }
 
 function isWorkspaceSyncPreparationRoot(authorization: ExternalActionExecutionAuthorizationV1): boolean {

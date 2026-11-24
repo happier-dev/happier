@@ -21,7 +21,6 @@ import {
 } from './methods.js';
 
 import { z } from '../zodRuntimePolicy.js';
-import { deploymentChildEffectActionIdForRootV1 } from '../deployments/deploymentActionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { ActionRequiredAuthoritySchema, type ActionRequiredAuthority } from '../actions/metadata.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from '../auth/callerInputConstraintsV1.js';
@@ -34,7 +33,6 @@ import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messa
 import { ActionRequestAttributionV1Schema } from '../actions/actionRequestAttributionV1.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { isSessionStopChildV1 } from '../actions/sessionSectionArchive.js';
-import { isMachineSetupPlanRpcChildV1, readSessionAgentReadinessChildActionV1 } from '../machines/managed/actionIdsV1.js';
 
 import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '../actions/externalActionApi.js';
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../actions/externalActionApi.js';
@@ -46,10 +44,8 @@ export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissio
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectWorkspaceSyncOpenActionV1 } from '../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '../actions/operations/methodsV1.js';
 import { readDeploymentArchiveRpcEffectV1 } from '../deployments/deploymentArchiveRpcV1.js';
-import { readSessionActionChildCreationRpcEffectV1 } from '../sessions/creation/sessionCreationActionIdsV1.js';
 import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1 } from '../machines/managed/actionsV1.js';
-import { resolveMachineRpcExternalActionEffectV1 } from '../machines/peer/mediation/rpc/routePolicyV1.js';
-import { readProjectServiceMoveChildEffectV1 } from '../workspaces/projectServiceRelocationV1.js';
+import { isBackupReceiverSetupChildOperandV1, readReviewedMachineRpcChildFamilyV1 } from '../machines/peer/mediation/rpc/reviewedChildFamilyV1.js';
 
 /** Shared retained-root transport grammar, not signature or operand admission.
  * The Home and receiving host still verify the signed root and derived child.
@@ -73,28 +69,31 @@ export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
   if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, root)) {
     return exactMachineRoot && method === PROJECT_FINITE_ACTION_RPC_METHODS_V1[root as keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1] ? 'root' : null;
   }
-  const target = { machineId, installationId: execution.installationId };
-  const readiness = readSessionAgentReadinessChildActionV1(binding, execution.reviewedChild, target);
-  if (readiness !== null) return readiness === effect
-    && resolveMachineRpcExternalActionEffectV1(method, binding, target, execution.reviewedChild) === readiness ? 'child' : null;
-  const creation = readSessionActionChildCreationRpcEffectV1(method, binding, target, execution.reviewedChild);
-  if (creation !== null) return effect === creation ? 'child' : null;
-  if (isMachineSetupPlanRpcChildV1({ rootActionId: root, effectActionId: effect, method })) {
-    if (typeof params === 'string') return 'child';
-    const plan = MachineSetupPlanInputV1Schema.safeParse(params);
-    return plan.success && plan.data.machineId === machineId && plan.data.homeId === binding.serverIdentityId
-      && (envelope.v === 2 || readMachineSetupPlanChildInputV1({ rootActionId: root,
-        rootInput: envelope.input, machineId, input: params }) !== null) ? 'child' : null;
+  // The cross-Machine child owner decides the family; this grammar keeps only
+  // the operand facts a relay can read before the Home verifier runs.
+  switch (readReviewedMachineRpcChildFamilyV1({ binding, effectActionId: effect, method,
+    target: { machineId, installationId: execution.installationId }, reviewedChild: execution.reviewedChild })) {
+    case 'setup_plan': {
+      if (typeof params === 'string') return 'child';
+      const plan = MachineSetupPlanInputV1Schema.safeParse(params);
+      return plan.success && plan.data.machineId === machineId && plan.data.homeId === binding.serverIdentityId
+        && (envelope.v === 2 || readMachineSetupPlanChildInputV1({ rootActionId: root,
+          rootInput: envelope.input, machineId, input: params }) !== null) ? 'child' : null;
+    }
+    case 'backup_receiver_setup':
+      return typeof params === 'string' || isBackupReceiverSetupChildOperandV1({ binding,
+        reviewedChild: execution.reviewedChild, machineId, params }) ? 'child' : null;
+    case 'stop':
+      return isSessionStopChildV1({ rootActionId: root, effectActionId: effect, method,
+        target: execution.target, params, ...(envelope.v === 1 ? { rootInput: envelope.input } : {}) }) ? 'child' : null;
+    case 'deployment': {
+      const child = execution.deploymentChildRouting;
+      return child?.machineId === machineId && child.actionId === effect ? 'child' : null;
+    }
+    case 'readiness': case 'creation': case 'service_move': case 'project_setup_set': return 'child';
+    case null: break;
   }
-  if (isSessionStopChildV1({ rootActionId: root, effectActionId: effect, method,
-    target: execution.target, params, ...(envelope.v === 1 ? { rootInput: envelope.input } : {}) })) return 'child';
-  if (root === 'projects.service.relocate') return effect === readProjectServiceMoveChildEffectV1(method) ? 'child' : null;
   if (root === 'action.operations.cancel') return exactMachineRoot && method === ACTION_OPERATION_RPC_METHODS_V1.cancel ? 'root' : null;
-  if (method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD && execution.deploymentChildRouting) {
-    const child = execution.deploymentChildRouting;
-    return child.machineId === machineId && child.actionId === effect
-      && child.actionId === deploymentChildEffectActionIdForRootV1(root, binding.deploymentPreparationAdmission, child.actionId) ? 'child' : null;
-  }
   return execution.deploymentChildExecution !== undefined && readDeploymentArchiveRpcEffectV1(method) === effect ? 'child' : null;
 }
 
@@ -249,31 +248,23 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
   externalActionExecution: z.lazy(() => ExternalActionMachineRpcExecutionV1Schema),
   /** Reviewed composite children retain the SOURCE packet and exact original envelope. */
   originalActionEnvelope: z.optional(z.lazy(() => ExternalActionRequestEnvelopeSchema)),
-}).check(z.refine(value => !value.originalActionEnvelope
-  || value.externalActionExecution.authorization.binding.actionId === 'projects.service.relocate'
-  || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
-    effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
-  || readSessionAgentReadinessChildActionV1(value.externalActionExecution.authorization.binding,
-    value.externalActionExecution.reviewedChild, { machineId: value.method.slice(0, value.method.indexOf(':')),
-      installationId: value.externalActionExecution.installationId }) === value.externalActionExecution.effectActionId
-  || value.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
-    value.method.slice(value.method.indexOf(':') + 1), value.externalActionExecution.authorization.binding,
-    { machineId: value.method.slice(0, value.method.indexOf(':')), installationId: value.externalActionExecution.installationId },
-    value.externalActionExecution.reviewedChild)
-  || value.externalActionExecution.deploymentChildRouting !== undefined
-    && value.method === `${value.externalActionExecution.deploymentChildRouting.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
-    && value.externalActionExecution.effectActionId === value.externalActionExecution.deploymentChildRouting.actionId
-    && deploymentChildEffectActionIdForRootV1(value.externalActionExecution.authorization.binding.actionId,
-      value.externalActionExecution.authorization.binding.deploymentPreparationAdmission,
-      value.externalActionExecution.effectActionId) === value.externalActionExecution.deploymentChildRouting.actionId
-  || isSessionStopChildV1({
-    rootActionId: value.externalActionExecution.authorization.binding.actionId,
-    effectActionId: value.externalActionExecution.effectActionId,
-    method: value.method.slice(value.method.indexOf(':') + 1),
-    target: value.externalActionExecution.target,
-    params: value.params,
-    ...(value.originalActionEnvelope?.v === 1 ? { rootInput: value.originalActionEnvelope.input } : {}),
-  }))));
+}).check(z.refine(value => {
+  if (!value.originalActionEnvelope) return true;
+  const execution = value.externalActionExecution;
+  const method = value.method.slice(value.method.indexOf(':') + 1);
+  const machineId = value.method.slice(0, value.method.indexOf(':'));
+  // Only a cross-Machine reviewed child carries its original envelope; the owner names the family.
+  switch (readReviewedMachineRpcChildFamilyV1({ binding: execution.authorization.binding, effectActionId: execution.effectActionId,
+    method, target: { machineId, installationId: execution.installationId }, reviewedChild: execution.reviewedChild })) {
+    case null: return false;
+    case 'deployment': return execution.deploymentChildRouting?.machineId === machineId
+      && execution.deploymentChildRouting.actionId === execution.effectActionId;
+    case 'stop': return isSessionStopChildV1({ rootActionId: execution.authorization.binding.actionId,
+      effectActionId: execution.effectActionId, method, target: execution.target, params: value.params,
+      ...(value.originalActionEnvelope.v === 1 ? { rootInput: value.originalActionEnvelope.input } : {}) });
+    default: return true;
+  }
+})));
 export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSyncSourceExecutionV1Schema>>;
 
 /** Target custody has its own phase binding; the moved Session need not live on this child. */

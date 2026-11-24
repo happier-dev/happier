@@ -18,7 +18,9 @@ import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@hap
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { readRequesterAccountActionContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
@@ -28,7 +30,8 @@ import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/m
 const homes: Array<Readonly<{ close(): Promise<void> }>> = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => home.close())); });
 
-async function createHome(ownerToken: string | null, installationPublicKey?: string, secret?: Uint8Array, peerCustodian?: string) {
+async function createHome(ownerToken: string | null, installationPublicKey?: string, secret?: Uint8Array, peerCustodian?: string,
+  /** Home admits the reviewed receiver read; its credential is the server tests' concern (7ca17357b47). */ reviewedPeerRead = false) {
   const accountMode = secret ? 'e2ee' : 'plain';
   const codec = secret ? createMachineContentCodec({ encryptionKey: secret, encryptionVariant: 'legacy' }) : null;
   const content: SocketRpcContent = codec?.mode === 'e2ee' ? { mode: 'e2ee', cipher: {
@@ -40,7 +43,12 @@ async function createHome(ownerToken: string | null, installationPublicKey?: str
   const http = createServer((request, response) => {
     requests.push({ path: request.url, authorization: request.headers.authorization });
     response.setHeader('Content-Type', 'application/json');
-    if (ownerToken === null || request.headers.authorization !== `Bearer ${ownerToken}`) {
+    const signedReviewedRead = reviewedPeerRead && request.url === '/v1/machines/peer';
+    if (signedReviewedRead) {
+      response.end(JSON.stringify({ machine: { id: 'peer', installationId: 'peer-installation', installationPublicKey,
+        access: { custodian: { accountId: peerCustodian, displayName: '' }, role: 'manage', resourceMode: accountMode, accessState: 'ready' },
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } }));
+    } else if (ownerToken === null || request.headers.authorization !== `Bearer ${ownerToken}`) {
       response.writeHead(401).end('{}');
     } else if (request.url === '/v1/account/encryption/currentness') {
       response.end(JSON.stringify({ mode: accountMode, version: 1, signingKeyFingerprint: null,
@@ -161,6 +169,54 @@ describe('Machine RPC replacement Home custody', () => {
         externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } }));
     await expect(result).resolves.toEqual({ status: 'running' });
     expect(owner.calls).toEqual([`peer:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
+  });
+  // A Backup configure root reaches only the receiver its own review named (owner ruling 2026-11-23: whoever holds it).
+  it.each([['named', 'peer'], ['not named', 'elsewhere']] as const)('seals a Backup receiver Setup Plan child only to the receiver its review named (%s)', async (_case, receiverMachineId) => {
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'session-account' })).toString('base64url')}.signature`, encryption: null } as const;
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'), undefined, 'bob', true);
+    const homeId = 'srv_backup_home';
+    const target = { kind: 'machine' as const, machineId: 'current' };
+    const rootInput = { serverId: homeId, environmentId: 'environment', expectedRevision: 3, intent: 'test' as const,
+      destinationSetup: { kind: 'anotherMachine' as const, machineId: receiverMachineId, expectedInstallationId: 'peer-installation', receiverInputs: {} },
+      configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' }, occurrenceId: 'destination',
+        config: { path: '/private/repository' }, credentialBindings: [],
+        sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
+        ownership: { environmentId: 'environment', prefix: 'owner-prefix' }, retention: { kind: 'keepEverything' as const } } };
+    const envelope = { v: 1 as const, requestId: 'backup-configure', target, input: rootInput };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-backup-root', binding: {
+      accountId: 'session-account', custodianAccountId: 'session-account', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId: 'current', installationId: 'installation',
+      actionId: 'deployments.backups.configure', requestId: envelope.requestId, target, environmentId: 'environment',
+      deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.backups.configure', rootInput),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: homeId,
+      bootstrap: { credentials, serverHttpBaseUrl: owner.url, isCurrent: async () => true,
+        attribution: { accountId: 'session-account', serverId: homeId, machineId: 'current', installationId: 'installation' } } });
+    if (!authorization) throw new Error('Expected admitted Backup requester custody');
+    const transport = createCliMachineActionTransport({ credentials: { token: 'foreign-daemon', encryption: null },
+      serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: owner.url,
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: keys.secretKey });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, runtimeAccountId: 'session-account', serverId: homeId,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope };
+    // The host issuer's ordinary reviewed-child port produces the reviewed child; only Home is a boundary fixture.
+    const declared = Object.values(BACKUP_RECEIVER_SETUP_CHILDREN_V1).map(child => ({ ...child, scopeInput: { homeId, machineId: 'peer' } }));
+    const port = createHostReviewedChildPortV1({ actionId: 'deployments.backups.configure', input: rootInput, context,
+      plan: { children: declared }, reviewAdmitted: true,
+      policies: declared.map(child => ({ action: child.action, role: child.role, surface: 'ui' as const })),
+      execute: async (input, childContext) => ({ ok: true, result: await runWithServerHttpBaseUrl(owner.url, () => transport.callMachineAction({
+        machineId: 'peer', method: RPC_METHODS.MACHINE_SETUP_PLAN, exactMachine: true, effectActionId: 'machines.setup.plan',
+        request: input, context: childContext })) }) });
+    const result = port.invoke({ ...BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan, input: { homeId, machineId: 'peer' } });
+    if (receiverMachineId === 'peer') {
+      await expect(result).resolves.toEqual({ ok: true, result: { status: 'running' } });
+      expect(owner.calls).toEqual([`peer:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
+    } else {
+      // The issuer and the sender refuse a Machine the root's review did not name; nothing is dispatched.
+      await expect(result).rejects.toBeDefined();
+      expect(owner.calls).toEqual([]);
+    }
   });
   it.each([
     { foreignRuntime: false, accountMode: 'plain' as const },

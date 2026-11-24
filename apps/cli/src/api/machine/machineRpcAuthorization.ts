@@ -6,7 +6,6 @@ import {
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
@@ -16,7 +15,6 @@ import {
 import {
   resolveMachineRpcRoutePolicy,
   resolveMachineRpcExternalActionEffectV1,
-  readSessionAgentReadinessChildActionV1,
 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import {
   canExecuteRequesterWorkspaceOnDaemonForHost,
@@ -101,9 +99,7 @@ import type {
   RpcAuthorizationResult,
   RpcAdmissionPredicate,
 } from '@/api/rpc/types';
-import {
-  isMachineSetupPlanRpcChildV1,
-} from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
@@ -129,8 +125,8 @@ import {
   createHttpStatusError,
   readHttpStatus,
 } from '@/api/client/httpStatusError';
-import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { deploymentChildEffectActionIdForRootV1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
   ManagedInstallationServerOriginV1Schema,
   ManagedInstallationCapabilityRequestV1Schema,
@@ -748,49 +744,36 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           );
     const deploymentRouting =
       sourceExecution?.externalActionExecution.deploymentChildRouting;
-    // Retain this exact child for Home's signed controller/receipt/member
-    // recheck; recognizing the family does not make it current locally.
-    const deploymentChild =
-      (originalRoot?.binding.deploymentChildRoot === true) &&
-      sourceExecution?.externalActionExecution.effectActionId ===
-        deploymentChildEffectActionIdForRootV1(originalRoot?.binding.actionId ?? '', originalRoot?.binding.deploymentPreparationAdmission, sourceExecution?.externalActionExecution.effectActionId) &&
-      input.method ===
-        `${context.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}` &&
-      deploymentRouting?.actionId === sourceExecution?.externalActionExecution.effectActionId &&
-      deploymentRouting?.machineId === context.machineId &&
-      deploymentRouting.installationId === context.installationId;
-    const readinessChild = readSessionAgentReadinessChildActionV1(originalRoot?.binding,
-      sourceExecution?.externalActionExecution.reviewedChild, context);
-    const readinessSource = readinessChild !== null && sourceExecution?.externalActionExecution.effectActionId === readinessChild
-      && resolveMachineRpcExternalActionEffectV1(input.method?.slice(input.method.indexOf(':') + 1) ?? '',
-        originalRoot?.binding, context, sourceExecution?.externalActionExecution.reviewedChild) === readinessChild;
+    // The one cross-Machine child owner names the family; this receiver keeps
+    // the family's operand facts and its exact signed source packet below.
+    const childFamily = originalRoot && sourceExecution && input.method?.startsWith(`${context.machineId}:`)
+      ? readReviewedMachineRpcChildFamilyV1({
+          binding: originalRoot.binding,
+          effectActionId: sourceExecution.externalActionExecution.effectActionId,
+          method: input.method.slice(input.method.indexOf(':') + 1),
+          target: context,
+          reviewedChild: sourceExecution.externalActionExecution.reviewedChild,
+        })
+      : null;
+    const childOperandAdmitted =
+      childFamily === 'deployment'
+        ? deploymentRouting?.actionId === sourceExecution?.externalActionExecution.effectActionId &&
+          deploymentRouting?.machineId === context.machineId &&
+          deploymentRouting.installationId === context.installationId
+        : childFamily === 'stop'
+          ? sourceExecution !== undefined && isSessionStopChildV1({
+              rootActionId: originalRoot?.binding.actionId ?? '',
+              effectActionId: sourceExecution.externalActionExecution.effectActionId,
+              method: RPC_METHODS.STOP_SESSION,
+              target: sourceExecution.externalActionExecution.target,
+              params: sourceExecution.params,
+            })
+          : childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup'
+            ? context.role === 'manage'
+            : childFamily !== null;
     const moveChild = Boolean(
       originalRoot &&
-      (readinessSource || originalRoot.binding.actionId === 'projects.service.relocate' ||
-        deploymentChild ||
-        (sourceExecution !== undefined && sourceExecution.externalActionExecution.effectActionId ===
-          readSessionActionChildCreationRpcEffectV1(input.method?.slice(input.method.indexOf(':') + 1) ?? '',
-            originalRoot.binding, context, sourceExecution.externalActionExecution.reviewedChild)) ||
-        (isSessionStopChildRootV1(originalRoot?.binding.actionId) &&
-          input.method === `${context.machineId}:${RPC_METHODS.STOP_SESSION}` &&
-          sourceExecution &&
-          isSessionStopChildV1({
-            rootActionId: originalRoot.binding.actionId,
-            effectActionId:
-              sourceExecution.externalActionExecution.effectActionId,
-            method: RPC_METHODS.STOP_SESSION,
-            target: sourceExecution.externalActionExecution.target,
-            params: sourceExecution.params,
-          })) ||
-        (input.method ===
-          `${context.machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}` &&
-          context.role === 'manage' &&
-          isMachineSetupPlanRpcChildV1({
-            rootActionId: originalRoot?.binding.actionId,
-            effectActionId:
-              sourceExecution?.externalActionExecution.effectActionId,
-            method: RPC_METHODS.MACHINE_SETUP_PLAN,
-          }))) &&
+      childOperandAdmitted &&
       sourceExecution?.originalActionEnvelope &&
       !sourceRouting &&
       !input.workspaceSyncTargetRouting &&

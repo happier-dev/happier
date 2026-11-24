@@ -23,10 +23,9 @@ import { ManagedActivityRpcRequestV1Schema } from '../managed/managedIntentV1.js
 import { SessionActionRpcOriginV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '../../rpc/socket.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readDeploymentArchiveRpcEffectV1 } from '../../deployments/deploymentArchiveRpcV1.js';
-import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
-import { isSessionStopChildRootV1, isSessionStopChildV1 } from '../../actions/sessionSectionArchive.js';
-import { isMachineSetupPlanRpcChildV1 } from '../managed/actionsV1.js';
-import { readSessionAgentReadinessChildActionV1 } from '../managed/actionIdsV1.js';
+import { deploymentOperationForRootActionV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isSessionStopChildV1 } from '../../actions/sessionSectionArchive.js';
+import { readReviewedMachineRpcChildFamilyV1 } from '../peer/mediation/rpc/reviewedChildFamilyV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema, ExternalActionWorkflowOriginV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
 import {
@@ -188,46 +187,27 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
             && archiveProof.externalActionExecution.authorization.token === admission.callerInputAuthorization.token
             && createCanonicalJsonSigningInput(archiveExecution.authorization.binding) === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding)
             && createCanonicalJsonSigningInput(archiveProof.externalActionExecution.authorization.binding) === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding);
-        const deploymentChild = deployment !== undefined && admission.callerInputAuthorization !== undefined
-            && admission.method === `${admission.context.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
-            && admission.workspaceSyncSourceExecution?.method === admission.method
-            && deployment.machineId === admission.context.machineId && deployment.installationId === admission.context.installationId
-            && deployment.actionId === deploymentChildEffectActionIdForRootV1(admission.callerInputAuthorization.binding.actionId,
-                admission.callerInputAuthorization.binding.deploymentPreparationAdmission, deployment.actionId)
-            && admission.workspaceSyncSourceExecution.externalActionExecution.effectActionId === deployment.actionId
-            && admission.workspaceSyncSourceExecution.externalActionExecution.authorization.token === admission.callerInputAuthorization.token
-            && createCanonicalJsonSigningInput(admission.workspaceSyncSourceExecution.externalActionExecution.authorization.binding)
-                === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding);
-        const readinessExecution = admission.workspaceSyncSourceExecution?.externalActionExecution;
-        const readinessChild = readinessExecution !== undefined && admission.callerInputAuthorization !== undefined
-            && admission.method === admission.workspaceSyncSourceExecution?.method
+        // The one cross-Machine child owner names the family; the proof keeps that family's operand facts.
+        const childExecution = admission.workspaceSyncSourceExecution?.externalActionExecution;
+        const childFamily = childExecution !== undefined && admission.callerInputAuthorization !== undefined
             && admission.method?.startsWith(`${admission.context.machineId}:`)
-            && readSessionAgentReadinessChildActionV1(admission.callerInputAuthorization.binding,
-                readinessExecution.reviewedChild, admission.context) === readinessExecution.effectActionId
-            && readinessExecution.authorization.token === admission.callerInputAuthorization.token
-            && createCanonicalJsonSigningInput(readinessExecution.authorization.binding)
-                === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding);
-        const moveChild = (deploymentChild || readinessChild || admission.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
-            || admission.context.role === 'manage' && admission.workspaceSyncSourceExecution
-                && admission.method === `${admission.context.machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}`
-                && isMachineSetupPlanRpcChildV1({ rootActionId: admission.callerInputAuthorization?.binding.actionId,
-                    effectActionId: admission.workspaceSyncSourceExecution.externalActionExecution.effectActionId,
-                    method: RPC_METHODS.MACHINE_SETUP_PLAN })
-            || admission.callerInputAuthorization?.binding.actionId === 'discussion.second_opinion.start'
-                && admission.workspaceSyncSourceExecution?.externalActionExecution.effectActionId === 'session.spawn_new'
-                && (admission.method?.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
-                    || admission.method?.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
-            || isSessionStopChildRootV1(admission.callerInputAuthorization?.binding.actionId)
-                && admission.workspaceSyncSourceExecution
-                && admission.method === `${admission.context.machineId}:${RPC_METHODS.STOP_SESSION}`
-                && admission.workspaceSyncSourceExecution.method === admission.method
-                && isSessionStopChildV1({ rootActionId: admission.callerInputAuthorization.binding.actionId,
-                    effectActionId: admission.workspaceSyncSourceExecution.externalActionExecution.effectActionId,
-                    method: RPC_METHODS.STOP_SESSION, target: admission.workspaceSyncSourceExecution.externalActionExecution.target,
-                    params: admission.workspaceSyncSourceExecution.params,
-                    ...(admission.workspaceSyncSourceExecution.originalActionEnvelope?.v === 1
-                        ? { rootInput: admission.workspaceSyncSourceExecution.originalActionEnvelope.input } : {}),
-                }))
+            && admission.workspaceSyncSourceExecution?.method === admission.method
+            && childExecution.authorization.token === admission.callerInputAuthorization.token
+            && createCanonicalJsonSigningInput(childExecution.authorization.binding)
+                === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding)
+            ? readReviewedMachineRpcChildFamilyV1({ binding: admission.callerInputAuthorization.binding,
+                effectActionId: childExecution.effectActionId, method: admission.method.slice(admission.method.indexOf(':') + 1),
+                target: admission.context, reviewedChild: childExecution.reviewedChild }) : null;
+        const moveChild = childFamily !== null && childExecution !== undefined
+            && (childFamily === 'deployment' ? deployment?.machineId === admission.context.machineId
+                && deployment.installationId === admission.context.installationId && deployment.actionId === childExecution.effectActionId
+            : childFamily === 'stop' ? isSessionStopChildV1({ rootActionId: admission.callerInputAuthorization?.binding.actionId ?? '',
+                effectActionId: childExecution.effectActionId, method: RPC_METHODS.STOP_SESSION, target: childExecution.target,
+                params: admission.workspaceSyncSourceExecution?.params,
+                ...(admission.workspaceSyncSourceExecution?.originalActionEnvelope?.v === 1
+                    ? { rootInput: admission.workspaceSyncSourceExecution.originalActionEnvelope.input } : {}) })
+            : childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup' ? admission.context.role === 'manage'
+            : true)
             && admission.workspaceSyncSourceExecution?.originalActionEnvelope !== undefined;
         if (admission.callerInputAuthorization && !moveChild && !deploymentArchive && !admission.workspaceSyncSourceRouting
             && !admission.workspaceSyncTargetRouting && !admission.workspaceSyncSourceWriterTargetRouting && !admission.workspaceSyncSeedRouting) {

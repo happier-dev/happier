@@ -1,12 +1,11 @@
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupCombinedActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
@@ -419,15 +418,13 @@ export function createCliMachineActionTransport(
     const invoke = input.exactMachine ? callExactMachineRpc : callMachineRpc;
     const requestId = input.requestId ?? input.context?.actionRequestId;
     const transportRequester = readRequesterAccountActionTransportContext(input.context?.externalActionExecutionAuthorization);
-    const reviewedCreationRead = input.effectActionId === readSessionActionChildCreationRpcEffectV1(input.method,
-      transportRequester?.authorization.binding, undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined);
-    const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: transportRequester?.authorization.binding.actionId,
-      effectActionId: input.effectActionId, method: input.method });
-    const reviewedReadiness = readSessionAgentReadinessChildActionV1(transportRequester?.authorization.binding,
-      readHostAdmittedReviewedChildV1(input.context) ?? undefined);
-    const readinessEffect = reviewedReadiness && resolveMachineRpcExternalActionEffectV1(input.method, transportRequester?.authorization.binding,
-      undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined) === input.effectActionId;
-    const credentials = reviewedCreationRead || reviewedSetupPlanRead || readinessEffect ? transportRequester!.credentials : params.credentials;
+    // Reviewed children the owner names spend the original requester's Account
+    // transport; the other families keep this host's own credentials.
+    const childFamily = readReviewedMachineRpcChildFamilyV1({ binding: transportRequester?.authorization.binding,
+      effectActionId: input.effectActionId, method: input.method,
+      reviewedChild: readHostAdmittedReviewedChildV1(input.context) ?? undefined });
+    const credentials = childFamily === 'creation' || childFamily === 'setup_plan' || childFamily === 'readiness'
+      || childFamily === 'backup_receiver_setup' ? transportRequester?.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,

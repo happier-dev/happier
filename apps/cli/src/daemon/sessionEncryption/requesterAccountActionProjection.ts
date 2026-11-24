@@ -32,7 +32,8 @@ import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineD
 import { createAccountScopedCryptoMaterialSnapshotV1, type AccountScopedCryptoMaterial,
   type AccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
+import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
+import { isReviewedChildRecipientPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isReviewedMachineSetupCodecV1, openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
   type ExternalActionRequesterAccountContextPurposeV1,
   type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -52,7 +53,6 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSessionStopChildRootV1, isSessionStopChildV1, readSessionStopChildTargetV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedEnrollmentPolicyChildActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
@@ -440,24 +440,18 @@ export function readAdmittedRequesterAccountReadRuntime(input: Readonly<{
   // RpcHandlerManager already matched this signed projection to the decrypted
   // job before opening requester custody. The retained packet keeps E2EE bytes.
   const deploymentChild = packet?.externalActionExecution.deploymentChildRouting;
-  const forwardedMove = (authorization?.binding.actionId === 'projects.service.relocate'
-    || packet !== undefined && packet.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
-      packet.method.slice(packet.method.indexOf(':') + 1), authorization?.binding,
-      { machineId: input.machineId, installationId: input.installationId }, packet.externalActionExecution.reviewedChild)
-    || isSessionStopChildRootV1(authorization?.binding.actionId)
-      && packet?.method === `${input.machineId}:${RPC_METHODS.STOP_SESSION}`
-      && isSessionStopChildV1({ rootActionId: authorization.binding.actionId,
-        effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.STOP_SESSION,
-        target: packet.externalActionExecution.target, params: packet.params })
-    || isMachineSetupPlanRpcChildV1({ rootActionId: authorization?.binding.actionId,
-      effectActionId: packet?.externalActionExecution.effectActionId, method: RPC_METHODS.MACHINE_SETUP_PLAN })
-      && packet?.method === `${input.machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}` && admission?.role === 'manage'
-    || deploymentChild?.machineId === input.machineId && deploymentChild.installationId === input.installationId
-      && authorization !== undefined
-      && deploymentChild.actionId === deploymentChildEffectActionIdForRootV1(
-        authorization.binding.actionId, authorization.binding.deploymentPreparationAdmission, deploymentChild.actionId)
-      && packet?.externalActionExecution.effectActionId === deploymentChild.actionId
-      && packet.method === `${input.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`) && packet?.originalActionEnvelope
+  // The one cross-Machine child owner names the family; each keeps its operand facts here.
+  const childFamily = packet?.method.startsWith(`${input.machineId}:`) ? readReviewedMachineRpcChildFamilyV1({
+    binding: authorization?.binding, effectActionId: packet.externalActionExecution.effectActionId,
+    method: packet.method.slice(packet.method.indexOf(':') + 1), target: { machineId: input.machineId, installationId: input.installationId },
+    reviewedChild: packet.externalActionExecution.reviewedChild }) : null;
+  const forwardedMove = (childFamily === 'stop' ? isSessionStopChildV1({ rootActionId: authorization?.binding.actionId ?? '',
+      effectActionId: packet?.externalActionExecution.effectActionId ?? '', method: RPC_METHODS.STOP_SESSION,
+      target: packet?.externalActionExecution.target, params: packet?.params })
+    : childFamily === 'setup_plan' || childFamily === 'backup_receiver_setup' ? admission?.role === 'manage'
+    : childFamily === 'deployment' ? deploymentChild?.machineId === input.machineId && deploymentChild.installationId === input.installationId
+      && deploymentChild.actionId === packet?.externalActionExecution.effectActionId
+    : childFamily !== null) && packet?.originalActionEnvelope
     && ingress.originalActionEnvelope && sameStrictJsonValue(packet.originalActionEnvelope, ingress.originalActionEnvelope)
     && authorization !== undefined && packet.externalActionExecution.authorization.token === authorization.token
     && sameStrictJsonValue(packet.externalActionExecution.authorization.binding, authorization.binding)
@@ -843,15 +837,8 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         ?? deploymentChildEffectActionIdForRootV1(root.data.binding.actionId, root.data.binding.deploymentPreparationAdmission) ?? '',
       reviewedChild: input.deploymentChildExecution?.externalActionExecution.reviewedChild,
       method: input.purpose.method, params: input.purpose.params }) : null;
-    const setupPlan = input.purpose.kind === 'machine_rpc' && isMachineSetupPlanRpcChildV1({ rootActionId: root.data.binding.actionId,
-      effectActionId: 'machines.setup.plan', method: input.purpose.method })
-      ? MachineSetupPlanInputV1Schema.safeParse(input.purpose.params) : null;
-    const setupPlanChild = setupPlan?.success && setupPlan.data.homeId === input.serverIdentityId
-      && setupPlan.data.machineId === moveRecipient?.machineId;
-    if (moveRecipient && !(root.data.binding.actionId === 'projects.service.relocate'
-      || input.purpose.kind === 'machine_rpc' && readSessionActionChildCreationRpcEffectV1(
-        input.purpose.method, root.data.binding, moveRecipient, input.purpose.reviewedChild) !== null
-      || stopChildTarget !== null || deploymentChild !== null || setupPlanChild)) return refused('requester_move_root');
+    // The seal owner decides which reviewed child may take custody to another recipient.
+    if (moveRecipient && !isReviewedChildRecipientPurposeV1(root.data, input.purpose)) return refused('requester_move_root');
     if (preparation && (!isProjectWorkspaceSyncPreparationActionV1(root.data.binding.actionId)
       || root.data.binding.target.kind !== 'machine' || root.data.binding.target.machineId !== root.data.binding.machineId)) return refused('requester_workspace_preparation_root');
     if (input.purpose.kind === 'managed_finite_wake' && (!finiteWake

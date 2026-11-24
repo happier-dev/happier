@@ -18,6 +18,8 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { isBackupReceiverSetupChildOperandV1, readReviewedMachineRpcChildFamilyV1,
+  type ReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
@@ -583,6 +585,44 @@ export async function isReviewedServiceMoveChild(input: Readonly<{
 }>): Promise<boolean> {
   const move = await readReviewedServiceMoveInput(input);
   return isReviewedServiceMoveChildForInput(input, move);
+}
+
+/** A Backup receiver Setup child is exactly the operand its root's review named; no root envelope is reopened. */
+export async function isReviewedBackupReceiverSetupChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; actionId: string; machineId: string; params: unknown;
+  reviewedChild?: ReviewedActionChildHttpProofV1; signal?: AbortSignal;
+}>): Promise<boolean> {
+  return !input.signal?.aborted && input.reviewedChild?.actionId === input.actionId
+    && isBackupReceiverSetupChildOperandV1({ binding: input.authorization.binding, reviewedChild: input.reviewedChild,
+      machineId: input.machineId, params: input.params });
+}
+
+/**
+ * Operand review for the cross-Machine family the one owner
+ * (readReviewedMachineRpcChildFamilyV1) named. Sender, receiver and the
+ * receiving executor call this instead of selecting a reviewer themselves.
+ */
+export async function isReviewedMachineRpcChild(family: ReviewedMachineRpcChildFamilyV1, input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal; target?: unknown;
+  reviewedChild?: ReviewedActionChildHttpProofV1; onRefused?: (reason: DeploymentChildDerivationRefusal) => void;
+}>): Promise<boolean> {
+  const { target, reviewedChild, onRefused, ...base } = input;
+  switch (family) {
+    case 'readiness': return isReviewedSessionAgentReadinessChild({ ...base, ...(reviewedChild ? { reviewedChild } : {}) });
+    case 'creation': return isReviewedSessionActionCreationChild({ ...base,
+      ...(reviewedChild ? { reviewedChild } : {}), ...(onRefused ? { onRefused } : {}) });
+    case 'deployment': return isReviewedDeploymentChild({ ...base,
+      ...(reviewedChild ? { reviewedChild } : {}), ...(onRefused ? { onRefused } : {}) });
+    case 'setup_plan': return isReviewedMachineSetupPlanChild(base);
+    case 'backup_receiver_setup': return isReviewedBackupReceiverSetupChild({ ...base, ...(reviewedChild ? { reviewedChild } : {}) });
+    case 'project_setup_set': return isReviewedProjectSetupSetChild(base);
+    case 'stop': return isReviewedSessionStopChild({ ...base, target });
+    case 'service_move': {
+      const { method: _method, ...move } = base;
+      return isReviewedServiceMoveChild(move);
+    }
+  }
 }
 
 async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isReviewedServiceMoveChild>[0],
@@ -1804,8 +1844,12 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, deploymentChild.actionId)
       || input.effectActionId !== deploymentChild.actionId
       || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
-    || binding.actionId !== 'projects.service.relocate' && !creationEffect && !stopChild && !deploymentChild && !nativeCredentialChild && !setupPlanChild && !setupSetChild
-      && !input.method.startsWith(`${binding.machineId}:`)) return null;
+    // Only a child the cross-Machine owner names leaves the root's own Machine.
+    || !nativeCredentialChild && !input.method.startsWith(`${binding.machineId}:`)
+      && readReviewedMachineRpcChildFamilyV1({ binding, effectActionId: input.effectActionId,
+        method: input.method.slice(input.method.indexOf(':') + 1),
+        target: { machineId: input.method.slice(0, input.method.indexOf(':')), installationId: input.sourceInstallationId },
+        reviewedChild: readinessProof }) === null) return null;
   return createExternalActionMachineRpcExecution({
     context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },
     effectActionId: input.effectActionId,
@@ -1906,18 +1950,10 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   signal?: AbortSignal;
 }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
-  const creationEffect = parsed.success && input.forwardedMove
-    ? readSessionActionChildCreationRpcEffectV1(input.forwardedMove.method ?? '', parsed.data.binding,
-      input.target.kind === 'machine' ? { machineId: input.target.machineId, installationId: input.installationId } : undefined,
-      input.forwardedMove.reviewedChild) : null;
+  // A forwarded child's recipient was admitted once by the seal owner
+  // (isReviewedChildRecipientPurposeV1) in this projection's only caller.
   if (!parsed.success || parsed.data.binding.serverIdentityId !== input.serverIdentityId
     || (parsed.data.binding.installationId !== input.installationId && !input.forwardedMove)
-    || input.forwardedMove && parsed.data.binding.actionId !== 'projects.service.relocate'
-      && !creationEffect
-      && !isSessionStopChildRootV1(parsed.data.binding.actionId)
-      && !isMachineSetupPlanRpcChildV1({ rootActionId: parsed.data.binding.actionId,
-        effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
-      && !input.forwardedDeploymentChild
     || !input.serverId || !input.serverHttpBaseUrl) return null;
   const authorization: ExternalActionExecutionAuthorizationV1 = { ...parsed.data };
   const requesterAccountProjection = input.authorization.requesterAccountProjection;
