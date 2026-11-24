@@ -15,6 +15,11 @@ vi.mock('expo-router', () => router.module);
 vi.mock('@/utils/web/radixCjs', async () =>
   (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock(),
 );
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal, {
+    maxHeight: 640, maxWidth: 280, placement: 'bottom',
+  }),
+);
 const modal = await vi.hoisted(async () =>
   (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     renderCustomModals: true,
@@ -206,6 +211,52 @@ describe('LocalServiceCaptureView', () => {
       });
       expect(screen.findByTestId('capture-off')).toBeNull();
       expect(screen.findByTestId('capture-waiting')).not.toBeNull();
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('is the one place that turns capture off and clears it: its menu retries after a gap, turns the Project switch off and clears this checkout', async () => {
+    let enabled = true;
+    const { invoke, calls } = machine((call) => {
+      if (call.actionId.endsWith('/capture/configure')) {
+        enabled = (call.input as { enabled: boolean }).enabled;
+        return { ok: true, enabled };
+      }
+      if (call.actionId.endsWith('/capture/clear')) return { ok: true, source };
+      if (call.actionId.endsWith('/capture/status'))
+        return { ok: true, source, coverage: { lostObservations: 3, reason: 'store_busy' }, enabled };
+      return { ok: true, source, items: [] };
+    });
+    const screen = await renderScreen(view(invoke, 'logs'));
+    await settle();
+    try {
+      await screen.pressByTestIdAsync('capture-menu');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+      await screen.pressByTestIdAsync('capture-menu.retry');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+      await settle();
+
+      await screen.pressByTestIdAsync('capture-menu');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+      await screen.pressByTestIdAsync('capture-menu.clear');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+      await settle();
+      expect(calls.find((call) => call.actionId.endsWith('/capture/clear'))?.input).toEqual({ source });
+
+      await screen.pressByTestIdAsync('capture-menu');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+      await screen.pressByTestIdAsync('capture-menu.turn-off');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+      await settle();
+      const project = { serverId: 'home', machineId: 'laptop', projectId: 'billing-api' };
+      expect(calls.filter((call) => call.actionId.endsWith('/capture/configure')).map((call) => call.input)).toEqual([
+        { project, enabled: true, retry: true },
+        { project, enabled: false },
+      ]);
+      // Off again: the view says what capture would show and offers its one switch; no menu while off.
+      expect(screen.findByTestId('capture-off')).not.toBeNull();
+      expect(screen.findByTestId('capture-menu')).toBeNull();
     } finally {
       screen.unmount();
     }

@@ -56,6 +56,11 @@ export type Copy = Readonly<{
     offBody: string;
     turnOn: string;
     turnOnFailed: string;
+    turnOff: string;
+    turnOffFailed: string;
+    retry: string;
+    preparing: string;
+    missed: (p: Readonly<{ count: number }>) => string;
     gaps: (p: Readonly<{ reason: string }>) => string;
     restart: string;
     restartReason: string;
@@ -166,6 +171,11 @@ const en: Copy = {
     offBody: 'Each request’s route, time, database queries and logs, kept on this Machine. Turning capture on restarts the dev servers once.',
     turnOn: 'Turn on capture',
     turnOnFailed: 'Capture could not be turned on.',
+    turnOff: 'Turn off capture',
+    turnOffFailed: 'Capture could not be turned off.',
+    retry: 'Retry capture',
+    preparing: 'Preparing capture…',
+    missed: ({ count }) => `${count} observations missed`,
     gaps: ({ reason }) => `Capture on with gaps · ${reason}`,
     restart: 'Restart the dev servers to capture their requests.',
     restartReason: 'Capture changed while they were running.',

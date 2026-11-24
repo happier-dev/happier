@@ -22,7 +22,6 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
-import { CaptureConfiguration } from './CaptureConfiguration.js';
 import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
 
 const PANEL_LOCATION = Object.freeze({
@@ -201,10 +200,8 @@ function DatabasesPanel(context: RenderContext) {
     >
       {instance && launch ? (
         <WorkbenchProvider instance={instance}>
+          {/* Capture is turned on, off and cleared in the Dev servers capture view that hosts this panel: one control owner. */}
           <DatabaseRows context={context} launch={launch} />
-          {launch.scope.kind === 'worktree' ? <CaptureConfiguration
-            key={JSON.stringify([launch.scope.accountId, launch.scope.workspace.serverId, launch.scope.workspace.machineId,
-              launch.scope.projectKey, launch.scope.workspace.workspaceId])} scope={launch.scope} /> : null}
         </WorkbenchProvider>
       ) : (
         // The same line state as "No databases found": it sits inside the sheet with the row inset.

@@ -10,6 +10,7 @@ import {
   CaptureLogs,
   CaptureTraces,
 } from '@happier-dev/plugins-telemetry/capture-views';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -19,6 +20,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import {
+  TelemetryMenu,
   TelemetryRequestDetail,
   useTelemetryCaptureList,
 } from '@/components/projects/deployments/DeploymentTelemetryPanel';
@@ -174,18 +176,55 @@ export function LocalServiceCaptureView(
     }
   }, [lifetime, reads, requestApproval, retry, turningOn]);
 
+  // Turning capture off and clearing it live here, in the view's "…": capture has one control owner on the page.
+  const reconfigure = React.useCallback(async (enabled: boolean, failure: string, options?: Readonly<{ retry: true }>) => {
+    if (!reads) return;
+    try {
+      const outcome = await reads.configure(enabled, options);
+      if (!lifetime?.isCurrent()) return;
+      if (outcome.kind === 'approval_pending')
+        requestApproval(outcome.artifactId);
+      else retry();
+    } catch (error) {
+      const code = telemetryCaptureFailureCode(error);
+      if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE)
+        alertActionFailure({ code, reason: failure });
+    }
+  }, [lifetime, reads, requestApproval, retry]);
+  const turnOff = React.useCallback(
+    () => reconfigure(false, t('deploymentTelemetry.local.turnOffFailed')), [reconfigure]);
+  const retryCapture = React.useCallback(
+    () => reconfigure(true, t('deploymentTelemetry.local.turnOnFailed'), { retry: true }), [reconfigure]);
+  const clear = React.useCallback(async () => {
+    if (!reads) return;
+    try {
+      await reads.clear();
+    } catch (error) {
+      const code = telemetryCaptureFailureCode(error);
+      if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE)
+        alertActionFailure({ code, reason: t('deploymentTelemetry.menu.clearFailed') });
+      return;
+    }
+    if (lifetime?.isCurrent()) retry();
+  }, [lifetime, reads, retry]);
+
   const coverageReason =
     status?.kind === 'ready' ? status.status.coverage.reason : null;
+  const ready = status?.kind === 'ready' ? status.status : null;
+  const missed = ready && ready.coverage.lostObservations > 0
+    ? t('deploymentTelemetry.local.missed', { count: ready.coverage.lostObservations }) : null;
   const statusText =
     enabled === false
       ? t('deploymentTelemetry.local.off')
-      : coverageReason
-        ? t('deploymentTelemetry.local.gaps', {
-            reason: coverageReason.replaceAll('_', ' '),
-          })
-        : enabled
-          ? t('deploymentTelemetry.local.on')
-          : null;
+      : ready?.preparing
+        ? t('deploymentTelemetry.local.preparing')
+        : coverageReason
+          ? [t('deploymentTelemetry.local.gaps', {
+              reason: coverageReason.replaceAll('_', ' '),
+            }), missed].filter(Boolean).join(' · ')
+          : enabled
+            ? t('deploymentTelemetry.local.on')
+            : null;
   const restartRequired =
     status?.kind === 'ready' && status.status.restartRequired === true;
 
@@ -340,28 +379,32 @@ export function LocalServiceCaptureView(
             >
               {statusText}
             </Text>
-            <SegmentedTabBar<WindowId>
-              role="radiogroup"
-              accessibilityLabel={t('deploymentTelemetry.window.label')}
-              testIDPrefix={`${testID}-window`}
-              segmentSizing="content"
-              activeTabId={windowId}
-              tabs={[
-                {
-                  id: 'quarter',
-                  label: t('deploymentTelemetry.local.window.quarter'),
-                },
-                {
-                  id: 'hour',
-                  label: t('deploymentTelemetry.local.window.hour'),
-                },
-                { id: 'day', label: t('deploymentTelemetry.local.window.day') },
-              ]}
-              onSelectTab={(id) => {
-                setWindowId(id);
-                setOpenTrace(null);
-              }}
-            />
+            <View style={styles.barEnd}>
+              <SegmentedTabBar<WindowId>
+                role="radiogroup"
+                accessibilityLabel={t('deploymentTelemetry.window.label')}
+                testIDPrefix={`${testID}-window`}
+                segmentSizing="content"
+                activeTabId={windowId}
+                tabs={[
+                  {
+                    id: 'quarter',
+                    label: t('deploymentTelemetry.local.window.quarter'),
+                  },
+                  {
+                    id: 'hour',
+                    label: t('deploymentTelemetry.local.window.hour'),
+                  },
+                  { id: 'day', label: t('deploymentTelemetry.local.window.day') },
+                ]}
+                onSelectTab={(id) => {
+                  setWindowId(id);
+                  setOpenTrace(null);
+                }}
+              />
+              <TelemetryMenu onRetry={coverageReason ? retryCapture : null} onTurnOff={turnOff} onClear={clear}
+                testID={`${testID}-menu`} />
+            </View>
           </View>
         ) : null}
       </View>
@@ -371,11 +414,10 @@ export function LocalServiceCaptureView(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  root: { gap: theme.space.s12 },
-  lines: {
-    gap: theme.space.s12,
-    paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
-  },
+  // The view draws the page's sheet edge itself: its Collection, on a page column, takes that edge as drawn
+  // (CoreCollectionScope), so the table and the lines above it share the sheet edge of the page's other sections.
+  root: { gap: theme.space.s12, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
+  lines: { gap: theme.space.s12 },
   bar: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -383,6 +425,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     justifyContent: 'space-between',
     gap: theme.space.s8,
   },
+  barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   facts: { color: theme.colors.text.secondary, flexShrink: 1 },
   gaps: { color: theme.colors.state.warning.foreground, flexShrink: 1 },
 }));

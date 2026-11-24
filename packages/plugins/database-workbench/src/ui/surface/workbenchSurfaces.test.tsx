@@ -5,9 +5,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_ACCESS_SET_ACTION_ID_V1,
-    DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
-    DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
-    DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
     DATABASE_RELATIONS_LIST_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
@@ -1092,13 +1089,7 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
-    const daemon = daemonAnswers([descriptor]);
-    const executeAction = (request: PluginUiTestkitExecuteActionInput) => {
-      if (typeof request.action !== 'string' && request.action.localId === databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1)) {
-        return Promise.resolve({ ok: true, source: { kind: 'worktree', serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey, workspaceId: scope.workspace.workspaceId }, enabled: false, coverage: { lostObservations: 0, reason: null } });
-      }
-      return daemon(request);
-    };
+    const executeAction = daemonAnswers([descriptor]);
     const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'panel', mountNonce: 'panel' },
@@ -1121,7 +1112,8 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle();
-      expect(await fixture.getByText('Capture is off')).toBeTruthy();
+      // Capture has one control owner, the Dev servers capture view: the panel draws no second control set.
+      await expect(fixture.queryByText('Local capture')).resolves.toBeUndefined();
       await act(async () => {
         const row = (await fixture.getAllByRole('button')).find(button => button.name?.includes('billing_dev'));
         expect(row).toBeDefined();
@@ -1138,121 +1130,6 @@ describe('Database workbench surfaces', () => {
     } finally {
       await fixture.dispose();
     }
-  });
-
-  it('dispatches capture from the declared Databases panel and preserves a typed refusal', async () => {
-    const project = { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey };
-    const source = { kind: 'worktree', ...project, workspaceId: scope.workspace.workspaceId };
-    const configure = databaseActionLocalIdV1(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1);
-    const status = databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
-    const manifest = PLUGIN_MANIFEST.contributes.ui;
-    const view = manifest?.views?.find(candidate => candidate.id === 'databases-panel');
-    const renderer = manifest?.renderers?.find(candidate => view && 'renderer' in view && candidate.id === view.renderer);
-    if (renderer?.kind !== 'reactNative' || !Array.isArray(renderer.requiredHostMethods))
-      throw new Error('Expected the declared Databases panel');
-    const daemon = daemonAnswers([descriptor]);
-    const captureWrite = vi.fn(async () => ({ ok: true as const, result: {
-      ok: false, status: 'unavailable', code: 'capture_source_unavailable', reason: 'This machine cannot capture this project.',
-    } }));
-    const actionControl = createPluginUiActionControlTestHost(captureWrite);
-    const fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'capture-refused', mountNonce: 'capture-refused' },
-      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPanel,
-      launchInput: projectNativeJsonValueForTransport({ scope }),
-      surfaceContext: createSurfaceContextFixture({
-        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'databases-panel' }, container: 'servicesPanel' },
-        target: { kind: 'services' },
-      }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: {
-        async executeAction(request) {
-          if (typeof request.action !== 'string' && request.action.localId === status)
-            return { ok: true, source, enabled: false, coverage: { lostObservations: 0, reason: null } };
-          return daemon(request);
-        },
-        ...(renderer.requiredHostMethods.includes('actionControl') ? { actionControl: actionControl.handler } : {}),
-      },
-    });
-    try {
-      await settle();
-      await fixture.getByText('Capture is off');
-      await act(async () => actionControl.press('Turn on capture'));
-      expect(captureWrite).toHaveBeenCalledWith(expect.objectContaining({
-        action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true },
-      }));
-      expect(await fixture.getByText('This machine cannot capture this project.')).toBeTruthy();
-      await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
-      expect(await fixture.getByText('capture_source_unavailable')).toBeTruthy();
-      expect(await fixture.getByText('Capture is off')).toBeTruthy();
-    } finally { await fixture.dispose(); }
-  });
-
-  it('uses the checkout’s project for capture configuration and its worktree for reviewed clear', async () => {
-    const project = { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey };
-    const source = { kind: 'worktree', ...project, workspaceId: scope.workspace.workspaceId };
-    const status = databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
-    const configure = databaseActionLocalIdV1(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1);
-    const clear = databaseActionLocalIdV1(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1);
-    const daemon = daemonAnswers([descriptor]);
-    let enabled = true;
-    let retainedBinding = false;
-    let preparing = true;
-    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
-      if (typeof request.action !== 'string' && request.action.localId === status) {
-        expect(request.action.pluginId).toBe('happier.telemetry');
-        expect(request.input).toEqual({ source });
-        return { ok: true, source, enabled, coverage: { lostObservations: 0, reason: 'receiver_unavailable' },
-          ...(retainedBinding ? { restartRequired: true } : {}), ...(preparing ? { preparing: true } : {}) };
-      }
-      return daemon(request);
-    });
-    const captureWrite = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
-      if (typeof request.action !== 'string' && request.action.localId === clear) {
-        return { ok: true as const, result: { ok: true } };
-      }
-      enabled = (request.input as { enabled: boolean }).enabled;
-      if (!enabled) retainedBinding = true;
-      return { ok: true as const, result: { ok: true, enabled } };
-    });
-    const actionControl = createPluginUiActionControlTestHost(captureWrite);
-    const fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'capture', mountNonce: 'capture' },
-      authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: renderPanel,
-      launchInput: projectNativeJsonValueForTransport({ scope }),
-      surfaceContext: createSurfaceContextFixture({
-        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'databases-panel' }, container: 'servicesPanel' },
-        target: { kind: 'services' },
-      }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { executeAction, actionControl: actionControl.handler },
-    });
-    try {
-      await settle();
-      const statusCalls = executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status);
-      expect(statusCalls).toHaveLength(1);
-      expect(captureWrite).not.toHaveBeenCalled();
-      expect(await fixture.queryByText('Preparing capture…')).toBeTruthy();
-      preparing = false;
-      await fixture.press(await fixture.getByRole('button', { name: 'Check capture status' }));
-      expect(await fixture.getByText('Capture is on')).toBeTruthy();
-      await expect(fixture.queryByText('Preparing capture…')).resolves.toBeUndefined();
-      await act(async () => actionControl.press('Turn off capture'));
-      expect(await fixture.getByText('Restart affected services in Dev servers to apply the capture change.')).toBeTruthy();
-      expect(await fixture.getByText('Capture is off')).toBeTruthy();
-      await act(async () => actionControl.press('Turn on capture'));
-      expect(await fixture.getByText('Capture is on')).toBeTruthy();
-      await act(async () => actionControl.press('Retry capture'));
-      await act(async () => actionControl.press('Clear capture'));
-      expect(await fixture.getByText('Capture cleared for this worktree.')).toBeTruthy();
-      expect(captureWrite.mock.calls).toEqual([
-        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: false } })],
-        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true } })],
-        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true, retry: true } })],
-        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: clear }, input: { source } })],
-      ]);
-      expect(executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status)).toHaveLength(6);
-    } finally { await fixture.dispose(); }
   });
 
   it('says plainly when the checkout’s services name no database', async () => {

@@ -215,12 +215,15 @@ export function createTelemetryCaptureReads(
         await call(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, { source: source(environment) }),
       ));
     },
-    /** A worktree's Project Capture switch on its Machine (P5 Q3); the person's press is the confirmation. */
-    async configure(enabled: boolean): Promise<TelemetryCaptureConfigureOutcome> {
+    /**
+     * A worktree's Project Capture switch on its Machine (P5 Q3); the person's press is the confirmation. `retry`
+     * asks a switch that is already on to bind again after a gap.
+     */
+    async configure(enabled: boolean, options?: Readonly<{ retry: true }>): Promise<TelemetryCaptureConfigureOutcome> {
       if (!environment.worktree) throw new HappyError('telemetry_unavailable', false, { code: 'telemetry_unavailable' });
       const project = { serverId: environment.scope.serverId, machineId: environment.collectorMachineId,
         projectId: environment.worktree.projectId };
-      const result = await call(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled });
+      const result = await call(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled, ...(options?.retry ? { retry: true } : {}) });
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
       if (approval.success) return { kind: 'approval_pending', artifactId: approval.data.artifactId };
       return { kind: 'configured', enabled: settle(DatabaseCaptureConfigureResultV1Schema.safeParse(result)).enabled };

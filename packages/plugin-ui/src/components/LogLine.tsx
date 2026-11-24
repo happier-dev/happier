@@ -27,6 +27,13 @@ const LOG_LINE_GAP = HAPPIER_SPACE_STEPS.s12;
 const LOG_LINE_RHYTHM = Object.freeze({ paddingVertical: HAPPIER_SPACE_STEPS.s2 });
 /** About one monospaced digit at the code size, so a gutter of n characters holds n digits. */
 const LOG_LINE_GUTTER_CHAR_PX = HAPPIER_SPACE_STEPS.s8;
+/**
+ * The message always keeps at least half the line. The lead (gutter and prefix columns) narrows instead, and a
+ * column that no longer fits beside the others moves under them, so a long source column (a service name) never
+ * squeezes the message into one character a line or splits the clock.
+ */
+const LOG_LINE_LEAD: HappierStyleProp = Object.freeze({ flexShrink: 1, minWidth: 0 });
+const LOG_LINE_MESSAGE: HappierStyleProp = Object.freeze({ flexBasis: 0, minWidth: '50%' });
 
 /**
  * One log row, the same in every log: a muted tabular gutter, the source's own columns, then the message,
@@ -36,7 +43,7 @@ export function LogLine({ gutter, prefix, prefixTestID, message, testID, message
   return (
     <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} testID={testID} style={[LOG_LINE_RHYTHM, style]}>
       {(gutter !== undefined || prefix !== undefined) && (
-        <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} testID={prefixTestID}>
+        <HappierStack direction="horizontal" align="flex-start" gap={LOG_LINE_GAP} wrap testID={prefixTestID} style={LOG_LINE_LEAD}>
           {gutter && (
             <HappierText
               variant="code"
@@ -51,7 +58,7 @@ export function LogLine({ gutter, prefix, prefixTestID, message, testID, message
         </HappierStack>
       )}
       {message && (
-        <HappierStack grow testID={messageTestID}>
+        <HappierStack grow testID={messageTestID} style={LOG_LINE_MESSAGE}>
           <AnsiText {...message} />
         </HappierStack>
       )}

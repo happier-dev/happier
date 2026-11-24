@@ -21,6 +21,7 @@ import {
   type CaptureEndpointAction,
 } from '@happier-dev/plugins-telemetry/capture-views';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
+import { HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
 import { useMachineServiceResource } from '@/components/machines/resources/useMachineServiceResource';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -463,20 +464,35 @@ function DeploymentTelemetryTabs(props: Readonly<{
   );
 }
 
-function TelemetryMenu({ onOpenSettings, onAddTelemetry, openingSetup, onClear }: Readonly<{
-  onOpenSettings: (() => void) | null;
-  onAddTelemetry: (() => void) | null;
-  openingSetup: boolean;
+/**
+ * The one "…" of a capture view, on an Environment's Telemetry tab and a checkout's Dev servers page: its rare
+ * moves (settings, retrying after a gap, turning capture off) and Clear, the destructive one, last.
+ */
+export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, openingSetup = false, onRetry = null, onTurnOff = null,
+  onClear,
+  testID = 'project-deployments.telemetry.menu' }: Readonly<{
+  onOpenSettings?: (() => void) | null;
+  onAddTelemetry?: (() => void) | null;
+  openingSetup?: boolean;
+  onRetry?: (() => Promise<void>) | null;
+  onTurnOff?: (() => Promise<void>) | null;
   onClear: (() => Promise<void>) | null;
+  testID?: string;
 }>) {
   const [open, setOpen] = React.useState(false);
   const [clearing, setClearing] = React.useState(false);
+  const [turningOff, setTurningOff] = React.useState(false);
+  const [retrying, setRetrying] = React.useState(false);
   const items = [
-    ...(onOpenSettings ? [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings',
+    ...(onOpenSettings ? [{ id: 'settings', testID: `${testID}.settings`,
       title: t('deploymentTelemetry.menu.settings') }] : []),
-    ...(onAddTelemetry ? [{ id: 'add-telemetry', testID: 'project-deployments.telemetry.menu.add-telemetry',
+    ...(onAddTelemetry ? [{ id: 'add-telemetry', testID: `${testID}.add-telemetry`,
       title: t('deploymentTelemetry.menu.addTelemetry'), disabled: openingSetup }] : []),
-    ...(onClear ? [{ id: 'clear', testID: 'project-deployments.telemetry.menu.clear',
+    ...(onRetry ? [{ id: 'retry', testID: `${testID}.retry`,
+      title: t('deploymentTelemetry.local.retry'), disabled: retrying }] : []),
+    ...(onTurnOff ? [{ id: 'turn-off', testID: `${testID}.turn-off`,
+      title: t('deploymentTelemetry.local.turnOff'), disabled: turningOff }] : []),
+    ...(onClear ? [{ id: 'clear', testID: `${testID}.clear`,
       title: t('deploymentTelemetry.menu.clear'), destructive: true, disabled: clearing }] : []),
   ];
   return (
@@ -491,13 +507,21 @@ function TelemetryMenu({ onOpenSettings, onAddTelemetry, openingSetup, onClear }
         setOpen(false);
         if (id === 'settings') onOpenSettings?.();
         if (id === 'add-telemetry') onAddTelemetry?.();
+        if (id === 'retry' && onRetry && !retrying) {
+          setRetrying(true);
+          void onRetry().finally(() => setRetrying(false));
+        }
+        if (id === 'turn-off' && onTurnOff && !turningOff) {
+          setTurningOff(true);
+          void onTurnOff().finally(() => setTurningOff(false));
+        }
         if (id === 'clear' && onClear && !clearing) {
           setClearing(true);
           void onClear().finally(() => setClearing(false));
         }
       }}
       trigger={({ toggle }) => (
-        <IconButton testID="project-deployments.telemetry.menu" iconName="dots-three" variant="plain"
+        <IconButton testID={testID} iconName="dots-three" variant="plain"
           accessibilityLabel={t('common.more')} onPress={toggle} />
       )}
     />
@@ -522,6 +546,8 @@ export function TelemetryRequestDetail(props: Readonly<{
   const { reads, lifetime, active, request, locale, onAddCheck } = props;
   const { serviceName, endpointMethod, endpointRoute } = request;
   const traceId = request.traceId ?? null;
+  // The header's text stands on the sheet edge like the sections below it: the column may draw part of that edge.
+  const headerInsetPx = Math.max(0, PAGE_LIST_METRICS.sheetInsetPx - React.useContext(HappierColumnEdgeContext));
   const [read, setRead] = React.useState<RequestRead>({ kind: 'loading' });
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
@@ -555,7 +581,7 @@ export function TelemetryRequestDetail(props: Readonly<{
   ].filter((part): part is string => part !== null && part.length > 0);
   return (
     <View style={styles.detail} testID="project-deployments.telemetry.request">
-      <View style={styles.detailHeader}>
+      <View style={[styles.detailHeader, { paddingHorizontal: headerInsetPx }]}>
         <TextLinkButton testID="project-deployments.telemetry.request.back" label={t('deploymentTelemetry.request.back')}
           onPress={props.onBack} tone="quiet" size="meta" />
         <Text variant="heading" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
@@ -612,7 +638,7 @@ const styles = StyleSheet.create((theme) => ({
   barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   detail: { gap: theme.space.s16 },
   // The detail's header stands on the same edge as the tab bar and its sections.
-  detailHeader: { gap: theme.space.s4, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
+  detailHeader: { gap: theme.space.s4 },
   // The request's identity in identifier type and the theme's ink, legible on either sheet.
   requestTitle: { ...Typography.mono(), color: theme.colors.text.primary },
 }));

@@ -743,11 +743,11 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     const page = props.presentation === 'page';
     const columnMaxWidth = useLayoutMaxWidth();
-    // The phone page is titled by its cockpit header and leads straight into the list (lab PAGEp).
+    // The page opens on its own name, as the Project's other pages do (lab dbCapture). The phone page is titled by
+    // its cockpit header and leads straight into the list (lab PAGEp).
     const pageHeader = page && !phone ? (
         <HappierPageHeader
-            title=""
-            showTitle={false}
+            title={t('projects.pages.services')}
             columnMaxWidthPx={columnMaxWidth}
             renderText={renderPageHeaderText}
             description={scope === 'machine' ? t('localServices.pane.purposeMachine') : t('localServices.pane.purpose')}
