@@ -422,8 +422,8 @@ describe('fetchAndApplyMachines real selected-envelope hydration', () => {
             await fetchAndApplyMachines({ credentials: legacyCredentials, sourceServerId: 'home-1', expectedAccountMode: 'e2ee',
                 encryption, machineDataKeys: new Map(), getMachineSnapshot: () => storage.getState().machines,
                 getExistingMachine: id => storage.getState().machines[id], request: async () => jsonResponse(rows),
-                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
-                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+                displayFirst: true,
+                applyMachines: (machines, replace, _publishedRows, warmDisplays) => storage.getState().applyMachines(machines, replace, { warmDisplays }),
             });
             await vi.waitFor(() => expect(storage.getState().machines['shared-readable']).toMatchObject({ metadata,
                 isShared: true, access, availability: { kind: 'available' } }));
@@ -479,8 +479,8 @@ describe('fetchAndApplyMachines real selected-envelope hydration', () => {
                 if (phase === 'request') { entered.resolve(); await release.promise; }
                 return jsonResponse([row]);
             },
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
-            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            displayFirst: true,
+            applyMachines: (machines, replace, _publishedRows, warmDisplays) => storage.getState().applyMachines(machines, replace, { warmDisplays }),
         });
         try {
             await entered.promise;

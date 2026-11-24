@@ -10195,14 +10195,11 @@ class Sync {
                 return display ? buildMachineDisplayCacheEntryFromRenderable(display) : undefined;
             },
             shouldContinue,
-            applyMachineDisplayEntries: (machines, options) => {
-                if (!shouldContinue()) return;
-                storage.getState().replaceMachineDisplays(machines, { sourceServerId, replace: options?.replace });
-            },
+            displayFirst: true,
             machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
-            applyMachines: (machines, replace, publishedRows) => {
+            applyMachines: (machines, replace, publishedRows, warmDisplays) => {
                 if (!shouldContinue()) return;
-                storage.getState().applyMachines(machines, replace, { sourceServerId,
+                storage.getState().applyMachines(machines, replace, { sourceServerId, warmDisplays,
                     activityUpdates: publishedRows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
                 });
             },

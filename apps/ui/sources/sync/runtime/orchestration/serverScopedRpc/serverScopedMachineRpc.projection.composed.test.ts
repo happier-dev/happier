@@ -460,9 +460,8 @@ describe('scoped Machine RPC on the applied active Home consumes Sync’s Machin
           request: async () => new Response(JSON.stringify([{ ...cold, metadata }])),
           getMachineSnapshot: () => getStorage().getState().machines,
           getExistingMachine: id => getStorage().getState().machines[id],
-          applyMachineDisplayEntries: (machines, options) => getStorage().getState().replaceMachineDisplays(machines,
-            { sourceServerId: home.profile.id, ...options }),
-          applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: home.profile.id }),
+          displayFirst: true,
+          applyMachines: (machines, replace, _rows, warmDisplays) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: home.profile.id, warmDisplays }),
           onListComplete: () => getStorage().getState().markMachineListSettled(home.profile.id),
         });
       } else getStorage().setState({ machineListStatusByServerId: { [home.profile.id]: 'idle' } });

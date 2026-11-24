@@ -61,6 +61,8 @@ export type ApplyMachinesOptions = Readonly<{
     sourceAccountId?: string | null;
     /** Liveness captured alongside these admitted rows, not content authority. */
     activityUpdates?: readonly MachineActivityUpdate[];
+    /** Retained labels for unopened rows in the same admitted census. */
+    warmDisplays?: readonly MachineDisplayRenderable[];
 }>;
 
 type MachineUpdateObserver = (serverId: string, machineIds: readonly string[], facts?: Readonly<{ workSummaryChanged: true }>) => void;
@@ -496,6 +498,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         delete mergedMachineDisplays[id];
                     }
                 }
+                const warmDisplays = options?.warmDisplays
+                    ? new Map(options.warmDisplays.map(display => [display.id, display]))
+                    : null;
                 retainedMachines.forEach((machine) => {
                     const previousMachine = state.machines[machine.id];
                     if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
@@ -508,7 +513,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         }
                         mergedMachines[machine.id] = retainedMachine;
                     }
-                    const nextDisplay = buildMachineDisplayRenderableFromMachine(machine);
+                    const warmDisplay = warmDisplays?.get(machine.id);
+                    const nextDisplay = buildMachineDisplayRenderableFromMachine(machine,
+                        warmDisplay?.metadataVersion === machine.metadataVersion ? warmDisplay : undefined);
                     const previousDisplay = state.machineDisplayById[machine.id];
                     if (!areMachineDisplaySemanticsEqual(previousDisplay, nextDisplay)) hasDisplaySemanticChanges = true;
                     const retainedDisplay = retainMachineDisplay(previousDisplay, nextDisplay);

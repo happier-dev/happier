@@ -50,8 +50,9 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
             getMachineSnapshot: () => storage.getState().machines,
             getExistingMachine: id => storage.getState().machines[id],
             request: async () => Response.json([row]),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
-            applyMachines: (machines, replace, publishedRows) => storage.getState().applyMachines(machines, replace, {
+            displayFirst: true,
+            applyMachines: (machines, replace, publishedRows, warmDisplays) => storage.getState().applyMachines(machines, replace, {
+                warmDisplays,
                 activityUpdates: publishedRows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
             }),
         };
@@ -80,8 +81,9 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
             getMachineSnapshot: () => storage.getState().machines,
             getExistingMachine: (id) => storage.getState().machines[id],
             request: async () => Response.json([row]),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
-            applyMachines: (machines, replace, publishedRows) => storage.getState().applyMachines(machines, replace, {
+            displayFirst: true,
+            applyMachines: (machines, replace, publishedRows, warmDisplays) => storage.getState().applyMachines(machines, replace, {
+                warmDisplays,
                 activityUpdates: publishedRows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
             }),
         };
@@ -134,8 +136,8 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
                 getMachineSnapshot: () => storage.getState().machines,
                 getExistingMachine: (id) => storage.getState().machines[id] ?? null,
                 request: async () => Response.json([row]),
-                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
-                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+                displayFirst: true,
+                applyMachines: (machines, replace, _rows, warmDisplays) => storage.getState().applyMachines(machines, replace, { warmDisplays }),
             });
             expect(storage.getState().machines[row.id]).toMatchObject({ id: row.id,
                 storageMode: 'plain', availability: { kind: 'available' }, metadata: { host: 'tester.local' } });
@@ -236,9 +238,9 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
             getMachineSnapshot: () => storage.getState().machines,
             request: async () => Response.json([{ ...fixture, dataEncryptionKey: null, metadata: encryptedMetadata,
                 daemonState: encryptedDaemonState }]),
-            applyMachineDisplayEntries: (machines: Parameters<typeof initialState.replaceMachineDisplays>[0], options: Parameters<typeof initialState.replaceMachineDisplays>[1]) =>
-                storage.getState().replaceMachineDisplays(machines, options),
-            applyMachines: (machines: Machine[], replace: boolean) => storage.getState().applyMachines(machines, replace),
+            displayFirst: true,
+            applyMachines: (...args: Parameters<Parameters<typeof fetchAndApplyMachines>[0]['applyMachines']>) =>
+                storage.getState().applyMachines(args[0], args[1], { warmDisplays: args[3] }),
         };
         try {
             await fetchAndApplyMachines(params);
@@ -521,7 +523,6 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
     it('marks a malformed plain Machine unavailable in the immediate warm-display state', async () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: { token: 'token-only' },
@@ -543,13 +544,13 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
                 },
             ]), { status: 200 })),
             applyMachines,
-            applyMachineDisplayEntries,
+            displayFirst: true,
             replace: true,
         });
 
-        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+        expect(applyMachines).toHaveBeenCalledWith(expect.any(Array), true, expect.any(Array), [
             expect.objectContaining({ id: 'machine-plain-malformed-display' }),
-        ], { replace: true });
+        ]);
         expect(applyMachines).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 'machine-plain-malformed-display',
@@ -563,7 +564,7 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
                     reason: 'content_unreadable',
                 },
             }),
-        ], true, expect.any(Array));
+        ], true, expect.any(Array), expect.any(Array));
     });
 
     it('keeps prior plain Machine fields and reports unavailable when a socket envelope is malformed', async () => {

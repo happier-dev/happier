@@ -95,7 +95,6 @@ describe('fetchAndApplyMachines error propagation', () => {
     it('keeps retained E2EE machines explicitly locked when token-only credentials have no encryption material', async () => {
         const credentials: AuthCredentials = { token: 'token-only' };
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
         const request = vi.fn(async (_path: string, _init: RequestInit) => ({
             ok: true,
             async json() {
@@ -123,15 +122,15 @@ describe('fetchAndApplyMachines error propagation', () => {
             machineDataKeys,
             request,
             applyMachines,
-            applyMachineDisplayEntries,
+            displayFirst: true,
         });
 
         expect(request).toHaveBeenCalledTimes(1);
         expect(request.mock.calls[0]?.[1]?.method).toBeUndefined();
         expect(machineDataKeys).toEqual(new Map());
-        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+        expect(applyMachines).toHaveBeenCalledWith(expect.any(Array), false, expect.any(Array), [
             expect.objectContaining({ id: 'retained-e2ee' }),
-        ], { replace: false });
+        ]);
         expect(applyMachines).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 'retained-e2ee',
@@ -145,7 +144,7 @@ describe('fetchAndApplyMachines error propagation', () => {
                     reason: 'encryption_material_unavailable',
                 },
             }),
-        ], false, expect.any(Array));
+        ], false, expect.any(Array), expect.any(Array));
     });
 
     it('keeps the authoritative metadata version, opens no daemon revision, and reports a locked machine when E2EE content decryption fails', async () => {
@@ -214,7 +213,6 @@ describe('fetchAndApplyMachines error propagation', () => {
     it('still applies cached machine display rows when machine encryption initialization fails', async () => {
         const credentials: AuthCredentials = { token: 't', secret: 's' };
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials,
@@ -268,13 +266,12 @@ describe('fetchAndApplyMachines error propagation', () => {
                 : machineId === 'm2'
                     ? { metadataVersion: 2, displayName: 'two', host: 'h2', homeDir: '/h2' } as any
                     : undefined,
-            applyMachineDisplayEntries,
+            displayFirst: true,
             applyMachines,
         });
 
-        expect(applyMachineDisplayEntries).toHaveBeenCalledTimes(1);
         expect(applyMachines).toHaveBeenCalledTimes(1);
-        expect(applyMachineDisplayEntries.mock.calls[0]?.[0]).toHaveLength(2);
+        expect(applyMachines.mock.calls[0]?.[3]).toHaveLength(2);
         expect(applyMachines.mock.calls[0]?.[0]).toHaveLength(2);
         expect(applyMachines.mock.calls[0]?.[0]).toEqual([
             expect.objectContaining({

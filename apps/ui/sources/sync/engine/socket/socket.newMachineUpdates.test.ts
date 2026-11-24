@@ -587,8 +587,8 @@ describe('socket update handling: update-machine (missing encryption)', () => {
             request: async () => Response.json([{ ...machine, metadata, daemonState }]),
             getMachineSnapshot: () => storage.getState().machines,
             getExistingMachine: id => storage.getState().machines[id],
-            applyMachineDisplayEntries: rows => storage.getState().replaceMachineDisplays(rows),
-            applyMachines: (rows, replace) => storage.getState().applyMachines(rows, replace),
+            displayFirst: true,
+            applyMachines: (rows, replace, _publishedRows, warmDisplays) => storage.getState().applyMachines(rows, replace, { warmDisplays }),
         });
         const pending = refresh();
         try {
@@ -653,8 +653,8 @@ describe('socket update handling: update-machine (missing encryption)', () => {
             request: async () => Response.json([{ ...machine, metadata, daemonState }]),
             getMachineSnapshot: () => storage.getState().machines,
             getExistingMachine: id => storage.getState().machines[id],
-            applyMachineDisplayEntries: rows => storage.getState().replaceMachineDisplays(rows),
-            applyMachines: (rows, replace) => storage.getState().applyMachines(rows, replace),
+            displayFirst: true,
+            applyMachines: (rows, replace, _publishedRows, warmDisplays) => storage.getState().applyMachines(rows, replace, { warmDisplays }),
         });
         const hint = { id: 'newer-state-hint', seq: 2, createdAt: machine.updatedAt + 1,
             body: { t: 'update-machine' as const, machineId,

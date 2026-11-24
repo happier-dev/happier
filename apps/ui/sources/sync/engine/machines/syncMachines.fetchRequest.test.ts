@@ -230,8 +230,8 @@ describe('fetchAndApplyMachines request override', () => {
                 { ...createMachineFixture({ id: 'peer' }), metadata, dataEncryptionKey: secondEnvelope, storageMode: 'e2ee' }]),
             getMachineSnapshot: () => store.getState().machines,
             getExistingMachine: id => store.getState().machines[id],
-            applyMachineDisplayEntries: rows => store.getState().replaceMachineDisplays(rows),
-            applyMachines: (rows, replace) => store.getState().applyMachines(rows, replace),
+            displayFirst: true,
+            applyMachines: (rows, replace, _publishedRows, warmDisplays) => store.getState().applyMachines(rows, replace, { warmDisplays }),
         }).then(() => { listSettled = true; });
         try {
             await entered.promise;
@@ -264,7 +264,7 @@ describe('fetchAndApplyMachines request override', () => {
             credentials: legacyCredentials, sourceServerId: 'home-1', encryption,
             machineDataKeys: new Map(), getExistingMachine: () => existing,
             request: async () => jsonResponse([{ ...existing, metadata, dataEncryptionKey: null }]),
-            applyMachineDisplayEntries: () => {},
+            displayFirst: true,
             applyMachines: machines => { applied.push(machines); },
         });
         expect(applied[0]?.[0]?.metadata).toBeNull();
@@ -288,7 +288,7 @@ describe('fetchAndApplyMachines request override', () => {
         const encryption = await createEncryptionHarness();
         const applied: Machine[][] = [];
         const published: (readonly FetchedMachineRow[])[] = [];
-        const displayed: MachineDisplayRenderable[][] = [];
+        const displayed: (readonly MachineDisplayRenderable[])[] = [];
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
             sourceServerId: 'home-1',
@@ -298,8 +298,9 @@ describe('fetchAndApplyMachines request override', () => {
                 ...existing, metadata: 'unchanged-metadata', daemonState: 'unchanged-daemon', dataEncryptionKey: null,
             }]),
             getExistingMachine: () => existing,
-            applyMachineDisplayEntries: (machines) => { displayed.push(machines); },
-            applyMachines: (machines, _replace, rows: readonly FetchedMachineRow[] = []) => {
+            displayFirst: true,
+            applyMachines: (machines, _replace, rows, warmDisplays) => {
+                if (warmDisplays) displayed.push(warmDisplays);
                 applied.push(machines);
                 published.push(rows);
             },
@@ -332,7 +333,7 @@ describe('fetchAndApplyMachines request override', () => {
                 ...existing, metadata: 'rotated-metadata', dataEncryptionKey: 'next-key',
             }]),
             getExistingMachine: () => current,
-            applyMachineDisplayEntries: () => {},
+            displayFirst: true,
             applyMachines: (machines) => { current = machines[0]!; },
         });
         await vi.waitFor(() => expect(current.metadata).toEqual({ decrypted: 'rotated-metadata' }));
@@ -362,7 +363,7 @@ describe('fetchAndApplyMachines request override', () => {
             machineDataKeys: new Map(),
             request: async () => jsonResponse([{ ...existing, metadata: 'next-ciphertext', metadataVersion: 2, dataEncryptionKey: null }]),
             getExistingMachine: () => current,
-            applyMachineDisplayEntries: () => {},
+            displayFirst: true,
             applyMachines: (machines) => { current = machines[0]!; },
         });
 
@@ -448,7 +449,6 @@ describe('fetchAndApplyMachines request override', () => {
 
         const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -469,7 +469,7 @@ describe('fetchAndApplyMachines request override', () => {
                     host: 'mbp',
                     homeDir: '/home/u',
                 } : undefined,
-                applyMachineDisplayEntries,
+                displayFirst: true,
             } as any),
         } as any);
 
@@ -482,8 +482,8 @@ describe('fetchAndApplyMachines request override', () => {
                 metadataVersion: 5,
                 metadata: null,
             }),
-        ], false, expect.any(Array));
-        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+        ], false, expect.any(Array), expect.any(Array));
+        expect(applyMachines).toHaveBeenCalledWith(expect.any(Array), false, expect.any(Array), [
             expect.objectContaining({
                 id: 'm_cached',
                 metadataVersion: 5,
@@ -493,7 +493,7 @@ describe('fetchAndApplyMachines request override', () => {
                     homeDir: '/home/u',
                 }),
             }),
-        ], { replace: false });
+        ]);
     });
 
     it('hydrates every machine beyond the previous background row cutoff without publishing each row separately', async () => {
@@ -520,7 +520,6 @@ describe('fetchAndApplyMachines request override', () => {
         const applyMachines = vi.fn((machines: Machine[], replace: boolean) => {
             store.getState().applyMachines(machines, replace);
         });
-        const applyMachineDisplayEntries = vi.fn();
         const cachedMachineDisplayEntries = Object.fromEntries(rows.map((row) => [
             row.id,
             {
@@ -544,7 +543,7 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             getCachedMachineDisplayEntry: (machineId: string) => cachedMachineDisplayEntries[machineId],
-            applyMachineDisplayEntries,
+            displayFirst: true,
         } as any);
         await Promise.resolve();
         await Promise.resolve();
@@ -589,8 +588,8 @@ describe('fetchAndApplyMachines request override', () => {
         const loading = fetchAndApplyMachines({
             credentials: legacyCredentials, sourceServerId: 'home-1', encryption, machineDataKeys: new Map(), request,
             getExistingMachine: id => store.getState().machines[id], getMachineSnapshot: () => store.getState().machines,
-            ...(displayFirst ? { applyMachineDisplayEntries: (entries: MachineDisplayRenderable[]) => store.getState().replaceMachineDisplays(entries) } : {}),
-            applyMachines: (machines, replace) => store.getState().applyMachines(machines, replace),
+            displayFirst,
+            applyMachines: (machines, replace, _publishedRows, warmDisplays) => store.getState().applyMachines(machines, replace, { warmDisplays }),
         });
         try {
             await vi.waitFor(() => expect(names).toHaveLength(rows.length));
@@ -643,8 +642,8 @@ describe('fetchAndApplyMachines request override', () => {
             credentials: legacyCredentials, sourceServerId: 'home-1', encryption, machineDataKeys: new Map(),
             request: async () => jsonResponse([row]), shouldContinue: () => current,
             getExistingMachine: id => store.getState().machines[id], getMachineSnapshot: () => store.getState().machines,
-            applyMachineDisplayEntries: entries => store.getState().replaceMachineDisplays(entries),
-            applyMachines: (machines, replace) => store.getState().applyMachines(machines, replace),
+            displayFirst: true,
+            applyMachines: (machines, replace, _publishedRows, warmDisplays) => store.getState().applyMachines(machines, replace, { warmDisplays }),
         });
         try {
             await entered.promise;
@@ -680,8 +679,8 @@ describe('fetchAndApplyMachines request override', () => {
             request: async () => jsonResponse(rows),
             getExistingMachine: id => store.getState().machines[id],
             getMachineSnapshot: () => store.getState().machines,
-            applyMachineDisplayEntries: () => {},
-            applyMachines: (machines, replace) => store.getState().applyMachines(machines, replace),
+            displayFirst: true,
+            applyMachines: (machines, replace, _publishedRows, warmDisplays) => store.getState().applyMachines(machines, replace, { warmDisplays }),
         });
         try {
             await vi.waitFor(() => expect(['fast-a', 'fast-b', 'fast-c'].every(id => Boolean(store.getState().machines[id]?.metadata))).toBe(true));
@@ -728,7 +727,6 @@ describe('fetchAndApplyMachines request override', () => {
 
         const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -738,7 +736,7 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             ...( {
-                applyMachineDisplayEntries,
+                displayFirst: true,
             } as any),
         } as any);
 
@@ -753,8 +751,8 @@ describe('fetchAndApplyMachines request override', () => {
                 installationId: 'installation-1',
                 contentPublicKeyFingerprint: 'content-key-1',
             }),
-        ], false, expect.any(Array));
-        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+        ], false, expect.any(Array), expect.any(Array));
+        expect(applyMachines).toHaveBeenCalledWith(expect.any(Array), false, expect.any(Array), [
             expect.objectContaining({
                 id: 'm_replaced',
                 replacedByMachineId: 'm_current',
@@ -763,7 +761,7 @@ describe('fetchAndApplyMachines request override', () => {
                 replacementSource: 'automatic',
                 replacementActorUserId: 'user-1',
             }),
-        ], { replace: false });
+        ]);
     });
 
     it('still hydrates machine daemonState when cache-hit display metadata is fresh', async () => {
@@ -789,7 +787,6 @@ describe('fetchAndApplyMachines request override', () => {
 
         const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -810,7 +807,7 @@ describe('fetchAndApplyMachines request override', () => {
                     host: 'mbp',
                     homeDir: '/home/u',
                 } : undefined,
-                applyMachineDisplayEntries,
+                displayFirst: true,
             } as any),
         } as any);
 
@@ -857,7 +854,6 @@ describe('fetchAndApplyMachines request override', () => {
         encryption.decryptMetadata.mockImplementation(async () => { await release.promise; return existing.metadata; });
         encryption.decryptDaemonState.mockImplementation(async () => { await release.promise; return existing.daemonState; });
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         const fetchPromise = fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -881,7 +877,7 @@ describe('fetchAndApplyMachines request override', () => {
                     host: 'mbp',
                     homeDir: '/home/u',
                 } : undefined,
-                applyMachineDisplayEntries,
+                displayFirst: true,
             } as any),
         } as any);
 
@@ -893,7 +889,7 @@ describe('fetchAndApplyMachines request override', () => {
                     daemonStateVersion: 7,
                     daemonState: { status: 'running' },
                 }),
-            ], false, expect.any(Array)));
+            ], false, expect.any(Array), expect.any(Array)));
         } finally {
             release.resolve();
             await fetchPromise;
@@ -927,7 +923,6 @@ describe('fetchAndApplyMachines request override', () => {
 
         const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -951,7 +946,7 @@ describe('fetchAndApplyMachines request override', () => {
                     host: 'mbp',
                     homeDir: '/home/u',
                 } : undefined,
-                applyMachineDisplayEntries,
+                displayFirst: true,
             } as any),
         } as any);
 
@@ -961,7 +956,7 @@ describe('fetchAndApplyMachines request override', () => {
                 daemonState: null,
                 daemonStateVersion: 8,
             }),
-        ], false, expect.any(Array));
+        ], false, expect.any(Array), expect.any(Array));
     });
 
     it('renders placeholder machine displays immediately on empty cache and hydrates in the background', async () => {
@@ -989,7 +984,6 @@ describe('fetchAndApplyMachines request override', () => {
         const release = createDeferred<void>();
         encryption.decryptMetadata.mockImplementation(async () => { await release.promise; return createMachineFixture().metadata; });
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         const fetchPromise = fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -998,24 +992,24 @@ describe('fetchAndApplyMachines request override', () => {
             machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
-            applyMachineDisplayEntries,
+            displayFirst: true,
         });
 
         try {
-            await vi.waitFor(() => expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+            await vi.waitFor(() => expect(applyMachines).toHaveBeenCalledWith(expect.any(Array), false, expect.any(Array), [
                 expect.objectContaining({
                     id: 'm_cold',
                     metadataVersion: 5,
                     metadata: null,
                 }),
-            ], { replace: false }));
+            ]));
             expect(applyMachines).toHaveBeenCalledWith([
                 expect.objectContaining({
                     id: 'm_cold',
                     metadataVersion: 5,
                     metadata: null,
                 }),
-            ], false, expect.any(Array));
+            ], false, expect.any(Array), expect.any(Array));
         } finally {
             release.resolve();
             await fetchPromise;
@@ -1040,11 +1034,11 @@ describe('fetchAndApplyMachines request override', () => {
                 activeAt: 10, revokedAt: null, createdAt: 1, updatedAt: 10 } satisfies RawMachine]),
             getMachineSnapshot: () => store.getState().machines,
             getExistingMachine: id => store.getState().machines[id],
-            applyMachineDisplayEntries: rows => store.getState().replaceMachineDisplays(rows),
-            applyMachines: (rows, replace) => {
+            displayFirst: true,
+            applyMachines: (rows, replace, _publishedRows, warmDisplays) => {
                 for (const row of rows) published.push({ daemonStateVersion: row.daemonStateVersion,
                     metadata: row.metadata !== null, daemonState: row.daemonState != null });
-                store.getState().applyMachines(rows, replace);
+                store.getState().applyMachines(rows, replace, { warmDisplays });
             },
         });
         try {
@@ -1073,10 +1067,10 @@ describe('fetchAndApplyMachines request override', () => {
             request: async () => jsonResponse([row]),
             getMachineSnapshot: () => store.getState().machines,
             getExistingMachine: id => store.getState().machines[id],
-            applyMachineDisplayEntries: rows => store.getState().replaceMachineDisplays(rows),
-            applyMachines: (rows, replace) => {
+            displayFirst: true,
+            applyMachines: (rows, replace, _publishedRows, warmDisplays) => {
                 for (const machine of rows) versions.push(machine.daemonStateVersion);
-                store.getState().applyMachines(rows, replace);
+                store.getState().applyMachines(rows, replace, { warmDisplays });
             },
         });
         await read(false);
@@ -1312,7 +1306,6 @@ describe('fetchAndApplyMachines request override', () => {
 
         const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
-        const applyMachineDisplayEntries = vi.fn();
 
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -1321,11 +1314,10 @@ describe('fetchAndApplyMachines request override', () => {
             machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
-            applyMachineDisplayEntries,
+            displayFirst: true,
             shouldContinue: () => false,
         } as any);
 
         expect(applyMachines).not.toHaveBeenCalled();
-        expect(applyMachineDisplayEntries).not.toHaveBeenCalled();
     });
 });

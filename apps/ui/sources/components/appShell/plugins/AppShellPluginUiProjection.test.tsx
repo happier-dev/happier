@@ -3811,10 +3811,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
                     encryption, machineDataKeys: new Map(), request: async () => Response.json([row]),
                     getExistingMachine: id => persistentStorage.getState().machines[id],
                     getMachineSnapshot: () => persistentStorage.getState().machines,
-                    applyMachines: (machines, replace) => persistentStorage.getState().applyMachines(machines, replace,
-                        { sourceServerId: storageState.activeServer.serverId }),
-                    applyMachineDisplayEntries: (machines, options) => persistentStorage.getState().replaceMachineDisplays(machines,
-                        { ...options, sourceServerId: storageState.activeServer.serverId }),
+                    applyMachines: (machines, replace, _rows, warmDisplays) => persistentStorage.getState().applyMachines(machines, replace,
+                        { sourceServerId: storageState.activeServer.serverId, warmDisplays }),
+                    displayFirst: true,
                 });
             }
         });

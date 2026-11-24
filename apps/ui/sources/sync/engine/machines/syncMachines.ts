@@ -506,13 +506,14 @@ export async function fetchAndApplyMachines(params: {
     readTransport?: CapturedServerReadTransport;
     signal?: AbortSignal;
     /** Accepted raw rows carry the published key/content basis beside hydrated display rows. */
-    applyMachines: (machines: Machine[], replace: boolean, publishedRows: readonly FetchedMachineRow[]) => void;
+    applyMachines: (machines: Machine[], replace: boolean, publishedRows: readonly FetchedMachineRow[],
+        warmDisplays?: readonly MachineDisplayRenderable[]) => void;
     /** One admitted census, independently of warm and display-hydration publications. */
     onRowsObserved?: (machines: readonly FetchedMachineRow[]) => void;
     getExistingMachine?: (machineId: string) => Machine | null | undefined;
     /** Canonical immutable rows also fence keyless Plain/access reads before HTTP yields. */
     getMachineSnapshot?: () => Readonly<Record<string, Machine | undefined>>;
-    applyMachineDisplayEntries?: (machines: MachineDisplayRenderable[], options?: { replace?: boolean }) => void;
+    displayFirst?: boolean;
     getCachedMachineDisplayEntry?: (machineId: string) => MachineDisplayCacheEntryV1 | undefined;
     machineDisplayHydrationConcurrencyLimit?: number;
     shouldContinue?: () => boolean;
@@ -646,7 +647,7 @@ export async function fetchAndApplyMachines(params: {
                 : isMachineReadSnapshotCurrent(readIncumbentRow(machineId), incumbentRows.get(machineId))))
             && Boolean(row && (hydratingPublishedRows || rowIsNotOlder(row)));
     };
-    const applyCurrentMachines = (incoming: Machine[], replace: boolean) => {
+    const applyCurrentMachines = (incoming: Machine[], replace: boolean, warmDisplays?: readonly MachineDisplayRenderable[]) => {
         const current = incoming.filter((machine) => isMachineCurrent(machine.id)).map((machine) => {
             const presence = readIncumbentRow(machine.id);
             const captured = requestMachineSnapshot ? requestMachineSnapshot[machine.id] : incumbentRows.get(machine.id);
@@ -691,11 +692,13 @@ export async function fetchAndApplyMachines(params: {
                 ? { ...merged, availability: undefined } : merged;
             return qualified;
         });
-        applyMachines(current, replace && current.length === incoming.length && isCensusMembershipCurrent(),
-            current.flatMap(machine => {
-                const row = capturedRows.get(machine.id);
-                return row ? [row] : [];
-            }));
+        const replaceCurrent = replace && current.length === incoming.length && isCensusMembershipCurrent();
+        const publishedRows = current.flatMap(machine => {
+            const row = capturedRows.get(machine.id);
+            return row ? [row] : [];
+        });
+        if (warmDisplays) applyMachines(current, replaceCurrent, publishedRows, warmDisplays);
+        else applyMachines(current, replaceCurrent, publishedRows);
         observePresence(current.map(machine => machine.id));
         // Warm publication is this read's own synchronous write. Carry its exact
         // resulting row forward so later hydration does not reject itself, but do
@@ -842,7 +845,7 @@ export async function fetchAndApplyMachines(params: {
     // Re-admit retained opened content before publishing it. Unopened rows need
     // only a display shell; their fresh keys belong to the existing selective
     // hydration jobs. Exact/non-display readers await complete crypto admission.
-    const shouldApplyMachineDisplays = typeof params.applyMachineDisplayEntries === 'function';
+    const shouldApplyMachineDisplays = params.displayFirst === true;
     await initializeMachineKeys(shouldApplyMachineDisplays ? machines.filter(machine => {
         const classified = classifyMachineKey(machine);
         const retained = incumbentRows.get(machine.id);
@@ -1064,8 +1067,7 @@ export async function fetchAndApplyMachines(params: {
         });
         const replace = completeCensus && (params.replace ?? false) && !hasOlderRows
             && isCensusMembershipCurrent() && machines.every((machine) => isMachineCurrent(machine.id));
-        params.applyMachineDisplayEntries!(displayEntries, { replace });
-        applyCurrentMachines(warmMachines, replace);
+        applyCurrentMachines(warmMachines, replace, displayEntries);
         hydratingPublishedRows = true;
 
         const machinesNeedingHydration = machines

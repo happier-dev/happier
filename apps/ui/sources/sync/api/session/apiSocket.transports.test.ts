@@ -178,9 +178,8 @@ describe('apiSocket transports and roles', () => {
                     request: async () => new Response(JSON.stringify([{ ...cold, metadata }])),
                     getMachineSnapshot: () => storage.getState().machines,
                     getExistingMachine: id => storage.getState().machines[id],
-                    applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                        { sourceServerId: serverId, ...options }),
-                    applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+                    displayFirst: true,
+                    applyMachines: (machines, replace, _rows, warmDisplays) => storage.getState().applyMachines(machines, replace, { sourceServerId: serverId, warmDisplays }),
                     onListComplete: () => storage.getState().markMachineListSettled(serverId),
                 });
                 await firstPicture.promise;
@@ -221,9 +220,8 @@ describe('apiSocket transports and roles', () => {
                 request: async () => new Response(JSON.stringify([{ ...cold, metadata }])),
                 getMachineSnapshot: () => storage.getState().machines,
                 getExistingMachine: id => storage.getState().machines[id],
-                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                    { sourceServerId: serverId, ...options }),
-                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+                displayFirst: true,
+                applyMachines: (machines, replace, _rows, warmDisplays) => storage.getState().applyMachines(machines, replace, { sourceServerId: serverId, warmDisplays }),
                 onListComplete: () => storage.getState().markMachineListSettled(serverId),
             });
         });

@@ -1,12 +1,15 @@
+import { useLayoutEffect, useSyncExternalStore } from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as platformCrypto from 'rn-encryption';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
-import { countStoreNotifications, createDeferred, createMachineFixture, renderHook } from '@/dev/testkit';
+import { countStoreNotifications, createDeferred, createMachineFixture, createSessionFixture, renderHook } from '@/dev/testkit';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { hasCurrentMachineContent, readLiveMachineInventoryRows, resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -31,7 +34,7 @@ afterEach(() => {
 function createInventory() {
     const serverId = resolveServerProfileScopeIdForIdentifier(getActiveServerSnapshot().serverId);
     storage.setState({ machines: {}, machineDisplayById: {}, machinePresenceById: {},
-        machinePresenceByServerId: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
+        machinePresenceByServerId: {}, machineListByServerId: {}, machineRecordsByServerId: {}, machineListStatusByServerId: {} });
     const read = () => resolveServerScopedMachineInventory({ serverId, activeServerId: serverId,
         activeMachines: Object.values(storage.getState().machines),
         machineListByServerId: storage.getState().machineListByServerId,
@@ -40,14 +43,81 @@ function createInventory() {
         sourceServerId: serverId,
         getExistingMachine: (id: string) => storage.getState().machines[id],
         getMachineSnapshot: () => storage.getState().machines,
-        applyMachines: (machines: Parameters<typeof initialState.applyMachines>[0], replace: boolean) =>
-            storage.getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+        applyMachines: (machines: Machine[], replace: boolean, _publishedRows?: readonly FetchedMachineRow[],
+            warmDisplays?: NonNullable<Parameters<typeof initialState.applyMachines>[2]>['warmDisplays']) =>
+            storage.getState().applyMachines(machines, replace, { sourceServerId: serverId, warmDisplays }),
         onListComplete: () => storage.getState().markMachineListSettled(serverId),
         onListUnavailable: () => storage.getState().markMachineListUnavailable(serverId),
     } };
 }
 
 describe('Machine-list settlement through sync and the real store', () => {
+
+    it.each([[2, 1], [32, 17]])('publishes one Machine census for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
+        const inventory = createInventory();
+        const sessions = Array.from({ length: sessionCount }, (_, index) => {
+            const machineId = `machine-${index % machineCount}`;
+            return buildSessionListRenderableFromSession(createSessionFixture({
+                id: `session-${index}`,
+                metadata: { machineId, host: machineId, path: `/home/tester/project-${index}` },
+            }));
+        });
+        const rows = Array.from({ length: machineCount }, (_, index) => {
+            const id = `machine-${index}`;
+            return createPlainMachineRowFixture({ id, accountId: 'account-1' });
+        });
+        storage.getState().applyServerScopedSessionListRows(inventory.serverId, sessions, { source: 'query', mode: 'replace' });
+
+        const readSessions = () => storage.getState().sessionListRowsByServerId[inventory.serverId];
+        const readDisplay = () => storage.getState().machineDisplayById;
+        const readInventory = () => storage.getState().machineListByServerId[inventory.serverId];
+        const readIndex = () => storage.getState().sessionListIndexByServerId?.[inventory.serverId];
+        let commits = 0;
+        const mounted = await renderHook(() => {
+            const sessions = useSyncExternalStore(storage.subscribe, readSessions);
+            const displays = useSyncExternalStore(storage.subscribe, readDisplay);
+            const machines = useSyncExternalStore(storage.subscribe, readInventory);
+            const index = useSyncExternalStore(storage.subscribe, readIndex);
+            useLayoutEffect(() => { commits++; });
+            return { sessions, displays, machines, index };
+        });
+        const publications: { displayIds: string[]; inventoryIds: string[] }[] = [];
+        const stop = storage.subscribe((state, previous) => {
+            if (state.machineDisplayById !== previous.machineDisplayById
+                || state.machineListByServerId !== previous.machineListByServerId
+                || state.sessionListIndexByServerId !== previous.sessionListIndexByServerId) {
+                publications.push({
+                    displayIds: Object.keys(state.machineDisplayById),
+                    inventoryIds: (state.machineListByServerId[inventory.serverId] ?? []).map(machine => machine.id),
+                });
+            }
+        });
+        const refresh = () => fetchAndApplyMachines({
+            ...inventory.callbacks, credentials, expectedAccountMode: 'plain', encryption: null, machineDataKeys: new Map(),
+            replace: true, request: async () => Response.json(rows),
+            displayFirst: true,
+        });
+        try {
+            const before = commits;
+            await act(async () => { await refresh(); });
+            const hydrated = mounted.getCurrent();
+            const ids = rows.map(row => row.id);
+            expect.soft(publications).toEqual([{ displayIds: ids, inventoryIds: ids }]);
+            expect.soft(commits - before).toBe(1);
+            expect(Object.keys(hydrated.sessions ?? {})).toEqual(sessions.map(session => session.id));
+            expect(Object.keys(hydrated.displays)).toEqual(ids);
+            expect(hydrated.machines?.map(machine => machine.id)).toEqual(ids);
+            expect(hydrated.index).toBeDefined();
+
+            const beforeReplay = commits;
+            publications.length = 0;
+            await act(async () => { await refresh(); });
+            expect.soft(publications).toEqual([]);
+            expect.soft(commits - beforeReplay).toBe(0);
+            expect(mounted.getCurrent()).toBe(hydrated);
+        } finally { stop(); await mounted.unmount(); }
+    });
+
     it('publishes each released completion cohort once, with only changed records', async () => {
         const inventory = createInventory();
         const unchanged = createMachineFixture({ id: 'unchanged' });
@@ -134,8 +204,7 @@ describe('Machine-list settlement through sync and the real store', () => {
                 credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') },
                 expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(), machineDisplayHydrationConcurrencyLimit: 4,
                 request: async () => Response.json(rows),
-                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                    { sourceServerId: inventory.serverId, ...options }),
+                displayFirst: true,
             });
             console.info('[MACHINES-HYDRATE] cohorts', { consumer, daemon, publications: hydrationPublications,
                 cohorts: cohorts.mock.calls.length, unrelatedRenders });
@@ -184,8 +253,7 @@ describe('Machine-list settlement through sync and the real store', () => {
                     credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') },
                     expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(), machineDisplayHydrationConcurrencyLimit: 4,
                     request: async () => Response.json(rows),
-                    applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                        { sourceServerId: inventory.serverId, ...options }),
+                    displayFirst: true,
                 });
                 // Every Machine is fully opened, so fewer commits did not drop content.
                 expect(rows.every(row => storage.getState().machines[row.id]?.metadata?.host === metadata.host)).toBe(true);
@@ -222,8 +290,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             expectedAccountMode: mode,
             encryption, machineDataKeys: new Map(), replace: true,
             request: async () => Response.json(rows),
-            applyMachineDisplayEntries: (machines: Parameters<typeof initialState.replaceMachineDisplays>[0], options: Parameters<typeof initialState.replaceMachineDisplays>[1]) =>
-                storage.getState().replaceMachineDisplays(machines, { ...options, sourceServerId: inventory.serverId }),
+            displayFirst: true,
             applyMachines: (machines: Parameters<typeof initialState.applyMachines>[0], replace: boolean) => {
                 inventory.callbacks.applyMachines(machines, replace);
                 published.push(machines.map(machine => storage.getState().machines[machine.id]!));
@@ -305,8 +372,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') }, expectedAccountMode: 'e2ee',
             encryption, machineDataKeys: new Map([[incumbent.id, { envelope: oldEnvelope, dataKey: oldKey }]]),
             request: async () => Response.json([row]),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                { sourceServerId: inventory.serverId, ...options }),
+            displayFirst: true,
         });
         try {
             await entered.promise;
@@ -331,8 +397,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             keyBasis: { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 1 } };
         const params = { ...inventory.callbacks, credentials, expectedAccountMode: 'plain' as const,
             encryption: null, machineDataKeys: new Map(),
-            applyMachineDisplayEntries: (machines: Parameters<typeof initialState.replaceMachineDisplays>[0], options: Parameters<typeof initialState.replaceMachineDisplays>[1]) =>
-                storage.getState().replaceMachineDisplays(machines, { ...options, sourceServerId: inventory.serverId }),
+            displayFirst: true,
         };
         await fetchAndApplyMachines({ ...params, request: async () => Response.json([row]) });
         expect(storage.getState().machines.opening?.availability).toEqual({ kind: 'available' });
@@ -383,8 +448,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') }, expectedAccountMode: 'e2ee',
             encryption, machineDataKeys: new Map(), request: async () => {
                 entered.resolve(); await release.promise; return Response.json([row]);
-            }, applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                { sourceServerId: inventory.serverId, ...options }),
+            }, displayFirst: true,
         });
         try {
             await entered.promise;
@@ -436,8 +500,7 @@ describe('Machine-list settlement through sync and the real store', () => {
         const pending = fetchAndApplyMachines({ ...inventory.callbacks,
             credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') }, expectedAccountMode: 'e2ee',
             encryption, machineDataKeys: new Map(), request: async () => Response.json(rows),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                { sourceServerId: inventory.serverId, ...options }),
+            displayFirst: true,
         });
         try {
             await entered.promise;
@@ -473,8 +536,7 @@ describe('Machine-list settlement through sync and the real store', () => {
         const pending = fetchAndApplyMachines({ ...inventory.callbacks,
             credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') }, expectedAccountMode: 'e2ee',
             encryption, machineDataKeys: new Map(), request: async () => Response.json(rows),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                { sourceServerId: inventory.serverId, ...options }),
+            displayFirst: true,
         });
         try {
             await entered.promise;
@@ -538,8 +600,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') }, expectedAccountMode: 'e2ee',
             encryption, machineDataKeys: new Map(), replace: true, machineDisplayHydrationConcurrencyLimit: 1,
             request: async () => Response.json(rows),
-            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                { sourceServerId: inventory.serverId, ...options }),
+            displayFirst: true,
         });
         try {
             await activeStarted.promise;
@@ -614,8 +675,7 @@ describe('Machine-list settlement through sync and the real store', () => {
                 expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(), replace: true,
                 request: async () => first ? Response.json(rows) : outcome === 'failure'
                     ? Response.json({}, { status: 503 }) : Response.json([]),
-                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
-                    { sourceServerId: inventory.serverId, ...options }),
+                displayFirst: true,
             });
         });
         const decrypt = platformCrypto.decryptAsyncAES;
