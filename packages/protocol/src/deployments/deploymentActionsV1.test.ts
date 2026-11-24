@@ -1,3 +1,4 @@
+import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
 import { DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { resolveApprovalRequestApproveAdmission } from '../actions/actionApprovalPresentation.js';
@@ -405,6 +406,19 @@ describe('Domain admitted child transport', () => {
   const root = { serverId: 'home', environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
     expectedDomainRevision: 1, requestKey: 'request', targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
     ...capture.content };
+  it('accepts settled private bindings only in protected native Domain content', () => {
+    const { contentArtifactId: _id, contentHeaderVersion: _header, contentBodyVersion: _body, ...metadata } = root;
+    const binding = { machineId: 'receiver', installationId: 'installed', dockerEngineId: 'engine', nativeServer: 'private',
+      binding: { exposure: { exposure: 'privateNetwork', requirementId: 'caddy-origin', protocol: 'tcp',
+        hostAddress: '100.70.0.2', hostPort: 9381, providerId: 'tailscale', networkIdentity: 'tailnet' },
+      interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'] } };
+    const content = { hostname: 'app.example.test', target: { kind: 'telemetry' } };
+    const settled = { ...content, privatePlacementBindings: [binding] };
+    expect(DeploymentDomainContentV1Schema.parse(settled)).toEqual(settled);
+    expect(DeploymentActionInputSchemasV1['deployments.domains.add'].safeParse({ ...metadata, content }).success).toBe(true);
+    expect(DeploymentActionInputSchemasV1['deployments.domains.add'].safeParse({ ...metadata, content: settled }).success).toBe(false);
+    expect(DeploymentDomainContentV1Schema.safeParse({ ...settled, target: { kind: 'provider' } }).success).toBe(false);
+  });
   it('discovers only the prepared private candidate bound to an authored Domain root', () => {
     const { contentArtifactId: _id, contentHeaderVersion: _header, contentBodyVersion: _body, ...metadata } = root;
     const authored = { ...metadata, content: { hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 },

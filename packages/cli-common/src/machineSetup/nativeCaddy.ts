@@ -15,7 +15,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { checkCaddyPublishedPortConflicts } from './nativeCaddyPorts.js';
 import type { DeploymentDomainCaddyRequiredFactV1, DeploymentDomainCaddyFailureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainCaddyFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
-import type { MachineCaddyFirewallObservationV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
+import type { MachineCaddyFirewallObservationV1, MachineCaddyPrivateBindingV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 
 export type NativeCaddyFirewallExposure = NonNullable<Extract<MachineRecipeStepV1, { kind: 'firewall' }>['exposures']>[number];
 export type NativeCaddySetupInput = Readonly<{
@@ -24,7 +24,7 @@ export type NativeCaddySetupInput = Readonly<{
     stateDirectory: string; adminDirectory: string;
     daemonGroup: string; daemonGroupId: number; initialConfig: string; originPort: number;
     routedNetworks: readonly string[];
-    privateBinding?: Readonly<{ exposure: NativeCaddyFirewallExposure; interfaceName: string; sourceRanges: readonly string[] }>;
+    privateBinding?: Readonly<Omit<MachineCaddyPrivateBindingV1, 'sourceRanges'> & { sourceRanges: readonly string[] }>;
     publicBindings?: readonly NativeCaddyFirewallExposure[];
 }>;
 export type NativeCaddyContainerResult = Readonly<{ status: 'ready'; containerId: string }>

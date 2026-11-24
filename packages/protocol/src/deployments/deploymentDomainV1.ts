@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
-import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
+import { DeploymentDomainAuthoredContentV1Schema } from './deploymentDomainContentV1.js';
+import { MachineCaddyPrivateBindingV1Schema } from '../machines/setup/machineFirewallV1.js';
 import { DeploymentAppMachineBindingV1Schema } from '../machines/machinePublishedContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
 export { DeploymentDomainTunnelOwnershipV1Schema, DeploymentDomainTunnelOwnershipV1ProtocolSchema,
@@ -45,6 +46,8 @@ export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.str
     /** Host-local gateway bridge to this Machine's existing loopback collector. */
     telemetryBridge: z.optional(z.strictObject({ host: id, port: z.number().check(z.int(), z.minimum(1), z.maximum(65535)), networkId: id })),
     telemetryApp: z.optional(DeploymentDomainTelemetryAppV1Schema),
+    /** Private Add discovery only. A Machine emits this after firewall settlement. */
+    settledPrivateBinding: z.optional(MachineCaddyPrivateBindingV1Schema),
 }));
 export type DeploymentDomainMachineTopologyV1 = z.infer<typeof DeploymentDomainMachineTopologyV1Schema>;
 export const DeploymentDomainTopologyV1Schema = lazyZodSchema(() => z.strictObject({
@@ -189,7 +192,7 @@ export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.st
 export type DeploymentDomainAddPreparedInputV1 = z.infer<typeof DeploymentDomainAddPreparedInputV1Schema>;
 export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
     DeploymentDomainAddPreparedInputV1Schema,
-    z.strictObject({ ...addMetadata(), content: DeploymentDomainContentV1Schema }).check(
+    z.strictObject({ ...addMetadata(), content: DeploymentDomainAuthoredContentV1Schema }).check(
         z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
             { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })),
 ]));
@@ -222,7 +225,7 @@ export type DeploymentDomainAttachedVerifyInputV1 = z.infer<typeof DeploymentDom
 /** Private finite draft inspection; no Domain or Artifact is allocated. */
 export const DeploymentDomainPreviewInputV1Schema = lazyZodSchema(() => z.strictObject({
     ...environment, mode: z.literal('preview'), targetLinkId: id, expectedRevision: revision,
-    expectedTargetLinkRevision: revision, requestKey: id, content: DeploymentDomainContentV1Schema,
+    expectedTargetLinkRevision: revision, requestKey: id, content: DeploymentDomainAuthoredContentV1Schema,
 }));
 export type DeploymentDomainPreviewInputV1 = z.infer<typeof DeploymentDomainPreviewInputV1Schema>;
 export const DeploymentDomainVerifyInputV1Schema = lazyZodSchema(() => z.union([

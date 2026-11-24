@@ -35,12 +35,14 @@ export const MachinePublicSshV1Schema = lazyZodSchema(() => mini.discriminatedUn
 
 /** Canonical P20 declaration operands, shared by the reviewed reachability
  * basis and root CHECK. It contains neither guessed native facts nor rules. */
+export const MachineCaddyPrivateBindingV1Schema = lazyZodSchema(() => z.object({
+  exposure: MachineFirewallExposureV1Schema, interfaceName: z.string().min(1),
+  sourceRanges: z.array(z.union([z.cidrv4(), z.cidrv6()])),
+}).strict());
+export type MachineCaddyPrivateBindingV1 = z.infer<typeof MachineCaddyPrivateBindingV1Schema>;
 export const MachineFirewallTransitionBindingsV1Schema = lazyZodSchema(() => z.object({
   publicBindings: z.array(MachineFirewallExposureV1Schema).optional(),
-  privateBinding: z.object({
-    exposure: MachineFirewallExposureV1Schema, interfaceName: z.string().min(1),
-    sourceRanges: z.array(z.union([z.cidrv4(), z.cidrv6()])),
-  }).strict().optional(),
+  privateBinding: MachineCaddyPrivateBindingV1Schema.optional(),
 }).strict());
 export type MachineFirewallTransitionBindingsV1 = z.infer<typeof MachineFirewallTransitionBindingsV1Schema>;
 /** Host-captured scope for the existing protected Caddy CHECK. */

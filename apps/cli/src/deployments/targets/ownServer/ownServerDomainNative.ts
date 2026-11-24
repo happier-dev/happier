@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
@@ -50,6 +51,8 @@ import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { projectDeploymentException } from '@/deployments/deploymentFailure';
 import { logger } from '@/ui/logger';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { MachineCaddyPrivateBindingV1Schema } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 
 /** Captured by the ApiMachine metadata owner, never a synthetic Machine RPC. */
 export type DomainNativeSetupForHost = Readonly<{
@@ -76,7 +79,7 @@ const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCa
         details: parsed.success && parsed.data.step !== 'native_execution' ? parsed.data : projectDeploymentFailureRecoveryV1({
             ...(parsed.success ? parsed.data : details && typeof details === 'object' && !Array.isArray(details) ? details : {}),
             environmentId: job.input.environmentId, domainId: 'domainId' in job.input ? job.input.domainId : undefined, step: 'native_execution' as const,
-        }),
+        }, errorCode === 'private_scope_unenforceable' ? errorCode : undefined),
         failureCause: failureCause ?? projectActionFailureCauseV1({ code: errorCode }, 'deployment.domain.native_execution') };
     // The file-log boundary projects only closed native facts, not arbitrary
     // remedies, provider output, exception codes or other private content.
@@ -181,7 +184,7 @@ export function createOwnServerDomainNative(host: Readonly<{
         })();
         if (!opened.ok) return refuse(opened.error, undefined, opened.failureCause);
         if (opened.content.hostname === null) return refuse('target_mismatch');
-        const domain = { ...opened.content, hostname: opened.content.hostname };
+        const domain: DeploymentDomainContentV1 & { hostname: string } = { ...opened.content, hostname: opened.content.hostname };
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing || job.kind === 'domainDns';
@@ -260,7 +263,9 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const result = await docker.run(command.args, command.signal ?? signal, command.inputBytes);
                 return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr ?? '' };
             };
-            const machine = withoutWorkload && !(job.kind === 'domain' && job.observeTopology) ? null : await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => context.externalActionExecutionAuthorization
+            const needsPrivateNetwork = job.kind === 'domain' && (job.observeTopology
+                || observing && telemetry && job.capture.desired && job.capture.listener === 'privateOrigin');
+            const machine = withoutWorkload && !needsPrivateNetwork ? null : await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => context.externalActionExecutionAuthorization
                 ? ApiClient.getRequesterMachine(host.machineId, { authorization: context.externalActionExecutionAuthorization, signal,
                     effectActionId: job.actionId })
                 : (await ApiClient.create(host.credentials)).getMachine(host.machineId, { signal }));
@@ -271,12 +276,28 @@ export function createOwnServerDomainNative(host: Readonly<{
                 return { containerName: container.containerName, networkNames: [...container.networkNames] };
             }) ?? [];
             if (job.kind !== 'domainDns' && !withoutWorkload && nativeService && !replicas.length) return serviceUnavailable(job, 'service_replicas');
-            let caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
+            const observeCaddy = (privateBinding?: import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput['privateBinding']) =>
+                observeNativeCaddyContainer({ privateNetworks, privateBinding }, { run, signal });
+            const capture = job.kind === 'domain' && job.capture.desired && job.capture.listener === 'privateOrigin' ? job.capture : undefined;
+            const collectorPlacement = telemetry && capture;
+            const savedBinding = capture && domain.privatePlacementBindings?.find(item =>
+                item.machineId === host.machineId && item.installationId === identity.installationId
+                && item.dockerEngineId === docker.engineId && item.nativeServer === capture.placement.nativeServer)?.binding;
+            const discoveryBinding = collectorPlacement && job.kind === 'domain' && !observing
+                ? job.topology?.machines.find(item => item.machineId === host.machineId && item.installationId === identity.installationId
+                    && item.dockerEngineId === docker.engineId)?.settledPrivateBinding : undefined;
+            if (discoveryBinding && !isDeepStrictEqual(discoveryBinding, savedBinding)) return refuse('private_scope_unenforceable', { requiredFact: 'collectorPrivatePlacementBinding' });
+            if (collectorPlacement && observing && !savedBinding)
+                return refuse('private_scope_unenforceable', { requiredFact: 'collectorPrivatePlacementBinding' });
+            let caddy = await observeCaddy(collectorPlacement ? savedBinding : undefined);
+            let settledPrivateBinding: ReturnType<typeof MachineCaddyPrivateBindingV1Schema.parse> | undefined;
             const retainedCaddy = caddy.status === 'ready' ? caddy : undefined;
             // Only an admitted Domain add prepares or reconciles infrastructure. Verify,
             // removal and deployment observations retain their read-only paths.
-            const needsCaddySetup = (job.kind === 'domainDiscover' || reviewing) && isDeploymentDomainAddActionIdV1(job.actionId) && !!member && !!environmentContent
-                && (caddy.status === 'needs_setup' || caddy.status === 'stopped'
+            const membershipReplay = 'membershipDeploymentId' in job.input && job.input.membershipDeploymentId !== undefined;
+            const needsCaddySetup = (!telemetry || !membershipReplay) && (job.kind === 'domainDiscover' || reviewing) && isDeploymentDomainAddActionIdV1(job.actionId) && !!member && !!environmentContent
+                && (telemetry && privateNetworks.some(network => network.state === 'ready')
+                    || caddy.status === 'needs_setup' || caddy.status === 'stopped'
                     || caddy.status === 'unavailable' && caddy.reason === 'required_fact_unavailable'
                     || retainedCaddy && ((!telemetry && retainedCaddy.containerOrigins?.length === 0)
                         || replicas.some(replica => replica.networkNames.some(name => !retainedCaddy.networkNames.includes(name)))
@@ -302,8 +323,12 @@ export function createOwnServerDomainNative(host: Readonly<{
                     installationId: identity.installationId, dockerEngineId: docker.engineId, run, signal });
                 if (ready.status !== 'ready') return refuse('reason' in ready ? ready.reason : 'native_route_unavailable',
                     'details' in ready ? ready.details : undefined);
-                caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
+                if (telemetry && prepared.input.privateBinding)
+                    settledPrivateBinding = MachineCaddyPrivateBindingV1Schema.parse(prepared.input.privateBinding);
+                caddy = await observeCaddy(settledPrivateBinding);
             }
+            if ((observing || savedBinding) && collectorPlacement && caddy.status === 'ready' && !caddy.privateOrigins?.some(origin =>
+                origin.serverId === collectorPlacement.placement.nativeServer)) return refuse('private_scope_unenforceable', { requiredFact: 'collectorPrivatePlacementBinding' });
             if (caddy.status !== 'ready' && job.kind !== 'domainDns' && !reviewing) return refuse(caddy.status === 'unavailable' ? caddy.reason : 'native_route_unavailable',
                 caddy.status === 'unavailable' ? caddy.details : undefined);
             if (job.kind === 'domain' && caddy.status === 'ready' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
@@ -321,7 +346,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             return { identity, signal, environmentContent, members, domain, docker, run, caddy, needsNativeSetup,
                 get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
                     installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas,
-                    ...(telemetryBridge ? { telemetryBridge } : {}), ...(telemetryApp ? { telemetryApp } : {}) }); },
+                    ...(telemetryBridge ? { telemetryBridge } : {}), ...(telemetryApp ? { telemetryApp } : {}),
+                    ...(settledPrivateBinding ? { settledPrivateBinding } : {}) }); },
                 async release() { try { await custody.release(); } finally { custody.dispose(); await lease?.release(); } } };
         } catch (error) {
             try { await custody.release(); } finally { custody.dispose(); await lease?.release(); }

@@ -676,6 +676,11 @@ it.skipIf(process.platform === 'win32')('reports private origins only for ready 
         privateOrigins: [{ serverId: 'local', endpoint: '100.70.80.90:9381', network }] });
     expect(await observeNativeCaddyContainer({ ...f.input, privateNetworks: [{ ...network, addresses: ['100.70.80.91'] }] }, { run: f.run }))
         .toMatchObject({ status: 'ready', privateOrigins: [] });
+    expect(await observeNativeCaddyContainer({ ...f.input, privateNetworks: [{ ...network, networkIdentity: 'unreviewed-tailnet' }] }, { run: f.run }))
+        .toMatchObject({ status: 'ready', privateOrigins: [] });
+    f.readContainer().NetworkSettings.Ports = { '9381/tcp': [{ HostIp: '100.70.80.91', HostPort: '9381' }] };
+    expect(await observeNativeCaddyContainer({ ...f.input, privateNetworks: [{ ...network, addresses: [...network.addresses, '100.70.80.91'] }] }, { run: f.run }))
+        .toMatchObject({ status: 'ready', privateOrigins: [] });
     f.readContainer().NetworkSettings.Ports = {};
     expect(await observeNativeCaddyContainer({ ...f.input, privateNetworks: [network] }, { run: f.run }))
         .toMatchObject({ status: 'ready', servers: [{ serverId: 'local', endpoints: [] }], privateOrigins: [] });

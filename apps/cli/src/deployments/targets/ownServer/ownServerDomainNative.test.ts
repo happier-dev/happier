@@ -6,9 +6,10 @@ import { writeFile, mkdir, readFile, lstat, chmod } from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
 import { delimiter, join } from 'node:path';
 import { afterEach, expect, it, vi, type MockInstance } from 'vitest';
-import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
+import { nativeCaddyImage, nativeCaddyProfile } from '@happier-dev/cli-common/machineSetup';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainListResultV1Schema, DeploymentDomainObservationV1Schema, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentChildRpcV1Schema, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -27,15 +28,18 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { caddyPublicHttpServerId, materializeCaddyDomainRouteV1 } from './caddyRouteMaterialization';
-import { createOwnServerStartFirstRoutesForHost } from './ownServerDomainNative';
+import { createOwnServerDomainNative, createOwnServerStartFirstRoutesForHost } from './ownServerDomainNative';
+import { readTelemetryCollectorDomainForHost } from './domainRouteSelection';
+import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { NativeComposeRoutingGeneration } from '@/daemon/local/services/launch/nativeComposeStartFirst';
 import type { OwnServerDeploymentRequest } from './ownServerDeploymentTarget';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { MachineUpdateStateRequestSchema } from '@happier-dev/protocol/machines/metadataUpdate';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { MachineCaddyPrivateBindingV1Schema } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
@@ -105,7 +109,12 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', artifactRefusal: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns)', async scenario => withSocketTempDir(async directory => {
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'settled' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'missing' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'ask' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'wrongAddress' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'wrongNetwork' },
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns, collector topology: $collectorTopology)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
     const preview = 'preview' in scenario && scenario.preview;
@@ -114,6 +123,21 @@ it.each([
     const dns = 'dns' in scenario ? scenario.dns : 'ready';
     const publicListener = 'publicListener' in scenario && scenario.publicListener;
     const listener = publicListener ? 'public' as const : 'privateOrigin' as const;
+    const collectorTopology = 'collectorTopology' in scenario && scenario.collectorTopology;
+    const network: MachinePrivateNetworkObservationV1 = {
+        provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready', networkIdentity: 'reviewed-tailnet', interfaceName: 'tailscale0',
+        addresses: ['100.70.0.2', '100.70.0.3', 'fd7a:115c:a1e0::2'], sourceRanges: ['100.64.0.0/10'],
+        displayName: null, dnsName: null, magicDnsEnabled: false,
+    };
+    const { id: requirementId, ...privatePort } = nativeCaddyProfile.portRequirement;
+    const collectorBinding = { HostIp: collectorTopology === 'wrongAddress' ? network.addresses[1] : network.addresses[0], HostPort: String(privatePort.hostPort) };
+    const actualNetwork = collectorTopology === 'wrongNetwork' ? { ...network, networkIdentity: 'another-tailnet' } : network;
+    const binding = MachineCaddyPrivateBindingV1Schema.parse({
+        exposure: { ...privatePort, requirementId,
+            hostAddress: network.addresses[0], networkIdentity: network.networkIdentity, providerId: 'tailscale' },
+        interfaceName: network.interfaceName, sourceRanges: network.sourceRanges,
+    });
+    const ports = collectorTopology ? { [`${privatePort.containerPort}/tcp`]: [collectorBinding] } : {};
     const resolveDns = vi.spyOn(Resolver.prototype, 'resolve').mockImplementation(async (_hostname, recordType) => {
         if (dns === 'unavailable') throw Object.assign(new Error('resolver unavailable'), { code: 'ESERVFAIL' });
         if (dns === 'missing' || dns === 'ipv6' && recordType === 'A')
@@ -124,7 +148,8 @@ it.each([
     const diagnostic = 'diagnostic' in scenario ? scenario.diagnostic : undefined;
     const socketPath = join(directory, 'admin.sock');
     const configPath = join(directory, 'initial.json');
-    const domain = { hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 },
+    const domain = { hostname: 'app.example.test', target: collectorTopology
+        ? { kind: 'telemetry' as const } : { service: 'web', containerPort: 8080 },
         healthCheck: { path: '/health', expectStatus: 200 } };
     const connectorSubject = { v: 1 as const, kind: 'connectorToken' as const, machineId: 'receiver',
         installationId: 'receiver-installation', provider: { kind: 'builtin' as const, id: 'cloudflareNamed' as const },
@@ -156,9 +181,10 @@ it.each([
     let grantReads = 0, setupClient: ApiMachineClient | undefined;
     const material = materializeCaddyDomainRouteV1({ domainId: 'domain', domain, listener,
         ...(publicListener ? { publicTls: { kind: 'managed' as const } } : {}),
-        upstreams: { kind: 'replicas', containerNames: ['retired-generation-web-42'] }, privateSourceRanges: [] });
+        upstreams: { kind: 'replicas', containerNames: ['retired-generation-web-42'], ...(collectorTopology ? { containerPort: 4318 } : {}) },
+        privateSourceRanges: [], ...(collectorTopology ? { telemetryPrivateHosts: [binding.exposure.hostAddress] } : {}) });
     const foreign = { '@id': 'foreign-app', match: [{ host: ['other.example.test'] }], handle: [{ handler: 'static_response', status_code: 204 }] };
-    const nativeServer = { listen: [publicListener ? ':443' : ':9381'], automatic_https: { disable: !publicListener },
+    const nativeServer = { listen: [publicListener ? ':443' : collectorTopology ? `:${privatePort.containerPort}` : ':9381'], automatic_https: { disable: !publicListener },
         ...(material.tls ? { tls_connection_policies: [material.tls.connectionPolicy] } : {}),
         routes: missingEngine || mismatchedEngine ? [foreign] : [material.route, foreign],
         errors: { routes: !missingEngine && !mismatchedEngine && material.fallbackRoute ? [material.fallbackRoute] : [] } };
@@ -239,7 +265,7 @@ it.each([
             HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, Mounts: [
                 { Type: 'bind', Source: directory, Target: '/run/domain-native' },
                 { Type: 'bind', Source: configPath, Target: '/etc/caddy/happier.json' },
-            ] }, NetworkSettings: { Ports: {}, Networks: {} },
+            ], ...(collectorTopology ? { PortBindings: ports } : {}) }, NetworkSettings: { Ports: ports, Networks: {} },
         } } : {}), ...(connectorRetirement !== 'none' ? { nativeCloudflare: nativeConnector } : {}) });
         vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
         const environment = createDeploymentEnvironmentDetailV1();
@@ -279,6 +305,15 @@ it.each([
             if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: fixture.settingsContent, version: 1 } };
             if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: fixture.currentness };
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: encryptionMode, updatedAt: 1 } };
+            if (collectorTopology && url.endsWith('/v1/account/encryption-mode')) return { status: 200, data: { mode: 'plain' } };
+            if (collectorTopology && new URL(url).pathname === '/v1/machines/receiver') {
+                return { status: 200, data: { machine: { id: placement.machineId, installationId: placement.installationId,
+                    kind: 'persistent', revokedAt: null, replacedByMachineId: null, seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
+                    storageMode: 'plain', metadata: null, metadataVersion: 0, daemonStateVersion: 1, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                    daemonState: encodePlainMachineStoredContent({ status: 'running', reachability: { revision: 1,
+                        management: { daemon: 'ready', providers: [], publicSsh: 'closed' }, privateNetworks: [actualNetwork], ingress: [] } }),
+                } } };
+            }
             if (cutover && new URL(url).pathname === '/v1/machines/receiver') {
                 throw new axios.AxiosError('No published private networks', 'ERR_BAD_REQUEST', undefined, undefined,
                     { status: 404, statusText: 'Not Found', data: { error: 'not_found' }, headers: {}, config: { headers: new axios.AxiosHeaders() } });
@@ -294,6 +329,72 @@ it.each([
                 body: encode({ body: JSON.stringify(document.value) }), headerVersion: 1, bodyVersion: 1,
                 seq: 1, createdAt: 1, updatedAt: 1 } };
         });
+        if (collectorTopology) {
+            if (job.kind !== 'domain') throw new Error('Expected native Domain Verify custody');
+            const reference = job.capture.content;
+            const opened = { artifactId: reference.contentArtifactId, header: { kind: 'deployment-domain.v1', title: 'Collector' },
+                body: JSON.stringify({ ...domain, ...(collectorTopology === 'missing' ? {} : {
+                    privatePlacementBindings: [{ machineId: placement.machineId, installationId: placement.installationId,
+                        dockerEngineId: job.capture.dockerEngineId, nativeServer: placement.nativeServer, binding }],
+                }) }), revision: { headerVersion: 1, bodyVersion: 1 } };
+            const capture = { ...job.capture, telemetryCollector: { machineId: 'collector-app', deploymentId: 'collector-release' } };
+            const saved = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: placement.domainId, revision: 3, state: 'active',
+                environmentId: placement.environmentId, targetLinkId: placement.targetLinkId,
+                createdByAccountId: 'bob', createdAtMs: 1, updatedAtMs: 2, ...reference, placements: [capture] });
+            const captureNativeSetup = vi.fn(() => ({ readDesired: () => getMachineSetupDesiredV1({
+                read: async () => ({ status: 'ready' as const, metadata: {}, metadataVersion: 1 }),
+                async compareAndSwap() { throw new Error('Collector read cannot write Machine setup'); },
+            }), elevation: {
+                readPolicy: async () => ({ version: 1 as const, mode: collectorTopology === 'ask' ? 'ask' as const : 'preauthorized' as const }),
+                observe: async () => ({ version: 1 as const, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier',
+                    daemonIdentity: 'nonRoot' as const, rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed' as const,
+                    managedDropIn: 'absent' as const, tailscaledOperator: { authorization: 'unknown' as const } }),
+                spawn() { throw new Error('Verifying the private collector must not start an elevated process'); },
+            } }));
+            const native = createOwnServerDomainNative({ credentials: fixture.bob, serverHttpBaseUrl: fixture.serverHttpBaseUrl,
+                machineId: placement.machineId, serverId: placement.serverId, open: async () => opened,
+                captureNativeSetup,
+                async readEnvironment() { throw new Error('Verify must use captured Domain custody'); },
+                async readReceipt() { throw new Error('Verify must use captured Domain custody'); } });
+            const input = { serverId: placement.serverId, environmentId: placement.environmentId, targetLinkId: placement.targetLinkId,
+                collectorMachineId: placement.machineId, observerNetworks: [network],
+                async list() { return DeploymentDomainListResultV1Schema.parse({ ok: true, environmentId: placement.environmentId,
+                    domains: [saved], revision: 1, nextCursor: null }); },
+                async open() { return opened; },
+                deployment: { id: 'workload-release', actionOperationId: 'workload-operation' },
+                async sendChild(child: Parameters<typeof native>[0]) {
+                    const result = await native(child, {});
+                    if ('errorCode' in result) return result;
+                    const topology = DeploymentDomainMachineTopologyV1Schema.parse(result);
+                    expect(topology.privateNetworks).toContainEqual(network);
+                    expect(topology.caddy.servers).toContainEqual(expect.objectContaining({
+                        serverId: placement.nativeServer, endpoints: [{ hostAddress: '100.70.0.2', hostPort: privatePort.hostPort, containerPort: privatePort.containerPort }],
+                    }));
+                    return topology;
+                },
+            };
+            // The installed leg is healthy and its exact Docker publication exists.
+            // Verify must independently establish the private origin before launch can use it.
+            if (collectorTopology !== 'settled' && collectorTopology !== 'ask') {
+                expect(await readTelemetryCollectorDomainForHost(input)).toEqual({ kind: 'unavailable', reason: 'private_scope_unenforceable' });
+                expect(captureNativeSetup).not.toHaveBeenCalled();
+                return;
+            }
+            const verified = await native(job, {});
+            expect(verified).toMatchObject({
+                state: 'active', networkExposure: { kind: 'ready', listener: 'privateOrigin' } });
+            const collector = await readTelemetryCollectorDomainForHost(input);
+            expect(collector).toEqual({ kind: 'ready', endpoint: `http://100.70.0.2:${privatePort.hostPort}` });
+            if (collector.kind !== 'ready') throw new Error('Expected the admitted private OTLP endpoint');
+            const otlp = new URL('/v1/metrics', collector.endpoint);
+            expect(material.route.match).toContainEqual({ host: [domain.hostname, otlp.hostname] });
+            const publicMaterial = materializeCaddyDomainRouteV1({ domainId: 'domain', domain, listener: 'public',
+                publicTls: { kind: 'managed' }, upstreams: { kind: 'replicas', containerNames: ['collector'], containerPort: 4318 },
+                privateSourceRanges: [], telemetryPrivateHosts: [otlp.hostname] });
+            expect(publicMaterial.route.match).toContainEqual({ host: [domain.hostname] });
+            expect(captureNativeSetup).not.toHaveBeenCalled();
+            return;
+        }
         const sealed = sealMachineSecretGrant({ subject: connectorSubject, installationPublicKey: fixture.receiver.publicKey,
             content: { kind: 'connectorToken', token } });
         vi.spyOn(axios, 'request').mockImplementation(async request => {

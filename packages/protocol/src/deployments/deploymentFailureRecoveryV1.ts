@@ -376,6 +376,8 @@ const occupiedCheckoutRecovery = recovery(
     'source', 'Choose checkout location',
 );
 
+export const DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1 = 'deployment.telemetry.collector.private_binding';
+
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     const image = DeploymentImageResolutionFailureV1Schema.safeParse(details).data;
@@ -438,6 +440,10 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     if (sourceFile) return sourceFile;
     if (code === 'deployment_source_unavailable' && request?.pullRequestHead) return pullRequestHeadRecovery;
     const fact = failure?.requiredFact ?? details.requiredFact;
+    if (code === 'private_scope_unenforceable' && (fact === 'collectorPrivatePlacementBinding'
+        || failureCause?.phase === DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1))
+        return recovery('The Machine could not confirm the collector’s private firewall binding. In Domains, use Add address for the telemetry collector and review the private route again.',
+            'domains', 'Open Domains');
     if (code === 'required_fact_unavailable' && typeof fact === 'string' && Object.hasOwn(missingFacts, fact)) {
         return missingFacts[fact as keyof typeof missingFacts];
     }

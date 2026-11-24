@@ -88,6 +88,15 @@ describe('deployment failure diagnostics', () => {
             expect(receipt).toMatchObject({ failureCause: failure.failureCause });
             expect(receipt.effectAttempted).toBe(effectAttempted);
         });
+    it('retains the reviewed collector address recovery on an activation Receipt', () => {
+        const code = 'private_scope_unenforceable';
+        const error = createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+            failureCause: { phase: 'deployment.telemetry.collector.private_binding', errorClass: 'Error', errorCode: code, httpStatus: null } });
+        const receipt = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');
+        expect(receipt).toMatchObject({ code, phase: 'activate',
+            remedy: expect.stringContaining('Add address') });
+        expect(readDeploymentFailureRecoveryV1(code, receipt).nextAction.destination).toBe('domains');
+    });
     it('surfaces value-free schema issue paths when preparation rejects receipt content', () => {
         const parsed = DeploymentOwnServerContentV1Schema.safeParse({ machines: [],
             platform: { providerDeploymentId: 'private-provider-deployment' } });

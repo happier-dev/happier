@@ -3320,7 +3320,13 @@ telemetry Action. The Action resolves the HTTPS endpoint for the exporter.
 Own-server Deploy review shows the selected remote telemetry collector Machine
 and when its private route resolves. When the deploy starts, the executor reads
 the collector Domain topology under the accepted Receipt and uses the shared
-private origin. A missing route fails launch with `collector_route_unavailable`.
+private origin. Reviewed Domain setup saves the firewall's settled binding for
+the exact private placement in the protected Domain body. Verify and launch
+require Caddy's live publication to match that binding exactly. If the binding
+is absent or the publication no longer matches, launch returns
+`private_scope_unenforceable`. In the affected Environment, use Add address
+for the telemetry collector in Domains and review the private route to settle
+the binding again. Verify only reads the current state.
 The review carries the Machine identity without the route address or bearer.
 Home admits these launch reads for the accepted build or member child
 (`readAcceptedLaunchCollectorInTx`): the collector Machine the Environment

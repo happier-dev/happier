@@ -63,7 +63,7 @@ const failure = (reason: string, details?: unknown, failureCause?: unknown, effe
         remedy: `${typeof scoped.remedy === 'string' ? `${scoped.remedy} ` : ''}Cloudflare tunnel ${scoped.tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.` } : scoped;
     const recovery = isRecord(recoveryFacts) && recoveryFacts.step === 'native_execution'
         ? projectDeploymentFailureRecoveryV1(recoveryFacts,
-            adminAccessRefused ? errorCode : undefined) : recoveryFacts;
+            adminAccessRefused || errorCode === 'private_scope_unenforceable' ? errorCode : undefined) : recoveryFacts;
     return { ok: false as const, errorCode, error: errorCode, ...(recovery === undefined ? {} : { details: recovery }),
         ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
         ...(parsedCause === undefined ? {} : { failureCause: parsedCause }) };
@@ -481,6 +481,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 if ('mode' in parsed) return await previewOwnServerDomainDns(parsed, context, host);
                 let input = parsed;
                 let topology: DeploymentDomainTopologyV1 | undefined;
+                let settledContent: DeploymentDomainContentV1 | undefined;
                 if (isDeploymentDomainAddActionIdV1(actionId)) {
                     if (!context.externalActionExecutionAuthorization || !context.originalActionEnvelope) return failure('action_forbidden');
                     const original = DeploymentActionInputSchemasV1[actionId].parse(input);
@@ -510,6 +511,21 @@ export function createOwnServerDomainActions(host: Readonly<{
                             ? { ...placement, telemetryCollectorDeploymentId: collector.deploymentId } : placement),
                         ...(discovered.telemetryMachineId ? { telemetryMachineId: discovered.telemetryMachineId } : {}) };
                     topology = discovered.topology;
+                    if (opened.content.target.kind === 'telemetry' && !original.membershipDeploymentId) {
+                        const bindings = discovered.placements.flatMap(placement => {
+                            if (placement.listener !== 'privateOrigin') return [];
+                            const machine = topology?.machines.find(item => item.machineId === placement.machineId
+                                && item.installationId === placement.installationId && item.dockerEngineId === placement.dockerEngineId);
+                            const binding = machine?.settledPrivateBinding;
+                            return binding && machine.caddy.privateOrigins?.some(origin => origin.serverId === placement.nativeServer)
+                                ? [{ machineId: placement.machineId, installationId: placement.installationId,
+                                    nativeServer: placement.nativeServer, dockerEngineId: placement.dockerEngineId, binding }] : [];
+                        });
+                        const { privatePlacementBindings: previous, ...authored } = opened.content;
+                        if (!isDeepStrictEqual(bindings.length ? bindings : undefined, previous)) {
+                            settledContent = bindings.length ? { ...authored, privatePlacementBindings: bindings } : authored;
+                        }
+                    }
                 }
                 let domain: DeploymentDomainHeaderV1;
                 if (admitted) domain = admitted.domain;
@@ -534,6 +550,14 @@ export function createOwnServerDomainActions(host: Readonly<{
                 nativeScope = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
                     ...(isDeploymentDomainAddActionIdV1(actionId) && privateContent?.cloudflarePreparation
                         ? { tunnelId: privateContent.cloudflarePreparation.tunnelId } : {}) };
+                if (settledContent) {
+                    const capture = captures.find(item => item.desired && item.listener === 'privateOrigin')
+                        ?? captures.find(item => item.desired);
+                    if (!capture) return failure('target_mismatch');
+                    domain = await host.persistPreparedContent({ domain, capture, context, content: settledContent });
+                    privateContent = settledContent;
+                    captures = domain.placements ?? [];
+                }
                 if (isDeploymentDomainAddActionIdV1(actionId) && topology?.tunnelOrigin) {
                     // Add's discovery already opened this private content; preparation returns its own authored update.
                     const prepared = await prepareCloudflareDomainForHost({ domain, content: privateContent!,

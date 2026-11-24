@@ -29,6 +29,13 @@ it.each(['success', 'conflict', 'transport'] as const)('prepares private Domain 
         contentHeaderVersion: 4, contentBodyVersion: 7 }, desired: true, listener: 'privateOrigin' as const, dockerEngineId: 'observed-engine' };
     const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'target',
         revision: 2, state: 'pending', ...capture.content, createdByAccountId: 'owner', placements: [capture], createdAtMs: 1, updatedAtMs: 1 });
+    const preparedContent: DeploymentDomainContentV1 = { ...content, privatePlacementBindings: [{
+        machineId: capture.placement.machineId, installationId: capture.placement.installationId,
+        dockerEngineId: capture.dockerEngineId, nativeServer: capture.placement.nativeServer,
+        binding: { exposure: { exposure: 'privateNetwork', requirementId: 'caddy-origin', protocol: 'tcp',
+            hostAddress: '100.70.0.2', hostPort: 8080, providerId: 'tailscale', networkIdentity: 'reviewed-tailnet' },
+            interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'] },
+    }] };
     const committed = { ...domain, contentBodyVersion: 8,
         placements: [{ ...capture, content: { ...capture.content, contentBodyVersion: 8 } }] };
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
@@ -52,7 +59,7 @@ it.each(['success', 'conflict', 'transport'] as const)('prepares private Domain 
         const request = DeploymentDomainPreparedContentInputV1Schema.parse(config.data);
         expect(request.contentUpdate).not.toHaveProperty('header');
         expect(decodePlainArtifactStoredContent(request.contentUpdate.body))
-            .toEqual({ body: JSON.stringify(content) });
+            .toEqual({ body: JSON.stringify(preparedContent) });
         expect(config.headers).toMatchObject({ 'x-admitted-controller': 'controller' });
         if (scenario === 'transport') throw Object.assign(new Error('PRIVATE transport request bytes'), { code: 'ECONNRESET' });
         return { status: conflict ? 409 : 200, data: conflict ? { ok: false, error: 'deployment_conflict' }
@@ -64,7 +71,7 @@ it.each(['success', 'conflict', 'transport'] as const)('prepares private Domain 
             return { 'x-admitted-controller': 'controller', [requesterAccountEncryptionMode]: 'plain' as const };
         } });
     const context: ActionExecutorContext = { operationAcceptance: { operationId: 'operation', accept() {} } };
-    const result = runWithServerHttpBaseUrl('https://home.test', () => writer({ domain, capture, content, context }));
+    const result = runWithServerHttpBaseUrl('https://home.test', () => writer({ domain, capture, content: preparedContent, context }));
     if (scenario === 'transport') {
         let caught: unknown;
         try { await result; } catch (error) { caught = error; }
@@ -75,7 +82,11 @@ it.each(['success', 'conflict', 'transport'] as const)('prepares private Domain 
         expect(JSON.stringify(logged.mock.calls)).not.toContain('PRIVATE');
     }
     else if (conflict) await expect(result).rejects.toMatchObject({ code: 'deployment_conflict' });
-    else expect(await result).toEqual(committed);
+    else {
+        const settled = await result;
+        expect(settled).toEqual(committed);
+        expect(JSON.stringify(settled)).not.toContain('100.70.0.2');
+    }
     expect(reads.mock.calls.filter(([url]) => String(url).endsWith(`/v1/artifacts/${artifactId}`)),
         'one Artifact load for the admitted Domain content mutation').toHaveLength(1);
     expect(independentWrite).not.toHaveBeenCalled();

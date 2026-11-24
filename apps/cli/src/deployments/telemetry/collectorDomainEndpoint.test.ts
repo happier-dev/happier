@@ -28,11 +28,12 @@ it('resolves only the selected collector Domain over its actual shared privateOr
     const reference = { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
     let target: unknown = { kind: 'telemetry' };
     let selectedMachine = 'collector';
+    let listener: 'privateOrigin' | 'public' = 'privateOrigin';
     const header = () => DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: 'environment',
         targetLinkId: 'link', revision: 1, state: 'active', ...reference, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
         placements: [{ placement: { serverId: 'home', accountId: 'owner', environmentId: 'environment', targetLinkId: 'link',
             domainId: 'domain', machineId: selectedMachine, installationId: 'installed', actionOperationId: 'domain-operation',
-            requestId: 'domain-request', nativeServer: 'private' }, content: reference, desired: true, listener: 'privateOrigin', dockerEngineId: 'native' }] });
+            requestId: 'domain-request', nativeServer: 'private' }, content: reference, desired: true, listener, dockerEngineId: 'native' }] });
     const topology = DeploymentDomainMachineTopologyV1Schema.parse({ machineId: 'collector', installationId: 'installed',
         dockerEngineId: 'native', privateNetworks: [network], replicas: [], caddy: { status: 'ready', containerId: 'caddy',
             containerName: 'happier-caddy', adminSocketPath: '/run/caddy/admin.sock', networkNames: ['bridge'],
@@ -63,7 +64,10 @@ it('resolves only the selected collector Domain over its actual shared privateOr
     target = { kind: 'telemetry' }; selectedMachine = 'another-machine';
     expect(await readTelemetryCollectorDomainForHost(input)).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
     expect(sendChild).not.toHaveBeenCalled();
-    selectedMachine = 'collector';
+    selectedMachine = 'collector'; listener = 'public';
+    expect(await readTelemetryCollectorDomainForHost(input)).toEqual({ kind: 'unavailable', reason: 'collector_route_unavailable' });
+    expect(sendChild).not.toHaveBeenCalled();
+    listener = 'privateOrigin';
     expect(await readTelemetryCollectorDomainForHost({ ...input, sendChild: async () => ({ ok: true }) }))
         .toEqual({ kind: 'unavailable', reason: 'collector_route_unavailable' });
     expect(await readTelemetryCollectorDomainForHost({ ...input, sendChild: async () => ({

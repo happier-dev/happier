@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
@@ -347,7 +348,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                         targetLinkId: request.input.targetLinkId ?? environment.environment.runtimeTargetLinkId!,
                                         collectorMachineId, deployment: snapshot.deployment,
                                         context: request.context });
-                                    if (route.kind !== 'ready') return refuse('collector_unreachable', { reason: route.reason });
+                                    if (route.kind !== 'ready') return route.reason === 'private_scope_unenforceable'
+                                        ? refuse(route.reason, undefined, { phase: DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1,
+                                            errorClass: 'Error', errorCode: route.reason, httpStatus: null })
+                                        : refuse('collector_unreachable', { reason: route.reason });
                                     return route.endpoint;
                                 }
                                 const readEndpoint = retainedLease.registry.readTelemetryCollectorEndpoint;

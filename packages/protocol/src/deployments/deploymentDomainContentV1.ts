@@ -8,6 +8,7 @@ import type { DeploymentDomainHeaderV1 } from './deploymentDomainV1.js';
 import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
+import { MachineCaddyPrivateBindingV1Schema } from '../machines/setup/machineFirewallV1.js';
 import { DeploymentDomainHealthCheckV1Schema } from './deploymentDomainHealthCheckV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
 import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema,
@@ -16,8 +17,7 @@ export { DeploymentDomainProviderResultV1Schema, type DeploymentDomainProviderRe
 
 const path = z.string().check(z.startsWith('/'));
 
-/** Private desired routing input; native custody remains on the Domain owner. */
-export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObject({
+const domainAuthoredContent = () => ({
     hostname: z.nullable(text),
     target: z.union([z.strictObject({ service: text, kind: z.optional(z.literal('native')),
         containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
@@ -43,10 +43,43 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
         z.strictObject({ kind: z.literal('custom') }),
     ])),
     basicAuth: z.optional(z.strictObject({ username: text })),
-}).check(z.refine(content => content.hostname !== null || (
+});
+const hasValidDomainHostname = (content: {
+    hostname: string | null;
+    target: z.output<ReturnType<typeof domainAuthoredContent>['target']>;
+    providerObservation?: unknown;
+    healthCheck?: unknown;
+    ingress?: unknown;
+    cloudflarePreparation?: unknown;
+    tls?: unknown;
+    basicAuth?: unknown;
+}) => content.hostname !== null || (
     content.target.kind === 'provider' && !content.target.zone && !content.providerObservation
     && !content.healthCheck && !content.ingress && !content.cloudflarePreparation && !content.tls && !content.basicAuth
-), { message: 'Only a provider-assigned Domain can await its hostname.' })));
+);
+
+export const DeploymentDomainAuthoredContentV1Schema = lazyZodSchema(() =>
+    z.strictObject(domainAuthoredContent()).check(z.refine(content => hasValidDomainHostname(content), { message: 'Only a provider-assigned Domain can await its hostname.' })));
+
+/** Settlement is kept only in the protected Artifact body. */
+const DeploymentDomainPrivatePlacementBindingV1Schema = lazyZodSchema(() => z.strictObject({
+    machineId: text, installationId: text, dockerEngineId: text, nativeServer: text,
+    binding: MachineCaddyPrivateBindingV1Schema,
+}).check(z.refine(({ binding }) => binding.exposure.exposure === 'privateNetwork',
+    { message: 'A saved private placement requires a private network binding.' })));
+export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObject({
+    ...domainAuthoredContent(),
+    privatePlacementBindings: z.optional(z.array(DeploymentDomainPrivatePlacementBindingV1Schema)),
+}).check(z.refine(content => hasValidDomainHostname(content), { message: 'Only a provider-assigned Domain can await its hostname.' }),
+    z.refine(content => content.privatePlacementBindings === undefined
+        || content.target.kind !== 'provider' && content.hostname !== null,
+    { message: 'Provider Domains have no native private placements.' }),
+    z.refine(content => {
+        const bindings = content.privatePlacementBindings ?? [];
+        const placements = bindings.map(({ machineId, installationId, dockerEngineId, nativeServer }) =>
+            JSON.stringify([machineId, installationId, dockerEngineId, nativeServer]));
+        return new Set(placements).size === placements.length;
+    }, { message: 'A placement can hold only one settled private binding.' })));
 export type DeploymentDomainContentV1 = z.infer<typeof DeploymentDomainContentV1Schema>;
 
 /** Syntax only: DNS resolution and native routing retain their own observations. */
