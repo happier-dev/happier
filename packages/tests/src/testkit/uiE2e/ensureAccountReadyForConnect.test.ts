@@ -64,7 +64,13 @@ function createFakePage(params: Readonly<{
     clickCalls,
     waitCalls: 0,
     getByTestId: ((testId) => makeLocator(String(testId), testIdCounts, testIdCalls, testIdVisible, testIdVisibleCalls)) as Page['getByTestId'],
-    getByRole: ((_role, options) => makeLocator(String(options?.name ?? ''), roleCounts, roleCalls, roleVisible, roleVisibleCalls)) as Page['getByRole'],
+    getByRole: ((_role, options) => {
+      const name = String(options?.name ?? '');
+      const matchingName = typeof options?.name === 'string' && !options.exact
+        ? Object.keys(roleCounts).find((label) => label.toLowerCase().includes(name.toLowerCase())) ?? name
+        : name;
+      return makeLocator(matchingName, roleCounts, roleCalls, roleVisible, roleVisibleCalls);
+    }) as Page['getByRole'],
     waitForTimeout: async () => {
       page.waitCalls += 1;
     },
@@ -141,6 +147,20 @@ describe('ensureAccountReadyForConnect', () => {
     });
 
     await expect(ensureAccountReadyForConnect({ page, timeoutMs: 50 })).resolves.toBeUndefined();
+  });
+
+  it('waits to create the account when the signed-out Home button appears first', async () => {
+    const page = createFakePage({
+      roleCounts: { 'Run your own Home': [1] },
+      testIdCounts: {
+        'welcome-primary-start': [0, 1, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 1],
+      },
+    });
+
+    await ensureAccountReadyForConnect({ page, timeoutMs: 250 });
+
+    expect(page.clickCalls['welcome-primary-start']).toBe(1);
   });
 
   it('passes when the authenticated setup surface is visible', async () => {

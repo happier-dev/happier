@@ -73,7 +73,7 @@ async function countReadySignals(page: EnsureAccountReadyForConnectPage): Promis
     total += await countVisible(page.getByTestId(testId));
   }
   for (const name of READY_ROLE_BUTTON_NAMES) {
-    total += await countVisible(page.getByRole('button', { name }));
+    total += await countVisible(page.getByRole('button', { name, exact: true }));
   }
   return total;
 }
