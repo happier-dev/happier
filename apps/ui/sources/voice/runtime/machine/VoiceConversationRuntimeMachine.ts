@@ -255,7 +255,9 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     ? (transition.attemptId ?? null)
                     : (transition.attemptId ?? activeAttemptId);
 
-            const nextError = transition.clearError
+            const endingAfterCaptureRecovery = transition.toState === 'ending'
+                && current.error?.reason === 'voice_capture_recovered';
+            const nextError = transition.clearError || endingAfterCaptureRecovery
                 ? null
                 : transition.error !== undefined
                     ? transition.error

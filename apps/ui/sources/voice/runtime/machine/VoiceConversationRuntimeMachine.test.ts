@@ -18,6 +18,32 @@ function createDeferred<T>() {
 }
 
 describe('VoiceConversationRuntimeMachine', () => {
+    it('ends cleanly after capture recovered while preserving real terminal failures', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        const target = { controlSessionId: 'recovered' };
+        machine.transitionToConnecting(target);
+        machine.transitionToListening(target);
+        machine.setReconnecting({
+            ...target,
+            reconnecting: false,
+            recoveryNotice: createVoiceMachineError({ kind: 'transport_disconnect', reason: 'voice_capture_recovered' }),
+        });
+        expect(machine.getSnapshot().error?.reason).toBe('voice_capture_recovered');
+        machine.transitionToEnding(target);
+        machine.transitionToDisconnected({ ...target, error: machine.getSnapshot().error });
+        const ended = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot());
+        expect(resolveVoiceSurfaceState(ended)).toBe('idle');
+        expect(ended.errorCode).toBeUndefined();
+
+        machine.transitionToConnecting(target);
+        machine.transitionToListening(target);
+        const failure = createVoiceMachineError({ kind: 'transport_disconnect', reason: 'transport_lost' });
+        machine.transitionToEnding(target);
+        machine.transitionToDisconnected({ ...target, error: failure });
+        expect(resolveVoiceSurfaceState(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot())))
+            .toBe('error');
+    });
+
     it('projects admitted Agent readiness only for its owning attempt and withdraws it on failure', () => {
         const machine = createVoiceConversationRuntimeMachine();
         const agentRuntime = { serverId: 'home', machineId: 'machine',
