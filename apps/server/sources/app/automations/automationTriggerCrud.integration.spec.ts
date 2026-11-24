@@ -8,6 +8,8 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automationSessionLifecycleFixture";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
@@ -21,7 +23,6 @@ import {
     updateAutomationTrigger,
 } from "./automationCrudService";
 import { AutomationSessionLifecycleRegistrationValidationError } from "./automationSessionLifecycleRegistration";
-import { encodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 import { toAutomationRunV3ListApiDto } from "./automationApiProjection";
 
@@ -50,13 +51,15 @@ function automationTriggerId() {
     return AutomationTriggerIdSchema.parse(randomUUID());
 }
 
+let serverId: string;
+
 function lifecycleDefinition(params: Readonly<{
     sourceSessionId: string;
     sourceTurnId: string;
 }>) {
     return {
         kind: "sessionLifecycle" as const,
-        sourceSessionId: params.sourceSessionId,
+        subject: { kind: "session" as const, serverId, sessionId: params.sourceSessionId },
         events: ["parentTurnCompleted"] as ["parentTurnCompleted"],
         policy: { kind: "currentTurn" as const, sourceTurnId: params.sourceTurnId },
     };
@@ -80,7 +83,7 @@ function boundedLifecycleDefinition(params: Readonly<{
 }>) {
     return {
         kind: "sessionLifecycle" as const,
-        sourceSessionId: params.sourceSessionId,
+        subject: { kind: "session" as const, serverId, sessionId: params.sourceSessionId },
         events: params.events,
         policy: { kind: "nextMatches" as const, count: params.count },
     };
@@ -97,12 +100,14 @@ async function seedHistoricalSameSourceAutomation(accountId: string, source: Rea
     const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse({ v: 1, templateVersion: 1,
         template: { t: "plain", v: { v: 1, prompt: "Historical lifecycle target" } }, triggerEvidence: null,
         target: { kind: "existingSession", sessionId: source.sessionId } });
-    return db.automation.create({ data: { id: randomUUID(), accountId, name: "Historical same-source target", enabled: false,
+    const automationId = randomUUID();
+    return db.automation.create({ data: { id: automationId, accountId, name: "Historical same-source target", enabled: false,
         targetType: "existing_session", templateVersion: 1, templateCiphertext: JSON.stringify(recipe),
-        triggers: { create: { id: randomUUID(), kind: "sessionLifecycle", enabled: true,
-            ...encodeAutomationSessionLifecycleConfiguration(lifecycleDefinition({
-                sourceSessionId: source.sessionId, sourceTurnId: source.turnId,
-            })) } },
+        triggers: { create: { kind: "sessionLifecycle", enabled: true,
+            ...await createAutomationSessionLifecycleFixtureFields({
+                automationId, kind: "sessionLifecycle", sourceSessionId: source.sessionId,
+                events: ["parentTurnCompleted"], policy: { kind: "currentTurn", sourceTurnId: source.turnId },
+            }) } },
     }, include: { triggers: true } });
 }
 
@@ -149,6 +154,7 @@ describe("automation trigger-set CRUD", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-automation-trigger-crud-",
         });
+        serverId = await getOrCreateServerIdentityId();
     }, 120_000);
 
     afterAll(async () => {
@@ -499,7 +505,7 @@ describe("automation trigger-set CRUD", () => {
             data: { status: "completed", terminalAt: 2n, updatedAt: 2n },
         });
 
-        await expect(updateAutomationTrigger({
+        const retained = await updateAutomationTrigger({
             accountId: account.id,
             automationId: created.id,
             triggerId: trigger.id,
@@ -509,7 +515,8 @@ describe("automation trigger-set CRUD", () => {
                 sourceSessionId: source.sessionId,
                 sourceTurnId: source.turnId,
             }),
-        })).resolves.toEqual(expect.objectContaining({
+        });
+        expect(retained).toEqual(expect.objectContaining({
             triggers: [expect.objectContaining({ id: trigger.id, enabled: false })],
         }));
 
@@ -517,7 +524,7 @@ describe("automation trigger-set CRUD", () => {
             accountId: account.id,
             automationId: created.id,
             triggerId: trigger.id,
-            expectedRevision: trigger.revision + 1,
+            expectedRevision: retained!.triggers[0]!.revision,
             enabled: true,
         })).rejects.toMatchObject({ code: "sourceTurnNotInProgress" });
     });
@@ -716,8 +723,7 @@ describe("automation trigger-set CRUD", () => {
             sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted", "parentTurnFailed"]),
         });
 
-        // A changed Event membership is a new registration and restarts the
-        // configured budget.
+        // Editing Event membership keeps the consumed budget of the same policy.
         await updateAutomationTrigger({
             accountId: account.id,
             automationId: created.id,
@@ -733,7 +739,7 @@ describe("automation trigger-set CRUD", () => {
         await expect(db.automationTrigger.findUniqueOrThrow({
             where: { id: trigger.id },
             select: { remainingOccurrences: true },
-        })).resolves.toEqual({ remainingOccurrences: 3 });
+        })).resolves.toEqual({ remainingOccurrences: 1 });
     });
 
     it("does not block unrelated editor edits on an unchanged terminal exact-turn trigger", async () => {
@@ -1225,8 +1231,9 @@ describe("automation trigger-set CRUD", () => {
         const first = await listAutomationRuns({
             accountId: account.id, automationId: automation.id, limit: 1,
         });
-        const expectedFirst = { runs: [expect.objectContaining({ id: currentOnly.id, state: "running" })], nextCursor: currentOnly.id };
+        const expectedFirst = { runs: [expect.objectContaining({ id: currentOnly.id, state: "interrupted" })], nextCursor: currentOnly.id };
         expect(first).toEqual(expectedFirst);
+        expect(toAutomationRunV3ListApiDto(first!.runs[0]!).state).toBe("running");
         await expect(listAutomationRuns({
             accountId: account.id, automationId: automation.id, limit: 1,
         })).resolves.toEqual(expectedFirst);

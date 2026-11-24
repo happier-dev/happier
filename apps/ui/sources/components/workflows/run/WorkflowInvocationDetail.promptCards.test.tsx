@@ -184,7 +184,7 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
             expect(buttons).toHaveLength(1);
             await act(async () => { buttons[0]!.props.onLaunch('review'); });
             await vi.waitFor(() => expect(screen.findAllByType(InvestigationOutcomeBanner)[0]?.props.outcome)
-                .toEqual({ kind: 'unavailable', code: 'catalogUnavailable' }));
+                .toEqual({ kind: 'unavailable', code: 'failure_actions_unavailable' }));
             expectNoSessionTransport();
         } finally { await screen.unmount(); }
     });
@@ -423,8 +423,11 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(onRespondToRequest).toHaveBeenCalledTimes(1);
 
         await act(async () => { inFlight.reject(new Error('machine unreachable')); });
-        const failure = screen.get('permission-footer.action-error');
-        expect(failure.props.accessibilityRole).toBe('alert');
+        const announcement = screen.tree.root.findAll(node =>
+            node.props.role === 'alert' && node.props['aria-live'] === 'assertive'
+                && node.findAllByProps({ testID: 'permission-footer.action-error' }).length > 0,
+        );
+        expect(announcement).toHaveLength(1);
         expect(screen.get('permission-footer.allow').props.accessibilityState)
             .toMatchObject({ disabled: false });
         expectNoSessionTransport();

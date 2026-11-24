@@ -32,7 +32,7 @@ beforeEach(() => {
     $executeRawUnsafe: async () => 1,
     account: { findUnique: async () => ({ seq: 1, encryptionMode: 'plain', publicKey: 'ab'.repeat(32),
       contentPublicKey: null, contentPublicKeySig: null, settings: null, settingsVersion: 0 }) },
-    machine: { findFirst: async () => ({ id: 'machine', installationId: 'installation' }) },
+    machine: { findFirst: async () => ({ id: 'machine', accountId: 'account', installationId: 'installation' }) },
     automationRun: { findMany: async (query: { where: Record<string, unknown> }) => {
       persistence.queries.push(query);
       if ('dueAt' in query.where) {
@@ -48,8 +48,9 @@ it('selects private and session-scoped workflows plus unstarted manual/scheduled
   const now = Date.now();
   const workflow = { accountId: 'account', state: 'queued', originKind: 'direct',
     workflowCustodyState: 'pending', dueAt: new Date(now - 1), leaseExpiresAt: null,
-    triggerId: null, assignments: [{ machineId: 'machine' }], automation: null };
+    triggerId: null, assignments: [{ machineId: 'machine', admittedMachineInstallationId: 'installation' }], automation: null };
   const predecessor = { ...workflow, workflowCustodyState: null, originKind: 'automation',
+    assignments: [{ machineId: 'machine', admittedMachineInstallationId: null }],
     causeKind: 'manual', causeTriggerKind: null, automation: { scopeSessionId: null },
     executionAttempt: 0, executionDispatchCommittedAt: null, executionNativeCallId: null,
     executionNativeRunId: null, executionNativeSidechainId: null, executionDispatchState: null,

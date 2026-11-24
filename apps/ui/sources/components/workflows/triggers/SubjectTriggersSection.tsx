@@ -159,18 +159,19 @@ function SectionActionBar(props: Readonly<{ anchor?: React.RefObject<View | null
 }
 
 const SECTION_BINDINGS = {
-  Group: ItemGroup,
-  PagePresentation: ListPresentationProvider,
-  RowDensity: PageRowDensityProvider,
-  WidgetDescription: WidgetGlanceRow,
+  // Read host components at render time, as the host did before extracting the section.
+  get Group() { return ItemGroup; },
+  get PagePresentation() { return ListPresentationProvider; },
+  get RowDensity() { return PageRowDensityProvider; },
+  get WidgetDescription() { return WidgetGlanceRow; },
   WidgetHeaderActions: WidgetFrameHeaderActions,
   ActionBar: SectionActionBar,
-  LoadStateRows: ItemLoadStateRows,
-  StateLine: SurfaceStateCard,
-  FreshnessLine: SurfaceFreshnessLine,
-  MoreRow: Item,
-  SectionButton: SectionActionButton,
-  IconButton,
+  get LoadStateRows() { return ItemLoadStateRows; },
+  get StateLine() { return SurfaceStateCard; },
+  get FreshnessLine() { return SurfaceFreshnessLine; },
+  get MoreRow() { return Item; },
+  get SectionButton() { return SectionActionButton; },
+  get IconButton() { return IconButton; },
 } satisfies HappierAutomationsSectionBindings;
 
 /** A host whose subject read has not succeeded keeps the shared section without inventing an identity. */
