@@ -428,7 +428,7 @@ response.setHeader('content-type','application/json');response.end(JSON.stringif
 }
 
 async function createWorktrees(label: string, runtime: Readonly<Record<string, unknown>> = {}, native = false) {
-    const fixtureDir = await mkdtemp(resolve(testDir, `${label}-`));
+    const fixtureDir = await realpath(await mkdtemp(resolve(testDir, `${label}-`)));
     const firstRoot = resolve(fixtureDir, 'first-worktree');
     const secondRoot = resolve(native ? resolve(firstRoot, WORKTREE_RELATIVE_PARENT_DIR) : fixtureDir, 'second-worktree');
     await initGitRepo({ repoDir: firstRoot });
