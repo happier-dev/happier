@@ -21,6 +21,7 @@
  * Session's content is masked with.
  */
 import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import type { AgentState } from '@/api/types';
 
 const processSecrets = new Map<string, number>();
 
@@ -59,29 +60,124 @@ function redactString(value: string, secrets: readonly string[]): string {
     return redacted;
 }
 
-function redactValue(value: unknown, secrets: readonly string[]): unknown {
-    if (typeof value === 'string') return redactString(value, secrets);
-    if (Array.isArray(value)) {
-        let changed = false;
-        const next = value.map(entry => {
-            const redacted = redactValue(entry, secrets);
-            changed ||= redacted !== entry;
-            return redacted;
-        });
-        return changed ? next : value;
-    }
-    if (value === null || typeof value !== 'object') return value;
+function mapArray(value: readonly unknown[], project: (entry: unknown) => unknown): readonly unknown[] {
+    let changed = false;
+    const next = value.map(entry => {
+        const projected = project(entry);
+        changed ||= projected !== entry;
+        return projected;
+    });
+    return changed ? next : value;
+}
+
+function mapRecord(
+    value: object,
+    project: (key: string, entry: unknown) => readonly [key: string, entry: unknown],
+): unknown {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return value;
     let changed = false;
-    const next: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-        const redactedKey = redactString(key, secrets);
-        const redacted = redactValue(entry, secrets);
-        changed ||= redactedKey !== key || redacted !== entry;
-        next[redactedKey] = redacted;
-    }
-    return changed ? next : value;
+    const next = Object.entries(value).map(([key, entry]) => {
+        const [nextKey, nextEntry] = project(key, entry);
+        changed ||= nextKey !== key || nextEntry !== entry;
+        return [nextKey, nextEntry] as const;
+    });
+    return changed ? Object.fromEntries(next) : value;
+}
+
+function redactValue(value: unknown, secrets: readonly string[]): unknown {
+    if (typeof value === 'string') return redactString(value, secrets);
+    if (Array.isArray(value)) return mapArray(value, entry => redactValue(entry, secrets));
+    if (value === null || typeof value !== 'object') return value;
+    return mapRecord(value, (key, entry) => [redactString(key, secrets), redactValue(entry, secrets)]);
+}
+
+function redactFields(
+    value: unknown,
+    secrets: readonly string[],
+    project: (key: string, entry: unknown) => unknown,
+): unknown {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return redactValue(value, secrets);
+    return mapRecord(value, (key, entry) => [key, project(key, entry)]);
+}
+
+function redactChoiceOffer(value: unknown, secrets: readonly string[]): unknown {
+    return redactFields(value, secrets, (key, entry) => {
+        if (key === 'requirementId' || key === 'source') return entry;
+        if (key === 'origin') {
+            return redactFields(entry, secrets, (field, part) => field === 'sessionId' || field === 'subagentId'
+                ? part : redactValue(part, secrets));
+        }
+        if (key === 'choices' && Array.isArray(entry)) {
+            return mapArray(entry, choice => redactFields(choice, secrets, (field, part) => {
+                if (field === 'id' || field === 'scope' || field === 'decision') return part;
+                if (field === 'response') {
+                    return redactFields(part, secrets, (name, content) => name === 'decision' || name === 'mode'
+                        ? content : redactValue(content, secrets));
+                }
+                if (field === 'followUp') {
+                    return redactFields(part, secrets, (name, content) => name === 'actionId'
+                        ? content : redactValue(content, secrets));
+                }
+                return redactValue(part, secrets);
+            }));
+        }
+        return redactValue(entry, secrets);
+    });
+}
+
+function redactChoiceAnswer(value: unknown, secrets: readonly string[]): unknown {
+    return redactFields(value, secrets, (key, entry) => key === 'requirementId' || key === 'choiceId'
+        ? entry : redactValue(entry, secrets));
+}
+
+function redactRequest(value: unknown, secrets: readonly string[]): unknown {
+    return redactFields(value, secrets, (key, entry) => {
+        switch (key) {
+            case 'turnId':
+            case 'source':
+            case 'kind':
+            case 'lifetime':
+            case 'status':
+            case 'decision':
+            case 'mode':
+                return entry;
+            case 'nativeChoices':
+                return redactChoiceOffer(entry, secrets);
+            case 'nativeChoice':
+                return redactChoiceAnswer(entry, secrets);
+            case 'permissionResponseClaimV1':
+                return redactFields(entry, secrets, (field, part) => {
+                    if (field === 'turnId' || field === 'origin' || field === 'decision' || field === 'scope') return part;
+                    return field === 'nativeChoice' ? redactChoiceAnswer(part, secrets) : redactValue(part, secrets);
+                });
+            default:
+                return redactValue(entry, secrets);
+        }
+    });
+}
+
+function readActiveSecrets(): readonly string[] | undefined {
+    const scoped = readHostedSessionScope()?.transcriptSecrets;
+    if (processSecrets.size === 0 && !scoped?.size) return undefined;
+    return [...new Set([...processSecrets.keys(), ...(scoped?.keys() ?? [])])]
+        .sort((left, right) => right.length - left.length);
+}
+
+/** Keep the Session's routing fields and request IDs intact while redacting their content. */
+export function redactAgentStateTranscriptSecrets(state: AgentState): AgentState {
+    const secrets = readActiveSecrets();
+    if (!secrets) return state;
+    return redactFields(state, secrets, (key, entry) => key === 'requests' || key === 'completedRequests'
+        ? redactFields(entry, secrets, (_, request) => redactRequest(request, secrets))
+        : redactValue(entry, secrets)) as AgentState;
+}
+
+/** The request store compares the live and persisted offer using the writer's projection. */
+export function redactAgentStatePermissionChoiceOffer(value: unknown): unknown {
+    if (value == null) return value;
+    const secrets = readActiveSecrets();
+    return secrets ? redactChoiceOffer(value, secrets) : value;
 }
 
 /**
@@ -90,9 +186,6 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
  * returned as is. Without a registered secret this is a no-op.
  */
 export function redactTranscriptSecrets<T>(content: T): T {
-    const scoped = readHostedSessionScope()?.transcriptSecrets;
-    if ((processSecrets.size === 0 && !scoped?.size) || content === undefined) return content;
-    const secrets = [...new Set([...processSecrets.keys(), ...(scoped?.keys() ?? [])])]
-        .sort((left, right) => right.length - left.length);
-    return redactValue(content, secrets) as T;
+    const secrets = readActiveSecrets();
+    return secrets ? redactValue(content, secrets) as T : content;
 }

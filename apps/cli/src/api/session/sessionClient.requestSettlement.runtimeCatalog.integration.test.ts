@@ -8,6 +8,8 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { configuration, reloadConfiguration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -535,6 +537,66 @@ describe('ApiSessionClient exact request settlement recovery', () => {
       expect(saved.completedRequests.leaky).toMatchObject({ status: 'approved' });
       expect(row.agentState).not.toContain(secret);
     } finally { store.dispose(); unregister(); }
+  });
+
+  it.each(['approved', 'denied'] as const)('settles a native approval as %s when a registered value overlaps its control data', async decision => {
+    const unregister = registerTranscriptSecret('native');
+    const session = createOwnerSession({ id: 'native-approval-redaction', agentState: {} });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const client = createClient(session, [createSocket()]);
+    const permissions = new ProviderEnforcedPermissionHandler(client, {
+      logPrefix: '[NativeApprovalRedaction]', getWorkspaceWrites: () => 'allow',
+    });
+    const requestId = 'execution-run:child:occurrence:muse-approval';
+    const turnId = 'native-turn-child-1';
+    const nativeChoices = { requirementId: 'muse-requirement', source: 'muse', choices: [
+      { id: 'allow_once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true },
+        rulePreview: 'printf native' },
+      { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false } },
+    ] } as const;
+    const applied: string[] = [];
+    try {
+      const pending = permissions.handleToolCall(requestId, 'bash', { command: 'printf native' }, {
+        turnId, nativeChoices, source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        async acknowledgeDecisionApplication(result) { applied.push(result.decision); },
+      });
+      void pending.catch(() => undefined);
+      await Promise.race([
+        vi.waitFor(() => expect(JSON.parse(row.agentState ?? '{}').requests?.[requestId]).toBeDefined()),
+        pending.then(result => { throw new Error(`Native approval settled before publication: ${result.decision}`); }),
+      ]);
+      const stored = JSON.parse(row.agentState ?? '{}').requests[requestId];
+      expect(stored).toMatchObject({
+        turnId, source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE,
+        nativeChoices: { ...nativeChoices, choices: [
+          { ...nativeChoices.choices[0], rulePreview: `printf ${TRANSCRIPT_SECRET_REDACTED}` },
+          nativeChoices.choices[1],
+        ] },
+        arguments: { command: `printf ${TRANSCRIPT_SECRET_REDACTED}` },
+      });
+      const params = decision === 'approved'
+        ? { id: requestId, turnId, nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'allow_once' } }
+        : { id: requestId, turnId, approved: false, decision: 'denied' };
+      const answer = () => client.rpcHandlerManager.handleRequest({
+        method: `${session.id}:session.permission.respond`, params, callerAuthority: 'present_user',
+        authorization: { kind: 'session.permission.respond', sessionId: session.id,
+          actor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } },
+      }, undefined, 'authenticated_home_socket');
+      await expect(answer()).resolves.toBeUndefined();
+      await expect(pending).resolves.toMatchObject({ decision });
+      if (decision === 'approved') await expect(answer()).resolves.toBeUndefined();
+      expect(applied).toEqual([decision]);
+      const saved = JSON.parse(row.agentState ?? '{}');
+      expect(saved.requests[requestId]).toBeUndefined();
+      expect(saved.completedRequests[requestId]).toMatchObject({
+        status: decision, turnId, arguments: { command: `printf ${TRANSCRIPT_SECRET_REDACTED}` },
+      });
+    } finally {
+      await permissions.abortPendingRequestsAndFlush('test cleanup');
+      unregister();
+    }
   });
 
   it.each(['observed-abort', 'native-decision'] as const)('settles actual deferred permission composition after queued publication (%s)', async mode => {

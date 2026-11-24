@@ -14,7 +14,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { redactAgentStatePermissionChoiceOffer, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -1858,11 +1858,12 @@ export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown)
     if (!first || !second) return false;
     const identity = (record: Record<string, unknown>) => {
         // Retirement lifetime does not mint a new occurrence; older stored rows omit it.
-        const { currentHandler: _currentHandler, lifetime: _lifetime, ...metadata } = readAgentStateRequestMetadata(record);
+        const { currentHandler: _currentHandler, lifetime: _lifetime, nativeChoices, ...metadata } = readAgentStateRequestMetadata(record);
         return {
             tool: record.tool, arguments: redactTranscriptSecrets(record.arguments), createdAt: record.createdAt,
             kind: typeof record.kind === 'string' ? record.kind
                 : resolveAgentRequestKind(typeof record.tool === 'string' ? record.tool : ''),
+            nativeChoices: redactAgentStatePermissionChoiceOffer(nativeChoices),
             ...metadata,
         };
     };
