@@ -1,3 +1,4 @@
+import { RpcError } from '@happier-dev/protocol/rpc/errors';
 import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 /**
@@ -710,7 +711,10 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
   });
   throwIfDaemonAdmissionRefused(result);
   if (result?.error) {
-    throw new Error(String(result.error));
+    const message = String(result.error);
+    throw typeof result.errorCode === 'string'
+      ? new RpcError(message, result.errorCode)
+      : new Error(message);
   }
   return (result as { result?: unknown } | null)?.result;
 }

@@ -5683,6 +5683,7 @@ export async function startDaemonSessionControlRuntime(
       source: 'manual' | 'automatic';
       policy: 'defer_until_turn_boundary' | 'defer_until_idle';
       target: ConnectedServiceSwitchTarget;
+      signal?: AbortSignal;
       restartSignalDelayMs: number;
       restartDiagnostic: ConnectedServiceDaemonRestartDiagnosticInput;
       onSignalFailureLogMessage: string;
@@ -5717,6 +5718,7 @@ export async function startDaemonSessionControlRuntime(
           source: input.source,
           policy: input.policy,
           target: input.target,
+          signal: input.signal,
           turnDeferralQueue: connectedServiceTurnDeferralQueue,
         },
         restartRequestedSessions: params.connectedServicesRestartRequestedSessions,
@@ -14491,7 +14493,7 @@ export async function startDaemonSessionControlRuntime(
           );
         },
       },
-      handleSessionConnectedServiceAuthSwitch: async (input) => {
+      handleSessionConnectedServiceAuthSwitch: async (input, signal) => {
         return await withSessionAccountContext(input.sessionId, async (accountContext) => {
           const sessionCredentials =
             accountContext?.bootstrap.credentials ?? params.credentials;
@@ -14683,6 +14685,7 @@ export async function startDaemonSessionControlRuntime(
                   tracked,
                   source: 'manual',
                   policy: 'defer_until_turn_boundary',
+                  signal,
                   target: normalizeSwitchTarget({
                     serviceId: primaryServiceId,
                     profileId:

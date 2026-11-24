@@ -1,4 +1,5 @@
 import type { SessionForkPoint, SessionForkRpcResult } from '@happier-dev/protocol/sessions/fork';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 
 /**
@@ -39,6 +40,7 @@ const UNKNOWN_OUTCOME_ERROR_CODES: ReadonlySet<string> = new Set<string>([
     // transport errors and undecodable replies may follow issuance, so they
     // cannot claim the source is untouched.
     SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+    RPC_ERROR_CODES.OUTCOME_UNKNOWN,
 ]);
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -57,12 +59,12 @@ export function classifySessionForkRpcOutcome(result: SessionForkRpcResult): Ses
     }
 
     const errorCode = normalizeNonEmptyString(result.errorCode) ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
-    if (UNKNOWN_OUTCOME_ERROR_CODES.has(errorCode)) {
+    if (result.effectAttempted !== false && UNKNOWN_OUTCOME_ERROR_CODES.has(errorCode)) {
         return { type: 'unknown', errorCode };
     }
     return {
         type: 'failed',
-        kind: errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE ? 'update_required' : 'error',
+        kind: errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE ? 'update_required' : 'error',
         errorCode,
         message: normalizeNonEmptyString(result.errorMessage),
         ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),

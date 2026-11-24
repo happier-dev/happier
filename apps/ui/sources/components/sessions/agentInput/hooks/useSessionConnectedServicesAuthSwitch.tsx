@@ -85,6 +85,8 @@ import {
 import { useProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { presentSessionAuthSwitchFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import {
     createManualAuthSwitchRestartSignal,
     resolveSessionIntentionalRestartState,
@@ -649,13 +651,21 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         if (!machineId) return;
         if (!forceReapply && !rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
         void (async () => {
-            let routing: SwitchRouting | undefined;
-            try {
-                routing = options?.routing ?? findSwitchRouting(await params.readRoutingOptions(), serviceId, binding);
-            } catch {
-                Modal.alert(t('common.error'), t('common.unavailable'));
-                return;
-            }
+            const readRouting = async (selection: ConnectedServicesServiceBinding) => {
+                try {
+                    return findSwitchRouting(await params.readRoutingOptions(), serviceId, selection);
+                } catch (error) {
+                    const code = error instanceof WorkflowActionError ? error.rawCode : readRpcErrorCode(error) ?? null;
+                    alertActionFailure({
+                        code,
+                        reason: presentSessionAuthSwitchFailure(code ?? undefined),
+                        ...(error instanceof WorkflowActionError ? { requestId: error.requestId } : {}),
+                    });
+                    return null;
+                }
+            };
+            let routing = options?.routing ?? await readRouting(binding);
+            if (routing === null) return;
             if (!routing) {
                 Modal.alert(t('common.error'), t('common.unavailable'));
                 return;
@@ -689,7 +699,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 });
                 if (outcome.kind !== 'continue') return;
                 if (!areServiceBindingsEqual(binding, outcome.selection)) {
-                    routing = findSwitchRouting(await params.readRoutingOptions(), serviceId, outcome.selection);
+                    routing = await readRouting(outcome.selection);
                     if (!routing) return;
                     binding = outcome.selection;
                 }

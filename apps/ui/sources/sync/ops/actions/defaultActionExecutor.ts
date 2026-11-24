@@ -417,9 +417,7 @@ import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
-import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { resolveSessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import {
@@ -2984,50 +2982,19 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const sid = String(sessionId ?? '').trim();
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       const resolvedServerId = String(serverId ?? opts?.resolveServerIdForSessionId?.(sid) ?? '').trim();
-      const state = storage.getState();
-      const session = state.sessions[sid] ?? null;
       const machineId = resolveSessionMachineId(sid, resolvedServerId);
-
-      const settings = state.settings;
-      const replayEnabled = resolveHappierReplayConfig(settings ?? {}).enabled;
-      // One fork policy for every surface. This executor has no strategy modal
-      // to show, so it reads the same availability the modal renders and asks
-      // for the exact route that modal would have offered. An unqualified
-      // request is what let the daemon settle on Replay for an account that
-      // turned Replay off.
-      const availability = resolveSessionForkStrategyAvailability({
-        session,
-        forkPoint,
-        replayEnabled,
-        // Source-context continuation is a navigation to the New Session
-        // screen; this executor has no such route, so it is not one of its
-        // options rather than a route it silently fails to take.
-        agentSwitchingEnabled: false,
-        currentAgentCapabilities: opts?.currentAgentCapabilities,
-      });
-      // Explicit Native intent is resolved/refused by the daemon lifecycle owner.
-      // Its live capability need not be in this presentation's projection cache.
-      if (((strategy === undefined || strategy === 'auto') && !availability.native && !availability.replay)
-        || (strategy === 'replay' && !availability.replay)) {
-        return { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
-          ...(!replayEnabled ? { details: { reason: 'disabled_by_settings' } } : {}) };
-      }
+      const settings = storage.getState().settings;
       const replayOptions = resolveSessionForkReplayOptions({
         settings,
         executionRunsEnabled: resolveLocalFeaturePolicyEnabled('execution.runs', settings ?? {}),
       });
-      const resolvedStrategy = strategy === undefined || strategy === 'auto'
-        ? availability.replay ? strategy : 'native'
-        : strategy;
 
       const result = await forkSessionOp({
         ...(machineId ? { machineId } : {}),
         serverId: resolvedServerId || undefined,
         parentSessionId: sid,
         forkPoint,
-        // `auto` is the only value that can fall through to Replay, so it stays
-        // the request exactly while Replay is a route the account allows.
-        ...(resolvedStrategy ? { strategy: resolvedStrategy } : {}),
+        ...(strategy ? { strategy } : {}),
         ...replayOptions,
         ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
         ...(replayMaxSeedChars !== undefined ? { replayMaxSeedChars } : {}),

@@ -243,6 +243,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             const result = action.ok
                 ? SessionForkRpcResultSchema.safeParse(action.result)
                 : { success: true as const, data: { ok: false as const, errorCode: action.errorCode, errorMessage: action.error,
+                    ...(action.effectAttempted === false ? { effectAttempted: false as const } : {}),
                     errorDetail: normalizeSpawnSessionErrorDetail(action.details && typeof action.details === 'object'
                         ? Reflect.get(action.details, 'errorDetail') : undefined) } };
             if (!result.success) {

@@ -894,7 +894,7 @@ export function createDaemonControlApp({
     sessionId: string;
     attemptId: string;
   }>) => Promise<unknown>;
-  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
+  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams, signal: AbortSignal) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
@@ -1765,8 +1765,13 @@ export function createDaemonControlApp({
         errorCode: 'connected_service_auth_switch_handler_unavailable' as const,
       };
     }
-    const result = await handleSessionConnectedServiceAuthSwitch(request.body);
-    return { ok: true as const, result };
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      const result = await handleSessionConnectedServiceAuthSwitch(request.body, lifetime.signal);
+      return { ok: true as const, result };
+    } finally {
+      lifetime.dispose();
+    }
   });
 
   typed.post('/connected-service-auth/session/refresh-runtime-auth', {
@@ -4769,7 +4774,7 @@ export function startDaemonControlServer({
     sessionId: string;
     attemptId: string;
   }>) => Promise<unknown>;
-  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
+  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams, signal: AbortSignal) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;

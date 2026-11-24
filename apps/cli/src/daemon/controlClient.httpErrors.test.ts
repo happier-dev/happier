@@ -339,7 +339,7 @@ describe('daemon control client (HTTP error responses)', () => {
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify({
             ok: false,
-            errorCode: 'connected_service_auth_switch_unavailable',
+            errorCode: 'connected_service_auth_switch_handler_unavailable',
           }));
         });
         return;
@@ -375,9 +375,7 @@ describe('daemon control client (HTTP error responses)', () => {
             },
           },
         },
-      })).rejects.toThrow(
-        /HTTP 501 \(connected_service_auth_switch_unavailable\)/u,
-      );
+      })).rejects.toMatchObject({ rpcErrorCode: 'connected_service_auth_switch_handler_unavailable' });
       expect(observedBody).toEqual({
         sessionId: 'session-1',
         agentId: 'grok',

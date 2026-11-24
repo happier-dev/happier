@@ -1,5 +1,8 @@
 import { createServer } from 'node:http';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTypes';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -124,6 +127,41 @@ describe('createReplayForkSession', () => {
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({ state: 'valid' });
     fetchAccountEncryptionCurrentnessMock.mockResolvedValue({ mode: 'plain', version: 1 });
     archiveSessionOnceInactiveMock.mockResolvedValue({ archivedAt: 1 });
+  });
+
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+
+  it.each([
+    ['cli', 'replay'],
+    ['agent', 'auto'],
+  ] as const)('refuses a %s fork using %s when the Account disables Replay', async (surface, strategy) => {
+    setActiveAccountSettingsSnapshot({
+      source: 'network', settings: accountSettingsParse({ sessionReplayEnabled: false }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+    });
+    const parentSessionId = 'parent-session';
+    fetchSessionByIdCompatMock.mockResolvedValue({
+      id: parentSessionId, seq: 3, encryptionMode: 'plain',
+      metadata: JSON.stringify({ flavor: 'gemini', path: '/tmp/parent', machineId: 'machine' }),
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>().mockResolvedValue({ type: 'success', sessionId: 'child-session' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: getSessionHostBridge(),
+      resolveExecutionSurfaces: async () => ({
+        terminalRuntime: null, externalSession: null, attach: null, handoff: null, fork: null, checkpoint: null,
+      }),
+      handlers: { spawnSession, stopSession: async () => false },
+    });
+    const executor = createActionExecutor({
+      sessionFork: ({ sessionId, strategy: requestedStrategy, forkPoint }) =>
+        handler({ v: 1, parentSessionId: sessionId, strategy: requestedStrategy, forkPoint }),
+    });
+    const result = await withReplayHome('machine', () =>
+      withCliApiToken(`hap_v1_123e4567-e89b-42d3-a456-426614174000_${'A'.repeat(43)}`, () =>
+        executor.execute('session.fork', { sessionId: parentSessionId, strategy }, { surface, defaultSessionId: parentSessionId })));
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled', error: 'disabled_by_settings', effectAttempted: false });
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
 
   it('uses provider replay child launch directory hints for spawning', async () => {

@@ -30,6 +30,7 @@ type ConnectedServiceSwitchRequest = Readonly<{
     policy: ConnectedServiceSwitchDeferralPolicy;
     source: ConnectedServiceSwitchSource;
     target: ConnectedServiceSwitchTarget;
+    signal?: AbortSignal;
     runSwitch: (signal?: AbortSignal) => Promise<unknown>;
 }>;
 
@@ -39,6 +40,8 @@ type ConnectedServiceSwitchDeferralQueueParams = Readonly<{
 }>;
 
 type DeferredRequest = Readonly<{
+    signal?: AbortSignal;
+    matchesTarget: boolean;
     resolve: (result: unknown) => void;
     reject: (error: unknown) => void;
 }>;
@@ -126,7 +129,7 @@ function shouldReplacePending(input: Readonly<{
     return true;
 }
 
-function createDeferredPromise(): Readonly<{
+function createDeferredPromise(signal: AbortSignal | undefined, matchesTarget: boolean): Readonly<{
     promise: Promise<unknown>;
     request: DeferredRequest;
 }> {
@@ -139,6 +142,8 @@ function createDeferredPromise(): Readonly<{
     return {
         promise,
         request: {
+            signal,
+            matchesTarget,
             resolve: (result) => resolve?.(result),
             reject: (error) => reject?.(error),
         },
@@ -216,7 +221,7 @@ export function createConnectedServiceSwitchDeferralQueue(
         pending: PendingSwitch,
         reason: ConnectedServiceSwitchDeferralCompletionReason,
     ): Promise<void> => {
-        if (pending.settled || pending.executing) return;
+        if (pending.settled || pending.executing || pending.executionCancellation.signal.aborted) return;
         // Claim execution synchronously, before the first await, so concurrent terminal events (or a
         // cancellation racing a terminal event) cannot both pass the guard and double-invoke runSwitch.
         pending.executing = true;
@@ -256,6 +261,11 @@ export function createConnectedServiceSwitchDeferralQueue(
         settlePending(pending, 'reject', error);
     };
 
+    const switchCancelled = () => new ConnectedServiceSwitchDeferralConflictError({
+        code: 'switch_cancelled',
+        message: 'Connected-service deferred switch was cancelled',
+    });
+
     const rejectSupersededPending = async (pending: PendingSwitch): Promise<void> => {
         if (pending.settled) return;
         pending.executionCancellation.abort();
@@ -265,11 +275,7 @@ export function createConnectedServiceSwitchDeferralQueue(
             reason: 'switch_cancelled',
         });
         await pending.admissionTail;
-        const error = new ConnectedServiceSwitchDeferralConflictError({
-            code: 'switch_cancelled',
-            message: 'Connected-service deferred switch was cancelled',
-        });
-        settlePending(pending, 'reject', error);
+        settlePending(pending, 'reject', switchCancelled());
     };
 
     const shouldRunImmediately = (input: ConnectedServiceSwitchRequest): boolean => {
@@ -281,80 +287,94 @@ export function createConnectedServiceSwitchDeferralQueue(
         return state.inFlight !== true;
     };
 
+    const joinPending = async (pending: PendingSwitch, signal: AbortSignal | undefined, matchesTarget: boolean): Promise<unknown> => {
+        const { promise, request } = createDeferredPromise(signal, matchesTarget);
+        pending.requests.push(request);
+        const withdraw = () => {
+            if (pending.settled || pending.effectApplied) return;
+            if (!pending.executing) {
+                pending.requests.splice(pending.requests.indexOf(request), 1);
+                request.reject(switchCancelled());
+            }
+            // Only requests for this target can keep its switch alive. An automatic
+            // request waiting behind a different manual target is a passive join.
+            if (pending.requests.some(waiter => waiter.matchesTarget && !waiter.signal?.aborted)) return;
+            if (pending.executing) {
+                // Let the selected callback settle. The restart owner observes the signal
+                // at the effect boundary and keeps its resulting receipt if it committed.
+                pending.executionCancellation.abort();
+            } else {
+                settlePending(pending, 'reject', switchCancelled());
+                admitPendingEvent(pending, {
+                    type: 'connected_service_account_switch_deferral_completed',
+                    policy: pending.policy,
+                    reason: 'switch_cancelled',
+                });
+            }
+        };
+        signal?.addEventListener('abort', withdraw, { once: true });
+        try {
+            return await promise;
+        } finally {
+            signal?.removeEventListener('abort', withdraw);
+        }
+    };
+
     const requestSwitch = async (input: ConnectedServiceSwitchRequest): Promise<unknown> => {
         const sessionId = String(input.sessionId ?? '').trim();
         if (!sessionId) return;
+        if (input.signal?.aborted) throw switchCancelled();
         const target = normalizeTarget(input.target);
         if (shouldRunImmediately(input)) {
-            return await input.runSwitch();
+            return await input.runSwitch(input.signal);
         }
 
-        const deferred = createDeferredPromise();
         const pending = pendingBySessionId.get(sessionId);
-        if (!pending) {
-            const created: PendingSwitch = {
-                sessionId,
-                policy: input.policy,
-                source: input.source,
-                target,
-                runSwitch: input.runSwitch,
-                executionCancellation: new AbortController(),
-                requests: [deferred.request],
-                settled: false,
-                executing: false,
-                effectApplied: false,
-                selectedResult: undefined,
-                admissionTail: Promise.resolve(),
-            };
-            pendingBySessionId.set(sessionId, created);
-            admitPendingEvent(created, {
-                type: 'connected_service_account_switch_deferred',
-                policy: input.policy,
-                awaitingBoundary: input.policy === 'defer_until_turn_boundary',
-            });
-            return await deferred.promise;
+        if (pending && isSameConnectedServiceSwitchTarget(pending.target, target)) {
+            return await joinPending(pending, input.signal, true);
         }
-
-        if (isSameConnectedServiceSwitchTarget(pending.target, target)) {
-            pending.requests.push(deferred.request);
-            return await deferred.promise;
-        }
-
-        if (isOlderGeneration({ pending: pending.target, next: target })) {
+        if (pending && isOlderGeneration({ pending: pending.target, next: target })) {
             throw new ConnectedServiceSwitchDeferralConflictError({
                 code: 'group_generation_conflict',
                 message: 'Connected-service switch generation is older than pending deferred switch',
             });
         }
-
-        if (!shouldReplacePending({ pendingSource: pending.source, nextSource: input.source })) {
-            pending.requests.push(deferred.request);
-            return await deferred.promise;
+        if (pending && !shouldReplacePending({ pendingSource: pending.source, nextSource: input.source })) {
+            return await joinPending(pending, input.signal, false);
         }
 
-        const replacement: PendingSwitch = {
+        const selected: PendingSwitch = {
             sessionId,
             policy: input.policy,
             source: input.source,
             target,
             runSwitch: input.runSwitch,
             executionCancellation: new AbortController(),
-            requests: [deferred.request],
+            requests: [],
             settled: false,
             executing: false,
             effectApplied: false,
             selectedResult: undefined,
             admissionTail: Promise.resolve(),
         };
-        pendingBySessionId.set(sessionId, replacement);
-        admitPendingEvent(pending, {
-            type: 'connected_service_account_switch_deferral_superseded',
-            policy: input.policy,
-        });
-        void rejectSupersededPending(pending).catch((error) => {
-            settlePending(pending, 'reject', error);
-        });
-        return await deferred.promise;
+        pendingBySessionId.set(sessionId, selected);
+        const result = joinPending(selected, input.signal, true);
+        if (pending) {
+            admitPendingEvent(pending, {
+                type: 'connected_service_account_switch_deferral_superseded',
+                policy: input.policy,
+            });
+            void rejectSupersededPending(pending).catch((error) => {
+                settlePending(pending, 'reject', error);
+            });
+        } else {
+            admitPendingEvent(selected, {
+                type: 'connected_service_account_switch_deferred',
+                policy: input.policy,
+                awaitingBoundary: input.policy === 'defer_until_turn_boundary',
+            });
+        }
+        return await result;
     };
 
     const recordTurnLifecycleEvent = (input: Readonly<{

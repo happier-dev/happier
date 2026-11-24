@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { SessionForkPoint } from '@happier-dev/protocol/sessions/fork';
+import { isSessionReplayEnabled, type SessionForkPoint } from '@happier-dev/protocol/sessions/fork';
 import {
   isProviderBoundSessionMetadata,
   resolveAgentIdFromSessionMetadata,
@@ -121,7 +121,7 @@ export function resolveSessionForkStrategyAvailability(params: Readonly<{
 
   return {
     native,
-    replay: params.replayEnabled === true,
+    replay: isSessionReplayEnabled(params.replayEnabled),
     configure: params.agentSwitchingEnabled === true,
     nativeUnavailableReason: native
       ? null

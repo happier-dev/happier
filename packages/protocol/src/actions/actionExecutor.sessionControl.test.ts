@@ -3658,6 +3658,21 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.user_action.answer' });
   });
 
+  it('preserves a daemon switch refusal outside the receipt contract', async () => {
+    const errorCode = 'connected_service_auth_switch_handler_unavailable';
+    const executor = createExecutor({
+      sessionStatusGet: async () => ({ session: { machineId: 'machine' } }),
+      sessionConnectedServicesAuthSet: async () => ({ ok: false, errorCode, error: errorCode }),
+    });
+    expect(await executor.execute('session.connected_services_auth.set', {
+      sessionId: 's1', machineId: 'machine',
+      routing: { agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } },
+    }, {
+      surface: 'cli', defaultSessionId: 's1',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.connected_services_auth.set': ['cli'] } }),
+    })).toMatchObject({ ok: false, errorCode });
+  });
+
   it('discovers current-Session controls for Agent and MCP and honors Off, Ask and Allowed independently', async () => {
     const { resolveSocketRpcSessionAuthorization } = await import('../rpc/socket.js');
     for (const id of ['session.permission.remote.grants.list', 'session.permission.remote.grants.revoke'] as const) {

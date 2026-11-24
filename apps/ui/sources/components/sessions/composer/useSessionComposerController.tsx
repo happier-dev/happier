@@ -48,7 +48,8 @@ import { executeSessionLifecycleAction } from "@/components/sessions/actions/ses
 import type { CurrentUiContextCommandInvocation } from "@/components/appShell/currentUiContext/CurrentUiContextCommands";
 import { type SessionConnectedServiceAuthSwitchResult, readSessionConnectedServiceAuthSwitchActionResult } from "@/sync/ops/connectedServices/sessionAuthSwitch";
 import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import type { PublicActionInputById, PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, type PublicActionInputById, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { SessionConnectedServiceAuthSwitchRoutingSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
@@ -5282,12 +5283,19 @@ export function useSessionComposerController({
             return readSessionConnectedServiceAuthSwitchActionResult(settled);
         }, [actionExecutor, pendingRecoveryApproval.requestApproval, sessionAccountLifetime, sessionAccountScope, sessionId, sessionRouteServerId]);
         const readSessionConnectedServicesAuthOptions = React.useCallback(async () => {
-            const result = await actionExecutor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
-                actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, fieldPath: 'routing',
-                draftInput: { sessionId, machineId: controlMachineTarget?.machineId },
-            }, { surface: 'ui', authority: 'present_user', defaultSessionId: sessionId, serverId: sessionRouteServerId });
-            if (!result.ok || !sessionAccountLifetime?.isCurrent()) return [];
-            return (result.result as PublicActionResultById[typeof ACTION_OPTIONS_RESOLVE_ACTION_ID_V1]).options.flatMap(option => {
+            const result = await callWorkflowAction({
+                actionId: ACTION_OPTIONS_RESOLVE_ACTION_ID_V1,
+                input: {
+                    actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, fieldPath: 'routing',
+                    draftInput: { sessionId, machineId: controlMachineTarget?.machineId },
+                },
+                context: { surface: 'ui', authority: 'present_user', defaultSessionId: sessionId, serverId: sessionRouteServerId },
+                execute: createFrontDoorActionExecute(actionExecutor),
+                accountLifetime: sessionAccountLifetime,
+                parseResult: value => getActionSpec(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1).outputSchema!
+                    .parse(value) as PublicActionResultById[typeof ACTION_OPTIONS_RESOLVE_ACTION_ID_V1],
+            });
+            return result.options.flatMap(option => {
                 const routing = SessionConnectedServiceAuthSwitchRoutingSchema.safeParse(option.value);
                 return routing.success ? [routing.data] : [];
             });

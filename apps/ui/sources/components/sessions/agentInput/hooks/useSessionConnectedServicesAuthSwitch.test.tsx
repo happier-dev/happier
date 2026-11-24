@@ -399,6 +399,7 @@ await loadSyncSingletonForTests();
 
 const { useSessionConnectedServicesAuthSwitch: useAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 type AuthSwitchParams = Parameters<typeof useAuthSwitch>[0];
+const routingReadFailure = vi.hoisted(() => ({ current: null as Error | null }));
 type RoutingOption = Awaited<ReturnType<AuthSwitchParams['readRoutingOptions']>>[number];
 
 function useSessionConnectedServicesAuthSwitch(params: Omit<AuthSwitchParams, 'readRoutingOptions' | 'applyBinding'> & { applyBinding: typeof setSessionConnectedServiceAuthBindingMock }) {
@@ -407,6 +408,7 @@ function useSessionConnectedServicesAuthSwitch(params: Omit<AuthSwitchParams, 'r
         // The Home/daemon boundary supplies the switch operands. This fixture
         // exercises picker behavior with the same accounts used in the UI scenario.
         readRoutingOptions: async () => {
+            if (routingReadFailure.current) throw routingReadFailure.current;
             const agentId = params.agentId;
             if (!agentId) return [];
             const profile = AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current });
@@ -1824,6 +1826,26 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect.objectContaining({ text: 'connectedServices.authSwitch.partialApply.revert', onPress: expect.any(Function) }),
             expect.objectContaining({ text: 'common.cancel' }),
         ]);
+
+        const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
+        routingReadFailure.current = new WorkflowActionError({
+            message: 'Options owner is offline', rawCode: 'target_unavailable', requestId: 'options-retry-1',
+        });
+        try {
+            modalAlertMock.mockClear();
+            await act(async () => {
+                alertButtons?.find(button => button.text === 'connectedServices.authSwitch.partialApply.retry')?.onPress?.();
+            });
+            const { presentSessionAuthSwitchFailure } = await import('@/components/sessions/presentation/sessionRuntimeIssuePresentation');
+            expect(modalAlertMock).toHaveBeenCalledWith('common.error', presentSessionAuthSwitchFailure('target_unavailable'),
+                expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]));
+            const diagnostic = (modalAlertMock.mock.calls[0]?.[2] as Array<{ text: string; onPress?: () => void }>)
+                .find(button => button.text === 'approvals.technicalDetails');
+            diagnostic?.onPress?.();
+            expect(modalAlertMock).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('options-retry-1'));
+        } finally {
+            routingReadFailure.current = null;
+        }
 
         setSessionConnectedServiceAuthBindingMock.mockClear();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({ ok: true, action: 'metadata_updated' });

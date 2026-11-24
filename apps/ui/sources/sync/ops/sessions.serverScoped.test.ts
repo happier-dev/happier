@@ -672,7 +672,7 @@ describe('session resume and fork routing through the Home and Account boundary'
         setSession('sess-parent-provider', { metadata: metadata.MetadataSchema.parse({ path: '/tmp', host: 'host.local', machineId: 'machine-1', ...ownerMetadata }) });
         rejectRpc(errorCode);
         await expect(ops.forkSession({ machineId: 'machine-1', parentSessionId: 'sess-parent-provider', forkPoint: { type: 'latest' }, serverId: home.id }))
-            .resolves.toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
+            .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         expect(forkRequests()).toEqual([expect.objectContaining({ method: RPC_METHODS.SESSION_FORK_PROVIDER_SAFE, serverUrl: home.serverUrl, token: home.token })]);
     });
 
@@ -684,10 +684,10 @@ describe('session resume and fork routing through the Home and Account boundary'
         expect(forkRequests()).toEqual([expect.objectContaining({ targetId: 'reachable-machine', method: RPC_METHODS.SESSION_FORK, serverUrl: home.serverUrl })]);
     });
 
-    it('maps an unavailable native fork RPC to DAEMON_RPC_UNAVAILABLE', async () => {
+    it('identifies the missing native fork method', async () => {
         rejectRpc(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         await expect(ops.forkSession({ machineId: 'machine-1', parentSessionId: 'sess-parent', forkPoint: { type: 'latest' }, serverId: home.id }))
-            .resolves.toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
+            .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         expect(forkRequests()).toEqual([expect.objectContaining({ method: RPC_METHODS.SESSION_FORK })]);
     });
 

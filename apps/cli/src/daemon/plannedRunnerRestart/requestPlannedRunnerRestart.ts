@@ -334,6 +334,7 @@ export async function requestPlannedRunnerRestart(
         source: params.deferral.source,
         policy: params.deferral.policy,
         target: params.deferral.target,
+        signal: params.deferral.signal,
         runSwitch,
       });
     }

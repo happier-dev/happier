@@ -10,6 +10,11 @@ import { readSessionCreationCorrespondence } from './creation/sessionCreationCor
 import { readSessionDirectoryKind } from './metadata/sessionDirectoryV1.js';
 import type { PluginAgentSessionCapabilitiesV2 } from '../plugins/contributions/agentSessionCapabilities.js';
 
+/** Replay requires the Account's enabled preference, including in local chooser projections. */
+export function isSessionReplayEnabled(value: boolean | null | undefined): boolean {
+  return value === true;
+}
+
 /** A managed child gets a new allocation unless its creation recipe pins it to an in-place workspace. */
 export function requiresReplayForSessionForkWorkspace(
   capabilities: Pick<PluginAgentSessionCapabilitiesV2, 'forkWorkspace'> | null | undefined,
@@ -85,6 +90,8 @@ export const SessionForkRpcSuccessSchema = lazyZodSchema(() => z.strictObject({
 export const SessionForkRpcResultSchema = lazyZodSchema(() => z.union([
   SessionForkRpcSuccessSchema,
   z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)), errorMessage: z.string().check(z.minLength(1)),
+    /** A settled pre-effect refusal can safely skip child reconciliation. */
+    effectAttempted: z.optional(z.literal(false)),
     /** The creator's typed refusal (for example Home's Team credential reason), as a spawn carries it. */
     errorDetail: z.optional(SpawnSessionErrorDetailSchema) }),
 ]));

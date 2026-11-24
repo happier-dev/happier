@@ -309,6 +309,24 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         });
     });
 
+    it('keeps the switch for another live caller when a coalesced caller cancels', async () => {
+        const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
+        const sessionId = 'sess_1';
+        const receipt = { ok: true, action: 'restart_requested' };
+        const runSwitch = vi.fn(async () => receipt);
+        const input = { sessionId, policy: 'defer_until_turn_boundary', source: 'manual', target: target(), runSwitch } as const;
+        queue.recordTurnLifecycleEvent({ sessionId, event: 'task_started' });
+        const caller = new AbortController();
+        const cancelled = queue.requestSwitch({ ...input, signal: caller.signal });
+        const remaining = queue.requestSwitch(input);
+        const cancellation = expect(cancelled).rejects.toMatchObject({ code: 'switch_cancelled' });
+        caller.abort();
+        queue.recordTurnLifecycleEvent({ sessionId, event: 'assistant_message_end' });
+        await cancellation;
+        await expect(remaining).resolves.toEqual(receipt);
+        expect(runSwitch).toHaveBeenCalledOnce();
+    });
+
     it('coalesces same-target requests, cancels superseded requests, and rejects older generations', async () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
@@ -473,16 +491,19 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             reason: 'daemon_shutdown',
         }));
     });
-    it('resolves a signalled switch whose completion-event admission fails instead of reporting a rollback-safe failure', async () => {
+    it('preserves the receipt when the caller cancels after signaling and completion-event admission fails', async () => {
         // POST-EFFECT SETTLEMENT: runSwitch has already emitted the irreversible restart signal. A
         // failure while ADMITTING the completion transcript event is missing evidence, not an
         // un-happened switch, so the deferred caller must never see it as a rollback-safe rejection.
+        const caller = new AbortController();
+        const receipt = { ok: true, action: 'restart_requested' };
         const emitSessionEvent = vi.fn(async (_sessionId: string, event: unknown) => {
             if ((event as { type?: string }).type === 'connected_service_account_switch_deferral_completed') {
+                caller.abort();
                 throw new Error('transcript_admission_failed');
             }
         });
-        const runSwitch = vi.fn(async () => {});
+        const runSwitch = vi.fn(async () => receipt);
         const queue = createConnectedServiceSwitchDeferralQueue({
             disableDeferral: false,
             emitSessionEvent,
@@ -494,11 +515,12 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             policy: 'defer_until_turn_boundary',
             source: 'manual',
             target: target(),
+            signal: caller.signal,
             runSwitch,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
-        await expect(pending).resolves.toBeUndefined();
+        await expect(pending).resolves.toEqual(receipt);
         expect(runSwitch).toHaveBeenCalledTimes(1);
     });
 

@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
@@ -206,6 +208,8 @@ describe('createForkSessionLifecycleActionHandler', () => {
     mocks.declarationSource = 'cold';
   });
 
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+
   // Account-configured ACP declares load-session (resume) support only, and no
   // Agent-owned fork surface. Automatic fork therefore settles at the canonical
   // Replay owner regardless of what the Account declaration says about resume.
@@ -343,7 +347,11 @@ describe('createForkSessionLifecycleActionHandler', () => {
     });
   });
 
-  it('routes a declared native fork through child spawn-open and does not invoke legacy or replay owners', async () => {
+  it('routes an eligible Auto fork through Native when the Account disables Replay', async () => {
+    setActiveAccountSettingsSnapshot({
+      source: 'network', settings: accountSettingsParse({ sessionReplayEnabled: false }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+    });
     mocks.nativeForkOpenModes.push('create', 'resume', 'fork');
     mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
     mocks.attemptNativeForkOpen.mockResolvedValue({
@@ -368,7 +376,7 @@ describe('createForkSessionLifecycleActionHandler', () => {
       v: 1,
       parentSessionId: 'parent-session',
       forkPoint: { type: 'seq', upToSeqInclusive: 7 },
-      strategy: 'provider_native',
+      strategy: 'auto',
       requestId: 'native-open-request',
     })).resolves.toEqual({ ok: true, childSessionId: 'child-native-open' });
     expect(mocks.attemptNativeForkOpen).toHaveBeenCalledWith(expect.objectContaining({

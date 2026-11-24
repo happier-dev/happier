@@ -19,17 +19,25 @@ describe('classifySessionForkRpcOutcome', () => {
             .toEqual({ type: 'created', childSessionId: 'child_1' });
     });
 
-    it('treats an unavailable daemon method as a definite update requirement, not an unknown outcome', () => {
+    it('shows the update hint for a confirmed missing RPC method', () => {
         expect(classifySessionForkRpcOutcome({
             ok: false,
-            errorCode: 'DAEMON_RPC_UNAVAILABLE',
+            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
             errorMessage: 'Daemon RPC is not available',
         } as any)).toEqual({
             type: 'failed',
             kind: 'update_required',
-            errorCode: 'DAEMON_RPC_UNAVAILABLE',
+            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
             message: 'Daemon RPC is not available',
         });
+    });
+
+    it.each([
+        ['DAEMON_RPC_UNAVAILABLE', 'Requester Session authority is unavailable'],
+        ['UNEXPECTED', 'Home could not load the parent Session'],
+    ])('presents a confirmed pre-effect refusal (%s)', (errorCode, errorMessage) => {
+        expect(classifySessionForkRpcOutcome({ ok: false, errorCode, errorMessage, effectAttempted: false }))
+            .toEqual({ type: 'failed', kind: 'error', errorCode, message: errorMessage });
     });
 
     it('treats a webhook timeout as outcome-unknown so the caller never blind-retries', () => {

@@ -20,9 +20,10 @@ If you want to change the Agent without branching at all, see [Continue with ano
 ## How fork selection works
 
 In the current development flow, session and message fork controls open a strategy chooser before starting
-work. You can choose a **Native fork** when the Agent and fork point support one, **Replay fork** to
-start a child with a bounded transcript seed, or **Configure a new session** to continue through the
-normal new-session screen.
+work. **Native fork** requires support for the Agent, fork point, and child workspace. For example,
+Muse's native fork keeps the source workspace. Choose **Replay fork** when the child needs a new
+managed workspace. Replay starts the child with a bounded transcript seed. **Configure a new
+session** brings the conversation to the normal new-session screen.
 
 In the current 0.3 development source, sending `/fork` in the session composer forks from the latest
 conversation using Native or Replay according to session support and your replay settings, then opens
@@ -31,9 +32,9 @@ the error and restores `/fork` in the composer so you can retry.
 
 An explicit Native choice is strict: if the provider-native fork is unavailable or fails, Happier
 reports that outcome instead of silently creating a replay child. Existing callers that explicitly
-use the compatibility `auto` strategy may still let the daemon choose its established native-or-replay
-policy. Native forks stay in progress until the provider resolves them; Happier does not abandon one
-after an arbitrary deadline or run a fork-specific readiness poll.
+use the compatibility `auto` strategy let the daemon try Native first and use Replay when the
+Account allows it. If the app times out waiting for acknowledgement, the fork may still finish.
+Use **Check for fork** to look for the child created by that request before trying again.
 
 ## Fork a folderless session
 

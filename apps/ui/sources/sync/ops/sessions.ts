@@ -781,21 +781,22 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
         ) {
             return {
                 ok: false,
-                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage:
-                    `Daemon RPC is not available (RPC method not available). ` +
-                    `The daemon may be stopped, still starting, or not connected to the server.`,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                errorMessage: 'Daemon RPC method not available',
+                effectAttempted: false,
             };
         }
         // Preserve setup failures only when the transport proves this attempt
         // was not sent. An issued fork still requires lineage reconciliation.
-        const setupErrorCode = readRpcRequestDisposition(error) === 'notSent'
+        const notSent = readRpcRequestDisposition(error) === 'notSent';
+        const setupErrorCode = notSent
             ? readSessionRpcErrorCode(error) ?? (isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : undefined)
             : undefined;
         return {
             ok: false,
-            errorCode: setupErrorCode ?? 'UNEXPECTED',
+            errorCode: setupErrorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error ? error.message : 'Failed to fork session',
+            ...(notSent ? { effectAttempted: false as const } : {}),
         };
     }
 }

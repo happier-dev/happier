@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { isSessionReplayEnabled } from '@happier-dev/protocol/sessions/fork';
 import {
   HappierReplayRecentMessagesCountSchema,
   HappierReplayWritableMaxSeedCharsSchema,
@@ -28,7 +29,7 @@ export function resolveHappierReplayConfig(settings: HappierReplayConfigSource):
   recentMessagesCount: number;
   maxSeedChars: number;
 }> {
-  const enabled = settings.sessionReplayEnabled === true;
+  const enabled = isSessionReplayEnabled(settings.sessionReplayEnabled);
   const strategy = normalizeStrategy(settings.sessionReplayStrategy);
   const recentMessagesCount = z.catch(HappierReplayRecentMessagesCountSchema,
     settingsDefaults.sessionReplayRecentMessagesCount)

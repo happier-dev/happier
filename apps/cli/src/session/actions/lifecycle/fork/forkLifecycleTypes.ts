@@ -1,7 +1,7 @@
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { readStoredCredentials } from '@/persistence';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import type { SpawnSessionErrorDetail } from '@happier-dev/protocol';
+import type { SessionForkRpcResult } from '@happier-dev/protocol/sessions/fork';
 import type { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import type { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -23,10 +23,7 @@ export type ForkPoint = Readonly<
     | { type: 'latest' }
 >;
 
-export type ForkLifecycleResult = Readonly<
-    | { ok: true; childSessionId: string }
-    | { ok: false; errorCode: string; errorMessage: string; errorDetail?: SpawnSessionErrorDetail }
->;
+export type ForkLifecycleResult = Readonly<SessionForkRpcResult>;
 
 export type ForkStrategyAttemptResult = ForkLifecycleResult | null;
 

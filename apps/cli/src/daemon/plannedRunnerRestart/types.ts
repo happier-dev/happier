@@ -10,7 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { TrackedSession } from '@/daemon/types';
-import type { ConnectedServiceSwitchTarget } from '@/daemon/connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
+import type { ConnectedServiceSwitchDeferralQueue, ConnectedServiceSwitchTarget } from '@/daemon/connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
 
 export type PlannedRunnerRestartReason =
   | 'connected_service_switch'
@@ -56,15 +56,7 @@ export type PlannedRunnerRestartSignalRequest = Readonly<{
   onProcessAlreadyMissing: () => void;
 }>;
 
-export type PlannedRunnerRestartDeferralQueue = Readonly<{
-  requestSwitch: (input: Readonly<{
-    sessionId: string;
-    policy: PlannedRunnerRestartPolicy;
-    source: PlannedRunnerRestartSource;
-    target: ConnectedServiceSwitchTarget;
-    runSwitch: (signal?: AbortSignal) => Promise<unknown>;
-  }>) => Promise<unknown>;
-}>;
+export type PlannedRunnerRestartDeferralQueue = Pick<ConnectedServiceSwitchDeferralQueue, 'requestSwitch'>;
 
 export type PlannedRunnerRestartDeferral =
   | Readonly<{ kind: 'none' }>
@@ -73,6 +65,7 @@ export type PlannedRunnerRestartDeferral =
     source: PlannedRunnerRestartSource;
     policy: PlannedRunnerRestartPolicy;
     target: ConnectedServiceSwitchTarget;
+    signal?: AbortSignal;
     turnDeferralQueue: PlannedRunnerRestartDeferralQueue;
   }>;
 

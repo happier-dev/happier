@@ -249,7 +249,7 @@ describe('default Action executor Session lifecycle contracts', () => {
 
   it('restores /fork and its semantic draft when the fork Action refuses the request', async () => {
     installSession();
-    setSettings({ sessionReplayEnabled: false });
+    daemonAnswer = () => ({ ok: false, errorCode: 'action_disabled', errorMessage: 'disabled_by_settings', effectAttempted: false });
     const openSession = vi.fn();
     let message = '/fork';
     const clearSemanticDraftValues = vi.fn();
@@ -267,7 +267,7 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(clearSemanticDraftValues).not.toHaveBeenCalled();
     expect(modalAlert).toHaveBeenCalled();
     expect(openSession).not.toHaveBeenCalled();
-    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toEqual([]);
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
   });
 
   it('honors an explicit Replay cutoff and leaves child navigation to the initiating presentation', async () => {
@@ -285,13 +285,14 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(openSession).not.toHaveBeenCalled();
   });
 
-  it('refuses explicit Replay when the Account disables it even if Native is available', async () => {
+  it('preserves the daemon Replay refusal even when Native is available', async () => {
     installSession();
     setSettings({ sessionReplayEnabled: false });
+    daemonAnswer = () => ({ ok: false, errorCode: 'action_disabled', errorMessage: 'disabled_by_settings', effectAttempted: false });
     expect(await executor({ currentAgentCapabilities: codex }).execute('session.fork', {
       sessionId: 'sess_parent', strategy: 'replay',
-    }, context())).toMatchObject({ ok: false, errorCode: 'action_disabled' });
-    expect(outgoing).toEqual([]);
+    }, context())).toMatchObject({ ok: false, errorCode: 'action_disabled', error: 'disabled_by_settings', effectAttempted: false });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('strategy', 'replay');
   });
 
   it('keeps explicit Native failure distinct from a successful Replay fallback', async () => {
@@ -363,12 +364,25 @@ describe('default Action executor Session lifecycle contracts', () => {
 
   it('shows a typed daemon update requirement without treating it as an ambiguous fork', async () => {
     installSession();
-    daemonAnswer = () => ({ ok: false, errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'Update daemon' });
+    daemonAnswer = () => ({ ok: false, errorCode: 'RPC_METHOD_NOT_AVAILABLE', errorMessage: 'Update daemon' });
     const { harness, navigate } = await mountForkFlow();
     await act(async () => { await harness.getCurrent().submit('native'); });
     expect(harness.getCurrent().phase).toEqual({ type: 'choosing' });
     expect(harness.getCurrent().failure).toEqual({ route: 'native', kind: 'update_required', message: 'Update daemon' });
     expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DAEMON_RPC_UNAVAILABLE', 'Requester Session authority is unavailable'],
+    ['UNEXPECTED', 'Failed to load parent session'],
+  ])('presents a pre-effect fork refusal without reconciliation (%s)', async (errorCode, errorMessage) => {
+    installSession();
+    daemonAnswer = () => ({ ok: false, errorCode, errorMessage, effectAttempted: false });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('native'); });
+    expect(harness.getCurrent().phase.type).toBe('choosing');
+    expect(harness.getCurrent().failure).toMatchObject({ route: 'native', kind: 'error', message: errorMessage });
     expect(navigate).not.toHaveBeenCalled();
   });
 
@@ -505,22 +519,23 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('replayMaxSeedChars', 120_000);
   });
 
-  it('requests native fork when Replay is off and the current Agent declares native fork', async () => {
+  it('leaves Auto strategy selection to the daemon when Replay is off', async () => {
     installSession();
     answerFork();
     setSettings({ sessionReplayEnabled: false });
     expect(await executor({ currentAgentCapabilities: codex }).execute('session.fork', { sessionId: 'sess_parent' }, context())).toMatchObject({ ok: true });
-    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('strategy', 'native');
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).not.toHaveProperty('strategy');
   });
 
-  it('rejects a fork before dispatch when both Replay and the native route are unavailable', async () => {
+  it('surfaces the daemon Replay setting refusal from the fork Action', async () => {
     installSession({ metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1', flavor: 'claude' } });
     setSettings({ sessionReplayEnabled: false });
+    daemonAnswer = () => ({ ok: false, errorCode: 'action_disabled', errorMessage: 'disabled_by_settings', effectAttempted: false });
     const requestId = 'replay-disabled-by-settings';
     expect(await executor().execute('session.fork', { sessionId: 'sess_parent', strategy: 'replay' },
       { ...context(), actionRequestId: requestId }))
-      .toMatchObject({ ok: false, errorCode: 'action_disabled', requestId, details: { reason: 'disabled_by_settings' } });
-    expect(outgoing).toEqual([]);
+      .toMatchObject({ ok: false, errorCode: 'action_disabled', error: 'disabled_by_settings', requestId, effectAttempted: false });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('strategy', 'replay');
   });
 
   it('returns the canonical missing-machine error instead of manufacturing a successful fork', async () => {

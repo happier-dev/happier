@@ -416,7 +416,11 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           if (typeof expectedMachineId === 'string' && expectedMachineId.trim() && input.machineId !== expectedMachineId) {
             return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
           }
-          const receipt = SessionConnectedServiceAuthSwitchReceiptSchema.safeParse(await deps.sessionConnectedServicesAuthSet({ sessionId, ...input, ...routing }, ctx));
+          const response = await deps.sessionConnectedServicesAuthSet({ sessionId, ...input, ...routing }, ctx);
+          // Action failures carry an error message. Receipt refusals carry per-service diagnostics.
+          const refusal = typeof readRecord(response).error === 'string' ? readActionFailureEnvelope(response) : null;
+          if (refusal) return refusal;
+          const receipt = SessionConnectedServiceAuthSwitchReceiptSchema.safeParse(response);
           if (!receipt.success) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
           const result = receipt.data;
           return result.ok

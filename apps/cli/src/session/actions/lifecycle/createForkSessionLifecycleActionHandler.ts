@@ -11,7 +11,9 @@ import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { requiresReplayForSessionForkWorkspace, SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
+import { isSessionReplayEnabled, requiresReplayForSessionForkWorkspace, SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
+import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol/account/settings/accountSettings';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import {
     evaluateAgentSessionCapabilitySupport,
@@ -47,6 +49,13 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         errorMessage: 'cancelled',
     });
 
+    const requesterUnavailable = () => ({
+        ok: false as const,
+        errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+        errorMessage: 'Requester Session authority is unavailable',
+        effectAttempted: false as const,
+    });
+
     return async (raw: unknown, context) => {
         if (context?.signal?.aborted) return cancelled();
         const parsed = SessionForkRpcParamsSchema.safeParse(raw);
@@ -78,8 +87,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             spawnSession: params.handlers.spawnSession,
             stopSession: params.handlers.stopSession,
             ...(params.deps?.awaitAgentSessionOpen ? { awaitAgentSessionOpen: params.deps.awaitAgentSessionOpen } : {}),
-            refused: () => ({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Session authority is unavailable' }),
+            refused: requesterUnavailable,
             run: async ({ requester, spawnSession, isCurrent }) => {
         const credentials = requester?.credentials ?? await readStoredCredentials().catch(() => null);
         if (!credentials) {
@@ -103,11 +111,11 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 ok: false,
                 errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                 errorMessage: error instanceof Error ? error.message : 'Failed to load parent session',
+                effectAttempted: false,
             };
         }
         if (context?.signal?.aborted) return cancelled();
-        if (!await isCurrent()) return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-            errorMessage: 'Requester Session authority is unavailable' };
+        if (!await isCurrent()) return requesterUnavailable();
         if (!parentSession) {
             return {
                 ok: false,
@@ -262,8 +270,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         if (context?.signal?.aborted) return cancelled();
 
         const forkPromise = (async (): Promise<ForkLifecycleResult> => {
-            if (!await isCurrent()) return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Session authority is unavailable' };
+            if (!await isCurrent()) return requesterUnavailable();
             const spawnNonce = createStableSpawnNonce('session.fork', forkAttemptIdentity);
             // `native` is the generic user intent the fork strategy modal sends.
             // It enables exactly the native attempts `auto` enables, in the same
@@ -372,6 +379,15 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             }
 
             if (context?.signal?.aborted) return cancelled();
+
+            const replayEnabled = requester
+                ? requester.savedSecretOperationContext.readSnapshot()?.settings.sessionReplayEnabled
+                : (getActiveAccountSettingsSnapshot()?.settings.sessionReplayEnabled
+                    ?? ACCOUNT_SETTING_ARTIFACTS.defaults.sessionReplayEnabled);
+            if (replayEnabled === undefined) return requesterUnavailable();
+            if (!isSessionReplayEnabled(replayEnabled)) {
+                return { ok: false, errorCode: 'action_disabled', errorMessage: 'disabled_by_settings', effectAttempted: false };
+            }
 
             return await createReplayForkSession({
                 credentials,

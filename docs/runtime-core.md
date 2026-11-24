@@ -839,6 +839,11 @@ when its native fork retains the source workspace. Auto selects Replay for
 that Agent when a managed child needs its own workspace. Native-only requests
 return a typed refusal that points to Replay. Explicit path and in-place
 workspaces can still take the native path when the Agent supports the cutoff.
+The daemon applies the requester's Account Replay preference before creating a
+Replay child, including when Auto has exhausted the native routes. The app's
+fork acknowledgement uses the normal Session spawn RPC deadline. If the
+acknowledgement is lost, the chooser uses the recorded fork request identity and
+child lineage to reconcile the result.
 Native forks observe the same attestation inside their fork owner's child
 cleanup scope. The shared Project startup wrapper returns the physical child
 identity to that owner, which attempts the existing Stop and archival cleanup
