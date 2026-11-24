@@ -363,8 +363,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const referenceAddresses: NonNullable<NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec: runtime.exec, envPort, source,
                     onTelemetryProjection: facts => {
-                        telemetrySampling = facts.flatMap(({ service, samplingProvenance }) =>
-                            samplingProvenance ? [{ service, provenance: samplingProvenance }] : []);
+                        telemetrySampling = facts.flatMap(({ service, samplingProvenance, usesOwnCollector }) =>
+                            samplingProvenance || usesOwnCollector ? [{
+                                service,
+                                ...(samplingProvenance ? { provenance: samplingProvenance } : {}),
+                                ...(usesOwnCollector ? { collectorOrigin: 'appOwned' as const } : {}),
+                            }] : []);
                         const telemetryTokenHash = secretMaterial?.telemetryTokenHash;
                         const telemetryMachineId = environment.environment.telemetryMachineId;
                         deliveredTelemetry = facts.some(fact => fact.receivesTelemetry) && telemetryMachineId && telemetryTokenHash

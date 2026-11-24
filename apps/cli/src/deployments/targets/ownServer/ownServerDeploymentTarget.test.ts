@@ -4371,7 +4371,10 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 const nativeEnvironment = await docker.readRuntimeEnvironment('app');
                 if (scenario === 'telemetry_own_collector') {
                     expect(nativeEnvironment).not.toHaveProperty('OTEL_TRACES_SAMPLER');
-                    expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetrySampling');
+                    expect(receipt.content.machineResults[0]).toMatchObject({ currentDeploymentId: receipt.deployment.id });
+                    expect(receipt.content.machineResults[0]?.telemetrySampling).toStrictEqual([
+                        { service: 'app', collectorOrigin: 'appOwned' },
+                    ]);
                 } else {
                     const authored = scenario === 'telemetry_no_header';
                     expect(nativeEnvironment.OTEL_TRACES_SAMPLER).toBe(authored ? 'always_off' : 'parentbased_traceidratio');
@@ -4381,6 +4384,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                         telemetrySampling: [{ service: 'app', provenance: authored ? 'authored' : 'managed' }],
                     });
                     expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetrySampling.0.ratio');
+                    expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetrySampling.0.collectorOrigin');
                 }
                 expect.soft(Object.hasOwn(nativeEnvironment, 'OTEL_EXPORTER_OTLP_HEADERS')).toBe(delivered);
                 if (scenario === 'telemetry_own_collector') expect.soft(nativeEnvironment.OTEL_EXPORTER_OTLP_ENDPOINT)

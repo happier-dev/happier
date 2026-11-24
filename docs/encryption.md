@@ -14,14 +14,15 @@ rollback admission as server-visible non-content metadata beside receipt lineage
 Receipt reads project the same optional id. Backup configuration, credentials and
 backup payloads remain in their existing private content and storage paths.
 
-## Applied sampler provenance (unreleased 0.3)
+## Applied telemetry settings (unreleased 0.3)
 
-Each Own-server Receipt can carry per-service sampler provenance beside its
-existing private Machine result. The normal Plain or Account-sealed Receipt
-content carries service names and the `authored` or `managed` fact. The Home
-transition and Receipt header carry no sampler fact. Launch retains no sampler
-values or ratio here. Earlier Receipts omit the field. Matching development
-readers open the closed private content shape.
+The existing private Own-server Machine result can carry per-service telemetry
+facts in `machineResults[].telemetrySampling`. The normal Plain or Account-sealed
+Receipt content carries the service key, optional `authored` or `managed`
+sampler provenance, and optional `collectorOrigin: 'appOwned'`. The Home
+transition and Receipt header carry none of these facts. The record carries no
+endpoint, token, sampler value or ratio. Earlier Receipts omit collector origin.
+Matching development readers open the closed private content shape.
 
 ## Link preparation routing (unreleased 0.3)
 

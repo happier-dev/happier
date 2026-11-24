@@ -3293,13 +3293,15 @@ listener or a prepared Cloudflare Tunnel. An older Domain without the collector
 reference needs a fresh Add review. Platform configuration consumes this lookup
 separately.
 
-The Own-server launch settles sampler provenance for each applied service in
-the selected serving Receipt's private `machineResults[].telemetrySampling`.
-Select the exact Machine installation and service. An authored sampler variable
-or argument that won at launch produces `authored`. A managed binding that won
-without an authored override produces `managed`. Missing provenance leaves
-the applied sampler unknown. These facts neither expose sampler values nor claim
-an SDK or image default.
+The Own-server launch settles per-service telemetry facts in the serving
+Receipt's private `machineResults[].telemetrySampling`. Select the exact Machine
+installation and service. The optional `provenance` is `authored` when an
+authored sampler or argument won and `managed` when a managed sampling binding
+won. When Compose selects the app's own collector, launch records
+`collectorOrigin: 'appOwned'` on the same service entry, even without an observed
+sampler. An omitted fact is unknown. This record carries no collector endpoint,
+token, sampler value or ratio. Contributed targets omit collector origin when
+their serving launch cannot attest it.
 
 The cross-Machine source path uses an ordinary Domain with
 `target: { kind: 'telemetry' }`. The Domain owner captures the selected collector's

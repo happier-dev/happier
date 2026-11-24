@@ -149,7 +149,8 @@ export const DeploymentMachineResultV1Schema = z.strictObject({
     telemetryMachineId: z.optional(id), telemetryTokenHash: z.optional(DeploymentTelemetryTokenHashV1Schema),
     /** Applied service configuration belongs to the private Receipt. Values never enter this observation. */
     telemetrySampling: z.optional(z.array(z.strictObject({
-        service: text, provenance: z.enum(['authored', 'managed']),
+        service: text, provenance: z.optional(z.enum(['authored', 'managed'])),
+        collectorOrigin: z.optional(z.literal('appOwned')),
     }))),
     actionOperationId: z.optional(id), previousDeploymentId: z.optional(id), currentDeploymentId: z.optional(id),
     activation: z.enum(['pending', 'succeeded', 'failed', 'cancelled', 'outcome_unknown']),
