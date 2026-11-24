@@ -14,10 +14,10 @@ const candidate = (fields: NonNullable<WidgetCandidate['inputs']>['fields']): Ex
 describe('Widget group input collection', () => {
   it('names the bound input before its value on the group’s Inputs… row (lab wgmenu M “Project: happier”, F4 D-21)', () => {
     const fields = [{ path: 'session', title: 'Session', widget: 'json' as const }];
-    expect(describeWidgetGroupInputsBinding({ session: { kind: 'value', value: 'abc' } }, { session: 'qa-detect' }, fields)).toBe('Session: qa-detect');
+    expect(describeWidgetGroupInputsBinding({ session: { kind: 'value', value: 'abc' } }, { fields: [{ field: fields[0]!, slot: 'session', sessionTarget: false }], labels: { session: 'qa-detect' }, byChild: new Map() })).toBe('Session: qa-detect');
     // A value with no declared field keeps its value alone; nothing chosen says nothing.
-    expect(describeWidgetGroupInputsBinding({ other: { kind: 'value', value: 'x' } }, { other: 'x' }, fields)).toBe('x');
-    expect(describeWidgetGroupInputsBinding({}, {}, fields)).toBeNull();
+    expect(describeWidgetGroupInputsBinding({ other: { kind: 'value', value: 'x' } }, { fields: [], labels: {}, byChild: new Map() })).toBe('other');
+    expect(describeWidgetGroupInputsBinding({}, { fields: [], labels: {}, byChild: new Map() })).toBeNull();
   });
   it('discovers each group field through its declaring follow-able child, retaining its dependencies', () => {
     const period = { path: 'period', title: 'Period', widget: 'select' as const, optionsSourceId: 'periods' };

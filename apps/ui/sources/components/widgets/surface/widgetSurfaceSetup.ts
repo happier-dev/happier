@@ -19,6 +19,7 @@ import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@ha
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1, translateWidgetPublicProfileCopyV1, resolveWidgetPublicProfileInputsV1 } from '@happier-dev/protocol/widgets';
 import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import type { WidgetBindingValueLabel } from './widgetBindingValueLabel';
 
 /**
  * One named slot a page or area fills (lab `dashboards` PG, P1): "This page" (a plugin page's
@@ -28,7 +29,7 @@ import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectW
 export type WidgetSurfaceContextSlot = Readonly<{
     /** The follow label: "This page", "This project", "The checkout you're on". */
     label: string;
-    value: Readonly<{ value: JsonValue; label: string; description?: string }> | null;
+    value: Readonly<{ value: JsonValue; label: WidgetBindingValueLabel; description?: string }> | null;
     /** A runtime scope value can remain admitted without being offered as an editor input. */
     offered?: false;
 }>;
@@ -165,6 +166,7 @@ export function widgetSetupFieldsForCandidate(
     candidate: Pick<WidgetCandidate, 'inputs' | 'sessionInputPath' | 'connectedAccountPurposeBindings'>,
     context: WidgetSurfaceContext,
     audience: 'personal' | 'shared',
+    bindings?: WidgetInstanceV1['bindings'],
 ): readonly WidgetSetupField[] {
     const target = readWidgetInputTargetV1(candidate);
     return (candidate.inputs?.fields ?? []).map((field): WidgetSetupField => {
@@ -179,8 +181,12 @@ export function widgetSetupFieldsForCandidate(
                 },
             };
         }
-        const slot = context.slots && Object.hasOwn(context.slots, field.path) ? context.slots[field.path] : undefined;
-        if (field.contextMode !== 'own' && slot?.value) return { field, follow: { slot: field.path, label: slot.label, values: [slot.value] } };
+        const binding = bindings?.[field.path];
+        const name = binding?.kind === 'context' ? binding.slot : field.path;
+        const slot = context.slots && Object.hasOwn(context.slots, name) ? context.slots[name] : undefined;
+        if (field.contextMode !== 'own' && slot?.value) return { field, follow: {
+            slot: name, label: slot.label, values: [{ ...slot.value, label: slot.value.label ?? field.title }],
+        } };
         // On a shared surface a connection is each viewer's own; it is never stored in shared content.
         const purpose = candidate.connectedAccountPurposeBindings?.find(binding => binding.path === field.path)?.purpose;
         if (audience === 'shared' && field.connectedAccountOptions === true && purpose) return { field, viewer: { purpose } };
@@ -209,7 +215,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
     const publicCandidate = publicArea ? projectWidgetPublicProfileDescriptorV1(widgetDefinitionOfCandidate(input.candidate), input.candidate) : null;
     const candidate = publicCandidate ?? input.candidate;
     const mode = input.mode;
-    const fields = publicArea && !publicCandidate ? [] : widgetSetupFieldsForCandidate(candidate, publicArea ? {} : input.context, input.audience);
+    const fields = publicArea && !publicCandidate ? [] : widgetSetupFieldsForCandidate(candidate, publicArea ? {} : input.context, input.audience, mode.kind === 'edit' ? mode.instance.bindings : undefined);
     const copied = publicArea && mode.kind === 'add' && mode.copiedInput ? translateWidgetPublicProfileCopyV1({ v: 1, id: 'draft',
         definition: widgetDefinitionOfCandidate(candidate), bindings: Object.fromEntries(Object.entries(mode.copiedInput).map(([path, value]) => [path, { kind: 'value', value }])) }, candidate) : null;
     const copiedInput = copied ? Object.fromEntries(Object.entries(copied.bindings).flatMap(([path, binding]) => binding.kind === 'value' ? [[path, binding.value]] : []))

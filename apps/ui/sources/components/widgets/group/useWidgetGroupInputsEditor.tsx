@@ -25,18 +25,18 @@ import {
   type WidgetSurfaceContext,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import { useWidgetBindingValueLabels, type WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
+import { useWidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
 import { t } from '@/text';
 
 import {
   buildWidgetGroupInputsCandidate,
   describeWidgetGroupInputsBinding,
 } from './widgetGroupInputs';
-import { describeWidgetGroupFollowedInput, type WidgetBindingValueLabel } from '../surface/widgetBindingValueLabel';
-import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers } from './widgetGroupFollowedInputs';
+import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 
 const NO_FIELDS: readonly never[] = [];
+const NO_BINDINGS: WidgetInputBindingsV1 = Object.freeze({});
 
 /** The opening page is fixed. Each draft uses the same composed inputs the following children read. */
 function createGroupInheritedReader(
@@ -44,51 +44,48 @@ function createGroupInheritedReader(
   candidates: readonly (WidgetCandidate | null)[],
   surfaceOwner: WidgetSurfaceRefV1['owner'] | undefined,
   context: WidgetSurfaceContext,
-  labels: WidgetBindingValueLabels,
+  readings: WidgetGroupInputReadings,
   fields: readonly InputFieldHint[],
   labelledBindings: WidgetInputBindingsV1 | undefined,
 ): NonNullable<WidgetSetup['readInherited']> {
   const children = group.children.flatMap(({ instance }, index) => {
     const descriptor = candidates[index];
     if (!descriptor) return [];
-    const followers = readWidgetGroupInputFollowers(instance, descriptor);
-    return followers.length ? [{ instance, descriptor, followers }] : [];
+    const followers = readings.byChild.get(instance.id);
+    return followers?.length ? [{ instance, descriptor, followers }] : [];
   });
 
+  const declaredSlots = children.flatMap(({ followers }) => followers);
   return bindings => {
     const readChild = createWidgetGroupFollowedInputReader({
-      context, surfaceOwner, bindings, labelledBindings, labels, fieldCandidates: candidates,
+      context, surfaceOwner, bindings, labelledBindings, labels: readings.labels, fields: declaredSlots,
     });
-    const values = new Map<string, { kind: 'single'; value: JsonValue; slotLabel: WidgetBindingValueLabel } | { kind: 'several' | 'missing' | 'withheld' }>();
+    const values = new Map<string, { value: JsonValue; label: string } | 'several' | null>();
     for (const { instance, descriptor, followers } of children) {
       const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
       const read = readChild(instance, descriptor);
-      for (const { field, slot } of unset) {
-        const { path } = field;
-        const reading = read(field, slot);
+      for (const follower of unset) {
+        const { path } = follower.field;
+        const reading = read(follower);
         const previous = values.get(path);
-        if (previous?.kind === 'withheld') continue;
-        if (reading?.slotLabel === null) values.set(path, { kind: 'withheld' });
-        else if (!reading) values.set(path, { kind: 'missing' });
-        else if (!previous) values.set(path, { kind: 'single', ...reading });
-        else if (previous.kind === 'single') {
-          if (!sameStrictJsonValue(previous.value, reading.value)) values.set(path, { kind: 'several' });
-          else if (previous.slotLabel !== reading.slotLabel) values.set(path, { ...previous, slotLabel: undefined });
+        if (previous === null) continue;
+        if (!reading?.label) values.set(path, null);
+        else if (!previous) values.set(path, { value: reading.value, label: reading.label });
+        else if (previous !== 'several') {
+          if (!sameStrictJsonValue(previous.value, reading.value)) values.set(path, 'several');
+          else if (previous.label !== reading.label) values.set(path, null);
         }
       }
     }
 
-    const readings = new Map<string, WidgetSetupInheritedReading>();
+    const inherited = new Map<string, WidgetSetupInheritedReading>();
     for (const field of fields) {
       const result = values.get(field.path);
-      if (result?.kind === 'withheld') readings.set(field.path, { kind: 'single', valueLabel: field.title });
-      if (result?.kind === 'several') readings.set(field.path, { kind: 'several' });
-      if (result?.kind !== 'single') continue;
-      const valueLabel = describeWidgetGroupFollowedInput(field, result);
-      if (valueLabel) readings.set(field.path, { kind: 'single', valueLabel });
+      if (result !== undefined) inherited.set(field.path, result === 'several' ? { kind: 'several' }
+        : { kind: 'single', valueLabel: result?.label ?? field.title });
     }
-    return readings;
+    return inherited;
   };
 }
 
@@ -118,7 +115,7 @@ export function useWidgetGroupInputsEditor(
     | Readonly<{ onPress: () => void; binding: string | null }>
     | undefined;
   popover: React.ReactElement | null;
-  labels: WidgetBindingValueLabels;
+  readings: WidgetGroupInputReadings;
 }> {
   const anchorRef = React.useRef<View | null>(null);
   const [open, setOpen] = React.useState<Readonly<{
@@ -127,10 +124,18 @@ export function useWidgetGroupInputsEditor(
     group: WidgetLayoutGroupV1;
     candidates: readonly (WidgetCandidate | null)[];
     fields: readonly InputFieldHint[];
+    byChild: WidgetGroupInputReadings['byChild'];
   }> | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const { group, scope, context, setInputs, testID } = input;
-  // Built once when the step opens (the popover keeps its first setup); cheap to derive per render.
+  // Each child declares its followers once. The label owner, preview, and card share this result.
+  const byChild = React.useMemo(() => new Map(group.children.map(({ instance }, index) => {
+    const descriptor = input.candidates[index];
+    return [instance.id, descriptor ? readWidgetGroupInputFollowers(instance, descriptor) : NO_FIELDS] as const;
+  })), [group.children, input.candidates]);
+  const fields = React.useMemo(() => [...byChild.values()].flat(), [byChild]);
+  const labels = useWidgetBindingValueLabels(group.context ?? NO_BINDINGS, null, fields);
+  // The popover keeps the setup it opened with.
   const candidate = React.useMemo(() => {
     const descriptor = buildWidgetGroupInputsCandidate({ title: input.title, candidates: input.candidates });
     if (!descriptor?.inputs) return descriptor;
@@ -138,12 +143,14 @@ export function useWidgetGroupInputsEditor(
     const fields = descriptor.inputs.fields.map(({ required: _required, requiredWhen: _requiredWhen, ...field }) => field);
     return { ...descriptor, inputs: { ...descriptor.inputs, fields } };
   }, [input.title, input.candidates]);
+  const declared = candidate?.inputs?.fields ?? NO_FIELDS;
+  const readings = React.useMemo(() => ({ fields, byChild, labels, declared }), [fields, byChild, labels, declared]);
   const editable = candidate !== null && scope !== null && setInputs !== undefined;
   const commands = useCurrentUiContextLocalCommands(editable ? [
     { key: 'open', title: t('widgetFrame.groupInputsTitle', { group: input.title }), description: `${testID}.groupInputs.open`,
       invoke: (_value, callerContext) => {
         setNotice(null);
-        setOpen({ callerContext, context, group, candidates: input.candidates, fields: candidate?.inputs?.fields ?? NO_FIELDS });
+        setOpen({ callerContext, context, group, candidates: input.candidates, fields: candidate?.inputs?.fields ?? NO_FIELDS, byChild });
       } },
     ...(open ? [{ key: 'close', title: `${t('common.close')}: ${input.title}`, description: `${testID}.groupInputs.close`,
       invoke: () => setOpen(null) }] : []),
@@ -154,9 +161,8 @@ export function useWidgetGroupInputsEditor(
     if (result.approvalPending) setNotice(t('widgetAdd.areaApprovalPending'));
     else close();
   }, [close]);
-  const labels = useWidgetBindingValueLabels(group.context ?? {}, candidate, input.candidates);
   // The Inputs… row names what is bound before its value (lab wgmenu M "Project: happier").
-  const binding = describeWidgetGroupInputsBinding(group.context, labels, candidate?.inputs?.fields ?? NO_FIELDS);
+  const binding = React.useMemo(() => describeWidgetGroupInputsBinding(group.context, readings), [group.context, readings]);
   const editInputs = React.useMemo(
     () => (editable ? { onPress: show, binding } : undefined),
     [binding, editable, show],
@@ -164,8 +170,8 @@ export function useWidgetGroupInputsEditor(
   const childTitle = input.childTitle;
   // Preserve the opening page, while letting the existing label owner withdraw a name during the edit.
   const readInherited = React.useMemo(() => open
-    ? createGroupInheritedReader(open.group, open.candidates, scope?.owner, open.context, labels, open.fields, group.context)
-    : undefined, [open, scope?.owner, labels, group.context]);
+    ? createGroupInheritedReader(open.group, open.candidates, scope?.owner, open.context, { ...readings, byChild: open.byChild }, open.fields, group.context)
+    : undefined, [open, scope?.owner, readings, group.context]);
   const buildSetup = React.useCallback(() => {
     const bindings = group.context ?? {};
     const setup = buildWidgetCandidateSetup({
@@ -210,6 +216,7 @@ export function useWidgetGroupInputsEditor(
       renderPreview: () => (
         <WidgetGroupFollowers
           group={group}
+          byChild={byChild}
           candidates={input.candidates}
           childTitle={childTitle}
           testID={`${testID}.groupInputs.followers`}
@@ -217,6 +224,7 @@ export function useWidgetGroupInputsEditor(
       ),
     };
   }, [
+    byChild,
     candidate,
     childTitle,
     context,
@@ -243,24 +251,22 @@ export function useWidgetGroupInputsEditor(
         testID={`${testID}.groupInputs`}
       />
     ) : null;
-  return { anchorRef, editInputs, popover, labels };
+  return { anchorRef, editInputs, popover, readings };
 }
 
 /** Who follows the group and who keeps its own value, then the boundary: the group grants nothing. */
 function WidgetGroupFollowers(
   props: Readonly<{
     group: WidgetLayoutGroupV1;
+    byChild: WidgetGroupInputReadings['byChild'];
     candidates: readonly (WidgetCandidate | null)[];
     childTitle?: ((instanceId: string) => string) | undefined;
     testID: string;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const slots = new Set(Object.keys(props.group.context ?? {}));
-  const rows = props.group.children.map((child) => {
-    const follows = Object.values(child.instance.bindings).some(
-      (binding) => binding.kind === 'context' && slots.has(binding.slot),
-    );
+  const rows = React.useMemo(() => props.group.children.map((child) => {
+    const follows = Boolean(props.byChild.get(child.instance.id)?.length);
     return {
       id: child.instance.id,
       title:
@@ -269,8 +275,8 @@ function WidgetGroupFollowers(
           && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), child.instance.definition))),
       follows,
     };
-  });
-  const following = rows.filter((row) => row.follows).length;
+  }), [props.group.children, props.byChild, props.candidates, props.childTitle]);
+  const following = React.useMemo(() => rows.filter(row => row.follows).length, [rows]);
   return (
     <View testID={props.testID} style={styles.list}>
       <Text style={styles.heading}>

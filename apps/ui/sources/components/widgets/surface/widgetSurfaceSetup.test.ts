@@ -5,10 +5,11 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { usageAnalyticsRequestToQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { usageWidgetSurfaceContext, readUsageWidgetPageContext, readUsageWidgetPageScope } from '@/components/settings/usage/usageWidgetPageContext';
-import { proposeWidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
+import { describeWidgetSetupRow, proposeWidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
 import { t } from '@/text';
 import { buildWidgetCandidateSetup, runAcknowledgedWidgetSetupCommand, widgetProvidedContext, widgetSetupFieldsForCandidate } from './widgetSurfaceSetup';
 import type { WidgetCandidate } from '../widgetCatalog';
+import { widgetGroupSurfaceContext } from '../group/widgetGroupInputs';
 
 describe('public-profile snapshot setup', () => {
     it('translates a copied Usage choice to public presentation only, without asking for a private query', () => {
@@ -66,6 +67,33 @@ describe('Usage declared inputs on every host', () => {
             });
         }
     }
+});
+
+it('uses the typed value and declared field labels in a grouped widget’s Edit inputs menu', () => {
+    const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_period_summary' })!;
+    const period = descriptor.inputs!.fields.find(field => field.path === 'period')!;
+    const candidate: WidgetCandidate = { ...descriptor, pluginName: 'Usage', sharedPluginName: false, inputSchema: undefined,
+        inputs: { fields: [period, { path: 'calendarKey', title: 'Calendar', widget: 'select', contextMode: 'follow' }] } };
+    const instance: WidgetInstanceV1 = { v: 1, id: 'summary', definition: descriptor.definition, bindings: {
+        period: { kind: 'context', slot: 'period' },
+        calendarKey: { kind: 'context', slot: 'calendarKey' },
+    } };
+    const periodOnly = widgetGroupSurfaceContext({}, {
+        period: { kind: 'value', value: { relative: '90days' } },
+    }, { fields: [], byChild: new Map(), labels: { period: t('usage.last90Days') } });
+    const context = widgetGroupSurfaceContext(periodOnly, {
+        calendarKey: { kind: 'value', value: { opaque: true } },
+    }, { fields: [], byChild: new Map(), labels: { calendarKey: null } });
+    const build = (placed: WidgetInstanceV1, surface = context) => buildWidgetCandidateSetup({
+        candidate, context: surface, audience: 'personal', mode: { kind: 'edit', instance: placed }, submit: async () => ({ ok: true }),
+    });
+    const setup = build(instance);
+    expect.soft(setup.fields.map(({ follow }) => follow?.values[0]?.label)).toEqual([t('usage.last90Days'), 'Calendar']);
+
+    const alias = build({ ...instance, bindings: { ...instance.bindings, calendarKey: { kind: 'context', slot: 'period' } } }, { slots: { period: { label: 'This page', value: { value: { relative: '90days' }, label: null }, offered: false } } });
+    const row = describeWidgetSetupRow({ entry: alias.fields[1]!, draft: alias.initial,
+        resolution: alias.resolve(alias.initial), options: [] });
+    expect(row).toMatchObject({ kind: 'follows', valueLabel: 'Calendar' });
 });
 
 describe('Widget setup schema defaults', () => {

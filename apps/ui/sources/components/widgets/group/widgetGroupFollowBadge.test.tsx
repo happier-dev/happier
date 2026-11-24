@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { Text } from 'react-native';
 import type { InputFieldHint } from '@happier-dev/protocol/inputs';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { HappierWidgetFrame } from '@happier-dev/plugin-ui/presentation';
@@ -14,11 +15,12 @@ import { storage } from '@/sync/domains/state/storage';
 import { useWidgetBindingValueLabels } from '../surface/useWidgetBindingValueLabels';
 import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
 import { WidgetSetupPopover } from '../add/WidgetSetupPopover';
+import { WidgetSetupStep } from '../add/WidgetSetupStep';
 import { useWidgetInstanceBindingLabel } from '../surface/useWidgetInstanceBindingLabel';
-import type { WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
+import { widgetSetupFieldsForCandidate, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
 import type { WidgetCandidate } from '../widgetCatalog';
-import { useWidgetGroupCardSource } from './widgetGroupFollowedInputs';
-import { widgetGroupFollowSource } from './widgetGroupInputs';
+import { readWidgetGroupInputFollowers, useWidgetGroupCardSource, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
+import { describeWidgetGroupInputsBinding, useWidgetGroupHeaderReading, widgetGroupFollowSource, widgetGroupSurfaceContext } from './widgetGroupInputs';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -37,12 +39,18 @@ const candidate: WidgetCandidate = {
 const follow = (slot: string) => ({ kind: 'context', slot } as const);
 const last90 = { kind: 'value', value: { relative: '90days' } } as const;
 
+function groupReading(instance: WidgetInstanceV1, fields: WidgetGroupInputReadings['fields'], labels: WidgetGroupInputReadings['labels']): WidgetGroupInputReadings {
+    return { fields, byChild: new Map([[instance.id, fields]]), labels };
+}
+
 async function renderCard(bindings: WidgetInputBindingsV1, group: WidgetInputBindingsV1, context: WidgetSurfaceContext = {},
-    labels: Readonly<Record<string, string | null>> = {}) {
+    labels?: WidgetGroupInputReadings['labels']) {
     const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition, bindings };
+    const fields = readWidgetGroupInputFollowers(instance, candidate);
     function Card() {
+        const ownedLabels = useWidgetBindingValueLabels(group, null, fields);
         const pageLabel = useWidgetInstanceBindingLabel(instance, candidate, context);
-        const followed = useWidgetGroupCardSource(instance, candidate, context, { kind: 'corePage', pageId: 'usage', area: 'main' }, group, labels);
+        const followed = useWidgetGroupCardSource(instance, candidate, context, { kind: 'corePage', pageId: 'usage', area: 'main' }, group, groupReading(instance, fields, labels ?? ownedLabels));
         return <HappierWidgetFrame frameStyle="plain" placement="home" title="Period summary" testID="card"
             source={followed ? widgetGroupFollowSource(followed.value, true) : pageLabel ?? undefined} />;
     }
@@ -76,7 +84,6 @@ it('never repeats Following group when a second input follows the page', async (
         { costBasis: follow('costBasis'), period: follow('period') },
         { period: last90 },
         { slots: { costBasis: { label: 'This page', value: { value: 'auto', label: 'Automatic' } } } },
-        { period: undefined },
     );
     expect(screen.findByTestId('card.source')?.props.accessibilityLabel).toBe(caption('usage.last90Days'));
 });
@@ -95,6 +102,131 @@ it('shows no group badge for a field the child pins', async () => {
     const screen = await renderCard({ period: last90 }, { period: last90 });
     expect(screen.findByTestId('card.source')?.props.accessibilityLabel ?? '').not.toContain('widgetFrame.followingGroupValue');
 });
+
+
+it('prints only label-owner answers across the five mounted group input surfaces', async () => {
+    const marker = 'raw-private-operand';
+    const cases: readonly { field: Pick<InputFieldHint, 'widget' | 'inputType' | 'optionsSourceId'>; title: string; value: JsonValue }[] = [
+        { title: 'Session', field: { widget: 'json', inputType: { hostType: 'session' } }, value: { serverId: 'home', sessionId: marker } },
+        { title: 'Machine', field: { widget: 'json', inputType: { hostType: 'machine' } }, value: { serverId: 'home', machineId: marker } },
+        { title: 'Project', field: { widget: 'json', optionsSourceId: 'test.projects' }, value: [marker] },
+        { title: 'Agent', field: { widget: 'text', optionsSourceId: 'test.agents' }, value: marker },
+        { title: 'Provider', field: { widget: 'text', optionsSourceId: 'test.providers' }, value: marker },
+        { title: 'Location', field: { widget: 'text' }, value: '/private/' + marker },
+        { title: 'Period', field: { widget: 'json', inputType: { hostType: 'usageQuery', field: 'period' } }, value: { relative: '90days' } },
+        { title: 'Retry limit', field: { widget: 'integer' }, value: 27 },
+        { title: 'Note', field: { widget: 'json' }, value: { label: 'Safe note', path: '/private/' + marker } },
+        { title: 'Text', field: { widget: 'text' }, value: 'Plain note' },
+    ];
+    const scope = { serverId: 'home', accountId: 'actor', owner: { kind: 'home' } } as const;
+    const open = async (descriptor: WidgetCandidate, instance: WidgetInstanceV1, context: WidgetInputBindingsV1,
+        page: WidgetSurfaceContext = {}) => {
+        const hook = await renderHook(() => useWidgetGroupInputsEditor({
+            group: { kind: 'group', id: 'group', width: 'full', frameStyle: 'plain', dividers: 'hairline',
+                children: [{ kind: 'widget', instance }], context },
+            candidates: [descriptor], title: 'Group', scope, context: page, setInputs: async () => ({ ok: true }), testID: 'group',
+        }));
+        await act(async () => hook.getCurrent().editInputs!.onPress());
+        return hook;
+    };
+    for (const { field, title, value } of cases) {
+        for (const path of ['declared', 'consumer', 'dynamicConsumer']) {
+            const slot = path === 'declared' ? path : 'operand';
+            const hint: InputFieldHint = { ...field, path, title };
+            const descriptor: WidgetCandidate = { ...candidate, inputs: { fields: [hint] } };
+            const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition, bindings: { [path]: follow(slot) } };
+            const group = { [slot]: { kind: 'value', value } } as const;
+            for (const answer of ['Admitted ' + title, null, undefined, 'fresh draft'] as const) {
+                const fresh = answer === 'fresh draft';
+                const owner = fresh ? undefined : answer;
+                const fields = readWidgetGroupInputFollowers(instance, descriptor);
+                const readings = groupReading(instance, fields, owner === undefined ? {} : { [slot]: owner });
+                const editor = await open(descriptor, instance, {}, fresh ? {} : { slots: {
+                    [slot]: { label: 'Page', value: { value, label: owner } },
+                } });
+                const popover = editor.getCurrent().popover;
+                if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
+                const setup = popover.props.setup();
+                const draft = fresh ? group : {};
+                const inherited = setup.readInherited?.(draft).get(path);
+                const editorLabel = inherited?.kind === 'single' ? inherited.valueLabel : undefined;
+                const freshLabels: Readonly<Record<string, string>> = {
+                    Period: 'usage.last90Days', 'Retry limit': '27', Note: 'Safe note', Text: 'Plain note',
+                };
+                const expectedEditor = fresh ? (path === slot ? undefined : freshLabels[title] ?? title) : owner ?? title;
+                expect.soft(editorLabel, title + ' / ' + path + ' / ' + String(answer)).toBe(expectedEditor);
+                function Readings() {
+                    const header = useWidgetGroupHeaderReading(true, group, readings);
+                    const badge = useWidgetGroupCardSource(instance, descriptor, {}, scope.owner, group, readings);
+                    const menu = describeWidgetGroupInputsBinding(group, readings);
+                    const context = widgetGroupSurfaceContext({}, group, readings);
+                    const setupFields = widgetSetupFieldsForCandidate(descriptor, context, 'personal', instance.bindings);
+                    const setupLabel = setupFields[0]?.follow?.values[0]?.label ?? context.slots?.[slot]?.value?.label;
+                    return <>
+                        <HappierWidgetFrame frameStyle="plain" placement="home" title="Group" testID="header" source={header?.source} />
+                        <Text testID="menu" accessibilityLabel={menu ?? undefined}>{menu}</Text>
+                        <Text testID="setup" accessibilityLabel={setupLabel ?? undefined}>{setupLabel}</Text>
+                        <HappierWidgetFrame frameStyle="plain" placement="home" title="Card" testID="card"
+                            source={badge ? widgetGroupFollowSource(badge.value, true) : undefined} />
+                        <Text testID="inherited" accessibilityLabel={editorLabel}>{editorLabel}</Text>
+                        {setup.renderPreview?.({ input: {}, draft: { bindings: draft } })}
+                    </>;
+                }
+                const screen = await renderScreen(<Readings />);
+                const observation = [screen.getTextContent(), ...['header.source', 'menu', 'setup', 'card.source', 'inherited'].map(id =>
+                    screen.findByTestId(id)?.props.accessibilityLabel ?? '')].join(' ');
+                expect.soft(observation, title + ' ' + path + ' ' + String(answer)).not.toContain(marker);
+                const badge = screen.findByTestId('card.source')?.props.accessibilityLabel;
+                // A typed formatter must not replace a missing owner answer, even with a legible value.
+                expect.soft(badge, title + ' ' + path).toBe(caption(owner ?? title));
+                const readable = owner ?? title;
+                expect.soft(screen.findByTestId('header.source.text')?.props.children).toBe(readable);
+                expect.soft(screen.findByTestId('menu')?.props.accessibilityLabel).toContain(readable);
+                expect.soft(screen.findByTestId('setup')?.props.accessibilityLabel).toBe(readable);
+                expect.soft(screen.getTextContent()).toContain('widgetFrame.groupFollowCount(following=1,count=1)');
+                await screen.unmount();
+                await editor.unmount();
+            }
+        }
+    }
+
+    // The current draft reaches the same owner with the child's declared input type.
+    const descriptor: WidgetCandidate = { ...candidate, inputs: { fields: [
+        { path: 'followed', title: 'Note', widget: 'json' },
+        { path: 'operand', title: 'Group note', widget: 'json' },
+    ] } };
+    const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition, bindings: { followed: follow('operand'), operand: follow('operand') } };
+    const hook = await open(descriptor, instance, {});
+    const popover = hook.getCurrent().popover;
+    if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
+    const draft = { operand: { kind: 'value', value: { label: 'Safe note', path: '/private/' + marker } } } as const;
+    expect.soft(popover.props.readInherited?.(draft).get('followed')).toEqual({ kind: 'single', valueLabel: 'Safe note' });
+    await hook.unmount();
+
+    for (const following of [0, 3]) {
+        const period: WidgetCandidate = { ...candidate, inputs: { fields: [{ path: 'period', title: 'Period', widget: 'text' }] } };
+        const group = { kind: 'group', id: 'counted', width: 'full', frameStyle: 'plain', dividers: 'hairline',
+            children: Array.from({ length: 7 }, (_, index) => ({
+                kind: 'widget' as const, instance: { ...instance, id: `card-${index}`,
+                    bindings: { period: index < following ? follow('period') : { kind: 'value' as const, value: 'Monday' } } },
+            })) } as const;
+        const editor = await renderHook(() => useWidgetGroupInputsEditor({
+            group, candidates: group.children.map(() => period), title: 'Group', scope, setInputs: async () => ({ ok: true }), testID: 'group',
+            context: { slots: { period: { label: 'This page', value: { value: 'Today', label: 'Today' } } } },
+        }));
+        await act(async () => editor.getCurrent().editInputs!.onPress());
+        const form = editor.getCurrent().popover;
+        if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(form)) throw Error('No group editor');
+        const setup = form.props.setup();
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} testID="count" onDone={() => {}} />);
+        expect.soft(screen.getTextContent()).toContain(`widgetFrame.groupFollowCount(following=${following},count=7)`);
+        const reading = screen.findByTestId('count.field.period.input')?.props.placeholder;
+        if (following === 0) expect.soft(reading).toBeUndefined();
+        else expect.soft(reading).toBe('widgetAdd.inheritedValue(value=Today,source=widgetFrame.followingGroup)');
+        await screen.unmount();
+        await editor.unmount();
+    }
+}, 30_000);
 
 const hiddenCases = [
     { title: 'Session', field: { widget: 'json', inputType: { hostType: 'session' } },
@@ -127,9 +259,10 @@ it.each(hiddenCases)('does not disclose the withheld $title in either follow sur
     };
     const group = { operand: { kind: 'value', value } } as const;
     const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition, bindings: { followed: follow('operand') } };
+    const fields = readWidgetGroupInputFollowers(instance, descriptor);
     function Card() {
-        const labels = useWidgetBindingValueLabels(group, descriptor);
-        const name = useWidgetGroupCardSource(instance, descriptor, {}, { kind: 'home' }, group, labels);
+        const labels = useWidgetBindingValueLabels(group, null, fields);
+        const name = useWidgetGroupCardSource(instance, descriptor, {}, { kind: 'home' }, group, groupReading(instance, fields, labels));
         return <HappierWidgetFrame frameStyle="plain" placement="home" title="Card" testID="private"
             source={name ? widgetGroupFollowSource(name.value, true) : undefined} />;
     }

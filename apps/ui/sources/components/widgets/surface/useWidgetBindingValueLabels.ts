@@ -6,7 +6,6 @@ import { MachineTargetV1Schema } from '@happier-dev/protocol/machines/machineAcc
 import { readWidgetInputTargetV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import { readWidgetGroupInputCandidate } from '@/components/widgets/group/widgetGroupInputs';
 import { storage, useSessionDisplayNameProjections, type SessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceDisplayPresentation } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
@@ -17,9 +16,7 @@ import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolve
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
-import { describeWidgetBindingPinValue, type WidgetBindingValueLabel, type WidgetBindingValueLabels } from './widgetBindingValueLabel';
-
-export type { WidgetBindingValueLabels } from './widgetBindingValueLabel';
+import { describeWidgetBindingPinValue, type WidgetBindingLabelField, type WidgetBindingValueLabel, type WidgetBindingValueLabels } from './widgetBindingValueLabel';
 
 const sessionName = (source: SessionDisplayNameSource | null) => source ? getSessionName(source, source.serverId) : null;
 
@@ -27,7 +24,7 @@ const sessionName = (source: SessionDisplayNameSource | null) => source ? getSes
 export function useWidgetBindingValueLabels(
     bindings: WidgetInputBindingsV1,
     candidate: Pick<WidgetCandidate, 'inputs' | 'sessionInputPath'> | null | undefined,
-    fieldCandidates?: readonly (WidgetCandidate | null | undefined)[],
+    groupFields?: readonly WidgetBindingLabelField[],
 ): WidgetBindingValueLabels {
     const isSessionVisible = useSessionRecordingVisibility();
     const entries = React.useMemo(() => {
@@ -36,13 +33,12 @@ export function useWidgetBindingValueLabels(
         const paths = fields.map(field => field.path);
         // Installed descriptors may declare their exact Session ABI without field hints.
         if (target.kind === 'session' && !paths.includes(target.path)) paths.unshift(target.path);
-        return paths.map(path => {
-            const field = fields.find(field => field.path === path);
-            const binding = bindings[path];
+        const declarations = groupFields ?? paths.map(slot => ({
+            slot, field: fields.find(field => field.path === slot), sessionTarget: target.kind === 'session' && target.path === slot,
+        }));
+        return declarations.map(({ slot, field, sessionTarget }) => {
+            const binding = bindings[slot];
             const value = binding?.kind === 'value' ? binding.value : undefined;
-            const declaring = fieldCandidates ? readWidgetGroupInputCandidate(fieldCandidates, path) : undefined;
-            const fieldTarget = declaring ? readWidgetInputTargetV1(declaring) : target;
-            const sessionTarget = fieldTarget.kind === 'session' && fieldTarget.path === path;
             const session = value !== undefined && (sessionTarget
                 || (field?.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'session'))
                 ? VoiceTrackedSessionAddressV1Schema.safeParse(value) : null;
@@ -50,10 +46,10 @@ export function useWidgetBindingValueLabels(
                 ? WorkspaceRefV1Schema.safeParse(value) : null;
             const machine = value !== undefined && field?.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'machine'
                 ? MachineTargetV1Schema.safeParse(value) : null;
-            return { path, field, value, sessionTarget, session: session?.success ? session.data : null, workspace: workspace?.success ? workspace.data : null,
+            return { slot, field, value, sessionTarget, session: session?.success ? session.data : null, workspace: workspace?.success ? workspace.data : null,
                 machine: machine?.success ? machine.data : null };
         });
-    }, [bindings, candidate, fieldCandidates]);
+    }, [bindings, candidate, groupFields]);
     const addresses = React.useMemo(() => entries.flatMap(entry => entry.session && isSessionVisible(entry.session) ? [entry.session] : []), [entries, isSessionVisible]);
     // The pinned Sessions are named from encrypted content: they demand it like visible list rows.
     useSessionContentDemand(addresses, { tag: 'widgets.hydrateBoundSessions', hydrate: 'unsettled' });
@@ -74,14 +70,16 @@ export function useWidgetBindingValueLabels(
     })));
     return React.useMemo(() => {
         let sessionIndex = 0;
-        return Object.fromEntries(entries.map((entry, index) => {
+        const labels: Record<string, WidgetBindingValueLabel> = Object.create(null);
+        entries.forEach((entry, index) => {
             const { field, value } = entry;
             let label: WidgetBindingValueLabel;
             if (entry.session) label = isSessionVisible(entry.session) ? sessionNames[sessionIndex++] ?? null : null;
             else if (entry.workspace) label = workspaceNames[index] ?? null;
             else if (entry.machine) label = machineNames[index] ?? null;
-            else if (value !== undefined) label = describeWidgetBindingPinValue(field, value, entry.sessionTarget);
-            return [entry.path, label];
-        }));
-    }, [entries, sessionNames, workspaceNames, machineNames, isSessionVisible]);
+            else if (value !== undefined) label = describeWidgetBindingPinValue(field, value, entry.sessionTarget, groupFields !== undefined);
+            labels[entry.slot] = Object.hasOwn(labels, entry.slot) && labels[entry.slot] !== label ? null : label;
+        });
+        return labels;
+    }, [entries, sessionNames, workspaceNames, machineNames, isSessionVisible, groupFields]);
 }

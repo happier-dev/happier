@@ -221,7 +221,7 @@ export function describeWidgetSetupRow(input: Readonly<{
     }
     if (binding?.kind === 'context') {
         if (issue) return issue.status === 'selection_required' ? { kind: 'needed' } : { kind: 'invalid', label: entry.follow?.label ?? null, issue, follows: true };
-        return { kind: 'follows', label: entry.follow?.label ?? binding.slot, valueLabel: offered[0]?.label ?? null };
+        return { kind: 'follows', label: entry.follow?.label ?? entry.field.title, valueLabel: offered[0]?.label ?? null };
     }
     if (binding?.kind === 'value') {
         if (issue && issue.status !== 'selection_required') {

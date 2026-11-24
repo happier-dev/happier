@@ -38,8 +38,7 @@ import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
 import { useWidgetGroupHeaderReading, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
-import { useWidgetGroupCardSource } from '@/components/widgets/group/widgetGroupFollowedInputs';
-import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
+import { useWidgetGroupCardSource, type WidgetGroupInputReadings } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
@@ -146,7 +145,7 @@ type HubGroupSection = Extract<HomeHubSection<WidgetCandidate>, { kind: 'group' 
 type HubWidgetSectionModel = Extract<HomeHubSection<WidgetCandidate>, { kind: 'widget' }>;
 
 /** A widget inside a group: where it sits there, and whether its cell has room for the full follow phrase. */
-type HubGroupChildPlacement = Readonly<{ group: HubGroupSection; index: number; wide: boolean; labels: WidgetBindingValueLabels; header: WidgetGroupHeaderReading }>;
+type HubGroupChildPlacement = Readonly<{ group: HubGroupSection; index: number; wide: boolean; labels: WidgetGroupInputReadings; header: WidgetGroupHeaderReading }>;
 
 /**
  * One home section with its hover-revealed "⋯" menu. Memoized on stable props, so a hub render
@@ -242,7 +241,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
         rename: title => layout.rename(group.id, title),
         setInputs: bindings => runWidgetSetupCommand(() => layout.setGroupInputs(group.id, bindings), t('widgetAdd.saveFailed')), testID,
     });
-    const labels = menu.labels;
+    const labels = menu.readings;
     // The whole group lifts by its grip (or, with a fine pointer, by its frame) and is a drop target:
     // into it, or beside it at its top or bottom edge (lab wgdnd B).
     const homeSurface = props.homeSurface;

@@ -1044,6 +1044,33 @@ describe('a plugin page widget area', () => {
         expect(panel()?.props.current).toEqual({ mode: 'origins', origins: ['https://status.example.com'] });
     });
 
+    it.each(['alias', 'pinned', 'untitled'] as const)('draws the correct source when the group header is %s', async mode => {
+        const area = createArea();
+        await area.store.apply({ kind: 'group_add', group: {
+            kind: 'group', id: 'reading', ...(mode === 'untitled' ? {} : { title: 'Checks group' }),
+            width: 'full', frameStyle: 'card', dividers: 'hairline',
+            context: { groupRepository: mode === 'alias'
+                ? { kind: 'context', slot: 'repository' }
+                : { kind: 'value', value: 'Header repository' } },
+            children: [{ kind: 'widget', instance: { ...follow, bindings: { repository: { kind: 'context', slot: 'groupRepository' } } } }],
+        } });
+        const screen = await renderScreen(page(area.hostApi, 'happier'));
+        await flushHookEffects({ cycles: 6 });
+        const source = screen.findByTestId('prs.pinned.widget.follow.frame.source');
+        expect(screen.getTextContent()).toContain('widget:checks repository:' + (mode === 'alias' ? 'happier' : 'Header repository') + ';');
+        if (mode === 'alias') {
+            expect(source?.props.children).toBe('CI');
+        } else if (mode === 'pinned') {
+            expect(screen.getTextContent()).toContain('Header repository');
+            expect(source).toBeNull();
+        } else {
+            expect(source?.props.accessibilityLabel).toBe('widgetFrame.followingGroupValue(value=Header repository)');
+            const drag = screen.root.findAllByType(SessionSurfaceEntityDragHandle).find(handle =>
+                handle.props.title === 'Checks')?.props.drag;
+            expect(drag?.runtime.describeSource(drag.sourceId)?.subtitle).toBe('Header repository · widgetAdd.sizes.medium');
+        }
+    });
+
     it('follows This page while a pinned sibling keeps its own value, and a page change re-reads only the follower', async () => {
         const area = createArea();
         await area.store.apply({ kind: 'add', instance: follow });

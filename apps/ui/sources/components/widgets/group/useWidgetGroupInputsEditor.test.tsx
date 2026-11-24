@@ -261,9 +261,9 @@ describe('group inherited readings', () => {
     expect(screen.findByTestId('edit.field.calendar.input')?.props.placeholder).toBe(inherited('Calendar option'));
   });
 
-  it('preserves the opening label for an unchanged group pin', async () => {
+  it('labels a group pin with the child declaration that follows it', async () => {
     const { screen } = await mount([{ period: follow('priority') }], { priority: pin(2) });
-    expect(screen.findByTestId('edit.field.period.input')?.props.placeholder).toBe(inherited('High'));
+    expect(screen.findByTestId('edit.field.period.input')?.props.placeholder).toBe(inherited('2'));
   });
 
   it('leaves a choice unnamed when its bound draft input has no applicable label', async () => {
@@ -271,7 +271,7 @@ describe('group inherited readings', () => {
     const reading = () => screen.findByTestId('edit.field.unknownChoice.control.trigger')?.props.accessibilityLabel;
     expect(reading()).toBe(`Unknown choice: ${inherited('Listed')}`);
     await act(async () => screen.changeTextByTestId('edit.field.route.input', 'opaque'));
-    expect(reading()).toBe('Unknown choice: common.choose');
+    expect(reading()).toBe(`Unknown choice: ${inherited('Unknown choice')}`);
   });
 
   it.each([
@@ -279,9 +279,9 @@ describe('group inherited readings', () => {
     ['agrees when two children use the same slot', [{ period: follow('calendar') }, { period: follow('calendar') }], inherited('Yesterday')],
     ['ignores a pinned child while showing what the following child reads', [{ period: pin('Monday') }, { period: follow('calendar') }], inherited('Yesterday')],
     ['names competing child contexts without identifying a value', [{ period: follow('period') }, { period: follow('calendar') }], inherited('widgetAdd.severalValues')],
-    ['makes no claim when a child is unresolved even if other children disagree', [{ period: follow('period') }, { period: follow('missing') }, { period: follow('calendar') }], undefined],
-    ['leaves an incomplete inherited reading empty', [{ period: follow('period') }, { period: follow('missing') }], undefined],
-    ['makes no claim when the followed slot has nothing to inherit', [{ period: follow('missing') }], undefined],
+    ['makes no claim when a child is unresolved even if other children disagree', [{ period: follow('period') }, { period: follow('missing') }, { period: follow('calendar') }], inherited('Period')],
+    ['leaves an incomplete inherited reading empty', [{ period: follow('period') }, { period: follow('missing') }], inherited('Period')],
+    ['makes no claim when the followed slot has nothing to inherit', [{ period: follow('missing') }], inherited('Period')],
   ] as const)('%s', async (_name, children, expected) => {
     const { screen } = await mount(children);
     const input = screen.findByTestId('edit.field.period.input')!;
@@ -306,7 +306,7 @@ describe('group inherited readings', () => {
 
   it('does not name a text value the numeric child rejects', async () => {
     const { screen } = await mount([{ count: follow('calendar') }]);
-    expect(screen.findByTestId('edit.field.count.input')?.props.placeholder).toBeUndefined();
+    expect(screen.findByTestId('edit.field.count.input')?.props.placeholder).toBe(inherited('Count'));
   });
 
   it('uses the one inherited list to read a count of two Projects in a popup field', async () => {

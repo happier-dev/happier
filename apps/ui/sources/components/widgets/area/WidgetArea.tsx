@@ -17,7 +17,7 @@ import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitl
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
 import { useWidgetGroupHeaderReading, widgetGroupFollowSource, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
-import { useWidgetGroupCardSource } from '@/components/widgets/group/widgetGroupFollowedInputs';
+import { useWidgetGroupCardSource, type WidgetGroupInputReadings } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget } from '@/components/widgets/group/widgetGroupDropTarget';
@@ -67,7 +67,6 @@ import { useWidgetBodyLastHeight } from '@/components/widgets/frame/widgetFrameB
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { isWidgetFollowingSurfaceSlot, useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
-import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
 import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -614,7 +613,7 @@ export function projectWidgetAreaItems(items: readonly WidgetLayoutItemV1[], pla
 }
 
 /** A child's place in its group, and whether its cell spans the group (room for the full follow phrase). */
-type WidgetAreaGroupChild = Readonly<{ group: WidgetLayoutGroupV1; index: number; wide: boolean; labels: WidgetBindingValueLabels; header: WidgetGroupHeaderReading }>;
+type WidgetAreaGroupChild = Readonly<{ group: WidgetLayoutGroupV1; index: number; wide: boolean; labels: WidgetGroupInputReadings; header: WidgetGroupHeaderReading }>;
 
 /** The area's group operations, each one semantic operation through the area's port. */
 function useWidgetAreaGroupOperations(write: WidgetAreaWrite, area: 'main' | 'aside' | undefined): WidgetGroupOperations {
@@ -639,7 +638,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     descriptors: readonly (WidgetCandidate | null)[];
     operations: WidgetGroupOperations;
     childTitle: (instanceId: string) => string;
-    renderChild: (instanceId: string, placement: WidgetGroupChildPlacement, labels: WidgetBindingValueLabels, header: WidgetGroupHeaderReading) => React.ReactNode;
+    renderChild: (instanceId: string, placement: WidgetGroupChildPlacement, labels: WidgetGroupInputReadings, header: WidgetGroupHeaderReading) => React.ReactNode;
 }>) {
     const { group, write } = props;
     const phone = useDeviceType() === 'phone';
@@ -656,7 +655,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
             () => write({ actionId: 'widgets.group.inputs.set', instanceId: group.id, bindings }), t('widgetAdd.saveFailed'),
         ) : undefined,
     });
-    const labels = menu.labels;
+    const labels = menu.readings;
     // The whole group lifts by its grip and is a drop target: into it, or beside it (lab wgdnd B).
     const carried = useWidgetCarriedIdentity({ kind: 'group', mark: WIDGET_GROUP_ICON, childCount: group.children.length });
     const drop = useSessionSurfaceEntityDrag(props.current && props.canEdit ? {
@@ -847,7 +846,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const changeCollapsed = (next: boolean) => { void disclosureCommands.invoke(disclosureKey, next); };
     // Carried, the card keeps its mark and says its source and the size it keeps (lab wgdnd 1).
     const carried = useWidgetCarriedIdentity({ kind: 'widget', mark: candidate?.icon ?? 'squares-four',
-        source: groupNamesFollowed ? bodyCaption ?? undefined : followed ?? bodyCaption ?? bindingLabel ?? sourceName, size });
+        source: groupNamesFollowed ? bodyCaption ?? undefined : followed?.value ?? bodyCaption ?? bindingLabel ?? sourceName, size });
     // A readable copy can be mentioned; movement still admits edit permission at its Action owner.
     const drag = useSessionSurfaceEntityDrag(props.current ? {
         scope: surface, title, ...carried, isCurrent: () => props.current && findWidgetLayoutItemV1(props.layoutItems, instance.id) !== undefined,

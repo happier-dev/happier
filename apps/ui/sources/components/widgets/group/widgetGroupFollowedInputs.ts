@@ -11,16 +11,23 @@ import {
     type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { WIDGET_SESSION_CONTEXT_SLOT, widgetProvidedContext, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
-import { describeWidgetBindingPinValue, describeWidgetGroupFollowedInput, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
-import { readWidgetGroupInputCandidate, type WidgetGroupHeaderReading } from './widgetGroupInputs';
+import { describeWidgetBindingPinValue, describeWidgetPageBindingValue, type WidgetBindingLabelField, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
+import type { WidgetGroupHeaderReading } from './widgetGroupInputs';
 
-export function readWidgetGroupInputFollowers(instance: WidgetInstanceV1, descriptor: WidgetInputDescriptorV1) {
+export type WidgetGroupInputReadings = Readonly<{
+    fields: readonly WidgetBindingLabelField[];
+    declared?: readonly InputFieldHint[];
+    byChild: ReadonlyMap<string, readonly WidgetBindingLabelField[]>;
+    labels: WidgetBindingValueLabels;
+}>;
+
+export function readWidgetGroupInputFollowers(instance: WidgetInstanceV1, descriptor: WidgetInputDescriptorV1): readonly WidgetBindingLabelField[] {
+    const target = readWidgetInputTargetV1(descriptor);
     return (descriptor.inputs?.fields ?? []).flatMap(field => {
         const binding = instance.bindings[field.path];
         return field.contextMode !== 'own' && !field.connectedAccountOptions && binding?.kind === 'context'
-            ? [{ field, slot: binding.slot }] : [];
+            ? [{ field, slot: binding.slot, sessionTarget: target.kind === 'session' && target.path === field.path }] : [];
     });
 }
 
@@ -31,34 +38,36 @@ export function createWidgetGroupFollowedInputReader(input: Readonly<{
     bindings: WidgetInputBindingsV1;
     labelledBindings: WidgetInputBindingsV1 | undefined;
     labels: WidgetBindingValueLabels | undefined;
-    fieldCandidates?: readonly (WidgetCandidate | null)[];
+    fields: readonly WidgetBindingLabelField[];
 }>) {
-    const { context, surfaceOwner, bindings, labelledBindings, labels, fieldCandidates } = input;
+    const { context, surfaceOwner, bindings, labelledBindings, labels, fields } = input;
     const composed = composeWidgetGroupContextV1({
         providedContext: widgetProvidedContext(context), surfaceOwner, groupBindings: bindings,
     });
     return (instance: WidgetInstanceV1, descriptor: WidgetInputDescriptorV1) => {
         const resolved = resolveConfiguredWidgetInputs({ instance, descriptor, providedContext: composed, viewerValues: {} });
-        return (field: InputFieldHint, slot: string) => {
+        return ({ field, slot }: WidgetBindingLabelField) => {
             const value = resolved.status === 'ready' ? readInputPath(resolved.input, field.path) as JsonValue | undefined : undefined;
             if (value === undefined) return null;
             const binding = bindings[slot];
             if (binding?.kind === 'value') {
                 const labelled = labelledBindings?.[slot];
-                if (labels && Object.hasOwn(labels, slot) && labelled?.kind === 'value' && sameStrictJsonValue(labelled.value, value)) {
-                    return { value, slotLabel: labels[slot] };
+                if (labelled?.kind === 'value' && sameStrictJsonValue(labelled.value, value)) {
+                    return { value, label: labels?.[slot] ?? null };
                 }
-                // A fresh draft pin has no inventory label. Apply the same owner's withholding rule using its declaration.
-                const source = fieldCandidates && readWidgetGroupInputCandidate(fieldCandidates, slot);
-                const sourceField = source?.inputs?.fields.find(entry => entry.path === slot) ?? field;
-                const target = readWidgetInputTargetV1(source ?? descriptor);
-                const label = describeWidgetBindingPinValue(sourceField, value, target.kind === 'session' && target.path === sourceField.path);
-                return { value, slotLabel: label === null ? null : undefined };
+                let label: string | null | undefined;
+                for (const declared of fields) {
+                    if (declared.slot !== slot) continue;
+                    const next = describeWidgetBindingPinValue(declared.field, value, declared.sessionTarget, true) ?? null;
+                    if (label !== undefined && label !== next) return { value, label: null };
+                    label = next;
+                }
+                return { value, label: label ?? null };
             }
             const pageSlot = binding?.kind === 'context' ? binding.slot : slot;
             const slotLabel = pageSlot === WIDGET_SESSION_CONTEXT_SLOT && context.session
                 ? context.session.label : context.slots?.[pageSlot]?.value?.label;
-            return { value, slotLabel };
+            return { value, label: describeWidgetPageBindingValue(field, value, slotLabel) };
         };
     };
 }
@@ -70,19 +79,19 @@ export function useWidgetGroupCardSource(
     context: WidgetSurfaceContext,
     surfaceOwner: WidgetSurfaceRefV1['owner'] | undefined,
     bindings: WidgetInputBindingsV1 | undefined,
-    labels: WidgetBindingValueLabels | undefined,
+    readings: WidgetGroupInputReadings | undefined,
     header: WidgetGroupHeaderReading = null,
 ): Readonly<{ value: string; namedInHeader: boolean }> | null {
     return useMemo(() => {
-        if (!bindings || !descriptor) return null;
-        const followed = readWidgetGroupInputFollowers(instance, descriptor).find(({ slot }) => Object.hasOwn(bindings, slot));
+        if (!bindings || !descriptor || !readings) return null;
+        const followed = readings.byChild.get(instance.id)?.find(({ slot }) => Object.hasOwn(bindings, slot));
         if (!followed) return null;
         const { field, slot } = followed;
         if (header?.binding?.slot === slot) return { value: header.binding.value, namedInHeader: true };
         // A named group's alias leaves the card's ordinary source in place when the header has no reading for it.
         if (header && bindings[slot]?.kind === 'context') return null;
-        const readChild = createWidgetGroupFollowedInputReader({ context, surfaceOwner, bindings, labelledBindings: bindings, labels });
-        const reading = readChild(instance, descriptor)(field, slot);
-        return { value: (reading && describeWidgetGroupFollowedInput(field, reading)) || field.title, namedInHeader: false };
-    }, [instance, descriptor, context, surfaceOwner, bindings, labels, header]);
+        const readChild = createWidgetGroupFollowedInputReader({ context, surfaceOwner, bindings, labelledBindings: bindings,
+            labels: readings.labels, fields: readings.fields });
+        return { value: readChild(instance, descriptor)(followed)?.label ?? field.title, namedInHeader: false };
+    }, [instance, descriptor, context, surfaceOwner, bindings, readings, header]);
 }

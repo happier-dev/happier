@@ -8,57 +8,50 @@ import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import type { HappierWidgetFrameSourceDescriptor } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
-import { describeWidgetBindingPinValue, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
+import type { WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 
-/** The group's own value for its header's source slot ("📁 happier"): its first chosen value. */
+/** The displayed pin and the slot it belongs to. A missing name has no replacement value. */
 export function readWidgetGroupHeaderBinding(
   context: WidgetInputBindingsV1 | undefined,
-  labels: WidgetBindingValueLabels | undefined,
-): Readonly<{ slot: string; value: string }> | null {
+  readings: Pick<WidgetGroupInputReadings, 'fields' | 'declared' | 'labels'>,
+): Readonly<{ slot: string; title: string; value: string | null }> | null {
+  let first: ReturnType<typeof readWidgetGroupHeaderBinding> = null;
   for (const [slot, binding] of Object.entries(context ?? {})) {
-    if (binding.kind === 'value') {
-      const label = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false);
-      if (label) return { slot, value: label };
-    }
+    if (binding.kind !== 'value') continue;
+    const field = readings.fields.find(entry => entry.slot === slot)?.field;
+    const title = field?.title ?? readings.declared?.find(entry => entry.path === slot)?.title ?? slot;
+    const pin = { slot, title, value: field ? readings.labels[slot] ?? null : null };
+    if (pin.value) return pin;
+    first ??= pin;
   }
-  return null;
+  return first;
 }
 
 export type WidgetGroupHeaderReading = Readonly<{
-  binding: ReturnType<typeof readWidgetGroupHeaderBinding>;
+  binding: Readonly<{ slot: string; value: string }> | null;
   source: HappierWidgetFrameSourceDescriptor | undefined;
 }> | null;
 
-/** The header gives its children the binding it actually draws. */
+/** A title alone does not replace the child's source. Only the pin value actually drawn does. */
 export function useWidgetGroupHeaderReading(
   titled: boolean,
   context: WidgetInputBindingsV1 | undefined,
-  labels: WidgetBindingValueLabels,
+  readings: WidgetGroupInputReadings,
 ): WidgetGroupHeaderReading {
   return useMemo(() => {
     if (!titled) return null;
-    const binding = readWidgetGroupHeaderBinding(context, labels);
-    return { binding, source: binding ? widgetGroupPinnedSource(binding.value) : undefined };
-  }, [titled, context, labels]);
+    const pin = readWidgetGroupHeaderBinding(context, readings);
+    return { binding: pin?.value ? { slot: pin.slot, value: pin.value } : null,
+      source: pin ? widgetGroupPinnedSource(pin.value ?? pin.title) : undefined };
+  }, [titled, context, readings]);
 }
 
-/**
- * The group's Inputs… row: what is bound, then its value ("Project: happier", lab wgmenu M), by the
- * input's own title. A value whose input is not declared keeps its value alone.
- */
 export function describeWidgetGroupInputsBinding(
   context: WidgetInputBindingsV1 | undefined,
-  labels: WidgetBindingValueLabels | undefined,
-  fields: readonly Pick<InputFieldHint, 'path' | 'title'>[],
+  readings: WidgetGroupInputReadings,
 ): string | null {
-  for (const [slot, binding] of Object.entries(context ?? {})) {
-    if (binding.kind !== 'value') continue;
-    const value = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false);
-    if (!value) continue;
-    const field = fields.find((entry) => entry.path === slot);
-    return field ? t('widgetFrame.groupInputsValue', { field: field.title, value }) : value;
-  }
-  return null;
+  const pin = readWidgetGroupHeaderBinding(context, readings);
+  return pin?.value ? t('widgetFrame.groupInputsValue', { field: pin.title, value: pin.value }) : pin?.title ?? null;
 }
 
 /**
@@ -126,7 +119,7 @@ export function buildWidgetGroupInputsCandidate(
 export function widgetGroupSurfaceContext(
   base: WidgetSurfaceContext,
   context: WidgetInputBindingsV1 | undefined,
-  labels?: WidgetBindingValueLabels,
+  readings?: WidgetGroupInputReadings,
 ): WidgetSurfaceContext {
   if (!context) return base;
   const slots: Record<
@@ -139,7 +132,7 @@ export function widgetGroupSurfaceContext(
       label: t('widgetFrame.followingGroup'),
       value: {
         value: binding.value,
-        label: (labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false)) ?? slot,
+        label: readings?.labels[slot] ?? null,
       },
     };
   }

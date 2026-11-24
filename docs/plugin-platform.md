@@ -9384,9 +9384,12 @@ Add pane send that child's definition to the ordinary options admission owner. I
 group editor, the configured-input resolver checks each following child against
 the current draft and the opening page context. An unset field shows their
 agreed value or “Several values” if all resolve and disagree. An agreed value
-uses the field's declared option label, the bound slot's opening label if the
-children agree on it, or the field's literal presentation. A value with no
-applicable label or literal presentation stays unnamed. Both readings say
+uses the binding label owner's answer for the child's declared field and
+bound slot. A saved name comes from the owner, or an admitted name from the
+bound page slot. A fresh draft can use the label owner's synchronous answer.
+Without one agreed name, the reading names the field or says “Several values.”
+The editor and its preview use the same configured followers. A field with no
+followers uses its own control value or the usual placeholder. The readings say
 “Following group” in placeholder ink. Text and popup inputs use their existing
 placeholder. Segmented choices and other controls without that slot use the
 row’s secondary line. Saving a group input persists
@@ -9402,8 +9405,13 @@ its half beside an empty slot while customizing; one column on phones and at
 half width). The group draws ink dividers; children draw plain without their
 own hairline. On an untitled group, the child's Follow badge names the value
 resolved for its first group-supplied field in declaration order, using the
-same labels as the group editor. If it has no usable label, the badge names
-the field. `widgetGroupMenu` builds the group ⋯ and each widget's group
+same labels as the group editor. If the label owner withholds the value or
+there is no usable label, the badge names the field. A named group replaces a
+card's source only when its header names the literal pin that card follows.
+A page alias in a named group keeps the card's own source. The per-widget
+Edit inputs menu uses the offered value's safe label or the declared field
+name when the label is withheld or unavailable.
+`widgetGroupMenu` builds the group ⋯ and each widget's group
 entries (Move to group, Remove from group, Ungroup, Group with…) through the
 frame menu's order, and every width choice shows unavailable widths with the
 blocking widget. Drag refusals for width and nesting take their words from the

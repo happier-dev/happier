@@ -1,4 +1,3 @@
-import { resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/presentation';
 import { isSameInputOptionValue, type InputFieldHint } from '@happier-dev/protocol/inputs';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -7,6 +6,7 @@ import { describeHostInputTypePickerValue } from '@/components/sessions/actions/
 /** A name, an intentional withholding, or a value left to its typed formatter. */
 export type WidgetBindingValueLabel = string | null | undefined;
 export type WidgetBindingValueLabels = Readonly<Record<string, WidgetBindingValueLabel>>;
+export type WidgetBindingLabelField = Readonly<{ slot: string; field: InputFieldHint; sessionTarget: boolean }>;
 
 /** A filesystem location is never used as the name of a binding. */
 const TYPED_LOCATION = /^(?:[\\/~]|[A-Za-z]:[\\/])/;
@@ -29,35 +29,22 @@ function describeWidgetBindingValue(value: JsonValue): string | null {
  * Inventory values carry the declared field name until their own safe label is available.
  */
 export function describeWidgetBindingPinValue(
-    field: InputFieldHint | undefined, value: JsonValue, sessionTarget: boolean,
+    field: InputFieldHint | undefined, value: JsonValue, sessionTarget: boolean, group = false,
 ): WidgetBindingValueLabel {
-    if (sessionTarget || field?.widget === 'secret') return null;
-    const type = field?.inputType;
+    if (!field || sessionTarget || field.widget === 'secret') return null;
+    const type = field.inputType;
     const period = type && 'hostType' in type && type.hostType === 'usageQuery' && type.field === 'period';
     if (type && 'hostType' in type && !period) return null;
-    const option = field?.options?.find(entry => isSameInputOptionValue(entry.value, value));
+    const option = field.options?.find(entry => isSameInputOptionValue(entry.value, value));
     if (option) return option.label;
     if (typeof value === 'string' && TYPED_LOCATION.test(value)) return null;
-    if (period) return undefined;
-    if (field?.options || field?.optionsSourceId || type) return null;
-    return describeWidgetBindingValue(value) ?? (field?.widget === 'text_list' ? undefined : null);
+    if (period) return group ? describeHostInputTypePickerValue(type, value) : undefined;
+    if (field.options || field.optionsSourceId || type) return null;
+    return describeWidgetBindingValue(value);
 }
 
-export function describeWidgetGroupFollowedInput(field: InputFieldHint, reading: {
-    value: JsonValue;
-    slotLabel: WidgetBindingValueLabel;
-}): string | null {
-    const { value, slotLabel } = reading;
-    if (slotLabel === null) return null;
-    const option = field.options?.find(option => isSameInputOptionValue(option.value, value));
-    if (option) return option.label;
-    if (slotLabel) return slotLabel;
-
-    const typedLabel = field.inputType && 'hostType' in field.inputType
-        ? describeHostInputTypePickerValue(field.inputType, value) : null;
-    if (typedLabel) return typedLabel;
-    if (field.allowCustomValue && typeof value === 'string') return value;
-    if (typeof value !== 'string' && typeof value !== 'number' && field.widget !== 'text_list' && field.widget !== 'json') return null;
-    const presentation = resolveHappierActionFieldPresentation(field, value);
-    return presentation.kind === 'text' && !presentation.secure ? presentation.value : null;
+// An admitted page name belongs to its bound slot. The child's declared choice can name that same value.
+export function describeWidgetPageBindingValue(field: InputFieldHint, value: JsonValue, pageLabel: WidgetBindingValueLabel): string | null {
+    if (!pageLabel) return null;
+    return field.options?.find(option => isSameInputOptionValue(option.value, value))?.label ?? pageLabel;
 }

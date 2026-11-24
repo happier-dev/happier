@@ -6,7 +6,7 @@ import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameR
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
-import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
+import type { WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 
 import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
 import { useWidgetGroupKeepFlows } from './useWidgetGroupKeepFlows';
@@ -34,7 +34,7 @@ export function useWidgetGroupMenu(input: Readonly<{
     /** The group's name write (an empty name makes it untitled); absent for read-only hosts. */
     commitName: ((next: string) => void | Promise<void>) | undefined;
     overlays: React.ReactNode;
-    labels: WidgetBindingValueLabels;
+    readings: WidgetGroupInputReadings;
 }> {
     const { group, childTitle, scope, testID } = input;
     const name = describeWidgetGroup(group, childTitle);
@@ -64,6 +64,6 @@ export function useWidgetGroupMenu(input: Readonly<{
         renameField: renaming.field,
         commitName,
         overlays: <>{inputs.popover}{keep.overlay}</>,
-        labels: inputs.labels,
+        readings: inputs.readings,
     };
 }
