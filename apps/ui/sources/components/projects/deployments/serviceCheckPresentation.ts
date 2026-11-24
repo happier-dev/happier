@@ -4,6 +4,7 @@ import {
   HealthCheckTcpConfigV1Schema,
   HealthCheckDnsConfigV1Schema,
   type HealthCheckDefinitionV1,
+  type HealthCheckSourceConfigV1,
   readHealthCheckHttpTargetV1,
 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
@@ -209,50 +210,55 @@ export function readServiceCheckDefinitions(
 ): readonly ServiceCheckDefinitionFacts[] | null {
   const parsed = storedHealthSource.safeParse(saved.sourceConfig);
   if (!parsed.success) return null;
-  const source = parsed.data;
+  return parsed.data.checks.map(check => projectServiceCheckDefinition(parsed.data, check, options));
+}
+
+export function projectServiceCheckDefinition(
+  source: HealthCheckSourceConfigV1,
+  check: HealthCheckDefinitionV1,
+  options: ServiceCheckDefinitionReadOptions = {},
+): ServiceCheckDefinitionFacts {
   const environmentId = source.subject.kind === 'environment' ? source.subject.environmentId : null;
-  return source.checks.map(check => {
-    const builtin = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
-    const http = builtin && (check.kind.localId === 'http' || check.kind.localId === 'certificate')
-      ? storedHttpConfig.safeParse(check.config) : null;
-    const tcp = builtin && check.kind.localId === 'tcp' ? storedTcpConfig.safeParse(check.config) : null;
-    const dns = builtin && check.kind.localId === 'dns' ? storedDnsConfig.safeParse(check.config) : null;
-    const keyFlow = check.kind.pluginId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.pluginId
-      && check.kind.localId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.localId ? TelemetryKeyFlowConfigV1Schema.safeParse(check.config) : null;
-    const binding = check.binding;
-    const domainId = binding.kind === 'healthCheck' ? null : binding.domainId;
-    const domain = binding.kind !== 'healthCheck' && source.subject.kind === 'environment'
-      ? options.domains?.find(item => item.domain.id === binding.domainId && item.domain.targetLinkId === binding.targetLinkId
-        && item.domain.environmentId === environmentId) : undefined;
-    const hostname = domain ? readDeploymentDomainHostnameV1(domain.content.hostname) : null;
-    const target = domain && hostname ? readHealthCheckHttpTargetV1({ hostname, healthCheck: domain.content.healthCheck })
-      : http?.success ? readHealthCheckHttpTargetV1(http.data) : null;
-    const address = domain ? target?.url ?? null : http?.success ? http.data.endpoint : tcp?.success ? `${tcp.data.host}:${tcp.data.port}` : null;
-    const labelUrl = target ? new URL(target.url) : null;
-    if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
-    const targetHost = labelUrl?.hostname ?? hostname ?? (tcp?.success ? tcp.data.host : dns?.success ? dns.data.hostname : null);
-    let titleTarget: ServiceCheckTitleTarget | null = null;
-    if (targetHost) {
-      if (!isLoopbackHostname(targetHost)) titleTarget = { kind: 'host', label: targetHost };
-      else if (domain?.content.target?.service) titleTarget = { kind: 'service', label: domain.content.target.service };
-      else if (source.subject.kind === 'machineService') titleTarget = { kind: 'service', label: source.subject.serviceId };
-      else titleTarget = { kind: 'environment', id: source.subject.environmentId };
-    }
-    const name = options.kindName?.(check.kind)
-      ?? BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(plugin => plugin.pluginId === check.kind.pluginId)
-        ?.healthCheckKindTitles?.find(kind => kind.id === check.kind.localId)?.title
-      ?? null;
-    return {
-      titleTarget,
-      checkId: check.checkId, name,
-      targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
-        : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
-      periodMs: check.periodMs, domainId, address,
-      expectStatus: target?.expectStatus ?? null,
-      keyword: http?.success ? http.data.keyword ?? null : null,
-      keyFlow: keyFlow?.success ? keyFlow.data : null,
-    };
-  });
+  const builtin = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
+  const http = builtin && (check.kind.localId === 'http' || check.kind.localId === 'certificate')
+    ? storedHttpConfig.safeParse(check.config) : null;
+  const tcp = builtin && check.kind.localId === 'tcp' ? storedTcpConfig.safeParse(check.config) : null;
+  const dns = builtin && check.kind.localId === 'dns' ? storedDnsConfig.safeParse(check.config) : null;
+  const keyFlow = check.kind.pluginId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.pluginId
+    && check.kind.localId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.localId ? TelemetryKeyFlowConfigV1Schema.safeParse(check.config) : null;
+  const binding = check.binding;
+  const domainId = binding.kind === 'healthCheck' ? null : binding.domainId;
+  const domain = binding.kind !== 'healthCheck' && source.subject.kind === 'environment'
+    ? options.domains?.find(item => item.domain.id === binding.domainId && item.domain.targetLinkId === binding.targetLinkId
+      && item.domain.environmentId === environmentId) : undefined;
+  const hostname = domain ? readDeploymentDomainHostnameV1(domain.content.hostname) : null;
+  const target = domain && hostname ? readHealthCheckHttpTargetV1({ hostname, healthCheck: domain.content.healthCheck })
+    : http?.success ? readHealthCheckHttpTargetV1(http.data) : null;
+  const address = domain ? target?.url ?? null : http?.success ? http.data.endpoint : tcp?.success ? `${tcp.data.host}:${tcp.data.port}` : null;
+  const labelUrl = target ? new URL(target.url) : null;
+  if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
+  const targetHost = labelUrl?.hostname ?? hostname ?? (tcp?.success ? tcp.data.host : dns?.success ? dns.data.hostname : null);
+  let titleTarget: ServiceCheckTitleTarget | null = null;
+  if (targetHost) {
+    if (!isLoopbackHostname(targetHost)) titleTarget = { kind: 'host', label: targetHost };
+    else if (domain?.content.target?.service) titleTarget = { kind: 'service', label: domain.content.target.service };
+    else if (source.subject.kind === 'machineService') titleTarget = { kind: 'service', label: source.subject.serviceId };
+    else titleTarget = { kind: 'environment', id: source.subject.environmentId };
+  }
+  const name = options.kindName?.(check.kind)
+    ?? BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(plugin => plugin.pluginId === check.kind.pluginId)
+      ?.healthCheckKindTitles?.find(kind => kind.id === check.kind.localId)?.title
+    ?? null;
+  return {
+    titleTarget,
+    checkId: check.checkId, name,
+    targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
+      : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
+    periodMs: check.periodMs, domainId, address,
+    expectStatus: target?.expectStatus ?? null,
+    keyword: http?.success ? http.data.keyword ?? null : null,
+    keyFlow: keyFlow?.success ? keyFlow.data : null,
+  };
 }
 
 /**

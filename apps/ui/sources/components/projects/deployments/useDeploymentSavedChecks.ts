@@ -6,18 +6,28 @@ import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkf
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor, readActionApprovalRequestCreatedError, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
+import { projectServiceCheckDefinition, serviceCheckTitle } from './serviceCheckPresentation';
 
 type SavedSource = WorkflowTriggerHealthSourceV1;
 export type DeploymentSavedCheck = Readonly<{
     source: SavedSource;
     check: SavedSource['source']['checks'][number];
+    title: string;
+    targetLabel: string | null;
 }>;
 
 /** Settings reads saved definitions even before a runtime target has its first deploy. */
-export function useDeploymentSavedChecks(lifetime: ServerAccountScopeLifetime | null, environmentId: string, demanded: boolean) {
+export function useDeploymentSavedChecks(
+    lifetime: ServerAccountScopeLifetime | null, environmentId: string, demanded: boolean, environmentName?: string,
+) {
     const read = useWorkflowTriggerSets({ healthSource: { environmentId } }, lifetime, { demanded });
-    const rows = React.useMemo(() => read.healthSources.flatMap(source =>
-        source.source.checks.map(check => ({ source, check }))), [read.healthSources]);
+    const rows = React.useMemo<readonly DeploymentSavedCheck[]>(() => {
+        const names = environmentName ? new Map([[environmentId, environmentName]]) : undefined;
+        return read.healthSources.flatMap(source => source.source.checks.map(check => {
+            const definition = projectServiceCheckDefinition(source.source, check);
+            return { source, check, title: serviceCheckTitle(definition, names).title, targetLabel: definition.targetLabel };
+        }));
+    }, [read.healthSources, environmentId, environmentName]);
     const remove = React.useMemo(() => lifetime ? createRemoval(lifetime) : null, [lifetime]);
     return { status: read.status, failure: read.failure, rows, retry: read.retry, remove };
 }

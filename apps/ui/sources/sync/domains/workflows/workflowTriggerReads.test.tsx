@@ -1,11 +1,16 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createWorkflowAutomationDetailFixture, selectWorkflowAutomationListFixture, selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
+import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
+import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
+import { createWorkflowAutomationDetailFixture, createWorkflowAutomationTriggerDetailFixture, selectWorkflowAutomationListFixture, selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, createWorkflowAutomationLastRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -73,9 +78,36 @@ describe('Account trigger reads through real Action and Automation owners', () =
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected the real Account lifetime');
         const environmentId = 'staging-checks';
-        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
-        const hook = await renderHook(() => useWorkflowTriggerSets({ healthSource: { environmentId } }, lifetime));
+        const declaration = await projectBundledPluginUiDeclaration({
+            packageName: '@happier-dev/plugins-machine-services', packageVersion: bundledMachineServices.version,
+            manifest: bundledMachineServices, artifactGraphs: [],
+        });
+        if (!declaration) throw new Error('Expected the bundled Machine services declaration');
+        onTestFinished(installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiFirstPaintDeclaration(declaration)]));
+        const saved = { ...automation('saved-staging-check'), triggers: [createWorkflowAutomationTriggerDetailFixture('saved-staging-check', {
+            triggerId: AutomationTriggerIdSchema.parse('a4ab38a9-7260-4d1b-b712-eca1b2f7a6d4'),
+            trigger: { kind: 'pluginEvent', enabled: true,
+                eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
+                sourceInstanceId: 'staging-http', sourceContractVersion: 1, displayLabel: 'Event observation',
+                sourceConfig: { v: 1, subject: { kind: 'environment', environmentId }, checks: [{
+                    checkId: 'app-http', kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' },
+                    binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:8080/health', expectStatus: 200 },
+                    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1,
+                }] },
+                filter: null, maximumObservationAgeMs: null,
+                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                    machineId: 'alternate', pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, materializationId: 'services',
+                } },
+            },
+        })] };
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [saved], nextCursor: null } });
+        const { useDeploymentSavedChecks } = await import('@/components/projects/deployments/useDeploymentSavedChecks');
+        const hook = await renderHook(() => useDeploymentSavedChecks(lifetime, environmentId, true, 'Staging'));
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().rows).toMatchObject([{
+            title: 'HTTP · Staging', targetLabel: '127.0.0.1:8080/health', check: { checkId: 'app-http' },
+            source: { automationId: 'saved-staging-check', observer: { machineId: 'alternate' } },
+        }]);
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toMatchObject([
             { path: '/v3/automations/query', input: { healthCheckSources: { environmentId } } },
         ]);
