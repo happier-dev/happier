@@ -107,6 +107,7 @@ export type CurrentUiContextMountPublisher = Readonly<{
  */
 export type CurrentUiContextResolvedCommand = Readonly<{
     id: string;
+    title?: string;
     command: CurrentUiContextMountedCommand;
     /** Aborts synchronously when this exact private command record retires. */
     retirementSignal: AbortSignal;
@@ -479,6 +480,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             if (!semantic || descriptor.id !== semantic.id) return null;
             return Object.freeze({
                 id: semantic.id,
+                title: descriptor.title,
                 command: semantic.command,
                 retirementSignal: semantic.retirement.signal,
             });

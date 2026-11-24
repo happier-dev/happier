@@ -398,6 +398,8 @@ export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
 ] as const);
 const otherReviewCommentMutationActionIds = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1.filter(id => id !== createReviewCommentActionId);
 
+export const CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID = 'ui.current_context.command.invoke' as const;
+
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   plugin_collection_sharing: PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1,
   deployments: [...DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1],
@@ -784,7 +786,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   current_ui_context: [
     'ui.current_context.read',
-    'ui.current_context.command.invoke',
+    CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID,
   ],
   account_home_continuation: ['account.home_continuation.invoke'],
   command_palette: ['ui.command_palette.list', 'ui.command_palette.invoke'],

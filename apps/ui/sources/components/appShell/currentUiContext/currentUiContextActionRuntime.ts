@@ -17,7 +17,7 @@ import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { executeCapturedScopeContributedAction } from './contributedActionInvocation';
-import type { CurrentUiContextCommandInvokeInput } from '@happier-dev/protocol/actions/actionSpecs';
+import type { CurrentUiContextCommandInvokeInput, CurrentUiContextCommandInvokeOutput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 type PortFactory = (surface: PluginSurfaceActionInvocationSurface, hostAction?: PluginSurfaceHostActionBinding) => CurrentUiContextVoiceToolPort | null;
@@ -132,9 +132,15 @@ export async function executeCurrentUiContextAction(
     }
     // The ordinary Action executor has already admitted this strict input.
     const input = request.input as CurrentUiContextCommandInvokeInput;
-    const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, signal: request.context.signal,
+    const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, includeCommandTitle: true, signal: request.context.signal,
         ...(input.input === undefined ? {} : { input: input.input }) });
-    if (outcome?.ok) return withActionAutomationNoticesV1({ ok: true, result: outcome.result ?? null }, outcome.automationNotices);
+    if (outcome?.ok) {
+        const result: CurrentUiContextCommandInvokeOutput = {
+            value: outcome.result ?? null,
+            ...(outcome.commandTitle ? { commandTitle: outcome.commandTitle } : {}),
+        };
+        return withActionAutomationNoticesV1({ ok: true, result }, outcome.automationNotices);
+    }
     const errorCode = outcome?.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome?.errorCode ?? (outcome?.code === 'denied' ? 'permission_denied'
         : 'unsupported_action');

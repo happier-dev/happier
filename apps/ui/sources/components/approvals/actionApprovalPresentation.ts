@@ -1,8 +1,8 @@
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { CurrentUiContextCommandInvokeOutputSchema, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
@@ -31,6 +31,7 @@ export type ActionApprovalPresentationInput = Readonly<{
     kind?: 'confirmation';
     actionArgs?: unknown;
     status?: ApprovalRequest['status'];
+    execution?: ApprovalRequest['execution'];
     preview?: unknown;
     authoredTitle?: string | null;
     authoredSummary?: string | null;
@@ -186,8 +187,11 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
             .find(row => row.kind === 'value' && row.path === 'name') : undefined;
     const teamMember = spec.id === 'teams.members.add'
         ? readTeamMemberApprovalPresentation(input.preview, input.actionArgs) : null;
+    const command = spec.id === CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID && input.execution?.ok
+        ? CurrentUiContextCommandInvokeOutputSchema.safeParse(input.execution.result) : null;
+    const commandTitle = command?.success ? command.data.commandTitle : undefined;
     const subject = teamMember ? `${teamMember.accountName} · ${teamMember.teamName}`
-        : createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
+        : createdMachineName?.kind === 'value' ? createdMachineName.value : commandTitle ?? input.subject;
     const confirmLabel = readActionApprovalConfirmLabel(spec.id)
         ?? (input.kind === 'confirmation' ? resolveActionTitle(spec.id, spec) : resolveActionConfirmVerb(undefined));
     const incoming = readIncomingDiscussionApprovalSource(input);

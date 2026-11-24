@@ -19,6 +19,12 @@ export const CurrentUiContextCommandInvokeInputSchema = lazyZodSchema(() => z.st
 }));
 export type CurrentUiContextCommandInvokeInput = z.infer<typeof CurrentUiContextCommandInvokeInputSchema>;
 
+export const CurrentUiContextCommandInvokeOutputSchema = lazyZodSchema(() => z.strictObject({
+  commandTitle: z.optional(z.string().check(z.minLength(1))),
+  value: StrictJsonValueSchema,
+}));
+export type CurrentUiContextCommandInvokeOutput = z.infer<typeof CurrentUiContextCommandInvokeOutputSchema>;
+
 function createUiContextActionSpecs() {
   return Object.freeze([
   {
@@ -204,7 +210,7 @@ function createUiContextActionSpecs() {
         { path: 'input', title: 'Command input', widget: 'json' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: CurrentUiContextCommandInvokeOutputSchema,
     inputSchema: CurrentUiContextCommandInvokeInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);

@@ -2667,7 +2667,7 @@ describe('current UI context Voice tool port', () => {
                 const unregister = registerCurrentUiContextActionPort((surface) => surface === invocationSurface ? port : null);
                 try {
                     expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: COMMAND_ID }, context: { surface: invocationSurface } }))
-                        .toEqual({ ok: true, result: { surface: invocationSurface } });
+                        .toEqual({ ok: true, result: { value: { surface: invocationSurface } } });
                 } finally { unregister(); }
                 expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: COMMAND_ID }, context: { surface: invocationSurface } }))
                     .toMatchObject({ ok: false, errorCode: 'unsupported_action' });

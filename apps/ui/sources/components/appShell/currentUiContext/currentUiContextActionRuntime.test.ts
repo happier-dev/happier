@@ -40,9 +40,9 @@ describe('current UI context Action adapter', () => {
         }));
         const input = { title: 'Reviewed title', keywords: ['automation'] };
         expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id, input },
-            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: input });
+            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: { value: input } });
         expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id },
-            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: null });
+            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: { value: null } });
         expect(received).toEqual([input, undefined]);
     });
 
@@ -117,7 +117,7 @@ describe('current UI context Action adapter', () => {
         // consent, so no dialog is raised and the mounted command runs once.
         expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id },
             { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId }))
-            .toEqual({ ok: true, result: { status: 'completed', dictationStatus: 'listening', inserted: false } });
+            .toEqual({ ok: true, result: { value: { status: 'completed', dictationStatus: 'listening', inserted: false } } });
         expect(requestedMicrophoneConsent).toBe(false);
         expect(captures).toBe(1);
         expect(await executor.execute('ui.voice_global.dictation.finish', { commandId: command.id },
@@ -163,7 +163,7 @@ describe('current UI context Action adapter', () => {
         expect(completed).toBe(0);
         await expect(executor.execute('ui.current_context.command.invoke', input,
             { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId }))
-            .resolves.toEqual({ ok: true, result: { status: 'completed' } });
+            .resolves.toEqual({ ok: true, result: { value: { status: 'completed' } } });
         expect(completed).toBe(1);
         await expect(executor.execute('account.home_continuation.invoke', {
             operation: 'choose', commandId: command.id, homeServerIdentityId: 'another-home',

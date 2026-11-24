@@ -15,7 +15,7 @@ import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { useIncomingDiscussionApprovalNames } from './useIncomingDiscussionApprovalNames';
 import type { ActionApprovalPresentationInput } from './actionApprovalPresentation';
 
-export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
+export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'execution' | 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
     storedTitle: string | null | undefined;
     /** The request's own generated summary: a first line that only restates it is not a title the person chose. */
     previewSummary?: string | null;
@@ -118,6 +118,7 @@ export function readApprovalArtifactTitleInput(
     actionId,
     actionArgs: parsed.request.actionArgs,
     status: parsed.request.status,
+    execution: parsed.request.execution,
     preview: parsed.request.preview,
     executionOriginV1: parsed.request.v === 2 ? parsed.request.executionOriginV1 : undefined,
     sessionIds,

@@ -388,7 +388,8 @@ import { SESSION_LIFETIME_CONTROL_ACTION_SPECS, SESSION_RECOVERY_ACTION_SPECS, S
 import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS } from './specs/catalog.js';
 import { WorkspaceFilesReplaceActionOutputSchema, WORKSPACE_FILE_ACTION_SPECS } from './specs/workspaceFiles.js';
 import { UI_CONTEXT_ACTION_SPECS } from './specs/uiContext.js';
-export { CurrentUiContextCommandInvokeInputSchema, type CurrentUiContextCommandInvokeInput } from './specs/uiContext.js';
+export { CurrentUiContextCommandInvokeInputSchema, CurrentUiContextCommandInvokeOutputSchema,
+  type CurrentUiContextCommandInvokeInput, type CurrentUiContextCommandInvokeOutput } from './specs/uiContext.js';
 import { ROLE_ACTION_SPECS } from './specs/roles.js';
 import { ACTION_POLICY_SPECS, SETTINGS_ADMINISTRATION_ACTION_SPECS } from './specs/settings.js';
 import { MACHINE_PRESET_ACTION_SPECS, EPHEMERAL_RUNNER_ACTION_SPECS, MACHINE_POOL_ACTION_SPECS } from './specs/managedMachines.js';

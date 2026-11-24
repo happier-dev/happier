@@ -70,7 +70,7 @@ import {
  * diagnostics: those remain local to the current-context and Action owners.
  */
 export type CurrentUiContextVoiceInvocationOutcome =
-    | Readonly<{ ok: true; result?: PluginUiJsonValueV1 }>
+    | Readonly<{ ok: true; result?: PluginUiJsonValueV1; commandTitle?: string }>
     | Readonly<{ ok: false; code: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['code'] | 'outcome_unknown'; errorCode?: string; actionHandlerInvocation?: 'notStarted';
         message?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['message'];
         retryable?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['retryable'];
@@ -82,6 +82,7 @@ export type CurrentUiContextVoiceInvocationOutcome =
 
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
+    includeCommandTitle?: true;
     input?: PluginUiJsonValueV1;
     signal?: AbortSignal;
     /** Host-private Settings ingress retains its admitted caller through the same mounted command. */
@@ -454,12 +455,10 @@ export function createCurrentUiContextVoiceToolPort(
         invoke: (observation, signal, isCurrent) => invokeProjectedAction({ ...request, signal }, isCurrent, false, observation),
     });
 
-    const invokeCurrentUiCommand = async (
+    const invokeResolvedCurrentUiCommand = async (
         request: CurrentUiContextVoiceCommandInvocationInput,
+        resolved: CurrentUiContextResolvedCommand,
     ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
-        if (request.signal?.aborted) return unavailable();
-        const resolved = input.reader.resolveCurrentUiCommand(request.commandId);
-        if (!resolved) return unavailable();
         const isCurrent = (): boolean => (
             request.signal?.aborted !== true
             && isResolvedCommandCurrent(input.reader, resolved)
@@ -565,6 +564,16 @@ export function createCurrentUiContextVoiceToolPort(
         } catch {
             return isCurrent() ? { ok: false, code: 'internal_error' } : stale();
         }
+    };
+
+    const invokeCurrentUiCommand: NonNullable<CurrentUiContextVoiceToolPort['invokeCurrentUiCommand']> = async request => {
+        if (request.signal?.aborted) return unavailable();
+        const resolved = input.reader.resolveCurrentUiCommand(request.commandId);
+        if (!resolved) return unavailable();
+        const outcome = await invokeResolvedCurrentUiCommand(request, resolved);
+        return request.includeCommandTitle && outcome.ok && resolved.title
+            ? { ...outcome, commandTitle: resolved.title }
+            : outcome;
     };
 
     return Object.freeze({

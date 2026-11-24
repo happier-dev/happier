@@ -89,12 +89,24 @@ it('retains the mounted command Skip notice through successful and refused Actio
     </CurrentUiContextCommandsProvider>);
     try {
         const executor = createDefaultActionExecutor();
+        const { resolveApprovalRequestTitle } = await import('@/components/approvals/approvalRequestTitle');
+        const actionId = 'ui.current_context.command.invoke';
+        const context = { serverId, surface: 'agent', authority: 'account_automation' } as const;
         for (const ok of [true, false]) {
             const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === (ok ? 'Applied command' : 'Refused command'))!;
-            await act(async () => expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, {
-                serverId, surface: 'agent', authority: 'account_automation',
-            })).toMatchObject({ ok, automationNotices: expect.arrayContaining([notice]) }));
+            await act(async () => {
+                const result = await executor.execute(actionId, { commandId: command.id }, context);
+                expect(result).toMatchObject({ ok, automationNotices: expect.arrayContaining([notice]) });
+                if (result.ok) {
+                    expect(result.result).toEqual({ commandTitle: command.title, value: { status: 'applied' } });
+                    expect(resolveApprovalRequestTitle({ storedTitle: actionId, actionId, status: 'executed',
+                        execution: { executedAtMs: 1, ok: true, result: result.result },
+                    }).title).toContain(command.title);
+                }
+            });
         }
+        await expect(executor.execute(actionId, { commandId: 'unknown-mount' }, context))
+            .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action', error: 'unavailable' });
     } finally { await screen.unmount(); }
 });
 

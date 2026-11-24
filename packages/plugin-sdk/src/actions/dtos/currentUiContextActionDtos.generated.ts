@@ -35,7 +35,8 @@ export type CurrentUiContextActionResultById = {
         };
         detail?: JsonValue | undefined;
     };
-    readonly "ui.current_context.command.invoke": boolean | null | number | readonly JsonValue[] | string | {
-        readonly [key: string]: JsonValue;
+    readonly "ui.current_context.command.invoke": {
+        value: JsonValue;
+        commandTitle?: string | undefined;
     };
 };
