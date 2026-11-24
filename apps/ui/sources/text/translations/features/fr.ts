@@ -21421,6 +21421,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         causeNotRecorded: 'La cause de l’échec n’a pas été enregistrée',
         usageLimitWait: 'Attends la réinitialisation de la limite d’utilisation du fournisseur, puis réessaie.',
         agentTimedOut: 'Impossible de joindre l’Agent à temps',
+        replySecretMasked: 'La réponse contenait du texte correspondant à l’un de vos secrets, son résultat n’a donc pas pu être lu. Renommez l’option ou modifiez le secret.',
         agentUnreachable: 'Impossible de joindre l’Agent',
         agentConnectionLost: 'Connexion à l’Agent perdue',
         publicationDeclined: 'Vous avez refusé de publier sa réponse dans la discussion, donc rien n’a été publié.',

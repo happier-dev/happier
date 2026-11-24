@@ -37,6 +37,8 @@ import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.te
 import { observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
 import { createDaemonAdmissionDrain, waitForDaemonAdmission } from '../lifecycle/admissionDrain';
 import type { WorkflowJsonValue } from './input';
+import { registerTranscriptSecret, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } as const;
 const workspace = { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } as const;
@@ -2723,6 +2725,44 @@ describe('workflow coordinator', () => {
       reason: 'invalid_result_contract',
       reasonMessage: 'not_json',
       usage: { inputTokens: 13, outputTokens: 2, costUsd: 0.03 },
+    });
+  });
+
+  // The Session reply is read from its stored row, which the transcript writer masked. A decode that
+  // fails on masked text names that cause instead of a contract error.
+  describe('a Session reply altered by secret masking', () => {
+    const storedReply = (secrets: readonly string[], reply: string) => {
+      const releases = secrets.map(secret => registerTranscriptSecret(secret));
+      try { return redactTranscriptSecrets(reply); } finally { for (const release of releases) release(); }
+    };
+    it.each([
+      { name: 'an enum option equal to a registered secret', secrets: ['postgres'], reply: '{"choice":"postgres"}',
+        schema: { type: 'object' as const, properties: { choice: { enum: ['postgres', 'mysql'] } }, required: ['choice'] },
+        reason: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE },
+      { name: 'a number containing a registered digit', secrets: ['1'], reply: '{"line":12}',
+        schema: { type: 'object' as const, properties: { line: { type: 'number' as const } }, required: ['line'] },
+        reason: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE },
+      { name: 'an invalid reply without the mask', secrets: ['postgres'], reply: 'maybe',
+        schema: { type: 'object' as const }, reason: 'invalid_result_contract' },
+    ])('fails a typed Session step with the masking cause: $name', async ({ secrets, reply, schema, reason }) => {
+      const store = createInMemoryWorkflowCoordinatorStore();
+      const text = storedReply(secrets, reply);
+      const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
+        executeStep: async () => ({ kind: 'completed', result: text }) });
+      const typed = { ...step('typed'), result: { kind: 'json' as const, schema } };
+      await expect(coordinator.run({ runId: `run-masked-${reason}-${secrets[0]}`, definition: definition([typed]), inputs: {},
+        executionTarget, authorization })).resolves.toEqual({ state: 'interrupted', reason });
+    });
+
+    it('fails a Session loop evaluator whose decision was masked', async () => {
+      const text = storedReply(['stop'], JSON.stringify('stop'));
+      const coordinator = createWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
+        executeStep: async ({ step: executed }) => ({ kind: 'completed', result: executed.id === 'evaluator' ? text : 'done' }) });
+      const workflow = definition([{ kind: 'loop', id: 'evaluate-loop', body: [step('body')], repetition: {
+        kind: 'evaluate', maxIterations: 2, history: 'latest',
+        evaluator: { ...step('evaluator'), result: { kind: 'decision', decisions: ['continue', 'stop'] } } } }]);
+      await expect(coordinator.run({ runId: 'run-masked-evaluator', definition: workflow, inputs: {}, executionTarget, authorization }))
+        .resolves.toEqual({ state: 'interrupted', reason: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE });
     });
   });
 

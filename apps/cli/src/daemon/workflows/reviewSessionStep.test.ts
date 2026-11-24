@@ -4,12 +4,12 @@ import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actio
 
 import { createWorkflowSessionStepExecutor } from './sessionStepExecutor';
 import { materializeWorkflowSessionReview } from './reviewSessionStep';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
+import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 
-it.each(['complete', 'partial'] as const)('publishes a restored Session review as host receipts with %s coverage', async reviewOutcome => {
-  const reviewRound = { reviewId: 'actual-review', roundOrdinal: 2 };
-  const rawText = JSON.stringify({ reviewOutcome, summary: 'Inspected.', overviewMarkdown: 'Inspected.', findings: [],
-    questions: [], assumptions: [], reviewRound: { reviewId: 'model-invented', roundOrdinal: 99 },
-    commentIds: ['model-invented'], perEngineOutcome: [] });
+const reviewRound = { reviewId: 'actual-review', roundOrdinal: 2 };
+
+async function executeSessionReview(rawText: string) {
   const execute = createWorkflowSessionStepExecutor({
     credentials: { token: 'token', encryption: null },
     prepareConversation: async () => { throw new Error('An admitted input is observed in place'); },
@@ -24,7 +24,7 @@ it.each(['complete', 'partial'] as const)('publishes a restored Session review a
       comments: async () => { throw new Error('Empty findings do not publish a comment'); },
     }),
   });
-  const result = await execute({ runId: 'actual-workflow',
+  return await execute({ runId: 'actual-workflow',
     step: { kind: 'step', id: 'review', document: { text: 'Inspect', references: [], attachments: [] }, input: [],
       result: { kind: 'json', schema: zodSchemaToJsonSchemaObject(ReviewStartTerminalValueV1Schema) } },
     invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'review', scope: [] },
@@ -37,9 +37,23 @@ it.each(['complete', 'partial'] as const)('publishes a restored Session review a
     workspace: { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' },
     beforeInputAdmission: async () => { throw new Error('An admitted input is observed in place'); }, onInputAccepted: async () => {},
   });
+}
+
+it.each(['complete', 'partial'] as const)('publishes a restored Session review as host receipts with %s coverage', async reviewOutcome => {
+  const rawText = JSON.stringify({ reviewOutcome, summary: 'Inspected.', overviewMarkdown: 'Inspected.', findings: [],
+    questions: [], assumptions: [], reviewRound: { reviewId: 'model-invented', roundOrdinal: 99 },
+    commentIds: ['model-invented'], perEngineOutcome: [] });
+  const result = await executeSessionReview(rawText);
   expect(result).toEqual({ kind: 'completed', resultEncoding: 'typed', result: {
     reviewRound, reviewedFingerprint: null, commentIds: [],
     perEngineOutcome: [{ key: 'step-1-reviewer-1', outcome: 'completed', reviewOutcome, materialization: { kind: 'complete' },
       finishedAt: expect.any(Number) }],
   } });
+});
+
+it('names secret masking when the stored Session review reply no longer parses', async () => {
+  // The reply as the transcript writer stored it: a registered secret replaced part of the JSON.
+  expect(await executeSessionReview(`{"reviewOutcome":"complete","findings":[{"line":${TRANSCRIPT_SECRET_REDACTED}2}]}`))
+    .toEqual({ kind: 'failed', code: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE });
+  expect(await executeSessionReview('not a review')).toEqual({ kind: 'failed', code: 'invalid_output' });
 });

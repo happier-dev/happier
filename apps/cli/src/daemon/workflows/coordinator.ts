@@ -29,7 +29,7 @@ import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
 import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
 import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
-import { readWorkflowProjectSetupConsentHold } from './stepExecution';
+import { readWorkflowProjectSetupConsentHold, readWorkflowSessionReplyFailureCode } from './stepExecution';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { ExecutionRunResultDecodeResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -2996,7 +2996,9 @@ function validateStepResult(
   if (!observation) throw new WorkflowLeafFailure('interrupted', 'invalid_result_contract', true);
   const decoded = decodeExecutionRunResultObservation(observation, step.result);
   if (!decoded.ok) {
-    throw new WorkflowLeafFailure('interrupted', 'invalid_result_contract', true, decoded.reason);
+    throw new WorkflowLeafFailure('interrupted', observation.encoding === 'raw_text'
+      ? readWorkflowSessionReplyFailureCode(observation.value, 'invalid_result_contract') : 'invalid_result_contract',
+    true, decoded.reason);
   }
   return decoded.value;
 }

@@ -21364,6 +21364,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         causeNotRecorded: 'La causa dell’errore non è stata registrata',
         usageLimitWait: 'Attendi che il limite di utilizzo del fornitore si reimposti, poi riprova.',
         agentTimedOut: 'Impossibile raggiungere l’Agente in tempo',
+        replySecretMasked: 'La risposta conteneva testo corrispondente a uno dei tuoi segreti, quindi non è stato possibile leggerne il risultato. Rinomina l’opzione o cambia il segreto.',
         agentUnreachable: 'Impossibile raggiungere l’Agente',
         agentConnectionLost: 'Connessione all’Agente persa',
         publicationDeclined: 'Hai rifiutato di pubblicare la risposta nella discussione, quindi non è stato pubblicato nulla.',

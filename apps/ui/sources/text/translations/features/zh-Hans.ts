@@ -21239,6 +21239,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         causeNotRecorded: '未记录失败原因',
         usageLimitWait: '等待提供商的使用限额重置后再试。',
         agentTimedOut: '未能及时连接到智能体',
+        replySecretMasked: '回复中包含与你的某个密钥相符的文本，因此无法读取其结果。请重命名该选项或更改密钥。',
         agentUnreachable: '无法连接到智能体',
         agentConnectionLost: '与智能体的连接已断开',
         publicationDeclined: '你拒绝将其回答发布到讨论中，因此未发布任何内容。',

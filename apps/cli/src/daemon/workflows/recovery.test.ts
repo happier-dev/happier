@@ -1,4 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
@@ -647,6 +649,10 @@ describe.each(['plain', 'e2ee'] as const)('frozen result recovery (%s)', (mode) 
     { name: 'missing permitted decision', contract: { kind: 'decision', decisions: ['continue', 'stop'] },
       observed: { kind: 'fulfilled', outcome: { kind: 'pass' } },
       expected: { reason: { code: 'invalid_result_contract', message: 'not_json' } }, lifecycle: 'failed' },
+    { name: 'stored reply altered by secret masking',
+      contract: { kind: 'json', schema: { type: 'object', properties: { choice: { enum: ['postgres', 'mysql'] } }, required: ['choice'] } },
+      observed: { kind: 'final_text', text: `{"choice":"${TRANSCRIPT_SECRET_REDACTED}"}` },
+      expected: { reason: { code: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE, message: 'schema_mismatch' } }, lifecycle: 'failed' },
     { name: 'failed input is not successful no-text', contract: { kind: 'text' },
       observed: { kind: 'failed', message: 'provider failed', usage: { inputTokens: 8 } },
       expected: { reason: { code: 'session_input_failed', message: 'provider failed' } }, lifecycle: 'failed' },

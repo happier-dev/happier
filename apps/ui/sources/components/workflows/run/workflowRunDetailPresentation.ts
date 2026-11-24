@@ -32,6 +32,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowFailureRemedy } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { readWorkflowSetupInstallPackagesV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import {
     describeWorkflowRunState,
     isTerminalWorkflowRunState,
@@ -430,6 +431,8 @@ const RECORDED_TRANSPORT_FAILURE_KEYS = {
     EHOSTUNREACH: 'workflows.recovery.agentUnreachable',
     ECONNRESET: 'workflows.recovery.agentConnectionLost',
     EPIPE: 'workflows.recovery.agentConnectionLost',
+    // The stored Session reply was altered by secret masking; the decode reason stays in Technical details.
+    [WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE]: 'workflows.recovery.replySecretMasked',
 } as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
 
 function describeRecordedTransportFailure(code: string): string | null {

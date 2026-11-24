@@ -20,6 +20,7 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { t } from '@/text';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import { resolveManagedMachineWorkStatus } from '@/components/work/status/resolveWorkStatusTone';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -271,6 +272,7 @@ describe('managed workflow Run presentation', () => {
         ['ETIMEDOUT', 'connect ETIMEDOUT 10.0.0.4:443', 'workflows.recovery.agentTimedOut'],
         ['ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:3013', 'workflows.recovery.agentUnreachable'],
         ['ECONNRESET', 'socket hang up', 'workflows.recovery.agentConnectionLost'],
+        [WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE, 'schema_mismatch', 'workflows.recovery.replySecretMasked'],
     ] as const)('says a recorded %s in words on the cause line and keeps the raw message for step detail', (code, message, key) => {
         const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });

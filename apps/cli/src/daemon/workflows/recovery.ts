@@ -18,7 +18,7 @@ import { isWorkflowJsonObject } from './input';
 import { createWorkflowRunReviewEntryNotificationHandler } from '@/notifications/activity/dispatchWorkflowRunUpdateNotification';
 import { DurableWorkflowCoordinatorStore } from './production';
 import { logger } from '@/ui/logger';
-import { readWorkflowProjectSetupConsentHold } from './stepExecution';
+import { readWorkflowProjectSetupConsentHold, readWorkflowSessionReplyFailureCode } from './stepExecution';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -277,7 +277,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       : execution?.kind === 'detached_run' ? { encoding: 'typed' as const, value: observation.result } : null;
     const decoded = value ? decodeExecutionRunResultObservation(value, step.result) : null;
     return decoded?.ok ? { ...observation, result: decoded.value }
-      : { kind: 'failed', code: 'invalid_result_contract', ...(decoded && !decoded.ok ? { message: decoded.reason } : {}),
+      : { kind: 'failed', code: value?.encoding === 'raw_text'
+          ? readWorkflowSessionReplyFailureCode(value.value, 'invalid_result_contract') : 'invalid_result_contract', ...(decoded && !decoded.ok ? { message: decoded.reason } : {}),
         ...(observation.usage ? { usage: observation.usage } : {}) };
   };
   const commitFact = async (

@@ -10,6 +10,7 @@ import { normalizeParsedReviewContent } from '@/agent/reviews/normalize/normaliz
 import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import type { WorkflowStepExecutionResult, WorkflowStepExecutor } from './coordinator';
+import { readWorkflowSessionReplyFailureCode } from './stepExecution';
 
 /** Actual Session input correspondence supplied by the Session execution owner. */
 export type WorkflowSessionReviewInput = Readonly<{
@@ -35,7 +36,7 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
   const { reviewRound, comparisonId, comparison, inlineThreshold } = prepared.data;
   const intentInput = { reviewRound, inlineThreshold, ...(comparisonId ? { comparisonId } : {}), ...(comparison ? { comparison } : {}) };
   const content = normalizeParsedReviewContent({ value: parseTrailingJsonObject(input.rawText), intentInput, generatedAtMs: Date.now() });
-  if (!content) return { kind: 'failed', code: 'invalid_output' };
+  if (!content) return { kind: 'failed', code: readWorkflowSessionReplyFailureCode(input.rawText, 'invalid_output') };
   const service = createReviewRunCommentService({ cwd: input.workspace.path, scope: { workspace: input.workspace },
     execute: (actionId, value, options) => input.comments({ actionId, input: value,
       ...(options?.principal ? { reviewCommentPrincipal: options.principal } : {}),

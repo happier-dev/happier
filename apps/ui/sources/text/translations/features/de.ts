@@ -20858,6 +20858,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         causeNotRecorded: 'Die Fehlerursache wurde nicht aufgezeichnet',
         usageLimitWait: 'Warte, bis das Nutzungslimit des Anbieters zurückgesetzt wird, und versuche es dann erneut.',
         agentTimedOut: 'Der Agent war nicht rechtzeitig erreichbar',
+        replySecretMasked: 'Die Antwort enthielt Text, der einem deiner Secrets entspricht, daher konnte ihr Ergebnis nicht gelesen werden. Benenne die Option um oder ändere das Secret.',
         agentUnreachable: 'Der Agent war nicht erreichbar',
         agentConnectionLost: 'Die Verbindung zum Agent wurde unterbrochen',
         publicationDeclined: 'Du hast das Posten der Antwort in der Diskussion abgelehnt, daher wurde nichts gepostet.',

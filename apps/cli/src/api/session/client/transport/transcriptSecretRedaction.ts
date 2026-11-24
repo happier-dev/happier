@@ -28,6 +28,11 @@ const processSecrets = new Map<string, number>();
 
 export const TRANSCRIPT_SECRET_REDACTED = '[redacted]';
 
+/** Whether stored text carries this masker's marker (a reader of the stored form can name the cause). */
+export function containsTranscriptSecretMask(text: string): boolean {
+    return text.includes(TRANSCRIPT_SECRET_REDACTED);
+}
+
 /** Register a live secret; the returned function releases this registration. */
 export function registerTranscriptSecret(secret: string): () => void {
     const scope = readHostedSessionScope();

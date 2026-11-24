@@ -242,3 +242,10 @@ export function readWorkflowClosedResultFieldNames(
     ? new Set(projection.fields.map((field) => field.name))
     : null;
 }
+
+/**
+ * A Session step's result is read from the reply as the transcript writer stored it, with registered
+ * secret values masked. When that stored reply no longer decodes and carries the mask, the step fails
+ * with this cause: a registered secret value equalled part of the reply (an option, a word or a digit).
+ */
+export const WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE = 'session_reply_secret_masked';

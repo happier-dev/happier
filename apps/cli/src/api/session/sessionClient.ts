@@ -146,7 +146,7 @@ import {
 import { accountWakeNeedsHostChangesRead, registerAccountWakeConsumer, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
-import { registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
+import { redactTranscriptSecrets, registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
     createRuntimeSessionClientDurableMutationOutbox,
@@ -586,6 +586,8 @@ export class ApiSessionClient extends EventEmitter {
     private rolePromptOrganization: Pick<import('@happier-dev/protocol').V2SessionByIdResponse['session'], 'manager' | 'origin'>;
     private hostCurrentTurnFacts: Readonly<{ turnId: string; facts: import('@happier-dev/protocol').SessionTurnFactsV1 }> | null = null;
     private questionWaitTurnId: string | null = null;
+    /** This Session's transcript masker, in the hosted scope its writer uses. */
+    private readonly redactOwnTranscriptSecrets = bindToHostedSessionScope((text: string) => redactTranscriptSecrets(text));
     private metadata: Metadata | null;
     private metadataLayoutVersion: number;
     private metadataVersion: number;
@@ -4815,7 +4817,8 @@ export class ApiSessionClient extends EventEmitter {
             if (committed.type !== 'found') return { v: 1, ok: false, error: 'unavailable' };
             const content = openSessionMessageContent({ ...this.getStoredContentEncryptionContext(), content: committed.message.content });
             const answer = extractAssistantTextSnapshotFromSessionContent(content);
-            if (!answer || answer.text !== reply.message.trim() || committed.message.sidechainId !== (original.sidechainId ?? null)) {
+            // The stored row holds the writer's masked text: compare the reply through the same masker.
+            if (!answer || answer.text !== this.redactOwnTranscriptSecrets(reply.message).trim() || committed.message.sidechainId !== (original.sidechainId ?? null)) {
                 return { v: 1, ok: false, error: 'conflict' };
             }
             outcome = { kind: 'answer', result: { sessionId: this.sessionId, messageId: committed.message.id } };

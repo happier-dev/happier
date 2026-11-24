@@ -21350,6 +21350,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         causeNotRecorded: 'A causa da falha não foi registrada',
         usageLimitWait: 'Aguarde a redefinição do limite de uso do provedor e tente novamente.',
         agentTimedOut: 'Não foi possível contactar o Agente a tempo',
+        replySecretMasked: 'A resposta continha texto que corresponde a um dos seus segredos, por isso o resultado não pôde ser lido. Mude o nome da opção ou altere o segredo.',
         agentUnreachable: 'Não foi possível contactar o Agente',
         agentConnectionLost: 'A ligação ao Agente foi perdida',
         publicationDeclined: 'Recusou publicar a resposta na discussão, por isso nada foi publicado.',

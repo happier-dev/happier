@@ -21239,6 +21239,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         causeNotRecorded: '未記錄失敗原因',
         usageLimitWait: '等待供應商的使用額度重設後再試。',
         agentTimedOut: '未能及時連線到智慧代理',
+        replySecretMasked: '回覆中含有與你的某個密鑰相符的文字，因此無法讀取其結果。請重新命名該選項或更改密鑰。',
         agentUnreachable: '無法連線到智慧代理',
         agentConnectionLost: '與智慧代理的連線已中斷',
         publicationDeclined: '你拒絕將其回答發佈到討論中，因此未發佈任何內容。',

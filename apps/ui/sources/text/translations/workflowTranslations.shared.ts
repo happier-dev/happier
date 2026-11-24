@@ -875,6 +875,7 @@ export const en = {
         causeNotRecorded: 'The failure cause was not recorded',
         usageLimitWait: 'Wait for the provider’s usage limit to reset, then try again.',
         agentTimedOut: 'Couldn’t reach the Agent in time',
+        replySecretMasked: 'The reply contained text matching one of your secrets, so its result couldn’t be read. Rename the option or change the secret.',
         agentUnreachable: 'Couldn’t reach the Agent',
         agentConnectionLost: 'Lost the connection to the Agent',
         publicationDeclined: 'You declined posting its answer to the discussion, so nothing was posted.',

@@ -21299,6 +21299,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         causeNotRecorded: '失敗の原因は記録されていません',
         usageLimitWait: 'プロバイダーの使用制限がリセットされてから、もう一度試してください。',
         agentTimedOut: '時間内にエージェントに接続できませんでした',
+        replySecretMasked: '返信にシークレットのいずれかと一致するテキストが含まれていたため、結果を読み取れませんでした。オプション名を変更するか、シークレットを変更してください。',
         agentUnreachable: 'エージェントに接続できませんでした',
         agentConnectionLost: 'エージェントとの接続が切れました',
         publicationDeclined: 'ディスカッションへの回答の投稿を拒否したため、何も投稿されませんでした。',

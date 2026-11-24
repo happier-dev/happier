@@ -12,6 +12,8 @@ import {
   type WaitForSessionInputReplyResult,
 } from '@/session/services/sendSessionMessage';
 import type { SessionMessageModelSelectionInput } from '@/session/services/resolveSessionMessageModel';
+import { containsTranscriptSecretMask } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
 import { resolveSessionMessageAdmissionTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
@@ -30,6 +32,15 @@ export type WorkflowSessionInputObservation = (
   | Readonly<{ kind: 'cancelled'; usage?: SessionInputUsageV1 }>
   | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
 ) & Readonly<{ replyOutcome?: SessionMessageReplyOutcomeV1 }>;
+
+/**
+ * A Session step's result is read from the stored reply, which the transcript writer masked. When that
+ * text no longer decodes and carries the masker's marker, the cause is the masking, not the authored contract.
+ */
+export function readWorkflowSessionReplyFailureCode(storedReply: unknown, fallback: string): string {
+  return typeof storedReply === 'string' && containsTranscriptSecretMask(storedReply)
+    ? WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE : fallback;
+}
 
 export function workflowRuntimeFailureKind(issue: SessionRuntimeIssueV1 | undefined): 'failed' | 'needs_attention' {
   return issue?.source === 'usage_limit' ? 'needs_attention' : 'failed';

@@ -21388,6 +21388,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         causeNotRecorded: 'Przyczyna niepowodzenia nie została zapisana',
         usageLimitWait: 'Poczekaj na zresetowanie limitu użycia dostawcy, a następnie spróbuj ponownie.',
         agentTimedOut: 'Nie udało się połączyć z agentem na czas',
+        replySecretMasked: 'Odpowiedź zawierała tekst pasujący do jednego z Twoich sekretów, więc nie udało się odczytać jej wyniku. Zmień nazwę opcji lub zmień sekret.',
         agentUnreachable: 'Nie udało się połączyć z agentem',
         agentConnectionLost: 'Utracono połączenie z agentem',
         publicationDeclined: 'Odrzucono opublikowanie odpowiedzi w dyskusji, więc nic nie zostało opublikowane.',

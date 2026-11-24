@@ -11,6 +11,7 @@ import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, c
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
 import { ApiSessionClient } from './sessionClient';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from './client/transport/transcriptSecretRedaction';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 // HTTP and Socket.IO are substituted; reply publication, transcript commitment,
@@ -21,7 +22,9 @@ vi.mock('axios', async importOriginal => {
 });
 
 const clients = new Set<ApiSessionClient>();
+const releaseSecrets: Array<() => void> = [];
 afterEach(async () => {
+  for (const release of releaseSecrets.splice(0)) release();
   await Promise.allSettled([...clients].map(client => client.close()));
   clients.clear();
   vi.unstubAllGlobals();
@@ -244,7 +247,13 @@ describe('Session reply publication through the real Action and publisher', () =
     expect(requests).toHaveLength(1);
   });
 
-  it('commits the answer before fulfilling only its named original input and rejects an unrelated turn', async () => {
+  // A registered secret in the answer is masked in the stored row; publication compares like with like.
+  it.each([
+    { name: 'plain answer', message: '  Revision 42 is checked.\n', stored: '  Revision 42 is checked.\n', secret: undefined },
+    { name: 'answer holding a registered secret', message: '  Token reply-secret-value is set.\n',
+      stored: `  Token ${TRANSCRIPT_SECRET_REDACTED} is set.\n`, secret: 'reply-secret-value' },
+  ])('commits the answer before fulfilling only its named original input and rejects an unrelated turn ($name)', async ({ message, stored, secret }) => {
+    if (secret) releaseSecrets.push(registerTranscriptSecret(secret));
     const sessionId = 'cmv3replyreceiveraaaaaaaa';
     const receiverSession = createPlainSessionFixture({ id: sessionId });
     const credentials = { token: 'reply-owner', encryption: null };
@@ -332,7 +341,7 @@ describe('Session reply publication through the real Action and publisher', () =
     client.observeHostTurnFacts({ turnId: 'accepted-turn', facts: { initiator: 'user', workDepth: 0 } });
     const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId,
       mode: 'plain', ctx: null, sessionMessageReplyPublisher: client });
-    const input = { sessionId, requestLocalId: 'original-input', reply: { kind: 'answer' as const, message: '  Revision 42 is checked.\n' } };
+    const input = { sessionId, requestLocalId: 'original-input', reply: { kind: 'answer' as const, message } };
     const publication = client.rpcHandlerManager.invokeLocal('session.message.reply', input, {
       rpcContext: { callerAuthority: 'present_user' },
     });
@@ -350,7 +359,7 @@ describe('Session reply publication through the real Action and publisher', () =
         outcome: { kind: 'answer', result: { sessionId, messageId: 'committed-answer' } } } })]);
     expect(publications).toHaveLength(1);
     expect(publications[0]).toMatchObject({ content: { t: 'plain', v: {
-      content: { data: { message: input.reply.message } }, meta: { actionRequestAttributionV1: cause },
+      content: { data: { message: stored } }, meta: { actionRequestAttributionV1: cause },
     } } });
     expect(await deps.sessionMessageReply!({ context: { surface: 'cli' }, ...input, sessionId: 'other-session' }))
       .toMatchObject({ v: 1, ok: false, error: 'forbidden' });

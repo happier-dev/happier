@@ -21378,6 +21378,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         causeNotRecorded: 'No s’ha registrat la causa de l’error',
         usageLimitWait: 'Espera que es restableixi el límit d’ús del proveïdor i torna-ho a provar.',
         agentTimedOut: 'No s’ha pogut contactar amb l’Agent a temps',
+        replySecretMasked: 'La resposta contenia text que coincideix amb un dels teus secrets, així que no se n’ha pogut llegir el resultat. Canvia el nom de l’opció o canvia el secret.',
         agentUnreachable: 'No s’ha pogut contactar amb l’Agent',
         agentConnectionLost: 'S’ha perdut la connexió amb l’Agent',
         publicationDeclined: 'Has rebutjat publicar la resposta a la conversa, així que no s’ha publicat res.',
