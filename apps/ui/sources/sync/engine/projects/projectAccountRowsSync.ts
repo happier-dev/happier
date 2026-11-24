@@ -474,7 +474,8 @@ export function createProjectAccountRowsSync(options: Readonly<{
             }
             if (intent.kind === 'migrate_label' && (options.readLegacyLabel?.(intent.legacyKey) !== intent.label || existing?.label)) return { ok: true, workspaceRefId: existing?.id, migrated: false };
             const patch = intent.kind === 'migrate_label' ? { label: intent.label } : intent.patch;
-            const { lastOpenedAtMs: rememberedOpen, ...structuralPatch } = patch;
+            const { lastOpenedAtMs, ...structuralPatch } = patch;
+            const rememberedOpen = lastOpenedAtMs ?? undefined;
             const nextRefs = upsertWorkspaceRefByScope(before.workspaceRefs, { scope: intent.scope, nowMs: intent.nowMs, patch: structuralPatch });
             const resolved = resolveWorkspaceRefByScope(nextRefs, intent.scope);
             if (resolved.kind !== 'resolved') return { ok: false, code: 'workspace_ref_not_found' };

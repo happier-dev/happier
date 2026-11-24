@@ -193,8 +193,9 @@ export function useProjectHeldSetupReviewOperation(query: ActionOperationProject
 }
 
 export function useProjectHeldSetupReviewOperations(accountId: string, workspaces: readonly WorkspaceAddressV1[]) {
-    return useActionOperationSelector(useShallow(() =>
-        actionOperationSelectors.selectHeldProjectSetupReviews(actionOperationStore.getSnapshot(), accountId, workspaces)));
+    const select = useShallow(() =>
+        actionOperationSelectors.selectHeldProjectSetupReviews(actionOperationStore.getSnapshot(), accountId, workspaces));
+    return useActionOperationSelector(() => select(undefined));
 }
 
 export function useProjectServiceActionOperations(query: ActionOperationProjectServicesQuery) {

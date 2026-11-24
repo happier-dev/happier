@@ -410,6 +410,15 @@ describe('Project Account row sync owner', () => {
         await h.owner.mutateRef({ kind: 'upsert', scope: { serverId: 'home', machineId: 'other', rootPath: '/other' }, nowMs: 2, patch: { lastOpenedAtMs: 9 } });
         expect(h.recencyWrites).toEqual([{ refId: expect.any(String), timestamp: 9, committed: true }]);
     });
+    it('preserves the opened timestamp when a workspace upsert has no timestamp', async () => {
+        const h = harness();
+        const scope = { serverId: 'home', machineId: 'machine', rootPath: '/repo' };
+        await h.owner.mutateRef({ kind: 'upsert', scope, nowMs: 9, patch: { lastOpenedAtMs: 9 } });
+        await h.owner.mutateRef({ kind: 'upsert', scope, nowMs: 10, patch: { lastOpenedAtMs: null } });
+        await h.owner.mutateRef({ kind: 'upsert', scope, nowMs: 11, patch: { label: 'Renamed', lastOpenedAtMs: null } });
+        expect((await h.owner.refresh()).workspaceRefs).toMatchObject([{ label: 'Renamed', lastOpenedAtMs: 9 }]);
+        expect(h.recencyWrites).toEqual([{ refId: 'ref', timestamp: 9, committed: true }]);
+    });
     it.each([
         { name: 'accepted anchor', fields: { projectKey: 'anchor' } },
         { name: 'implicit fallback anchor', fields: {} },
