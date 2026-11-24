@@ -78,32 +78,46 @@ export type MachineFreshCopyRow = Readonly<{
     target: WorkspaceRefV1;
 }>;
 
+export type MachineFreshCopies = Readonly<{
+    copies: readonly MachineFreshCopyRow[];
+    /** Missing endpoints affect these relationships only; known copies remain usable. */
+    unresolvedRelationshipIds: readonly string[];
+}>;
+
 /** Null is an unknown census, not evidence that this Machine has no worker copies. */
 export function readMachineFreshCopies(
     state: Parameters<typeof readCurrentProjectAccountRows>[0],
     input: Readonly<{ scope: ServerAccountScope; machineId: string }>,
-): readonly MachineFreshCopyRow[] | null {
+): MachineFreshCopies | null {
     const rows = readCurrentProjectAccountRows(state);
     if (!rows || rows.status !== 'ready' || rows.coverage !== 'complete'
         || !areServerAccountScopesEqual(rows.scope, input.scope)) return null;
     const refs = new Map<string, WorkspaceRefV1>();
+    const foreignRefIds = new Set<string>();
     for (const ref of rows.workspaceRefs) {
-        if (ref.serverId !== rows.scope.serverId) continue;
+        if (ref.serverId !== rows.scope.serverId) { foreignRefIds.add(ref.id); continue; }
         if (refs.has(ref.id)) return null;
         refs.set(ref.id, ref);
     }
     const copies: MachineFreshCopyRow[] = [];
+    const unresolvedRelationshipIds: string[] = [];
     for (const relationship of rows.relationships) {
         const provenance = getWorkspaceSyncWorkerCopyV1(relationship);
         if (!provenance) continue;
         const target = refs.get(provenance.targetWorkspaceRefId);
-        if (!target) return null;
-        if (target.machineId !== input.machineId) continue;
         const source = refs.get(provenance.sourceWorkspaceRefId);
-        if (!source) return null;
+        // Account rows can retain refs from another Home. Those relationships do not belong
+        // to this Home's Machine; a missing endpoint is a different, unresolved observation.
+        if ((!target && foreignRefIds.has(provenance.targetWorkspaceRefId))
+            || (!source && foreignRefIds.has(provenance.sourceWorkspaceRefId))) continue;
+        if (target && target.machineId !== input.machineId) continue;
+        if (!target || !source) {
+            unresolvedRelationshipIds.push(relationship.relationshipId);
+            continue;
+        }
         copies.push({ relationship, source, target });
     }
-    return copies;
+    return { copies, unresolvedRelationshipIds };
 }
 
 export function createProjectAccountRowsDomain<S extends ProjectAccountRowsDomain>({ set }: { set: StoreSet<S>; get: StoreGet<S> }): ProjectAccountRowsDomain {

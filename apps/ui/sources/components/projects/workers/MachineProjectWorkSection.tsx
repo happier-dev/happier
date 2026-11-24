@@ -570,6 +570,15 @@ export function MachineProjectWorkSection(
             onDismiss={() => freshCopies.dismissNotice(notice.relationshipId)}
           />
         ))}
+        {freshCopies.incomplete ? (
+          <SurfaceStateCard
+            testID={`${testID}.copies.unavailable`}
+            size="line"
+            kind="unavailable"
+            title={t('projectWorkers.freshCopiesUnavailable')}
+            action={{ label: t('projectWorkers.checkAgain'), onPress: retryProjectRows }}
+          />
+        ) : null}
         {freshCopies.copies === null && nativeState === 'asleep' ? (
           <SurfaceStateCard
             testID={`${testID}.copies.asleep`}
@@ -593,7 +602,7 @@ export function MachineProjectWorkSection(
             title={t('projectWorkers.freshCopiesUnavailable')}
             action={{ label: t('projectWorkers.checkAgain'), onPress: retryProjectRows }}
           />
-        ) : freshCopies.copies.length === 0 ? (
+        ) : freshCopies.copies.length === 0 && !freshCopies.incomplete ? (
           <SurfaceStateCard
             testID={`${testID}.copies.empty`}
             size="line"

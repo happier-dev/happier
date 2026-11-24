@@ -85,12 +85,12 @@ describe('Project Account row projection', () => {
         state.getState().activateProjectAccountRowsScope(scope);
         state.getState().applyProjectAccountRowsForScope(scope, rows);
         const current = state.getState().projectAccountRows!;
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' }))
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })?.copies)
             .toEqual([forward, reversedEndpoints].map(relationship => ({ relationship,
                 source: current.workspaceRefs[0], target: current.workspaceRefs[1] })));
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-a' }))
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-a' })?.copies)
             .toEqual([{ relationship: oppositeTarget, source: current.workspaceRefs[1], target: current.workspaceRefs[0] }]);
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'unrelated-machine' })).toEqual([]);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'unrelated-machine' })?.copies).toEqual([]);
     });
     it('keeps Fresh-copy observation unknown for incomplete, failed or retired Account/Home rows', () => {
         const state = store();
@@ -99,7 +99,7 @@ describe('Project Account row projection', () => {
         state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), coverage: 'partial' });
         expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
         state.getState().applyProjectAccountRowsForScope(scope, snapshot());
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toEqual([]);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })?.copies).toEqual([]);
         expect(readMachineFreshCopies({ ...state.getState(), profileScope: { ...scope, accountId: 'retired-account' } },
             { scope, machineId: 'machine-b' })).toBeNull();
         expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope },
@@ -108,21 +108,27 @@ describe('Project Account row projection', () => {
         expect(state.getState().projectAccountRows?.workspaceRefs).toHaveLength(2);
         expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
     });
-    it('does not turn an unresolved marked source or target into an authoritative empty Fresh-copy list', () => {
-        const state = store();
+    it.each(['source', 'target'] as const)('keeps current copies when another relationship has a foreign-Home %s', (endpoint) => {
+        const rows = snapshot();
         const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-        const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'worker-copy', controllerMachineId: 'machine-a',
+        const worker: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'current-copy', controllerMachineId: 'machine-a',
             alphaWorkspaceRefId: 'ref-a', betaWorkspaceRefId: 'ref-b', mode: 'keep_synced', enabled: true,
             contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
             provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'ref-a', targetWorkspaceRefId: 'ref-b' } };
-        state.getState().activateProjectAccountRowsScope(scope);
-        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[0]!], relationships: [relationship] });
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
-        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[1]!], relationships: [relationship] });
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
-        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[0]!,
-            { ...snapshot().workspaceRefs[1]!, serverId: 'unrelated-home' }], relationships: [relationship] });
-        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+        const foreign: WorkspaceSyncRelationshipV1 = { ...worker, relationshipId: 'foreign-copy',
+            alphaWorkspaceRefId: endpoint === 'source' ? 'foreign' : 'ref-a',
+            betaWorkspaceRefId: endpoint === 'target' ? 'foreign' : 'ref-b',
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: endpoint === 'source' ? 'foreign' : 'ref-a',
+                targetWorkspaceRefId: endpoint === 'target' ? 'foreign' : 'ref-b' } };
+        const census = { ...rows, workspaceRefs: [...rows.workspaceRefs,
+            { ...rows.workspaceRefs[1]!, id: 'foreign', serverId: 'previous-home' }], relationships: [foreign, worker] };
+        const result = readMachineFreshCopies({ projectAccountRows: census }, { scope, machineId: 'machine-b' });
+        expect(result).toEqual({ copies: [{ relationship: worker, source: rows.workspaceRefs[0], target: rows.workspaceRefs[1] }],
+            unresolvedRelationshipIds: [] });
+        // Truly missing refs keep their own uncertainty without hiding the usable copy.
+        const missing = readMachineFreshCopies({ projectAccountRows: { ...census, workspaceRefs: rows.workspaceRefs } }, { scope, machineId: 'machine-b' });
+        expect(missing).toEqual({ copies: [{ relationship: worker, source: rows.workspaceRefs[0], target: rows.workspaceRefs[1] }],
+            unresolvedRelationshipIds: ['foreign-copy'] });
     });
     it('isolates Home/Account switches and refuses responses for a retired scope', () => {
         const state = store();

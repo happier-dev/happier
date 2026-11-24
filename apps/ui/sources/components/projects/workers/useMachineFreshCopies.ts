@@ -49,12 +49,14 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     const retirement = binding?.onRetire(() => lifetime.abort());
     return () => { retirement?.dispose(); lifetime.abort(); };
   }, [binding, lifetime]);
-  const rawCopies = React.useMemo(() => {
+  const census = React.useMemo(() => {
     if (!rows || !accountId) return null;
     return readMachineFreshCopies({ projectAccountRows: rows }, {
       scope: { accountId, serverId }, machineId,
     });
   }, [accountId, machineId, serverId, rows?.scope, rows?.status, rows?.coverage, rows?.workspaceRefs, rows?.relationships]);
+  const rawCopies = census?.copies ?? null;
+  const incomplete = Boolean(census?.unresolvedRelationshipIds.length);
   const [readToken, setReadToken] = React.useState(0);
   const refresh = React.useCallback(() => setReadToken(token => token + 1), []);
   const [scopedNotices, setNotices] = React.useState<ScopedCopyNotices | null>(null);
@@ -212,6 +214,6 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     noticesRef.current = { key, lifetime, values };
     setNotices(noticesRef.current);
   }, [key, lifetime]);
-  return { copies, loading, remove, notices, dismissNotice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
+  return { copies, incomplete, loading, remove, notices, dismissNotice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
     refreshApproval: approval.refresh, busy: [...notices.values()].some(notice => notice.kind === 'saving' || notice.kind === 'approval') };
 }

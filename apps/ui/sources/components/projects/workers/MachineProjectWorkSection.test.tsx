@@ -805,6 +805,28 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(screen.findAllByTestId('work.copies.unavailable')).toHaveLength(0);
   });
 
+  it('keeps usable Fresh copies beside an incomplete relationship and skips foreign-Home history', async () => {
+    const { screen } = await setup();
+    const { scope, source, target } = await seedWorkerCopy();
+    const rows = storage.getState().projectAccountRows!;
+    const worker = rows.relationships[0]!;
+    const unresolved: WorkspaceSyncRelationshipV1 = { ...worker, relationshipId: 'old-copy',
+      alphaWorkspaceRefId: 'old-target', betaWorkspaceRefId: source.id,
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: 'old-target' } };
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { ...rows, relationships: [unresolved, worker] });
+    });
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copies.unavailable').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copies.empty')).toHaveLength(0);
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { ...rows, relationships: [unresolved, worker],
+        workspaceRefs: [...rows.workspaceRefs, { ...target, id: 'old-target', serverId: 'previous-home' }] });
+    });
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copies.unavailable')).toHaveLength(0);
+  });
+
   it('Check again rereads partial Project rows once and shows the recovered copies', async () => {
     const { screen } = await setup({ deferMachineDiscovery: true });
     const { scope } = await seedWorkerCopy();
