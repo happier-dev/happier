@@ -1,3 +1,4 @@
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema }
     from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1528,7 +1529,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown with reviewed assigned Domain', 'provider teardown with assigned Domain attached after review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -1540,6 +1541,9 @@ describe('installed deployment storage and target composition', () => {
         });
         onTestFinished(() => actionAutomations.dispose());
         const providerTeardown = scenario.startsWith('provider teardown');
+        const reviewedAssignedDomain = scenario === 'provider teardown with reviewed assigned Domain';
+        const assignedDomainChanged = scenario === 'provider teardown with assigned Domain attached after review';
+        const reviewedDomainDelete = reviewedAssignedDomain || assignedDomainChanged;
         const retainedTraffic = scenario === 'promote retained platform' || scenario === 'rollback retained platform';
         const variableScenario = scenario.startsWith('variable ');
         const vercelTelemetryOff = scenario === 'variable Vercel telemetry off';
@@ -1623,7 +1627,7 @@ describe('installed deployment storage and target composition', () => {
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/project' } };
         // Retained older links/receipts did not carry a native preparation.
         const capturedPreparation = scenario === 'retained receipt observe' ? {} : { preparedNative, repositoryAccess };
-        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(retainedTraffic ? ['promote' as const, 'rollback' as const] : []), ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : []), ...(providerTeardown ? ['teardown' as const] : [])] as const;
+        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(retainedTraffic ? ['promote' as const, 'rollback' as const] : []), ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : []), ...(providerTeardown ? ['teardown' as const, ...(reviewedDomainDelete ? ['domains.remove' as const] : [])] : [])] as const;
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner', ...(sdkBackgroundObservation ? {
             tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.s`, encryption: null };
         let sdkHomeUrl = 'https://platform.test';
@@ -1799,6 +1803,7 @@ describe('installed deployment storage and target composition', () => {
                             ...(retainedTraffic ? { promote: 'promote', rollback: 'rollback' } : {}),
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : runtimeLogs ? { logs: { runtime: 'runtime-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
+                            ...(reviewedDomainDelete ? { domains: { remove: 'domains-remove' } } : {}),
                             ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : domainRole === 'domains.add' ? { add: 'domains-add' } : { verify: 'domains-verify' } } : {}),
                             ...(domainTeardown || providerTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -1911,7 +1916,7 @@ describe('installed deployment storage and target composition', () => {
         let requesterPreparation: Awaited<ReturnType<typeof prepareRequesterAccountActionContext>> = null;
         try {
             expect(runtime.registry.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
-            const environment = createDeploymentEnvironmentDetailV1();
+            let environment = createDeploymentEnvironmentDetailV1();
             environment.environment.owner = { kind: 'account', accountId: 'owner' };
             delete environment.environment.buildMachineId;
             const row = environment.targetLinks[0];
@@ -1974,6 +1979,10 @@ describe('installed deployment storage and target composition', () => {
             let nativeReads = 0;
             let candidatesCreated = 0;
             vi.spyOn(axios, 'request').mockImplementation(async request => {
+                if (scenario.startsWith('provider teardown') && !reviewedDomainDelete && new URL(request.url!).pathname.endsWith('/domains')) return {
+                    status: 200, data: { ok: true, environmentId: environment.environment.id,
+                        revision: environment.environment.revision, domains: [], nextCursor: null },
+                };
                 if (publicTelemetrySync && new URL(request.url!).pathname.endsWith('/domains/' + collectorDomain.domainId)) {
                     const placement = { serverId: 'home', accountId: 'owner', ...collectorDomain, ...controller,
                         actionOperationId: 'collector-domain-operation', requestId: 'collector-domain-request' };
@@ -2057,9 +2066,9 @@ describe('installed deployment storage and target composition', () => {
                 const version = Number(documents.get(id)?.bodyVersion ?? 0) + 1;
                 documents.set(id, { ...documents.get(id), ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
                     encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-                if (rootApproval) Object.assign(documents.get(id)!, { dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                if (rootApproval || reviewedDomainDelete) Object.assign(documents.get(id)!, { dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                     headerVersion: version, bodyVersion: version });
-                return { status: 200, data: { id, success: true, headerVersion: rootApproval ? version : 1, bodyVersion: rootApproval ? version : 1 } };
+                return { status: 200, data: { id, success: true, headerVersion: rootApproval || reviewedDomainDelete ? version : 1, bodyVersion: rootApproval || reviewedDomainDelete ? version : 1 } };
             });
             const identity = tweetnacl.sign.keyPair();
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(MachineInstallationIdentityV1Schema.parse({ version: 1,
@@ -2204,6 +2213,38 @@ describe('installed deployment storage and target composition', () => {
                     expect(module.readObservationCount()).toBe(0);
                     return;
                 }
+                const assignedHostname = 'assigned.up.railway.app';
+                const assignedDomainHeader = reviewedDomainDelete ? DeploymentDomainHeaderV1Schema.parse({
+                    v: 1, id: 'platform-domain', environmentId: intent.environmentId, targetLinkId: row.targetLink.id,
+                    revision: 1, state: 'active', provider: true, providerPlacement: {
+                        serverId: 'home', accountId: 'owner', environmentId: intent.environmentId, targetLinkId: row.targetLink.id,
+                        domainId: 'platform-domain', controller: { machineId: 'machine-a', installationId: 'installation-a' },
+                        actionOperationId: 'domain-operation', requestId: 'domain-request',
+                    }, contentArtifactId: 'platform-domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
+                    createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
+                }) : undefined;
+                let domainAttached = reviewedAssignedDomain;
+                let removedAssignedDomain = false;
+                if (assignedDomainHeader) {
+                    put(assignedDomainHeader.contentArtifactId, 'deployment-domain.v1',
+                        { hostname: assignedHostname, target: { kind: 'provider' } });
+                    const previous = vi.mocked(axios.request).getMockImplementation()!;
+                    vi.mocked(axios.request).mockImplementation(async request => {
+                        const path = new URL(request.url!).pathname;
+                        if (path.endsWith('/domains')) return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                            revision: environment.environment.revision, domains: domainAttached ? [assignedDomainHeader] : [], nextCursor: null } };
+                        if (path.endsWith('/domains/platform-domain')) return { status: 200, data: { ok: true,
+                            environmentId: intent.environmentId, revision: environment.environment.revision, domain: assignedDomainHeader } };
+                        if (path.endsWith('/domains/platform-domain/transitions')) {
+                            removedAssignedDomain = true;
+                            domainAttached = false;
+                            return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                                revision: environment.environment.revision, domain: { ...assignedDomainHeader, state: 'removing',
+                                    deletedAtMs: 2, revision: 2, contentBodyVersion: 2 } } };
+                        }
+                        return previous(request);
+                    });
+                }
                 const prepared = await deps.prepareDeploymentTeardown!({ input: intent, context: ownerContext,
                     readWorkflowInvocation: async () => { throw new Error('Runtime deletion has no Workflow custody'); } });
                 if (scenario === 'provider teardown linked default' || scenario === 'provider teardown explicit unlink') {
@@ -2219,7 +2260,7 @@ describe('installed deployment storage and target composition', () => {
                 }
                 expect(prepared, JSON.stringify(prepared)).toMatchObject({ input: { serverId: intent.serverId, environmentId: intent.environmentId, targetLinkId: intent.targetLinkId, reason: intent.reason, requestKey: intent.requestKey,
                     expectedRevision: environment.environment.revision, expectedTargetLinkRevision: row.targetLink.revision },
-                    hostReviewedChildren: { children: [{ role: 'teardown' }, { role: 'observe' }] } });
+                    ...(!reviewedDomainDelete ? { hostReviewedChildren: { children: [{ role: 'teardown' }, { role: 'observe' }] } } : {}) });
                 if (!('input' in prepared) || !('contentArtifactId' in prepared.input)) throw new Error('Expected provider teardown candidate');
                 const input = prepared.input;
                 const document = documents.get(input.contentArtifactId)!;
@@ -2232,7 +2273,7 @@ describe('installed deployment storage and target composition', () => {
                 const mismatchedReceipt = scenario === 'provider teardown wrong controller' || scenario === 'provider teardown wrong key';
                 const staleReceipt = scenario === 'provider teardown stale receipt';
                 const rejectedRevisions: number[] = [];
-                const receipt = createDeploymentReceiptHeaderV1({ id: 'provider-teardown', environmentId: intent.environmentId,
+                let receipt = createDeploymentReceiptHeaderV1({ id: 'provider-teardown', environmentId: intent.environmentId,
                     targetLinkId: row.targetLink.id, operation: 'teardown',
                     requestKey: scenario === 'provider teardown wrong key' ? 'foreign-request' : intent.requestKey,
                     actionOperationId: 'provider-delete-operation', state: scenario === 'provider teardown recovery' ? 'outcome_unknown' : 'queued',
@@ -2246,14 +2287,19 @@ describe('installed deployment storage and target composition', () => {
                 vi.mocked(axios.request).mockImplementation(async request => {
                     const path = new URL(request.url!).pathname;
                     if (receiptAdmitted && request.method === 'GET') dispatchReads.push(path);
-                    if (path.endsWith('/domains')) return { status: 200, data: { ok: true,
+                    if (!reviewedDomainDelete && path.endsWith('/domains')) return { status: 200, data: { ok: true,
                         environmentId: intent.environmentId, revision: environment.environment.revision, domains: [], nextCursor: null } };
                     if (path.endsWith(`/receipts/${receipt.id}`)) return { status: 200, data: { ok: true, deployment: receipt } };
                     if (path.endsWith('/teardown')) {
+                        if (reviewedDomainDelete) {
+                            expect(request.data).toMatchObject({ contentArtifactId: expect.any(String) });
+                            receipt = { ...receipt, contentArtifactId: z.object({ contentArtifactId: z.string() }).parse(request.data).contentArtifactId };
+                        }
                         receiptAdmitted = true;
                         return { status: 200, data: { ok: true, environmentId: intent.environmentId,
                             revision: environment.environment.revision, deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state } };
                     }
+                    if (path.endsWith('/domains/platform-domain/transitions')) return previousHttp(request);
                     if (path.endsWith('/transitions')) {
                         const transition = DeploymentTransitionInputV1Schema.parse(request.data);
                         states.push(transition.state);
@@ -2289,7 +2335,18 @@ describe('installed deployment storage and target composition', () => {
                 };
                 const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
                     generateOperationId: () => receipt.actionOperationId });
+                const approvalStore = createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://platform.test',
+                    getAccountEncryptionMode: async () => 'plain' });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    ...(reviewedDomainDelete ? { ...approvalStore,
+                        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+                            accountId: 'owner', machineId: 'machine-a', serverId: 'home',
+                            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: 'machine-a' }),
+                            resolveTarget: async ({ target }) => target ?? null, isAccountCurrent: async () => true,
+                            listAccountApiTokens: async () => ({ tokens: [] }),
+                            // The approval and the authenticated Account read share the fixture's default policy.
+                            resolveCurrentSessionAgentSpawnPolicyV1: async () => DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+                        }) } : {}),
                     actionAutomations,
                     runActionOperation: operations.runActionOperation,
                     listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
@@ -2301,6 +2358,42 @@ describe('installed deployment storage and target composition', () => {
                         ...(scenario === 'provider teardown queued observation' ? { 'deployments.receipts.observe': ['cli'] as const } : {}) },
                         ...(scenario === 'provider teardown review' ? { actions: {
                             [formatQualifiedPluginActionId({ pluginId, localId: 'teardown' })]: { approvalRequiredSurfaces: ['cli'] } } } : {}) }) };
+                if (reviewedDomainDelete) {
+                    const approvalContext: ActionExecutorContext = { ...context, authority: 'account_automation', surface: 'agent',
+                        interactivePresentation: undefined,
+                        externalActionTarget: { kind: 'machine', machineId: 'machine-a' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                            'deployments.teardown': { approvalRequiredSurfaces: ['agent'] },
+                        } }) };
+                    const review = await executor.execute('deployments.teardown', intent, approvalContext);
+                    expect(review, JSON.stringify(review)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                    if (!review.ok) throw new Error(review.errorCode);
+                    const { artifactId } = z.object({ artifactId: z.string() }).parse(review.result);
+                    expect(await approvalStore.approvalsGet({ artifactId })).toMatchObject({ v: 2, preview: {
+                        summary: reviewedAssignedDomain ? expect.stringContaining(assignedHostname) : expect.not.stringContaining(assignedHostname),
+                    } });
+                    expect(states).toEqual([]);
+                    if (assignedDomainChanged) {
+                        domainAttached = true;
+                        environment = { ...environment, environment: { ...environment.environment, revision: environment.environment.revision + 1 } };
+                    }
+                    const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve',
+                        serverIdentityId: 'home', originServerId: 'home' }, context);
+                    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
+                    const retained = await approvalStore.approvalsGet({ artifactId });
+                    const settled = retained?.v === 2 ? retained.execution : undefined;
+                    if (reviewedAssignedDomain) {
+                        expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true });
+                        expect(removedAssignedDomain).toBe(true);
+                        expect(states).toEqual(['succeeded']);
+                    } else {
+                        expect(settled, JSON.stringify(settled)).toMatchObject({ ok: false, errorCode: 'approval_stale',
+                            error: expect.stringContaining(assignedHostname), effectAttempted: false });
+                        expect(readDeploymentRefusalRecoveryV1('approval_stale', settled?.details)?.remedy).toContain(assignedHostname);
+                        expect(removedAssignedDomain).toBe(false);
+                        expect(states).toEqual([]);
+                    }
+                    return;
+                }
                 if (scenario === 'provider teardown changed identity') {
                     const linked = DeploymentTargetLinkProviderContentV1Schema.parse(row.content);
                     row.content = { ...linked, providerIdentity: { ...linked.providerIdentity, providerResourceId: 'different-project' } };

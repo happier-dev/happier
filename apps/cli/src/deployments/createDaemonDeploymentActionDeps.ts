@@ -65,9 +65,9 @@ import {
     DeploymentDomainMutationResultV1Schema, isDeploymentDomainChildActionIdV1,
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentEnvironmentCreationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { type HostReviewedChildrenPlanV1, readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
 import { readPreviewDomainForHost, preparePreviewDomainFactForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
@@ -1553,6 +1553,24 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 effectActionId: DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 })
             : ApiClient.create(host.credentials).then(api => api.getMachine(machineId, { signal: context.signal }))),
     });
+    // Provider teardown and Domain removal are one reviewed effect set.
+    async function planTeardownChildren(request: Parameters<typeof prepareOwnServerTeardownDomainReviewedChildren>[0],
+        environment: DeploymentEnvironmentDetailV1, preparedTargetPlan?: HostReviewedChildrenPlanV1): Promise<HostReviewedChildrenPlanV1 | ActionExecuteFailure | null> {
+        const { input, context } = request;
+        const link = environment.targetLinks.find(row => row.targetLink.id === input.targetLinkId)?.targetLink;
+        if (!link) return failure('target_mismatch');
+        const targetPlan = preparedTargetPlan ?? (link.role !== 'data' && link.source.kind === 'plugin'
+            ? await contributedTarget.prepareTeardownChildren({ environmentId: input.environmentId,
+                targetLinkId: link.id, context }, environment) : null);
+        if (isActionExecuteFailure(targetPlan)) return targetPlan;
+        const domainPlan = await prepareOwnServerTeardownDomainReviewedChildren(request, { serverId: host.serverId,
+            storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment,
+            readReceipt: targetHostReaders.readReceipt, readInstallation, prepareProviderDomain: prepareContributedDomain });
+        if (isActionExecuteFailure(domainPlan)) return domainPlan;
+        const children = [...(targetPlan?.children ?? []), ...(domainPlan?.children ?? [])];
+        return children.length ? { children } : null;
+    }
+
     const deps = {
         deploymentTelemetrySet,
         deploymentChild,
@@ -1703,6 +1721,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (data) return data;
                     const contributed = await contributedTarget.prepareTeardown({ ...request.input,
                         environmentId: request.input.environmentId, targetLinkId, context: request.context }, environment);
+                    if (contributed && 'hostReviewedChildren' in contributed && 'contentArtifactId' in contributed.input) {
+                        const plan = await planTeardownChildren({ actionId: DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+                            input: contributed.input, context: request.context }, environment, contributed.hostReviewedChildren);
+                        if (isActionExecuteFailure(plan)) return plan;
+                        return { ...contributed, hostReviewedChildren: plan ?? undefined };
+                    }
                     if (contributed) return contributed;
                 }
                 return await ownServerTeardown.prepare(request, environment);
@@ -1881,19 +1905,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 if ('detachKeepRunning' in input || 'nothingDeployed' in input) return null;
                 const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId, targetLinkId: input.targetLinkId, context: request.context });
-                const link = environment.targetLinks.find(row => row.targetLink.id === input.targetLinkId)?.targetLink;
-                if (!link) return failure('target_mismatch');
-                // Data cleanup already declared its retained child; Domain effects join the same parent review.
-                const targetPlan = link.role !== 'data' && link.source.kind === 'plugin'
-                    ? await contributedTarget.prepareTeardownChildren({ environmentId: input.environmentId,
-                        targetLinkId: input.targetLinkId, context: request.context }, environment) : null;
-                if (targetPlan && 'errorCode' in targetPlan) return targetPlan;
-                const domainPlan = await prepareOwnServerTeardownDomainReviewedChildren({ ...request, input }, { serverId: host.serverId,
-                    storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
-                    prepareProviderDomain: prepareContributedDomain });
-                if (domainPlan && 'errorCode' in domainPlan) return domainPlan;
-                const children = [...(targetPlan?.children ?? []), ...(domainPlan?.children ?? [])];
-                return children.length ? { children } : null;
+                return await planTeardownChildren({ ...request, input }, environment);
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         deploymentAction: (async (actionId, input, context, creationReview = undefined) => {

@@ -1,4 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { readDeploymentDomainHostnameV1 } from '../../deployments/deploymentDomainContentV1.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
@@ -17,6 +19,15 @@ export const HostReviewedChildDeclarationV1Schema = lazyZodSchema(() => z.strict
 export const HostReviewedChildrenPlanV1Schema = lazyZodSchema(() => z.strictObject({
   children: z.array(HostReviewedChildDeclarationV1Schema),
 }));
+
+/** Display facts from the exact admitted provider Domain removal children. */
+export function readReviewedDeploymentDomainRemovalsV1(plan: HostReviewedChildrenPlanV1 | undefined) {
+  return (plan?.children ?? []).flatMap(child => {
+    if (child.role !== 'domains.remove') return [];
+    const hostname = readDeploymentDomainHostnameV1(readRecord(readRecord(child.input).domain).hostname);
+    return hostname ? [{ hostname, child }] : [];
+  });
+}
 
 export type AdmittedHostReviewedChildrenV1 = Readonly<{
   parentActionId: ActionId;

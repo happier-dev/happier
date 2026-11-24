@@ -14,8 +14,8 @@ import type { ActionHomeEquivalence, PreparedCoreAdmission } from './coreInvocat
 import type { ActionSettingsActionId } from '../actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1, HostReviewedChildInvocationV1 } from './types.js';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1, retainHostReviewedChildCredentialScopeAdmissionV1, type HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
-import { HostReviewedChildrenPlanV1Schema } from './hostReviewedChildrenV1.js';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentDomainDnsVerifyActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { HostReviewedChildrenPlanV1Schema, readReviewedDeploymentDomainRemovalsV1 } from './hostReviewedChildrenV1.js';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentDomainDnsVerifyActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 
 /** Stored review facts are closed; they never create a host invocation port. */
 export function readHostReviewedChildrenPlanV1(value: unknown): HostReviewedChildrenPlanV1 | undefined {
@@ -194,8 +194,22 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
       && witness.artifactId === context.approvedActionReplay.artifactId && witness.actionId === actionId
       && witness.requestId === context.actionRequestId && witness.decidingAccountId
       && witness.inputDigest === computeActionInputApprovalDigestV1(actionId, params.input)));
-  if (retained && !reviewAccepted || params.approvalReplay && plan && !reviewAccepted)
+  if (retained && !reviewAccepted || params.approvalReplay && plan && !reviewAccepted) {
+    if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
+      const before = readReviewedDeploymentDomainRemovalsV1(retained);
+      const after = readReviewedDeploymentDomainRemovalsV1(plan);
+      const changed = [...new Set([
+        ...before.filter(({ child }) => !after.some(item => sameStrictJsonValue(item.child, child))).map(item => item.hostname),
+        ...after.filter(({ child }) => !before.some(item => sameStrictJsonValue(item.child, child))).map(item => item.hostname),
+      ])];
+      if (changed.length) {
+        const remedy = `The Domain removal in this Delete changed for ${changed.join(', ')}. Open a fresh Delete review.`;
+        return { ok: false, errorCode: 'approval_stale', error: remedy, effectAttempted: false,
+          details: { requiredFact: 'deploymentActionResult', remedy } };
+      }
+    }
     return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+  }
   const personReviewRequired = prepared?.requiredByPolicy === true && !reviewAccepted && params.reviewAdmitted !== true;
   return { ...(plan ? { plan, policies } : {}),
     ...(admittedChild && !personReviewRequired ? { admittedReviewedChild: true as const } : {}),

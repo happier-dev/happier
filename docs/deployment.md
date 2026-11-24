@@ -6202,7 +6202,10 @@ runtime Links. Its review includes their provider children. The accepted job cap
 Environment and Link references under the same controller and request proof.
 Cleanup invokes those exact reviewed children and settles their signed Domain
 observations through the existing removal owner. The bundled platform targets
-use the explicit detach-and-keep-running path; their remote resources and Domains stay.
+use the explicit detach-and-keep-running path to keep remote resources and
+Domains. A provider Delete instead reviews the exact Domain removals alongside
+provider teardown and observation. The review names each Domain being removed.
+A changed Domain removal requires a fresh review before any effect is attempted.
 
 A Domain's reviewed Cloudflare Named selection also selects tunnel placement when
 the Environment has no ingress setting. The Domain route-selection owner supplies
