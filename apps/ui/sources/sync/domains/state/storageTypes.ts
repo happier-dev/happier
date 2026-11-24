@@ -311,6 +311,8 @@ export interface Machine {
     id: string;
     /** Undefined on an unhydrated placeholder; null is Home's ordinary Machine projection. */
     managedMachineRef?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineRefV1 | null;
+    /** Home's admitted App Environment and placement, present only in a hydrated Machine row. */
+    deploymentApp?: import('@happier-dev/protocol/machines/enrollmentV1').DeploymentAppMachineAssociationV1 | null;
     /** Home's native qualification and owner-enabled wake presentation; absence makes no claim. */
     managedInputRuntime?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineInputRuntimeV1 | null;
     access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1;

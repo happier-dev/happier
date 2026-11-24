@@ -35,6 +35,28 @@ it('lists all 51 loaded Machines by default and honors a requested 201-Machine p
     expect(await listMachinesForVoiceTool({ serverId, purpose: 'input', limit: 2 })).toHaveProperty('items.length', 202);
 });
 
+it('exposes the admitted collector App address only in the refreshed person-facing input projection', async () => {
+    const { serverId, accountId } = account.scope;
+    const deploymentApp = { environmentId: 'collector-environment', targetLinkId: 'app-target', deploymentId: 'app-deploy',
+        controller: { machineId: 'controller', installationId: 'controller-installation' } };
+    const row = createPlainMachineRowFixture({ id: 'collector', accountId });
+    let association: typeof deploymentApp | null = deploymentApp;
+    const request = account.request.getMockImplementation();
+    if (!request) throw new Error('Expected Account HTTP boundary');
+    account.request.mockImplementation(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname === '/v1/machines') return Response.json([{ ...row, deploymentApp: association }]);
+        return request(input, init);
+    });
+    account.replaceVoice({ ...account.settings.voice, privacy: { ...account.settings.voice.privacy, shareDeviceInventory: true } });
+
+    const input = { purpose: 'input' as const, serverId, refresh: true };
+    expect(await listMachinesForVoiceTool(input)).toMatchObject({ items: [{ machineId: 'collector', deploymentApp }] });
+    expect(await listMachinesForVoiceTool({ serverId })).not.toHaveProperty('items.0.deploymentApp');
+    association = null;
+    expect(await listMachinesForVoiceTool(input)).toMatchObject({ items: [{ machineId: 'collector', deploymentApp: null }] });
+});
+
 it('retains a shared Use target installation in the Action inventory without stored content', async () => {
     const machine = createMachineFixture({ id: 'shared', installationId: 'other-installation',
         access: { custodian: { accountId: 'other-owner', displayName: 'Owner' }, role: 'use',

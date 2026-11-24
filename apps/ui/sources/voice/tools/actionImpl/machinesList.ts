@@ -59,6 +59,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
           const verdict = resolveMachineReachability(scope, m);
           return verdict === 'reachable' ? 'online' : verdict === 'unreachable' ? 'offline' : 'unknown';
         })(),
+        deploymentApp: row.deploymentApp ?? null,
         platform: normalizeNonEmptyString(m?.metadata?.platform), arch: normalizeNonEmptyString(m?.metadata?.arch),
         ...(normalizeNonEmptyString(m?.metadata?.homeDir) ? { homeDir: normalizeNonEmptyString(m?.metadata?.homeDir) } : {}),
         revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId } : {}),

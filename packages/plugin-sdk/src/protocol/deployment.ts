@@ -76,6 +76,7 @@ export const readDeploymentTargetLinkArtifactV1: (
 export const readDeploymentDomainServingUrlV1: typeof canonicalReadDomainServingUrl = projectProtocolValue(canonicalReadDomainServingUrl);
 export const selectPublicTelemetryCollectorDomainV1: typeof canonicalSelectPublicTelemetryCollectorDomain = projectProtocolValue(canonicalSelectPublicTelemetryCollectorDomain);
 export type { PublicTelemetryCollectorDomainInputV1, PublicTelemetryCollectorDomainResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+export type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 export type { DeploymentDeploySemanticInputV1, DeploymentCorrelationV1, DeploymentEnvironmentHeaderV1, DeploymentReceiptHeaderV1, EnvironmentVariableBindingV1, DeploymentSecretBindingSourceV1 };
 export type { DeploymentContentV1 } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';

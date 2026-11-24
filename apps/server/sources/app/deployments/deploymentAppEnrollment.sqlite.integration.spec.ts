@@ -252,8 +252,21 @@ describe('deployment App enrollment through ordinary registration', () => {
             })();
             expect(published.statusCode, published.body).toBe(200);
             expect(reads.filter(read => read.model === 'Deployment' && read.action === 'findMany')).toHaveLength(1);
-            expect(published.json().machine.deploymentApp).toEqual({ environmentId: environment.id,
-                deploymentId: receipt.id, targetLinkId: link.id, controller: enrollment.controller });
+            expect(published.json().machine).toMatchObject({ id: childId, deploymentApp: null });
+            const listRequesterMachines = () => app.inject({ method: 'GET', url: '/v1/machines',
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${requesterBearer}` } });
+            const hidden = await listRequesterMachines();
+            expect(hidden.statusCode, hidden.body).toBe(200);
+            expect(hidden.json()).toContainEqual(expect.objectContaining({ id: childId, deploymentApp: null }));
+            await db.projectSource.update({ where: { id: source.id }, data: {
+                audience: [{ principal: { kind: 'account', accountId: requester.id }, level: 'view' }],
+            } });
+            const visible = await listRequesterMachines();
+            expect(visible.statusCode, visible.body).toBe(200);
+            expect(visible.json()).toContainEqual(expect.objectContaining({ id: childId,
+                deploymentApp: { environmentId: environment.id, targetLinkId: link.id,
+                    deploymentId: receipt.id, controller: enrollment.controller } }));
+            await db.projectSource.update({ where: { id: source.id }, data: { audience: [] } });
             const { readDeploymentAppEnrollmentForMachineInTx } = await import('./deploymentAppEnrollment');
             const { inTx } = await import('@/storage/inTx');
             expect(await inTx(tx => readDeploymentAppEnrollmentForMachineInTx(tx, { machineId: childId })))

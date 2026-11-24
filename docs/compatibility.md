@@ -10558,6 +10558,16 @@ the closed request and response shapes. Earlier captures still support the
 private origin. Review and apply the Domain again to bind a public lookup to
 the current collector deployment. Existing rows need no migration.
 
+The Home Machine wire row returns `deploymentApp: null` when the reader cannot
+read the App Environment. The Machine stays listed. CLI inventory and CLI
+telemetry placement consume that same wire field. This disclosure correction
+ships with unreleased 0.3 and needs no compatibility shim or data migration.
+
+The refreshed browser `machines.list` Action exposes the admitted association
+as `items[].deploymentApp`. Follow the App Environment to list its Domains and
+submit the person's chosen public HTTPS Domain. Home uses the same App
+enrollment owner for discovery and Save. The wire schema is unchanged.
+
 In unreleased 0.3, the Database finding brief build Action accepts a
 selected finding with an optional baseline. Omitting it uses the completed
 selected observation as the baseline. Explicit baselines preserve the

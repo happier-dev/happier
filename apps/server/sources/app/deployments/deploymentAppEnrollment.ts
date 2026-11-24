@@ -6,6 +6,8 @@ import { DeploymentAppEnrollmentCorrelationV1Schema, type DeploymentAppEnrollmen
     type DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
+import type { DeploymentAuthentication } from './deploymentAdmission';
 import { ManagedMachineError } from '@/app/machines/managed/managedRows';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -16,7 +18,7 @@ type Publisher = Readonly<{ machineId: string; installationId: string }>;
 const receiptProjection = {
     id: true, environmentId: true, targetLinkId: true,
     acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
-    environment: { select: { deletedAt: true } }, targetLink: { select: { deletedAt: true, detachedAt: true } },
+    environment: { select: { deletedAt: true, projectSourceId: true } }, targetLink: { select: { deletedAt: true, detachedAt: true } },
 } satisfies Prisma.DeploymentSelect;
 
 /** The accepted Compose controller binds existing pairing; no separate pending enrollment owner. */
@@ -127,7 +129,8 @@ export async function linkDeploymentAppEnrollmentInTx(tx: Tx, input: DeploymentA
 /** Existing Machine reads supply the pointer; ordinary Machines add no receipt lookup. */
 export async function readDeploymentAppEnrollmentsForMachinesInTx(tx: Tx,
     input: Readonly<{ machines: readonly Readonly<{ id: string; deploymentAppDeploymentId: string | null;
-        revokedAt: Date | null; replacedByMachineId: string | null }>[] }>): Promise<ReadonlyMap<string, DeploymentAppMachineAssociationV1>> {
+        revokedAt: Date | null; replacedByMachineId: string | null }>[];
+        reader?: Readonly<{ accountId: string; authentication: DeploymentAuthentication }> }>): Promise<ReadonlyMap<string, DeploymentAppMachineAssociationV1>> {
     const result = new Map<string, DeploymentAppMachineAssociationV1>();
     const machines = input.machines;
     const ids = [...new Set(machines.flatMap(machine => machine.deploymentAppDeploymentId ? [machine.deploymentAppDeploymentId] : []))];
@@ -137,10 +140,16 @@ export async function readDeploymentAppEnrollmentsForMachinesInTx(tx: Tx,
         const receipts = await tx.deployment.findMany({ where: { id: { in: [...chunk] } }, select: receiptProjection });
         for (const receipt of receipts) byId.set(receipt.id, receipt);
     }
+    // Machine access does not imply Source access. Ordinary Machine reads use the
+    // same Source admission as App Environment and Domain reads.
+    const readableSources = input.reader ? await resolveProjectSourcesAccessInTx(tx, input.reader.accountId,
+        [...new Set([...byId.values()].map(receipt => receipt.environment.projectSourceId))],
+        input.reader.authentication, { includeDeleted: true }) : null;
     for (const machine of machines) {
         const receipt = machine.deploymentAppDeploymentId && byId.get(machine.deploymentAppDeploymentId);
         if (classifyMachineAvailabilityState(machine) !== 'available' || !receipt || receipt.environment.deletedAt
             || receipt.targetLink.deletedAt || receipt.targetLink.detachedAt
+            || (readableSources && !readableSources.get(receipt.environment.projectSourceId)?.ok)
             || !receipt.acceptedControllerMachineId || !receipt.acceptedControllerInstallationId) continue;
         result.set(machine.id, { environmentId: receipt.environmentId, deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
             controller: { machineId: receipt.acceptedControllerMachineId, installationId: receipt.acceptedControllerInstallationId } });

@@ -5,6 +5,7 @@ import { persistentMachineWhere } from '@/app/machines/machineSelection';
 import { withManagedWakeAvailabilityInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { z } from "zod/mini";
 import { readDeploymentAppEnrollmentsForMachinesInTx } from '@/app/deployments/deploymentAppEnrollment';
+import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
@@ -98,7 +99,10 @@ async function readAccessibleMachineProjectionsInTx(
         ...(input.admission ? { admission: input.admission } : {}),
         ...(schedulesRecipientRepair ? { includeRecipientWork: true as const } : {}) });
     const children = input.projection === 'hostFacts' ? null : await readMachineDevcontainerChildrenInTx(tx, [...openings.keys()]);
-    const apps = input.projection === 'hostFacts' ? null : await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [...openings.values()].map(opening => opening.machine) });
+    const apps = input.projection === 'hostFacts' ? null : await readDeploymentAppEnrollmentsForMachinesInTx(tx, {
+        machines: [...openings.values()].map(opening => opening.machine),
+        reader: { accountId: input.request.userId, authentication: readTeamOperationAuthenticationFromRequest(input.request) },
+    });
     return input.machineIds.flatMap(machineId => {
         const opening = openings.get(machineId);
         if (!opening) return [];
@@ -172,7 +176,9 @@ async function serializeMachineRowForRequest(
             id: true, managedResource: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true,
         } });
         const [projectedMachine] = await withManagedWakeAvailabilityInTx(tx, [machine]);
-        const apps = await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine] });
+        const apps = await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine],
+            reader: { accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request) },
+        });
         return { machine: projectedMachine, devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
             deploymentApp: apps.get(row.id) ?? null };
     });

@@ -27,6 +27,7 @@ export { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from './deployment.j
 export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deployment.js';
+export type { DeploymentAppMachineAssociationV1 } from './deployment.js';
 export type { DeploymentArtifactContentReferenceV1 } from './deployment.js';
 export type { DeploymentArtifactReadFailureV1 } from './deployment.js';
 export type { DeploymentContentV1 } from './deployment.js';

@@ -83,6 +83,7 @@ export type FetchedMachineRow = Readonly<{
     id: string;
     managedMachineRef?: Machine['managedMachineRef'];
     managedInputRuntime?: Machine['managedInputRuntime'];
+    deploymentApp?: Machine['deploymentApp'];
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: Machine['kind'];
     metadata: string | null;
@@ -179,6 +180,7 @@ function readMachinePublishedContext(machine: FetchedMachineRow) {
     return {
         ...(machine.managedMachineRef !== undefined ? { managedMachineRef: machine.managedMachineRef } : {}),
         ...(machine.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}),
+        ...(machine.deploymentApp !== undefined ? { deploymentApp: machine.deploymentApp } : {}),
         dataEncryptionKey: machine.dataEncryptionKey ?? null,
         ...(machine.keyBasis !== undefined ? { keyBasis: machine.keyBasis } : {}),
         ...(machine.access !== undefined ? { access: machine.access } : {}),

@@ -2603,6 +2603,7 @@
 | `./protocol` | `DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1` | value | any |
 | `./protocol` | `DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1` | value | any |
 | `./protocol` | `DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1` | value | any |
+| `./protocol` | `DeploymentAppMachineAssociationV1` | type | any |
 | `./protocol` | `DeploymentArtifactContentReferenceV1` | type | any |
 | `./protocol` | `DeploymentArtifactReadFailureV1` | type | any |
 | `./protocol` | `DeploymentContentV1` | type | any |

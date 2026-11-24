@@ -222,6 +222,7 @@ export {
     readDeploymentTargetLinkArtifactV1,
     readDeploymentDomainServingUrlV1,
     selectPublicTelemetryCollectorDomainV1,
+    type DeploymentAppMachineAssociationV1,
     type PublicTelemetryCollectorDomainInputV1,
     type PublicTelemetryCollectorDomainResultV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
