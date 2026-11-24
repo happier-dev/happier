@@ -3955,10 +3955,11 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
                 }).toMatchObject(nativePending ? { kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' }
                     : { kind: 'phase', phase: 'ssh.readiness.wait', label: 'Waiting for SSH' });
                 if (delivery === 'cancel' || nativeCancellation) {
-                    await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
-                    expect((await Promise.allSettled([work]))[0]?.status).toBe('rejected');
+                    expect(await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` }))
+                        .toEqual({ kind: 'requested' });
                     expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
                         .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+                    await expect(work).rejects.toMatchObject({ code: 'cancelled' });
                     expect(keyScans).toBe(nativePending ? 0 : 1);
                     const cancelledReads = { nativeBootstraps, nativeReads, keyScans, http: nativeHttp.length };
                     await vi.advanceTimersByTimeAsync(180_000);

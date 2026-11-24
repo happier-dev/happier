@@ -16,7 +16,11 @@ export class ManagedMachineControllerError extends Error {
     constructor(readonly code: string, readonly status?: number,
         readonly details?: ManagedMachineFailureDetailsV1,
         readonly failureCause?: ActionFailureCauseV1, cause?: unknown) {
-        super(code, cause ? { cause } : undefined);
+        // Confirmed cancellation is an Action outcome even without a child result.
+        const retainedCause = cause ?? (code === 'cancelled'
+            ? { ok: false, errorCode: code, error: code } satisfies ActionExecuteFailure
+            : undefined);
+        super(code, retainedCause ? { cause: retainedCause } : undefined);
         this.name = 'ManagedMachineControllerError';
     }
 
