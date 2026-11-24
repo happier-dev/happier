@@ -7,6 +7,9 @@ import type { AgentSessionGoalControlContext } from '@happier-dev/plugin-sdk/age
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost, type HostPreparedPluginExecLaunchAuthorizer } from '@/plugins/runtime/invocation/services/exec';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from './agentRuntimeDaemonServiceProtocol';
 import { buildPiRpcLaunch } from '../../../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
@@ -383,6 +386,41 @@ describe('runner daemon PluginServices proxy', () => {
             await new Promise<void>(resolve => server.close(() => resolve()));
             await transport.retire();
         }
+    });
+
+    it('keeps daemon-materialized launch secrets out of a Run final output written after its Agent exited', async () => {
+        const controller = new AbortController();
+        const secret = 'synthetic-exited-agent-project-value';
+        const services = await prepareRunnerDaemonPluginServices({ invocationId: 'exited-agent-run',
+            signal: controller.signal, local: createUnavailablePluginServices(),
+            // The daemon wire is the boundary; it returns the launch's materialized secret values.
+            dispatch: async operation => {
+                if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') return { authorizationId: 'exited-agent',
+                    secretValues: [secret], launch: { command: process.execPath, args: ['--version'], env: { PROJECT_TOKEN: secret } } };
+                if (operation.kind === 'plugin_exec.launch.release_v1' || operation.kind === 'plugin_services.close_v1') return null;
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+        });
+        const launch = await authorizeResolvedAgentNativeExecLaunchForHost(services.exec,
+            { command: process.execPath, args: ['--version'], cwd: process.cwd(), env: {} });
+        // The one-shot Agent exits and its process settles before the Run host writes the result.
+        await launch.release();
+        const run: ExecutionRunState = { runId: 'exited-agent-run', callId: 'call', sidechainId: 'sidechain', sessionId: null,
+            depth: 0, intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
+            instructions: '', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+            ioMode: 'request_response', status: 'running', startedAtMs: 1 };
+        const runs = new Map([[run.runId, run]]);
+        await finishExecutionRun({ runId: run.runId, next: { status: 'succeeded', finishedAtMs: 2, summary: `Done ${secret} control-summary` },
+            toolResult: { output: { answer: `Echo ${secret} control-answer` } }, runs, controllers: new Map(), budgetRegistry: null,
+            parentProvider: 'claude', sendAcp: async () => {}, enqueueMarkerWrite: async (_runId, write) => { await write(); },
+            terminalMarkerWritePromises: new Map() });
+        const stored = JSON.stringify(runs.get(run.runId));
+        expect(stored).not.toContain(secret);
+        expect(stored).toContain('control-answer');
+        // Closing the invocation, after the Run host settled its output, releases the registration.
+        controller.abort();
+        expect(redactTranscriptSecrets(secret)).toBe(secret);
     });
 
     it('keeps scoped Codex Goal controls in the runtime launch environment across profile bindings', async () => {

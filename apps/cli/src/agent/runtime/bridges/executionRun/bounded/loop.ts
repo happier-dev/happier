@@ -30,6 +30,7 @@ import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptP
 import { settleExecutionRunController } from '../settleExecutionRunController';
 import type { ExecutionRunTurnResultV1, JsonValue } from '@happier-dev/protocol';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 export async function executeBoundedBackendRun(args: Readonly<{
   runId: string;
@@ -437,7 +438,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return;
     }
 
-    const rawText = backendCtrl.buffer.trim();
+    // The turn result, summary and terminal output derive from this text; redact registered
+    // secrets while they are registered.
+    const rawText = redactTranscriptSecrets(backendCtrl.buffer.trim());
     const finishedAtMs = args.getNowMs();
     let completion = profile.onBoundedComplete({
       start,
@@ -469,7 +472,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
       await runTurnWithLiveInterventions(repairPrompt);
 
-      const repairedRawText = backendCtrl.buffer.trim();
+      const repairedRawText = redactTranscriptSecrets(backendCtrl.buffer.trim());
       completion = profile.onBoundedComplete({
         start,
         rawText: repairedRawText,

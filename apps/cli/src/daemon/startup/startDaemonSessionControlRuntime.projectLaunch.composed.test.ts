@@ -982,8 +982,9 @@ it.each(['retained', 'associated retained', 'current', 'associated current', 're
     await child.waitForSettlement();
   }
   if (selectedSecret) {
-    // The registration lives exactly as long as the launch it protects.
-    expect(JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, secretValue))).toContain(secretValue);
+    // Output written after the Agent settled (a Run's final result) is still redacted; the
+    // invocation's close releases the registration.
+    expect(JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, secretValue))).not.toContain(secretValue);
   }
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('owner-native-exec') });
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('owner-native') });

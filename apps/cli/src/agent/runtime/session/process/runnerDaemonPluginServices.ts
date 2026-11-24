@@ -2654,6 +2654,10 @@ export async function prepareRunnerDaemonPluginServices(
         }
         return value;
     };
+    // Launch secrets stay registered for this invocation's life, not the Agent process's: the
+    // Run host writes an exited Agent's final output before it disposes the runtime, and that
+    // disposal closes this invocation.
+    const launchSecretRegistrations: Array<() => void> = [];
     const readAuthorizedExecLaunch = (raw: Record<string, unknown>): HostAuthorizedPluginExecLaunch
         & Pick<ResolvedPluginExecutable, 'allowedArguments'> => {
         if (typeof raw.authorizationId !== 'string' || !isRunnerAuthorizedLaunchWire(raw.launch)) {
@@ -2668,9 +2672,11 @@ export async function prepareRunnerDaemonPluginServices(
         }
         const authorizationId = raw.authorizationId;
         const { stdin, stdinPreamble, ...launch } = raw.launch;
-        // This process spawns the Agent and writes its transcript: keep the daemon-materialized
-        // secret values out of it for as long as the launch lives.
-        const unregisterSecrets = secretValues.map(value => registerTranscriptSecret(value));
+        // This process spawns the Agent and writes its transcript and Run output: keep the
+        // daemon-materialized secret values out of them.
+        if (!input.signal.aborted) {
+            for (const value of secretValues) launchSecretRegistrations.push(registerTranscriptSecret(value));
+        }
         let released = false;
         return Object.freeze({ ...launch,
             args: Object.freeze([...launch.args]), env: Object.freeze({ ...launch.env }),
@@ -2680,7 +2686,6 @@ export async function prepareRunnerDaemonPluginServices(
             release() {
                 if (released) return;
                 released = true;
-                for (const unregister of unregisterSecrets) unregister();
                 void dispatch<null>({ kind: 'plugin_exec.launch.release_v1', requestId: randomUUID(),
                     invocationId: input.invocationId, authorizationId }, { timeoutMs: 1_000 }).catch(() => undefined);
             },
@@ -2895,6 +2900,7 @@ export async function prepareRunnerDaemonPluginServices(
     const closeInvocation = (): void => {
         if (closeStarted) return;
         closeStarted = true;
+        for (const unregister of launchSecretRegistrations.splice(0)) unregister();
         void dispatch<null>({
             kind: 'plugin_services.close_v1',
             requestId: randomUUID(),

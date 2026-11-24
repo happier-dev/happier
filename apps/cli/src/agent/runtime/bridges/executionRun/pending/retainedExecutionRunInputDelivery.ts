@@ -1,3 +1,4 @@
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readSessionAttachmentDescriptorsV1 } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -154,7 +155,7 @@ export function createRetainedExecutionRunInputDelivery(
                     ...controller.currentInputTurn,
                     state: event.kind === 'turn-complete' ? 'completed' : event.kind === 'turn-failed' ? 'failed' : 'cancelled',
                     ...(event.kind === 'turn-failed' ? { error: projectExecutionRunError(
-                        createExecutionRunDiagnosticError(event.diagnostic, event.emittedAtMs, options.agentId), { runId },
+                        createExecutionRunDiagnosticError(redactTranscriptSecrets(event.diagnostic), event.emittedAtMs, options.agentId), { runId },
                     ) } : {}),
                 };
                 controller.currentInputTurn = undefined;

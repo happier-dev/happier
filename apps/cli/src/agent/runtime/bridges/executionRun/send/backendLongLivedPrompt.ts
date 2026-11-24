@@ -38,6 +38,7 @@ import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/rev
 import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 function buildObservedTurnResult(
   contract: ExecutionRunResultContractV1 | undefined,
@@ -441,7 +442,9 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       }
       await ctrl2.streamWriter?.flushAll({ reason: 'turn-end' });
 
-      const rawText = ctrl2.buffer.trim();
+      // The turn result is retained and published from this text; redact registered secrets
+      // while they are registered.
+      const rawText = redactTranscriptSecrets(ctrl2.buffer.trim());
       const decoded = decodeExecutionRunProfileResult(rawText, args.params.resultContract);
       const result = decoded.ok
         ? buildObservedTurnResult(args.params.resultContract, decoded.value)

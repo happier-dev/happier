@@ -25,6 +25,7 @@ import { createExecutionRunControllerMessageHandler } from './messages/sessionSt
 import { sendBackendLongLivedRun } from './send/backendLongLivedPrompt';
 import { executeBoundedBackendRun } from './bounded/loop';
 import type { ExecutionRunState } from './executionRunTypes';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -216,7 +217,8 @@ it.each([
     { hookFirst: false, apiError: false },
     { hookFirst: true, apiError: false },
     { hookFirst: false, apiError: true },
-])('settles a Claude terminal child through the shared Session Run owner ($hookFirst, API error=$apiError)', async ({ hookFirst, apiError }) => {
+    { hookFirst: false, apiError: false, secret: 'synthetic-bounded-project-value' },
+])('settles a Claude terminal child through the shared Session Run owner ($hookFirst, API error=$apiError)', async ({ hookFirst, apiError, secret }) => {
     const terminal = createTerminalHostFixture();
     const hooks = createSessionHooksFixture();
     const boundary = createPluginContextFixture(terminal.service, createEventsFixture().service, { sessionHooks: hooks.service });
@@ -248,7 +250,10 @@ it.each([
     const messages: import('@/agent/core/AgentMessage').AgentMessage[] = [];
     const unsubscribe = host.subscribeMessages(message => messages.push(message));
     const providerSessionId = 'claude-terminal-native';
-    const text = JSON.stringify({ summary: 'C26_TERMINAL_CHILD_OK', deliverables: [{ id: 'reply', title: 'C26_TERMINAL_CHILD_OK' }] });
+    // The Agent echoes its launch's Project secret into the result it returns.
+    const summary = secret ? `C26_TERMINAL_CHILD_OK ${secret}` : 'C26_TERMINAL_CHILD_OK';
+    const text = JSON.stringify({ summary, deliverables: [{ id: 'reply', title: 'C26_TERMINAL_CHILD_OK' }] });
+    const releaseLaunch = secret ? registerTranscriptSecret(secret) : undefined;
     let unsubscribeController: (() => void) | undefined;
     try {
         const runId = 'claude-terminal-child';
@@ -330,19 +335,23 @@ it.each([
         } });
         await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId, last_assistant_message: text });
         await execution;
-        expect(runs.get(runId)).toMatchObject({ status: 'succeeded', summary: 'C26_TERMINAL_CHILD_OK',
+        releaseLaunch?.();
+        expect(runs.get(runId)).toMatchObject({ status: 'succeeded',
+            summary: secret ? `C26_TERMINAL_CHILD_OK ${TRANSCRIPT_SECRET_REDACTED}` : 'C26_TERMINAL_CHILD_OK',
             inputTurns: { last: { inputIds: ['terminal-input'], state: 'completed' } } });
+        if (secret) expect(JSON.stringify(runs.get(runId))).not.toContain(secret);
         expect(ctrl.turnInFlight).toBe(false);
         expect(ctrl.turnCount).toBe(1);
         expect(messages.filter(message => message.type === 'model-output')).toEqual([
             expect.objectContaining({ type: 'model-output', fullText: text }),
         ]);
-    } finally { unsubscribeController?.(); unsubscribe(); await host.dispose(); }
+    } finally { releaseLaunch?.(); unsubscribeController?.(); unsubscribe(); await host.dispose(); }
 });
 
 it.each([
     { streamed: true, quota: false }, { streamed: false, quota: false }, { streamed: false, quota: true },
-])('retains Claude SDK text and refuses a terminal provider quota despite trailing success ($streamed, quota=$quota)', async ({ streamed, quota }) => {
+    { streamed: true, quota: false, secret: 'synthetic-long-lived-project-value' },
+])('retains Claude SDK text and refuses a terminal provider quota despite trailing success ($streamed, quota=$quota)', async ({ streamed, quota, secret }) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-claude-run-text-'));
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
     reloadConfiguration();
@@ -408,7 +417,11 @@ it.each([
         sendAcp: async () => {}, parentProvider: 'claude', runs, backendSupportsResume: true,
         writeActivityMarker: async () => {}, getNowMs: () => 2,
     }));
-    const text = quota ? "You've hit your weekly limit · resets Nov 10, 9pm (Europe/Amsterdam)" : 'BACKGROUND DONE';
+    const text = quota ? "You've hit your weekly limit · resets Nov 10, 9pm (Europe/Amsterdam)"
+        : secret ? `BACKGROUND ${secret} DONE` : 'BACKGROUND DONE';
+    // Streamed deltas split the echoed secret; the stored result must still hold none of it.
+    const deltas = secret ? [text.slice(0, 20), text.slice(20)] : ['BACKGROUND ', 'DONE'];
+    const releaseLaunch = secret ? registerTranscriptSecret(secret) : undefined;
     try {
         const admission = await sendBackendLongLivedRun({ runId, params: { message: 'Return the marker', localInputId: 'exact-input' },
             runs, controllers, budgetRegistry: null, createRuntime: () => host, maxTurns: null, getNowMs: () => 2,
@@ -417,7 +430,7 @@ it.each([
         });
         expect(admission, JSON.stringify(admission)).toEqual({ ok: true });
         if (streamed) {
-            for (const delta of ['BACKGROUND ', 'DONE']) {
+            for (const delta of deltas) {
                 await sdk.emit({ type: 'stream_event', uuid: `delta-${delta}`, session_id: 'native-claude', parent_tool_use_id: null,
                     event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } } });
             }
@@ -429,6 +442,7 @@ it.each([
         await sdk.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'native-claude', uuid: 'result-row',
             result: text, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
         await vi.waitFor(() => expect(runs.get(runId)?.inputTurns?.last).toBeDefined());
+        releaseLaunch?.();
         const response = ExecutionRunGetResponseSchema.parse({ run: runs.get(runId) });
         if (quota) {
             expect(response.run).toMatchObject({ error: { runtimeIssueV1: {
@@ -437,9 +451,12 @@ it.each([
             expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'failed' });
             expect(response.run.inputTurns?.last).not.toHaveProperty('result');
         } else {
-            expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'completed', result: { kind: 'text', value: text } });
+            expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'completed', result: { kind: 'text',
+                value: secret ? `BACKGROUND ${TRANSCRIPT_SECRET_REDACTED} DONE` : text } });
+            if (secret) expect(JSON.stringify(runs.get(runId))).not.toContain(secret);
         }
     } finally {
+        releaseLaunch?.();
         unsubscribe();
         await host.dispose();
         await rm(directory, { recursive: true, force: true });
