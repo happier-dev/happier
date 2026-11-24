@@ -52,6 +52,12 @@ export type ConnectedServicesMaterialization = Readonly<{
   cleanupOnFailure: (() => void | Promise<void>) | null;
   cleanupOnExit: (() => void | Promise<void>) | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+  /**
+   * Secret values this materialization injected into the Agent's env or wrote into its runtime
+   * home (decided by the Connected Account credential owner). The launch owner adds them to its
+   * redaction lease, which the runner registers for the Session transcript.
+   */
+  secretValues?: readonly string[];
 }>;
 
 export type ConnectedServiceMaterializationCredentialRefreshFailureCategory =

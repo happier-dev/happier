@@ -1173,6 +1173,11 @@ export async function executeSpawnSessionRequest(
                 return await refuseSpawn(connectedServices.result);
             }
             const connectedServiceAuth = connectedServices.auth;
+            // Connected Account credentials materialized into the Agent env or runtime home join
+            // this launch's lease, so the runner keeps them out of the transcript.
+            if (connectedServiceAuth?.secretValues?.length) {
+                providerDiagnosticRedactionLease.add(connectedServiceAuth.secretValues);
+            }
             if (connectedServiceAuth?.materializationPurposeLease) {
                 launchResourceScope.register({
                     onFailure: () => connectedServiceAuth.materializationPurposeLease?.dispose(),

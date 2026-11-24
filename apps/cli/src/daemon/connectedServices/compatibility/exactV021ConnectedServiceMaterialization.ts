@@ -23,6 +23,7 @@ import type {
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { readCredentialRedactionValues } from '@/plugins/runtime/invocation/services/credentialRedactionValues';
 
 const EXACT_V021_UNFENCED_REVISION_BASIS = 'legacy_unfenced';
 
@@ -145,6 +146,8 @@ export async function materializeExactV021ConnectedServiceCredential(input: Read
   record: ConnectedServiceCredentialRecordV1;
   request: ConnectedAccountMaterializationRequest;
   existingFiles?: Readonly<Record<string, Uint8Array>>;
+  /** Host-private: the secret values this materialization could write, for Session transcript redaction. */
+  observeMaterializationSecretValues?: (values: readonly string[]) => void;
   signal?: AbortSignal;
 }>): Promise<ConnectedAccountMaterialization> {
   input.signal?.throwIfAborted();
@@ -220,6 +223,11 @@ export async function materializeExactV021ConnectedServiceCredential(input: Read
       return credential.values[key] ?? null;
     },
   });
+  // The released record has no runtime configuration (refused above), so every credential value
+  // is secret, as the established owner classifies it.
+  input.observeMaterializationSecretValues?.([...new Set(Object.values(credential.values)
+    .filter((value) => value.length > 0)
+    .flatMap((value) => readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })))]);
 
   return await invoker.invokeEstablished({
     target: Object.freeze({
@@ -352,6 +360,8 @@ export function createExactV021ConnectedServiceMaterializationOwner(input: Reado
         record,
         request: params.request,
         ...(params.existingFiles ? { existingFiles: params.existingFiles } : {}),
+        ...(params.observeMaterializationSecretValues
+          ? { observeMaterializationSecretValues: params.observeMaterializationSecretValues } : {}),
         signal: params.signal,
       });
     },
@@ -377,8 +387,19 @@ export async function materializeExactV021AgentLaunchProjection(input: Readonly<
     ConnectedServiceCredentialRecordV1
   >;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ env: Readonly<Record<string, string>> }> | null> {
+}>): Promise<Readonly<{ env: Readonly<Record<string, string>>; secretValues: readonly string[] }> | null> {
   input.signal?.throwIfAborted();
+  const projected = await projectExactV021AgentLaunch(input);
+  if (!projected) return null;
+  // The projection writes these released credential records into the Agent env and auth files.
+  const secretValues = [...input.recordsByServiceId.values()].flatMap((entry) => entry.kind === 'oauth'
+    ? [entry.oauth.accessToken, entry.oauth.refreshToken, ...(entry.oauth.idToken ? [entry.oauth.idToken] : [])]
+    : [entry.token.token]);
+  return Object.freeze({ env: projected.env, secretValues: Object.freeze([...new Set(secretValues)]) });
+}
+
+async function projectExactV021AgentLaunch(input: Parameters<typeof materializeExactV021AgentLaunchProjection>[0]):
+  Promise<Readonly<{ env: Readonly<Record<string, string>> }> | null> {
   const record = (serviceId: ConnectedServiceId) => {
     const candidate = input.recordsByServiceId.get(serviceId) ?? null;
     if (

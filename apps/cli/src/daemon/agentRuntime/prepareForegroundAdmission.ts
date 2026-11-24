@@ -1278,6 +1278,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
               Object.freeze({});
             let sensitiveEnvironmentVariableNames: readonly string[] =
               Object.freeze([]);
+            // Credentials a Connected Account materializer wrote into the runtime home: not in the
+            // environment, so the runner learns them as values.
+            let transcriptSecretValues: readonly string[] = Object.freeze([]);
             if (request.profileId) {
               const exactProfileSnapshot = readExactProfileSnapshot();
               if (!exactProfileSnapshot) {
@@ -1606,7 +1609,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
               if (materialized.agentLaunchMaterials) agentLaunchMaterials = materialized.agentLaunchMaterials;
               connectedServiceRedactionLease.add([
                 ...Object.values(materialized.env), ...Object.values(materialized.agentLaunchMaterials?.environment ?? {}),
+                ...(materialized.secretValues ?? []),
               ]);
+              transcriptSecretValues = Object.freeze([...new Set([...transcriptSecretValues, ...(materialized.secretValues ?? [])])]);
               sensitiveEnvironmentVariableNames = Object.freeze([
                 ...new Set([...sensitiveEnvironmentVariableNames, ...Object.keys(materialized.env)]),
               ]);
@@ -1849,6 +1854,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               unsetEnvironmentVariableNames:
                 mergedEnvironment.unsetEnvironmentVariableNames,
               sensitiveEnvironmentVariableNames,
+              ...(transcriptSecretValues.length > 0 ? { transcriptSecretValues } : {}),
               ...(materializedStateObservationBinding ? { materializedStateObservationBinding } : {}),
               ...(materializedConnectedServices && sessionPurposeBindingLease
                 ? {

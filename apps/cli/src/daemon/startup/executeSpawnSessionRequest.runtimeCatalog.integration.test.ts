@@ -1452,6 +1452,56 @@ describe('executeSpawnSessionRequest', () => {
     expect(hoisted.createRuntimeProviderSpawnAuthorizationAttempt).not.toHaveBeenCalled();
   });
 
+  it('hands native Connected Account launch credentials to the runner bootstrap for transcript redaction', async () => {
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true, normalizedExistingSessionId: '', effectiveResume: '',
+      effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+      sessionAttachPayload: null, catalogAgentId: 'codex',
+    });
+    hoisted.ensureSessionDirectory.mockResolvedValueOnce({ ok: true, directoryCreated: false });
+    await setAccountSnapshot({ settings: {} });
+    const release = vi.fn(async () => undefined);
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }),
+      source: 'active',
+      release,
+    });
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+    const { resolveConnectedServiceAuthForSpawn } = await import('../connectedServices/resolveConnectedServiceAuthForSpawn');
+    const { shouldResolveConnectedServiceAuthForSpawn } = await import('../connectedServices/shouldResolveConnectedServiceAuthForSpawn');
+    // Dummy credentials: one injected into the Agent env, one written into a runtime-home secretEntries file.
+    const envCredential = 'dummy-connected-env-api-key';
+    const fileCredential = 'dummy-runtime-home-oauth-token';
+    vi.mocked(shouldResolveConnectedServiceAuthForSpawn).mockReturnValueOnce(true);
+    vi.mocked(resolveConnectedServiceAuthForSpawn).mockResolvedValueOnce({
+      env: { OPENAI_API_KEY: envCredential },
+      secretValues: [envCredential, fileCredential],
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+      connectedServicesBindings: { v: 2, bindingsByServiceId: {} },
+      qualifiedPurposeBindingSnapshot: null,
+    });
+    vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+      ok: true, cleanupOnFailure: null, cleanupOnExit: null,
+      expandedEnvironmentVariables: {}, extraEnvForChild: {},
+    });
+    let runnerTranscriptSecretValues: readonly string[] | undefined;
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
+      runnerTranscriptSecretValues = input.runnerAgentSessionBootstrapAuthorization?.bootstrap?.transcriptSecretValues;
+      return { type: 'success', sessionId: 'session-1' };
+    });
+
+    const result = await executeSpawnSessionRequest({
+      ...createParams(),
+      options: { ...createParams().options, resume: '' },
+    });
+    expect(result.type).toBe('success');
+    expect(runnerTranscriptSecretValues).toEqual(expect.arrayContaining([envCredential, fileCredential]));
+  });
+
   it('rejects a stale deterministic legacy overlay after its terminal migration outcome', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({});
     hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({

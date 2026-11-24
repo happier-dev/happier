@@ -4701,6 +4701,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 Readonly<Record<string, string>> | null = null;
             let resolvedLateSensitiveEnvironmentVariableNames:
                 readonly string[] = Object.freeze([]);
+            // Launch secrets the Agent can reach outside its environment: runtime-home credentials
+            // from the foreground admission and the credentials late Provider bindings substitute.
+            let resolvedLateLaunchSecretValues: readonly string[] = Object.freeze([]);
             let resolvedLateSessionConnectedAccounts:
                 NonNullable<AgentSessionOpenRequest['connectedAccounts']>
                 | undefined;
@@ -4929,6 +4932,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     resolvedLateSensitiveEnvironmentVariableNames =
                         resolvedLateEnvironment
                             .sensitiveEnvironmentVariableNames;
+                    resolvedLateLaunchSecretValues = Object.freeze([
+                        ...(resolvedLateEnvironment.transcriptSecretValues ?? []),
+                    ]);
                     resolvedLateSessionConnectedAccounts =
                         resolvedLateEnvironment.sessionConnectedAccounts;
                     resolvedLateProviderBindingHandoff =
@@ -5442,6 +5448,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         ]);
                     resolvedLateProviderBindingHandoff =
                         publicBinding.handoff;
+                    resolvedLateLaunchSecretValues = Object.freeze([
+                        ...resolvedLateLaunchSecretValues,
+                        ...publicBinding.additionalRedactionValues,
+                    ]);
                 }
             }
             const teamCredentialBinding = sessionInput.teamCredentialBindings?.find((candidate) => (
@@ -5505,6 +5515,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     providerBinding: teamBinding.providerBinding,
                 });
                 resolvedLateEnvironmentValues = openInputs.launchEnvironment.values;
+                resolvedLateLaunchSecretValues = Object.freeze([
+                    ...resolvedLateLaunchSecretValues,
+                    ...teamBinding.additionalRedactionValues,
+                ]);
                 resolvedLateSensitiveEnvironmentVariableNames = Object.freeze([
                     ...new Set([
                         ...resolvedLateSensitiveEnvironmentVariableNames,
@@ -5949,7 +5963,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 params.agent.richDefinition?.definition
                                     .providerRequirements,
                             environment: lateEnvironment,
-                            launchSecretValues: sensitiveProfileValues,
+                            launchSecretValues: [
+                                ...sensitiveProfileValues,
+                                ...resolvedLateLaunchSecretValues,
+                            ],
                         });
                 }
                 assertGenerationCurrent();

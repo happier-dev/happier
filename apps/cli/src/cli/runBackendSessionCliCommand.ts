@@ -991,6 +991,7 @@ Provider CLI Options:
               : {}),
             sensitiveEnvironmentVariableNames:
               claimed.sensitiveEnvironmentVariableNames,
+            ...(claimed.transcriptSecretValues ? { transcriptSecretValues: claimed.transcriptSecretValues } : {}),
           });
         };
       }

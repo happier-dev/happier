@@ -809,6 +809,8 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         material: opened.payload.material,
         operation: Object.freeze({ kind: 'materialize', request: input.request,
           ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}) }),
+        ...(input.observeMaterializationSecretValues
+          ? { observeMaterializationSecretValues: input.observeMaterializationSecretValues } : {}),
         isCurrent: async () => {
           // Finite platform work keeps its admission until completion or local cancel.
           if (input.consumer.kind === 'platform_operation' || input.consumer.kind === 'action_operation') {

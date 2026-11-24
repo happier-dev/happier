@@ -18,10 +18,12 @@ import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/run
 import { ensureMergedAgentCommandRegistryLoaded, findCommandDispatchDescriptor } from './commandRegistry';
 import { dispatchCli } from './dispatch';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { PLUGIN_MANIFEST as codexManifest } from '../../../../packages/plugins/codex/src/manifest';
 import { PLUGIN_MANIFEST as ohMyPiManifest } from '../../../../packages/plugins/ohmypi/src/manifest';
 
-function createRecordedAdmittedBootstrap(backendId: string, manifest: typeof codexManifest | typeof ohMyPiManifest) {
+function createRecordedAdmittedBootstrap(backendId: string, manifest: typeof codexManifest | typeof ohMyPiManifest,
+  transcriptSecretValues?: readonly string[]) {
   // Bootstrap dispatch consumes an already-admitted descriptor. Supply that
   // boundary's recorded shape without exercising unrelated Account catalogs.
   const definition = PluginAgentContributionV2Schema.parse(manifest.contributes.agents?.[0]);
@@ -37,6 +39,7 @@ function createRecordedAdmittedBootstrap(backendId: string, manifest: typeof cod
         definition,
       },
     },
+    ...(transcriptSecretValues ? { transcriptSecretValues } : {}),
   });
 }
 
@@ -67,6 +70,46 @@ describe('admitted runner command selection', () => {
         rawArgv: [], terminalRuntime: null,
       })).rejects.toBe(runnerExit);
       expect(presentation.mock.calls.flat().join(' ')).toContain('already running');
+    } finally {
+      exit.mockRestore();
+      presentation.mockRestore();
+      fatal.mockRestore();
+      await lock.release();
+      await bootstrap.cleanupBootstrapFile();
+      env.restore();
+      reloadConfiguration();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the daemon-materialized launch secrets out of the transcript while the runner command runs', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runner-command-secrets-'));
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]);
+    env.patch({ HAPPIER_HOME_DIR: happyHomeDir });
+    reloadConfiguration();
+    // Dummy values standing in for a Connected Account env key and a runtime-home file credential.
+    const envCredential = 'dummy-bootstrap-connected-env-key';
+    const fileCredential = 'dummy-bootstrap-runtime-home-token';
+    const bootstrap = await createRecordedAdmittedBootstrap('codex', codexManifest, [envCredential, fileCredential]);
+    const sessionId = 'already-running-secret-redaction';
+    const lock = await acquireSessionRunnerLock({ sessionId });
+    if (!lock.ok) throw new Error('Unable to establish the running Session fixture');
+    const runnerExit = new Error('fixture-runner-exit');
+    const echoed = { type: 'tool-result', output: `OPENAI_API_KEY=${envCredential}\n${fileCredential}\ncontrol-ok` };
+    const redactedWhileRunning: unknown[] = [];
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw runnerExit; });
+    // The runner reports the existing-session refusal from inside the Session command: what its
+    // transcript writer would store for an Agent echo at that moment.
+    const presentation = vi.spyOn(console, 'error').mockImplementation(() => { redactedWhileRunning.push(redactTranscriptSecrets(echoed)); });
+    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    try {
+      env.patch({ [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: bootstrap.authorization.bootstrapFilePath });
+      await expect(dispatchCli({
+        args: ['codex', '--started-by', 'daemon', '--existing-session', sessionId],
+        rawArgv: [], terminalRuntime: null,
+      })).rejects.toBe(runnerExit);
+      expect(redactedWhileRunning[0]).toEqual({ type: 'tool-result', output: 'OPENAI_API_KEY=[redacted]\n[redacted]\ncontrol-ok' });
+      expect(redactTranscriptSecrets(echoed)).toBe(echoed);
     } finally {
       exit.mockRestore();
       presentation.mockRestore();

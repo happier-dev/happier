@@ -247,9 +247,16 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       throw new Error('Connected Account launch authority is unavailable');
     }
     const materializedAccountsByPurposeKey = new Map<string, AgentSessionConnectedAccountSelection>();
+    // Every Connected Account materialization of this launch reports what it may write into the
+    // Agent's env or runtime home; the launch owner keeps those values out of the transcript.
+    const secretValues = new Set<string>();
     const materializeAccount: StablePluginConnectedAccountsOwner['materialize'] = async input => {
       if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
-      const materialization = await connectedAccountsOwner.materialize(input);
+      const materialization = await connectedAccountsOwner.materialize({ ...input,
+        observeMaterializationSecretValues: (values) => {
+          for (const value of values) if (value.length > 0) secretValues.add(value);
+          input.observeMaterializationSecretValues?.(values);
+        } });
       // The purpose owner verifies this exact Account before and after producing
       // credentials. A declared target or a native home alone is not such proof.
       if (!params.legacyV021 && input.expectedAccount) {
@@ -820,6 +827,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         throw new Error('Exact v0.2.1 Connected Service launch projection is unavailable');
       }
       Object.assign(env, legacyProjection.env);
+      for (const value of legacyProjection.secretValues) secretValues.add(value);
     }
 
     const sourceCustody = identity ? lease.registry.readPluginSourceCustody?.(identity.pluginId) : null;
@@ -848,6 +856,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       cleanupOnFailure: cleanup,
       cleanupOnExit: cleanup,
       diagnostics,
+      ...(secretValues.size > 0 ? { secretValues: Object.freeze([...secretValues]) } : {}),
     };
   } catch (error) {
     await cleanup();

@@ -1700,8 +1700,12 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                 }),
                                 environmentOverlay:
                                     composed.providerEnvironmentOverlay,
-                                additionalRedactionValues:
-                                    composed.additionalRedactionValues,
+                                // The runner substitutes this credential into the Agent child
+                                // environment: it is a Session launch secret too.
+                                additionalRedactionValues: Object.freeze([
+                                    ...composed.additionalRedactionValues,
+                                    ...hostMaterialization.redactionValues,
+                                ]),
                                 transformAgentChildLaunchEnvironment:
                                     hostMaterialization
                                         .transformLaunchEnvironment,

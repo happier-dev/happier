@@ -12,6 +12,8 @@ export type ConnectedAccountPurposeMaterializationInput = Readonly<{
   request: ConnectedAccountMaterializationRequest;
   /** Host-private redaction classification, never a plugin materialization option. */
   observeMaterializationPublicValues?: (values: readonly string[]) => void;
+  /** Host-private: the secret values this materialization could write, for Session transcript redaction. */
+  observeMaterializationSecretValues?: (values: readonly string[]) => void;
   existingFiles?: Readonly<Record<string, Uint8Array>>;
   signal: AbortSignal;
 }>;
@@ -28,6 +30,7 @@ export type ConnectedAccountPurposeMaterializationOwner<TMaterial> = Readonly<{
   }>): Promise<Readonly<{ result: TMaterial; basis: Readonly<{
     credentialRevision: ConnectedServiceCredentialRevisionV1;
     materializationPublicValues?: readonly string[];
+    materializationSecretValues?: readonly string[];
   }> }>>;
 }>;
 
@@ -46,6 +49,7 @@ export function createConnectedAccountPurposeMaterializer<TMaterial>(owner: Conn
     });
     input.credentialRevisionBasis?.captureCredentialRevision(receipt.basis.credentialRevision);
     if (receipt.basis.materializationPublicValues) input.observeMaterializationPublicValues?.(receipt.basis.materializationPublicValues);
+    if (receipt.basis.materializationSecretValues) input.observeMaterializationSecretValues?.(receipt.basis.materializationSecretValues);
     return receipt.result;
   };
 }

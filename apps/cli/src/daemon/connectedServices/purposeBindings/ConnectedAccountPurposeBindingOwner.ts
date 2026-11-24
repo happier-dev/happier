@@ -135,6 +135,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     expectedConfigurationRevision?: string | null;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
     observeMaterializationPublicValues?: (values: readonly string[]) => void;
+    observeMaterializationSecretValues?: (values: readonly string[]) => void;
     request: ConnectedAccountMaterializationRequest;
     existingFiles?: Readonly<Record<string, Uint8Array>>;
     signal: AbortSignal;
@@ -150,6 +151,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     consumer: TeamDirectMaterialConsumer;
     account: QualifiedConnectedAccountRef;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+    observeMaterializationSecretValues?: (values: readonly string[]) => void;
     request: ConnectedAccountMaterializationRequest;
     existingFiles?: Readonly<Record<string, Uint8Array>>;
     signal: AbortSignal;
@@ -1534,6 +1536,8 @@ export function createConnectedAccountPurposeBindingOwner(
             consumer: resolved.directMaterialOrigin.consumer,
             account: resolved.resolved.account,
             ...(credentialRevisionBasis ? { credentialRevisionBasis } : {}),
+            ...(input.observeMaterializationSecretValues
+              ? { observeMaterializationSecretValues: input.observeMaterializationSecretValues } : {}),
             request: input.request,
             ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}),
             signal: input.signal,
@@ -1544,6 +1548,7 @@ export function createConnectedAccountPurposeBindingOwner(
           account: resolved.resolved.account,
           ...readAdmittedConfigurationBasis(input.exactPurposeBindingSubjectId, resolved.resolved.account),
           ...(input.observeMaterializationPublicValues ? { observeMaterializationPublicValues: input.observeMaterializationPublicValues } : {}),
+          ...(input.observeMaterializationSecretValues ? { observeMaterializationSecretValues: input.observeMaterializationSecretValues } : {}),
           ...(credentialRevisionBasis ? { credentialRevisionBasis } : {}),
           request: input.request,
           ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}),

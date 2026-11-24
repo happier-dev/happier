@@ -1553,6 +1553,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         credentialConfigurationRevision: 'configuration-1',
         runtimeConfigurationRevision: 'configuration-1',
         materializationPublicValues: ['https://api.example.test'],
+        // The credential the materializer wrote is handed back for Session transcript redaction.
+        materializationSecretValues: expect.arrayContaining(['access-1']),
         occurrenceId: 'generation-1',
         sourceCustody: {
           kind: 'managed',

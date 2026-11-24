@@ -2637,6 +2637,8 @@ describe('materializeConnectedServicesForSpawn', () => {
       }))).mode & 0o777).toBe(0o700);
     }
     expect(result!.env.ANTHROPIC_API_KEY).toBe('sk-ant-123');
+    // Both the env-injected key and the file-written OAuth tokens are Session launch secrets.
+    expect(result!.secretValues).toEqual(expect.arrayContaining(['sk-ant-123', 'access', 'refresh']));
 
     const authPath = join(result!.env.PI_CODING_AGENT_DIR, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
@@ -2780,6 +2782,8 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
     expect(result!.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(result!.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
+    // The secretEntries credential written to the runtime home is a Session launch secret.
+    expect(result!.secretValues).toContain('sk-ant-oat01-123');
     const target = result!.env.CLAUDE_CONFIG_DIR;
     expect((await lstat(join(target, 'settings.json'))).isSymbolicLink()).toBe(true);
     expect((await lstat(join(target, '.credentials.json'))).isSymbolicLink()).toBe(false);

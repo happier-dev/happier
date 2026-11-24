@@ -7,6 +7,8 @@ type ConnectedAccountCredentialRedaction = Readonly<{
     observeSecret(value: string | null): string | null;
     readCredentialRedactionValue(key: string, value: string | null): string | null;
     readPublicValues(): readonly string[];
+    /** Every secret value this admitted pair exposed to the materializer, with its rendered variants. */
+    readSecretValues(): readonly string[];
 }>;
 
 /** Host-only classification over the exact admitted credential/configuration pair. */
@@ -54,5 +56,6 @@ export function createConnectedAccountCredentialRedaction(input: Readonly<{
         for (const value of endpointValues) collect(value);
         return Object.freeze([...values]);
     };
-    return Object.freeze({ observeSecret, readCredentialRedactionValue, readPublicValues });
+    const readSecretValues = (): readonly string[] => Object.freeze([...secrets]);
+    return Object.freeze({ observeSecret, readCredentialRedactionValue, readPublicValues, readSecretValues });
 }

@@ -107,6 +107,8 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
             credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
             /** Classification supplied by the established materialization owner only. */
             observeMaterializationPublicValues?: (values: readonly string[]) => void;
+            /** Host-only: the secret values this materialization could write, for Session transcript redaction. */
+            observeMaterializationSecretValues?: (values: readonly string[]) => void;
             request: ConnectedAccountMaterializationRequest;
             /** Host-only native-home snapshot; never supplied by SDK service callers. */
             existingFiles?: Readonly<Record<string, Uint8Array>>;

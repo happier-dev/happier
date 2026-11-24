@@ -62,6 +62,7 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
         sessionConnectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
         unsetEnvironmentVariableNames: readonly string[];
         sensitiveEnvironmentVariableNames: readonly string[];
+        transcriptSecretValues?: readonly string[];
         invocationContext: RunnerAgentInvocationContext;
         materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
         connectedServiceRuntimeTarget?: Pick<ConnectedServiceRuntimeTargetInput,
@@ -647,6 +648,8 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           sensitiveEnvironmentVariableNames: [
             ...claimed.sensitiveEnvironmentVariableNames,
           ],
+          ...(claimed.transcriptSecretValues?.length
+            ? { transcriptSecretValues: [...claimed.transcriptSecretValues] } : {}),
         };
       } catch (error) {
         admission.claimPromise = null;

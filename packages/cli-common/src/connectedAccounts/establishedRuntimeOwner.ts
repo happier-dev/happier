@@ -155,6 +155,8 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota extends Conn
     material: Extract<TeamCredentialDirectMaterialPayloadV1['material'], { kind: 'qualified_connected_account' }>;
     operation: TOperation;
     isCurrent(): boolean | Promise<boolean>;
+    /** Host-private: the secret values this materialization could write, for Session transcript redaction. */
+    observeMaterializationSecretValues?: (values: readonly string[]) => void;
     signal?: AbortSignal;
   }>): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>>;
   invokeWithReceipt<TOperation extends ConnectedAccountRuntimeEstablishedOperation>(
@@ -193,6 +195,8 @@ export type QualifiedConnectedAccountEstablishedInvocationBasis = Readonly<{
   credentialRevision: string;
   /** Host-private public configuration strings, excluding actual secret collisions. */
   materializationPublicValues?: readonly string[];
+  /** Host-private secret values the materialization could write (env, headers, files), for transcript redaction. */
+  materializationSecretValues?: readonly string[];
   credentialHealth?: QualifiedConnectedAccountCredentialSnapshotV4['health'] | null;
   credentialProviderIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
   credentialConfigurationRevision: string | null;
@@ -1065,7 +1069,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           result,
           basis: Object.freeze({
             credentialRevision: initial.credential.credentialRevision,
-            ...(input.operation.kind === 'materialize' ? { materializationPublicValues: redaction.readPublicValues() } : {}),
+            ...(input.operation.kind === 'materialize' ? { materializationPublicValues: redaction.readPublicValues(),
+              materializationSecretValues: redaction.readSecretValues() } : {}),
             credentialHealth: observedCredentialHealth,
             credentialProviderIdentity: initial.credential.metadata.providerIdentity,
             credentialConfigurationRevision:
@@ -1189,6 +1194,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     material: Extract<TeamCredentialDirectMaterialPayloadV1['material'], { kind: 'qualified_connected_account' }>;
     operation: TOperation;
     isCurrent(): boolean | Promise<boolean>;
+    /** Host-private: the secret values this materialization could write, for Session transcript redaction. */
+    observeMaterializationSecretValues?: (values: readonly string[]) => void;
     signal?: AbortSignal;
   }>): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>> {
     assertNotAborted(input.signal);
@@ -1211,6 +1218,16 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         )
       ) {
         throw new Error('Connected-account direct material consumer is unavailable');
+      }
+      const directMode = runtimeLease.descriptor.authentication.modes.find(
+        (mode) => mode.id === input.material.authenticationModeId,
+      );
+      if (directMode && input.observeMaterializationSecretValues) {
+        input.observeMaterializationSecretValues(createConnectedAccountCredentialRedaction({
+          mode: directMode, credential: input.material.credential,
+          configuration: input.material.configuration?.values ?? {},
+          configurationSecrets: input.material.configuration?.secretValues,
+        }).readSecretValues());
       }
       const configuration: PluginConnectedAccountRuntimeConfiguration = Object.freeze({
         target: Object.freeze({

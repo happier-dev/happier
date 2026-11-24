@@ -82,6 +82,8 @@ export type HostPrivateLateSessionEnvironmentResolver = (
     environmentVariables: Readonly<Record<string, string>>;
     unsetEnvironmentVariables: readonly string[];
     sensitiveEnvironmentVariableNames: readonly string[];
+    /** Launch secret values that are not environment values (runtime-home credentials). */
+    transcriptSecretValues?: readonly string[];
     /**
      * Host-selected Connected Account references for this exact Session.
      * They remain data-only: the late resolver cannot select, materialize, or

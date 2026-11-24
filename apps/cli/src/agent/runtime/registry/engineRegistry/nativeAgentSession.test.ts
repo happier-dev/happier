@@ -8253,7 +8253,8 @@ describe('native Agent session host adapter', () => {
                     value: placeholder,
                     source: 'provider' as const,
                 }), ...codebuddyMaterialization.env],
-                additionalRedactionValues: Object.freeze([]),
+                // The runner-owned credential the transformer substitutes into the Agent child.
+                additionalRedactionValues: Object.freeze([credential]),
                 transformAgentChildLaunchEnvironment,
                 cleanup,
             });
@@ -8271,6 +8272,8 @@ describe('native Agent session host adapter', () => {
                 expect(request.launchEnvironment?.values
                     .HAPPIER_PROVIDER_KEY).toBe(placeholder);
                 expect(JSON.stringify(request)).not.toContain(credential);
+                // The Agent child holds the substituted credential; an echo stays out of the transcript.
+                expect(redactTranscriptSecrets({ text: `key=${credential}` })).toEqual({ text: 'key=[redacted]' });
                 expect(request.launchEnvironment?.values).toMatchObject({
                     CODEBUDDY_API_KEY: placeholder,
                     CODEBUDDY_AUTH_TOKEN: '',
@@ -8543,12 +8546,15 @@ describe('native Agent session host adapter', () => {
             environmentOverlay: [
                 { name: 'TEAM_PROVIDER_CLEARED', value: '', source: 'provider' },
                 { name: 'TEAM_PROVIDER_TOKEN', value: 'team-provider-fixture-token', source: 'provider' },
-            ], additionalRedactionValues: [], cleanup: () => undefined,
+            ], additionalRedactionValues: ['dummy-team-config-file-credential'], cleanup: () => undefined,
         }));
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: { sessions: { open: async request => {
                 expect(request.launchEnvironment?.values.TEAM_PROVIDER_CLEARED).toBe('');
                 expect(request.launchEnvironment?.values.TEAM_PROVIDER_TOKEN).toBe('team-provider-fixture-token');
+                // Team credential values the runner materialized stay out of the transcript.
+                expect(redactTranscriptSecrets({ text: 'team-provider-fixture-token dummy-team-config-file-credential' }))
+                    .toEqual({ text: '[redacted] [redacted]' });
                 return nativeSession;
             } } },
             lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,

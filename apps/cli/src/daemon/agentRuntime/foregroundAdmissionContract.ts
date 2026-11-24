@@ -205,6 +205,8 @@ export const ForegroundAgentRuntimeClaimResponseV1Schema =
       sessionConnectedAccounts: z.optional(AgentSessionConnectedAccountsV1Schema),
       unsetEnvironmentVariableNames: z.array(BoundedIdSchema).check(z.maxLength(256)),
       sensitiveEnvironmentVariableNames: z.array(BoundedIdSchema).check(z.maxLength(256)),
+      /** Secret values the daemon wrote outside the environment (runtime-home credentials), for transcript redaction. */
+      transcriptSecretValues: z.optional(z.array(z.string().check(z.minLength(1)))),
     }),
     z.strictObject({
       ok: z.literal(false),

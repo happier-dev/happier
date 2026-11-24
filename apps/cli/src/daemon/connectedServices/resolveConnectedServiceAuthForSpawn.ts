@@ -1307,6 +1307,8 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   }> | Promise<Readonly<{ subjectId: string; dispose(): void | Promise<void> }>>;
 }>): Promise<Readonly<{
   env: Record<string, string>;
+  /** Secret values this launch's Connected Account materializations injected or wrote. */
+  secretValues?: ConnectedServicesMaterialization['secretValues'];
   agentLaunchMaterials?: ConnectedServicesMaterialization['agentLaunchMaterials'];
   unsetEnvKeys?: readonly string[];
   sessionConnectedAccounts?: ConnectedServicesMaterialization['sessionConnectedAccounts'];
