@@ -4677,8 +4677,7 @@ export async function listAutomations(params: {
             accountId: params.accountId,
             deletedAt: null,
         },
-        // The list read never loads private trigger definition envelopes; the
-        // canonical full definition read remains the detail/mutation owner.
+        // The response projector uses stored envelopes to validate display carriers.
         select: automationDefinitionListItemSelect,
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     });

@@ -1319,7 +1319,7 @@ describe("automationCrudService (integration)", () => {
         })).rejects.toThrow(AutomationValidationError);
     });
 
-    it("keeps private trigger definition envelopes and unused status relations out of the list read", async () => {
+    it("keeps private trigger definition envelopes out of the list response and omits unused status relations from the read", async () => {
         const account = await db.account.create({
             data: { encryptionMode: "plain" },
             select: { id: true },
@@ -1364,9 +1364,19 @@ describe("automationCrudService (integration)", () => {
         expect(listedAutomation).toBeDefined();
         const listedEventTrigger = listedAutomation!.triggers.find((trigger) => trigger.kind === "pluginEvent");
         expect(listedEventTrigger).toBeDefined();
-        expect(listedEventTrigger!).not.toHaveProperty("definitionEnvelope");
-        expect(JSON.stringify(listedEventTrigger!)).not.toContain("Private repository label");
         expect(listedEventTrigger!).not.toHaveProperty("eventSourceStatus");
+
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const response = await app.inject({ method: "POST", url: "/v3/automations/query",
+                headers: { "x-test-user-id": account.id }, payload: {} });
+            expect(response.statusCode, response.body).toBe(200);
+            const page = AutomationDefinitionListResponseSchema.parse(response.json());
+            const publicTrigger = page.automations.find(row => row.id === automation.id)?.triggers
+                .find(trigger => trigger.kind === "pluginEvent");
+            expect(publicTrigger).toBeDefined();
+            expect(publicTrigger).not.toHaveProperty("triggerDefinitionEnvelope");
+            expect(response.body).not.toContain("Private repository label");
+        });
 
         const detail = await getAutomation({ accountId: account.id, automationId: automation.id });
         const detailEventTrigger = detail?.triggers.find((trigger) => trigger.kind === "pluginEvent");
