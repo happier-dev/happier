@@ -8,7 +8,7 @@ import {
   type DatabaseFindingBriefBuildResultV1,
   type DatabaseTargetV1,
 } from '@happier-dev/plugin-sdk/database';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema, type SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, ErrorState, Markdown, Row, Stack, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
@@ -62,10 +62,10 @@ export function FindingBrief({ target, recordKey }: Readonly<{ target: DatabaseT
     kind: 'existing',
     session: surface.accountScope ? { selector: 'sessions', addresses: [{ serverId: surface.accountScope.serverId, sessionId: currentSession }] } : currentSession,
   } : null;
-  const workspace = target.kind === 'worktree' ? target.workspace : undefined;
+  const workspace = target.kind === 'worktree' ? ProtocolWorkspaceAddressV1Schema.safeParse(target.workspace) : undefined;
   const newSession: SessionInputHandoffInputV1['newSession'] = { kind: 'new',
-    seed: workspace ? { placement: {
-      kind: 'exactTarget', serverId: workspace.serverId, machineId: workspace.machineId, directory: workspace.rootPath,
+    seed: workspace?.success ? { placement: {
+      kind: 'exactTarget', serverId: workspace.data.serverId, machineId: workspace.data.machineId, directory: workspace.data.rootPath,
     } } : {},
   };
   return <Stack gap="small">
