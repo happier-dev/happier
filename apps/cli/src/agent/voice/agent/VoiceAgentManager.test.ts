@@ -1311,7 +1311,7 @@ describe('VoiceAgentManager', () => {
       if (!activeTurnId) throw new Error('Native turn was not admitted');
       publishRuntimeEvent?.({ kind: 'turn-complete', turnId: activeTurnId, sessionId: 'session-parent', sequence: sequence++, emittedAtMs: 2 });
       expect(manager.isTurnInFlight('voice-authority')).toBe(false);
-      expect(activity).toEqual([true, false]);
+      await vi.waitFor(() => expect(activity).toEqual([true, false]));
       await manager.stop({ voiceAgentId: 'voice-authority' });
       expect(manager.readCurrentRuntimeAuthority('voice-authority')).toBeNull();
       expect(publishRuntimeEvent).toBeUndefined();

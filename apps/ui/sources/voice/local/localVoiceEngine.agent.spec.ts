@@ -1615,7 +1615,7 @@ describe('local voice engine agent behavior', () => {
             expect(spoken).toMatch(/Claude.*signed out/i);
             expect(spoken).toContain('Codex');
         } else {
-            expect(spoken).toBe(t('newSession.sessionStartedMessage'));
+            expect(spoken).toBe(t('voiceSurface.sessionCreated'));
         }
     });
 

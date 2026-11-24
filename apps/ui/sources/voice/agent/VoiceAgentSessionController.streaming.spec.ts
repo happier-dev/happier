@@ -606,7 +606,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
     expect(daemonStreamCancel).toHaveBeenCalledWith(expect.objectContaining({ streamId: 'stream-stop' }));
   });
 
-  it('forwards a concurrent turn to canonical admission instead of queueing it in Voice', async () => {
+  it.each(['turn', 'text update'] as const)('waits for an active turn before sending the next %s to canonical admission', async input => {
     const blockedRead = createDeferred<TurnStreamReadResult>();
     const readEntered = createDeferred<void>();
     daemonStreamStart.mockResolvedValueOnce({ streamId: 'stream-active' });
@@ -618,27 +618,36 @@ describe('VoiceExecutionTransport (streaming)', () => {
     const controller = createVoiceExecutionTransport();
     const activeTurn = trackPromise(controller.sendTurn('s1', 'active turn'));
     await readEntered.promise;
-    expect(daemonStreamRead).toHaveBeenCalledTimes(1);
+    const nextTurn = trackPromise(input === 'turn'
+      ? controller.sendTurn('s1', 'concurrent turn')
+      : controller.sendTextUpdate('s1', 'Permission required. Ask whether to allow it.'));
+    try {
+      await flushHookEffects();
+      expect(nextTurn.isSettled()).toBe(false);
+      expect(daemonStreamStart).toHaveBeenCalledTimes(1);
+      expect(daemonStreamRead).toHaveBeenCalledTimes(1);
+    } finally {
+      blockedRead.resolve({
+        streamId: 'stream-active',
+        events: [{ t: 'done', assistantText: 'active complete', actions: [] }],
+        nextCursor: 1,
+        done: true,
+      });
+      await Promise.all([activeTurn.settled, nextTurn.settled]);
+    }
 
-    await expect(controller.sendTurn('s1', 'concurrent turn')).rejects.toMatchObject({
-      rpcErrorCode: 'execution_run_busy',
-    });
-
-    expect(daemonStreamStart).toHaveBeenCalledTimes(2);
-    expect(daemonStreamRead).toHaveBeenCalledTimes(1);
-    expect(daemonStart).toHaveBeenCalledTimes(1);
-    expect(daemonRunStop).not.toHaveBeenCalled();
-
-    blockedRead.resolve({
-      streamId: 'stream-active',
-      events: [{ t: 'done', assistantText: 'active complete', actions: [] }],
-      nextCursor: 1,
-      done: true,
-    });
     await expect(activeTurn.settled).resolves.toMatchObject({
       status: 'resolved',
       value: { assistantText: 'active complete' },
     });
+    await expect(nextTurn.settled).resolves.toMatchObject({
+      status: 'rejected',
+      reason: { rpcErrorCode: 'execution_run_busy' },
+    });
+    expect(daemonStreamStart).toHaveBeenCalledTimes(2);
+    expect(daemonStreamRead).toHaveBeenCalledTimes(1);
+    expect(daemonStart).toHaveBeenCalledTimes(1);
+    expect(daemonRunStop).not.toHaveBeenCalled();
   });
 
   it('joins concurrent stops without retiring the first stop before daemon recovery', async () => {
@@ -826,34 +835,6 @@ describe('VoiceExecutionTransport (streaming)', () => {
         message: 'Permission required for writing /tmp/file.txt. Ask whether to allow it.',
       }),
     );
-  });
-
-  it('projects a concurrent text update to canonical admission instead of queueing it in Voice', async () => {
-    const blockedRead = createDeferred<TurnStreamReadResult>();
-    const readEntered = createDeferred<void>();
-    daemonStreamStart.mockResolvedValueOnce({ streamId: 'stream-1' });
-    daemonStreamStart.mockRejectedValueOnce(
-      Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }),
-    );
-    daemonStreamRead.mockImplementationOnce(async () => { readEntered.resolve(); return await blockedRead.promise; });
-
-    const controller: any = createVoiceExecutionTransport();
-    const firstTurn = controller.sendTurn('s1', 'hello');
-    await readEntered.promise;
-    expect(daemonStreamRead).toHaveBeenCalledTimes(1);
-
-    await expect(
-      controller.sendTextUpdate('s1', 'Permission required. Ask the human whether to allow it.'),
-    ).rejects.toMatchObject({ rpcErrorCode: 'execution_run_busy' });
-    expect(daemonStreamStart).toHaveBeenCalledTimes(2);
-
-    blockedRead.resolve({
-      streamId: 'stream-1',
-      events: [{ t: 'done', assistantText: 'ok', actions: [] }],
-      nextCursor: 1,
-      done: true,
-    });
-    await expect(firstTurn).resolves.toMatchObject({ assistantText: 'ok' });
   });
 
   it('can emit an immediate welcome via ensureRunningAndMaybeWelcome, and does not inject a greeting into the next user turn', async () => {

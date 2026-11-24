@@ -9,6 +9,7 @@ import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/ma
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { serveAccountHomes, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -40,7 +41,8 @@ import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voic
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { SpeechOptions } from 'expo-speech';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
   NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
@@ -87,6 +89,7 @@ let disconnect: (() => Promise<void>) | undefined;
 const events: string[] = [];
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let directPendingEntered = createDeferred<void>();
+const sessionSends: Array<Extract<ReturnType<typeof SessionSendMessageInputSchema.parse>, { message: string }> & { localId: string }> = [];
 type TurnReply = { assistantText: string; actions: VoiceAssistantAction[]; speechSegments?: string[] };
 let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
 let turnIndex = 0;
@@ -112,7 +115,10 @@ async function answerVoiceAgentRpc(method: string, input: unknown): Promise<unkn
       expect(admitted?.content.type).toBe('text');
       if (admitted?.content.type === 'text') expect(request.displayMessage ?? request.message).toBe(admitted.content.text);
     }
-    repliesByStream.set(streamId, turnReplies(turnIndex++, request.message));
+    const turnText = request.displayMessage ?? request.message;
+    // The provider prompt carries the original turn after the bound Session context.
+    if (request.message !== turnText) expect(request.message.endsWith(`\n\nUser said:\n${turnText}`)).toBe(true);
+    repliesByStream.set(streamId, turnReplies(turnIndex++, turnText));
     return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId });
   }
   if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
@@ -225,6 +231,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     events.length = 0;
     approvalArtifacts.clear();
     directPendingEntered = createDeferred<void>();
+    sessionSends.length = 0;
     turnIndex = 0;
     rejectStart = false;
     handledHttpStatus = 200;
@@ -235,12 +242,23 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       id: 'deployment-webhook', kind: 'webhook', url: 'https://deployment-hook.test/notify', enabled: true,
       topics: {}, readyIncludeMessageText: false, requestIncludeMessageText: false, signingSecretRef: null }] });
     retainedAgent = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerVoiceAgentRpc });
-    const actionHttp = await createRetainedVoiceAgentActionHttpBoundaries({ serverUrl: 'https://transcript-voice.test',
-      serverIdentityId: 'srv_transcript_voice', accountId: 'account-a', machineId: 'machine-1',
+    const voiceHome = { serverUrl: 'https://transcript-voice.test', serverIdentityId: 'srv_transcript_voice', accountId: 'account-a' };
+    const actionHttp = await createRetainedVoiceAgentActionHttpBoundaries({ ...voiceHome, machineId: 'machine-1',
       dispatch: (method, input) => retainedAgent.dispatch(method, input) });
+    const sessionSendHttp = await createExternalActionAccountHttpBoundary({ ...voiceHome,
+      machineId: 'machine-1', actionId: 'session.message.send', tokenEpoch: 0,
+      execute(input, { requestId }) {
+        const send = SessionSendMessageInputSchema.parse(input);
+        if (!('message' in send)) throw new Error('Expected a text message from Voice');
+        const localId = send.localId ?? `action-request:${requestId}`;
+        sessionSends.push({ ...send, localId });
+        return SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId });
+      },
+    });
+    actionHttp.push(sessionSendHttp);
     account = await serveAccountHomes({ homes: [
       { key: 'other', serverUrl: 'https://transcript-other.test', accountId: 'account-b' },
-      { key: 'voice', serverUrl: 'https://transcript-voice.test', serverIdentityId: 'srv_transcript_voice', accountId: 'account-a', currentAccount: true, settings: buildAccountSettings() },
+      { key: 'voice', ...voiceHome, currentAccount: true, settings: buildAccountSettings() },
     ], route: createSessionReadBatchHttpBoundary(async request => {
       if (request.path === managedMachineActionEndpointPathV1('machines.managed.list')) {
         return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
@@ -362,10 +380,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       let discoveredArtifactId: string | undefined;
       const resultBody = (message: string) => z.object({ toolResults: z.array(z.object({ result: z.unknown() })) })
         .parse(parseVoiceToolResultsFollowUp(message)).toolResults[0]!.result;
-      const catalog = z.object({ actionSpecs: z.array(z.object({ id: z.string(), bindings: z.optional(z.object({ voiceClientToolName: z.optional(z.string()) })),
-        inputHints: z.optional(z.object({ fields: z.array(z.object({ path: z.string(), description: z.optional(z.string()) })) })) })) });
-      let settingsListName = '';
-      let settingsSetName = '';
+      const catalog = z.object({ actionSpecs: z.array(z.object({ id: z.string(), bindings: z.nullish(z.object({ voiceClientToolName: z.optional(z.string()) })) })) });
       let discoveredAnchor = '';
       turnReplies = (index, message) => {
         if (index === 0) return { assistantText: 'Looking up the requested action.', actions: [
@@ -378,11 +393,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
           expect(spec).toBeDefined();
           expect(spec?.bindings?.voiceClientToolName).toEqual(expect.any(String));
           if (artifactId) return { assistantText: '', actions: [{ t: spec!.bindings!.voiceClientToolName!, args: { status: 'open' } }] };
-          settingsListName = spec!.bindings!.voiceClientToolName!;
-          const page = spec!.inputHints?.fields.find(field => field.path === 'pageId')?.description
-            ?.match(/\bvoiceConversations\b/)?.[0];
-          expect(page).toBe('voiceConversations');
-          return { assistantText: '', actions: [{ t: settingsListName, args: { pageId: page } }] };
+          return { assistantText: '', actions: [{ t: spec!.bindings!.voiceClientToolName!, args: { pageId: 'voiceConversations', query: 'Replies' } }] };
         }
         if (index === 2 && !artifactId) {
           const settings = z.object({ items: z.array(z.object({ anchor: z.string(), title: z.string() })) }).parse(resultBody(message)).items;
@@ -393,8 +404,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         }
         if (index === 3 && !artifactId) {
           const spec = z.object({ actionSpec: z.object({ bindings: z.object({ voiceClientToolName: z.string() }) }) }).parse(resultBody(message)).actionSpec;
-          settingsSetName = spec.bindings.voiceClientToolName;
-          return { assistantText: 'Replies is now set to Balanced.', speechSegments: narration, actions: [{ t: settingsSetName, args: { ...input, anchor: discoveredAnchor } }] };
+          return { assistantText: 'Replies is now set to Balanced.', speechSegments: narration, actions: [{ t: spec.bindings.voiceClientToolName, args: { ...input, anchor: discoveredAnchor } }] };
         }
         if (index === 2 && artifactId) {
           const requests = z.object({ items: z.array(z.object({ artifactId: z.string() })) }).parse(resultBody(message)).items;
@@ -449,19 +459,26 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
           const sending = sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
             userText: artifactId ? 'Approve this exact request.' : 'In Voice settings change Replies from Short to Balanced.',
             playbackController: createVoicePlaybackController(), voiceAgentSessions, signal: controller.signal });
-          // Keep a transport assertion failure observed while OS playback is held.
-          void sending.catch(() => undefined);
-          if (streamedNarration) {
-            const first = await firstNarration.promise;
-            // Hold real OS playback while the same streamed reply delivers its
-            // Action. The queued second segment must not replace host read-back.
-            await vi.waitFor(() => expect(carrier?.readPending() !== null || summaryAttempted).toBe(true));
-            first.onDone?.();
-            const summary = await hostSummary.promise;
-            await secondNarration.promise;
-            if (!summaryStopped) { summary.onStart?.(); summary.onDone?.(); }
+          try {
+            const awaitSpeech = <T,>(speechEvent: Promise<T>, event: string) => Promise.race([speechEvent, sending.then(() => {
+              throw new Error(`The turn settled before ${event}`);
+            })]);
+            if (streamedNarration) {
+              const first = await awaitSpeech(firstNarration.promise, 'first narration');
+              // Hold real OS playback while the same streamed reply delivers its
+              // Action. The queued second segment must not replace host read-back.
+              await vi.waitFor(() => expect(carrier?.readPending() !== null || summaryAttempted).toBe(true));
+              first.onDone?.();
+              const summary = await awaitSpeech(hostSummary.promise, 'host read-back');
+              await awaitSpeech(secondNarration.promise, 'second narration');
+              if (!summaryStopped) { summary.onStart?.(); summary.onDone?.(); }
+            }
+            await sending;
+          } finally {
+            controller.abort();
+            activeSpeech?.onStopped?.();
+            await sending.catch(() => undefined);
           }
-          await sending;
           expect(JSON.parse(await handlers.settings_get!({ anchor: input.anchor }))).toMatchObject({ ok: true, value: path === 'refused-setting' || path === 'approvals-off' ? 'short' : 'balanced' });
           expect(spoken).not.toContain('Replies is now set to Balanced.');
           expect(spoken).not.toContain('Unverified provider success claim.');
@@ -819,10 +836,9 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       voiceAgentSessions,
     });
 
-    expect(pendingWrites('s1')).toHaveLength(1);
-    expect(pendingWrites('s1')[0]).toMatchObject({ home: 'voice', accountId: 'account-a',
-      body: { requestedAction: { v: 1, kind: 'steer_if_active' } } });
-    expect(pendingRecords('s1')[0]).toMatchObject({ role: 'user', content: { type: 'text', text: 'hello' } });
+    expect(sessionSends).toMatchObject([{ sessionId: 's1', message: 'hello' }]);
+    expect(account.requests.filter(request => request.method === 'POST' && request.path === '/v1/actions/session.message.send'))
+      .toMatchObject([{ home: 'voice', accountId: 'account-a' }]);
     expectNoSyntheticTranscript();
   });
 
@@ -853,11 +869,11 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
 
     expect(turnIndex, JSON.stringify({
       daemonMethods: retainedAgent.requests.map(request => request.method),
-      admittedToolMessages: pendingRecords('s1').map(record => record.content),
+      admittedToolMessages: sessionSends.map(send => send.message),
       runtime: voiceConversationRuntimeMachine.getSnapshot(),
     })).toBe(10);
-    expect(pendingRecords('s1').map(record => record.content)).toEqual(
-      Array.from({ length: 9 }, (_, index) => ({ type: 'text', text: 'hello-' + (index + 1) })),
+    expect(sessionSends.map(({ sessionId, message }) => ({ sessionId, message }))).toEqual(
+      Array.from({ length: 9 }, (_, index) => ({ sessionId: 's1', message: 'hello-' + (index + 1) })),
     );
     expectNoSyntheticTranscript();
     expect(voiceOutputStatusStore.readForSession(VOICE_AGENT_GLOBAL_SESSION_ID)).toBeNull();
@@ -883,7 +899,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       voiceAgentSessions,
     });
 
-    expect(pendingWrites('s1')).toEqual([]);
+    expect(sessionSends).toEqual([]);
     // Batch snapshots are reads even though their bounded request uses POST.
     expect(account.requests.filter(request => request.home === 'other' && request.method === 'POST'
       && request.path !== '/v2/sessions/read-batch')).toEqual([]);

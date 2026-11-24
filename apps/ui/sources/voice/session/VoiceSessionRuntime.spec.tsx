@@ -1027,21 +1027,25 @@ describe('VoiceSessionRuntime', () => {
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     const { getVoiceSessionPresentedBinding, getVoiceSessionEndedAttempt } = await import('./voiceSessionStore');
     const { readVoiceConversationScopeMetadata, writeVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
+    const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
     const binding = getVoiceSessionPresentedBinding();
     if (!binding) throw new Error('Expected the admitted local binding');
     const carrier = storage.getState().sessions[binding.conversationSessionId];
-    const carrierMetadata = carrier?.metadata;
+    const carrierMetadata = readSessionOwnerMetadataView(carrier);
     if (!carrier || !carrierMetadata) throw new Error('Expected the admitted conversation carrier metadata');
     const admittedBindings = voiceSessionBindingStore.getState();
     await act(async () => {
       storage.getState().applySessions([{
         ...carrier,
-        metadata: writeVoiceConversationScopeMetadata(carrierMetadata, {
+        metadataLayoutVersion: 1,
+        seq: carrier.seq + 1,
+        updatedAt: carrier.updatedAt + 1,
+        ownerMetadataView: writeVoiceConversationScopeMetadata(carrierMetadata, {
           kind: 'session_root', sessionRootId: 'updated-conversation-root',
         }),
       }]);
     });
-    expect(readVoiceConversationScopeMetadata(storage.getState().sessions[carrier.id]?.metadata)).toEqual({
+    expect(readVoiceConversationScopeMetadata(readSessionOwnerMetadataView(storage.getState().sessions[carrier.id]))).toEqual({
       kind: 'session_root', sessionRootId: 'updated-conversation-root',
     });
     expect(voiceSessionBindingStore.getState()).toBe(admittedBindings);
