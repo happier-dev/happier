@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AxiosError } from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import axios from '@/api/client/credentialAxios';
@@ -27,6 +28,23 @@ it('skips selection and native completion demand for an Action on a Workflows-di
   expect(await port.select(args)).toMatchObject({ status: 'ready', before: [], after: [], notices: [] });
   expect(await port.hasAfterActions([args.actionId])).toBe(false);
   expect(request).not.toHaveBeenCalled();
+});
+
+it.each([
+  { status: null, reason: 'server_unreachable' },
+  { status: 503, reason: 'database_connection_unavailable' },
+  { status: 404, reason: 'not_found' },
+])('reports an enabled Home index failure as $reason', async ({ status, reason }) => {
+  serveHomeFeatures(true);
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  const request = vi.spyOn(axios, 'request');
+  if (status === null) request.mockRejectedValue(new AxiosError('Connection refused', 'ECONNREFUSED'));
+  else request.mockResolvedValue({ status, data: { error: reason } });
+  const port = createCliActionAutomationPortV1({ token, serverHttpBaseUrl: `https://index-failure-${reason}.test` });
+  if (!port) throw new Error('Expected the Account Action port');
+  expect(await port.select({ actionId: 'machines.command.run', input: {}, context: {} })).toMatchObject({
+    before: [], after: [], notices: [{ code: 'action_automations_not_checked', reason }],
+  });
 });
 
 it('keeps retained Action consumers on the same Account index when another credential for that Account is bound', async () => {

@@ -6641,7 +6641,10 @@ supplies the same declaration to stored, intended and inline validation.
 Action admission uses the Home's published `workflows` feature decision. A Home
 without that enabled bit runs Actions without reading the Action-trigger index.
 On an enabled Home, a failed index read preserves the Action's result and adds
-the typed notice that Automations could not be checked.
+an `action_automations_not_checked` notice. Its `reason` is `server_unreachable`
+for a classified transport failure without an HTTP response. A Home that responds
+with an error retains its typed code, such as `database_connection_unavailable`
+or `not_found`.
 
 The CLI and daemon retain one Action-trigger index per Account and Home across
 caller credentials. Pushed rows reach every retained consumer; each occurrence

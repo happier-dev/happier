@@ -37,7 +37,7 @@ const actionIds = ['session.pending.markHandled', 'session.pending.dismiss', 'se
 type RecoveryActionId = typeof actionIds[number];
 
 async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'ask' = false, indexCase?: {
-    workflowsEnabled: boolean; indexReply: 'missing' | 'empty';
+    workflowsEnabled: boolean; indexReply: 'missing' | 'empty' | 'unreachable' | 'refused';
 }) {
     const host = indexCase ? `pending-index-${indexCase.workflowsEnabled}-${indexCase.indexReply}` : 'pending-recovery';
     const serverId = await homes.addHome({ name: 'Pending Home', serverUrl: `https://${host}.test`, accountId: 'pending-owner', active: false });
@@ -80,15 +80,23 @@ describe('registered UI Pending recovery Action delivery', () => {
         { workflowsEnabled: false, indexReply: 'missing', reads: [0, 0, 0] },
         { workflowsEnabled: true, indexReply: 'missing', reads: [1, 0, 0] },
         { workflowsEnabled: true, indexReply: 'empty', reads: [1, 0, 0] },
+        { workflowsEnabled: true, indexReply: 'unreachable', reads: [1, 0, 0] },
+        { workflowsEnabled: true, indexReply: 'refused', reads: [1, 1, 1] },
     ] as const)('uses index demand for Workflows enabled=$workflowsEnabled and a $indexReply index', async ({ workflowsEnabled, indexReply, reads }) => {
         const { path, serverId, input, context } = await targetFixture('session.pending.action.set', false, { workflowsEnabled, indexReply });
         const indexPath = AUTOMATION_ACTION_INDEX_HTTP_PATH_V1;
-        homes.answer(serverId, `GET ${indexPath}`, indexReply === 'missing'
-            ? { status: 404, body: { error: 'not_found' } }
-            : { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
+        const indexReplies = {
+            missing: { status: 404, body: { error: 'not_found' } },
+            empty: { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) },
+            unreachable: { dispatchThenFail: true },
+            refused: { status: 503, body: { error: 'database_connection_unavailable' } },
+        };
+        homes.answer(serverId, `GET ${indexPath}`, indexReplies[indexReply]);
         const result = { ok: true, result: { didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } } };
-        const notices = workflowsEnabled && indexReply === 'missing'
-            ? { automationNotices: [{ code: 'action_automations_not_checked', reason: 'not_found' }] } : {};
+        const reason = workflowsEnabled ? {
+            missing: 'not_found', empty: null, unreachable: 'server_unreachable', refused: 'database_connection_unavailable',
+        }[indexReply] : null;
+        const notices = reason ? { automationNotices: [{ code: 'action_automations_not_checked', reason }] } : {};
         const counts: number[] = [];
         for (let i = 0; i < reads.length; i++) {
             const before = homes.requestsFor(indexPath).length;

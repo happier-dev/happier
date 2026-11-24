@@ -1,7 +1,8 @@
-import { createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
   type ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { readServerUnreachableFetchCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import type { UiWorkflowAction } from './workflowActionDeps';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -42,7 +43,12 @@ export function createUiActionAutomationPortV1(account: LazyActionAccountContext
     try {
       const response = await requestAccount.request(path, { method: init.method,
         headers: { Authorization: `Bearer ${requestAccount.credentials.token}`, 'Content-Type': 'application/json' },
-        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }), signal: init.signal });
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }), signal: init.signal })
+        .catch((error: unknown) => {
+          const code = path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 ? readServerUnreachableFetchCode(error) : null;
+          if (code) throw Object.assign(new Error('Action index transport failed', { cause: error }), { code });
+          throw error;
+        });
       return await readAutomationJsonOrThrow(response);
     } finally { requestAccount.dispose(); }
   } });

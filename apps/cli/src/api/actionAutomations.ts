@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import axios from '@/api/client/credentialAxios';
+import { isNetworkConnectionErrorCode, readNormalizedConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
   type ActionAutomationPortV1, type ActionAutomationSelectArgsV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
@@ -67,7 +69,14 @@ export function createCliActionAutomationPortV1(input: Readonly<{
       new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
     const response = await axios.request<unknown>({ url: `${normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)}${path}`,
       method: init.method, ...(init.body === undefined ? {} : { data: init.body }),
-      headers: { Authorization: `Bearer ${credential.token}` }, signal: init.signal, validateStatus: () => true });
+      headers: { Authorization: `Bearer ${credential.token}` }, signal: init.signal, validateStatus: () => true })
+      .catch((error: unknown) => {
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && readHttpStatus(error) === null
+          && isNetworkConnectionErrorCode(readNormalizedConnectionErrorCode(error))) {
+          throw Object.assign(new Error('Action index transport failed', { cause: error }), { code: 'server_unreachable' });
+        }
+        throw error;
+      });
     if (response.status < 200 || response.status >= 300) {
       const body = readRecord(response.data);
       const code = readActionErrorCodeV1({ code: body.errorCode ?? body.error });

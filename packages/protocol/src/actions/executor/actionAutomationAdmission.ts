@@ -18,6 +18,7 @@ import type { ActionAutomationRunV1, ActionAutomationConsentReviewV1 } from '../
 import type { WorkflowFinalResultV1, WorkflowRunStateV1 } from '../../workflows/workflowProgressV1.js';
 import { readActionAutomationExecutionMachineV1 } from './actionSettlement.js';
 import type { ActionAutomationNoticeV1 } from '../actionExecutionResult.js';
+import { readActionErrorCodeV1 } from '../actionErrorClassV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { isSharedRequesterActionV1, readActionWorkflowOriginRunIdV1 } from '../actionRequestAttributionV1.js';
 import type { FeaturesResponse } from '../../features/payload/featuresResponseSchema.js';
@@ -272,7 +273,7 @@ export function createActionAutomationPortV1(options: Readonly<{
       return undefined;
     } catch (error) {
       // Report only a typed boundary code. Exception text may contain private HTTP data.
-      if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') failureReason = error.code;
+      failureReason = readActionErrorCodeV1(error) ?? 'automation_index_unavailable';
       state = 'unavailable';
       return failureReason;
     } finally { changedWhileSeeding.clear(); }
