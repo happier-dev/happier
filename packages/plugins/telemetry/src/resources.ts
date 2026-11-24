@@ -78,6 +78,10 @@ async function readCaptureResourceSnapshot(context: ResourceContext, demand: dat
 type RollingCaptureDemand = Extract<database.DatabaseCaptureResourceInputV1,
     { view: keyof typeof database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1 }>;
 
+function isRollingCaptureDemand(demand: database.DatabaseCaptureResourceInputV1): demand is RollingCaptureDemand {
+    return Object.hasOwn(database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, demand.view);
+}
+
 async function readRollingCapturePage(demand: RollingCaptureDemand,
     readers: ReturnType<typeof createCaptureSelectedSourceReaders>, windowMs: number): Promise<database.DatabaseCaptureResourceSnapshotV1> {
     const until = Date.now();
@@ -106,7 +110,7 @@ export function createCaptureResourceRuntime(options: Readonly<{
             const serviceInput = PluginServiceListFieldResourceInputV1Schema.safeParse(context.context.launchInput);
             const demand = serviceInput.success ? { kind: 'service' as const, input: serviceInput.data }
                 : { kind: 'capture' as const, input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
-            if (demand.kind === 'capture' && 'windowMs' in demand.input && demand.input.windowMs !== undefined) {
+            if (demand.kind === 'capture' && isRollingCaptureDemand(demand.input) && demand.input.windowMs !== undefined) {
                 const selected = demand.input;
                 const windowMs = demand.input.windowMs;
                 const acquire = options.acquireSelection;
