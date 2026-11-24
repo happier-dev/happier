@@ -5,11 +5,13 @@ import type { SessionHandoffWorkspaceCaptureRequestV3 } from '@happier-dev/proto
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createRpcCallError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
-import { prepareExternalActionHandoffPreflightAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { prepareExternalActionHandoffPreflightAuthorization, type ExternalActionHandoffAuthorizationRefusalReason,
+  type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { sessionControlUnavailable } from '@/session/shared/sessionControlFailure';
 
 type Failure = Readonly<{ ok: false; errorCode: string; error: string }>;
 type MachineCall = typeof callMachineRpc;
@@ -30,7 +32,6 @@ type PreflightMachineRpcInput = Readonly<{
 
 const updateRequired = (): Failure => ({ ok: false, errorCode: 'handoff_existing_state_update_required',
   error: 'Existing session state requires a newer daemon. Turn session data transfer on.' });
-const unavailable = (): Failure => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
 
 /** Read-only handoff transport shared by tracked and direct source admission. */
 export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
@@ -46,9 +47,9 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
     const execute = async (): Promise<unknown> => {
       const signal = input.signal ?? input.context?.signal;
       signal?.throwIfAborted();
-      if (requester && !await requester.isCurrent()) return unavailable();
+      if (requester && !await requester.isCurrent()) return sessionControlUnavailable('session.handoff.preflight.requester');
       const root = input.context?.externalActionExecutionAuthorization;
-      if (input.context?.callerInputAuthorization && !root) return unavailable();
+      if (input.context?.callerInputAuthorization && !root) return sessionControlUnavailable('session.handoff.preflight.authorization');
       const requesterBootstrap = { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(input.credentials) } as const;
       const request = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
         ? SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse({
@@ -66,19 +67,24 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
           || admission.sourceMachineId !== input.request.sourceMachineId || admission.targetMachineId !== input.request.targetMachineId
           || signer.machineId !== admission.sourceMachineId || signer.installationId !== admission.sourceInstallationId
           || ![admission.sourceMachineId, admission.targetMachineId].includes(input.machineId)
-          || input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && input.machineId !== admission.targetMachineId) return unavailable();
+          || input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && input.machineId !== admission.targetMachineId) return sessionControlUnavailable('session.handoff.preflight.admission');
+        let childRefusal: ExternalActionHandoffAuthorizationRefusalReason = 'construction_failed';
         const child = await prepareExternalActionHandoffPreflightAuthorization({ authorization: root, input: request,
           machineId: input.machineId, sourceMachineId: signer.machineId, sourceInstallationId: signer.installationId,
           privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
           // The requester's own Account material seals the child request.
           ...(input.credentials.encryption ? { material: input.credentials.encryption } : {}),
+          onRefused: reason => { childRefusal = reason; },
           ...(signal ? { signal } : {}),
         });
         const authorization = child && requester && input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET
           ? await requester.projectExternalActionAuthorization(child, child.binding.serverIdentityId, signal) : child;
+        if (!child) return sessionControlUnavailable('session.handoff.preflight.child', childRefusal);
+        if (!authorization) return sessionControlUnavailable('session.handoff.preflight.projection');
         const currentSigner = boundary.readSourceInstallation();
-        if (!authorization || !currentSigner || currentSigner.machineId !== signer.machineId
-          || currentSigner.installationId !== signer.installationId || requester && !await requester.isCurrent()) return unavailable();
+        if (!currentSigner || currentSigner.machineId !== signer.machineId
+          || currentSigner.installationId !== signer.installationId) return sessionControlUnavailable('session.handoff.preflight.signer');
+        if (requester && !await requester.isCurrent()) return sessionControlUnavailable('session.handoff.preflight.requester');
         externalAction = { context: { ...input.context, authority: 'account_automation',
           defaultSessionMachineId: signer.machineId, externalActionTarget: authorization.binding.target,
           externalActionExecutionAuthorization: authorization }, effectActionId: 'session.handoff',

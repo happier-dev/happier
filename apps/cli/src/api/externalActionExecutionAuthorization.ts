@@ -2952,10 +2952,15 @@ export async function prepareExternalActionHandoffContinuationAuthorization(inpu
   serverHttpBaseUrl: string;
   /** The requester Account's own material, in either stored form. */
   material?: AccountScopedCryptoMaterial;
+  /** Receives the typed reason when no child is prepared. */
+  onRefused?: (reason: ExternalActionHandoffAuthorizationRefusalReason) => void;
   signal?: AbortSignal;
 }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   return prepareExternalActionHandoffAuthorization({ ...input, phase: 'continuation' });
 }
+
+export type ExternalActionHandoffAuthorizationRefusalReason = 'cancelled' | 'root_binding' | 'account_material_unavailable'
+  | 'home_refused' | 'child_invalid' | 'child_mismatch' | 'construction_failed';
 
 /** Read only the exact admitted peers while the original Session publisher remains current. */
 export async function prepareExternalActionHandoffPreflightAuthorization(input: Omit<
@@ -2967,15 +2972,19 @@ export async function prepareExternalActionHandoffPreflightAuthorization(input: 
 async function prepareExternalActionHandoffAuthorization(input: Omit<
   Parameters<typeof prepareExternalActionHandoffContinuationAuthorization>[0], 'handoffId'
 > & Readonly<{ phase: 'preflight'; handoffId?: never } | { phase: 'continuation'; handoffId: string }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
+  const refused = (reason: ExternalActionHandoffAuthorizationRefusalReason): null => {
+    input.onRefused?.(reason);
+    return null;
+  };
   try {
-    if (input.signal?.aborted) return null;
+    if (input.signal?.aborted) return refused('cancelled');
     const root = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
     const binding = root.binding;
     const admission = binding.handoffAdmission;
     if (binding.actionId !== 'session.handoff' || binding.handoffContinuation || binding.handoffPreflight || !admission
       || binding.machineId !== input.sourceMachineId || binding.installationId !== input.sourceInstallationId
       || admission.sourceMachineId !== input.sourceMachineId || admission.sourceInstallationId !== input.sourceInstallationId
-      || ![admission.sourceMachineId, admission.targetMachineId].includes(input.machineId)) return null;
+      || ![admission.sourceMachineId, admission.targetMachineId].includes(input.machineId)) return refused('root_binding');
     const target = { kind: 'machine' as const, machineId: input.machineId };
     const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
     const handoffAdmission = { sessionId: admission.sessionId, sourceMachineId: admission.sourceMachineId,
@@ -2983,7 +2992,7 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
     // The requester's stored recovery secret and data key name the same Account content key.
     const material = input.material?.type === 'legacy'
       ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(input.material) } : input.material;
-    if (binding.accountEncryptionMode === 'e2ee' && !material) return null;
+    if (binding.accountEncryptionMode === 'e2ee' && !material) return refused('account_material_unavailable');
     const envelope = binding.accountEncryptionMode === 'e2ee' && material
       // The opener's canonical binding: sign-in evidence stays on the root, not in the ciphertext.
       ? { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
@@ -3003,9 +3012,10 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
       timeout: input.signal ? 0 : 15_000,
       ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     });
-    if (input.signal?.aborted || response.status < 200 || response.status >= 300) return null;
+    if (input.signal?.aborted) return refused('cancelled');
+    if (response.status < 200 || response.status >= 300) return refused('home_refused');
     const child = ExternalActionExecutionAuthorizationV1Schema.safeParse(response.data);
-    if (!child.success) return null;
+    if (!child.success) return refused('child_invalid');
     const next = child.data.binding;
     const expectedInstallation = input.machineId === admission.sourceMachineId
       ? admission.sourceInstallationId : admission.targetInstallationId;
@@ -3025,12 +3035,12 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
       || ('authentication' in binding ? !('authentication' in next)
         || !sameStrictJsonValue(next.authentication, binding.authentication)
         : !('credentialId' in next) || next.credentialId !== binding.credentialId
-          || next.principalId !== binding.principalId || !sameStrictJsonValue(next.grant, binding.grant))) return null;
+          || next.principalId !== binding.principalId || !sameStrictJsonValue(next.grant, binding.grant))) return refused('child_mismatch');
     return child.data;
   } catch (error) {
     if (error instanceof SignedHomeAuthorizationHttpError) throw error;
     refuseExternalActionPhase('handoff_authorization', input.machineId, error);
-    return null;
+    return refused('construction_failed');
   }
 }
 

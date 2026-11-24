@@ -75,7 +75,7 @@ describe('installed source handoff preflight', () => {
 
   // A Manage member hands off their e2ee Session from another Account's SOURCE to their own TARGET.
   // Their retained custody holds the Account recovery secret (`legacy`), as the app's sign-in stores it.
-  it('prepares the TARGET preflight child from the requester Account secret', async () => {
+  it.each(['requester secret', 'no requester material'] as const)('prepares the TARGET preflight child from the requester Account (%s)', async material => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const secret = new Uint8Array(32).fill(9);
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root', binding: {
@@ -113,11 +113,19 @@ describe('installed source handoff preflight', () => {
         readSourceInstallation: () => ({ machineId: 'source', installationId: 'source-installation', privateKey: keys.secretKey }) },
     });
     const result = await preflight({ machineId: 'target', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
-      credentials: { token: 'member-token', encryption: { type: 'legacy', secret } },
+      credentials: { token: 'member-token', encryption: material === 'requester secret' ? { type: 'legacy', secret } : null },
       request: { sessionId: 'session', sourceMachineId: 'source', targetMachineId: 'target', targetPath: '/target',
         sourceSessionStorageMode: 'persisted' },
       context: { surface: 'ui', authority: 'present_user', externalActionExecutionAuthorization: root,
         signal: new AbortController().signal } as RpcActionExecutorContext });
+    if (material === 'no requester material') {
+      // An e2ee root without the requester's own material is refused before Home, and says why.
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        failureCause: { phase: 'session.handoff.preflight.child', nativeErrorReason: 'account_material_unavailable' } });
+      expect(post).not.toHaveBeenCalled();
+      expect(targetCalls).toEqual([]);
+      return;
+    }
     expect(result).toMatchObject({ protocolVersion: 3 });
     expect(post).toHaveBeenCalledOnce();
     expect(targetCalls).toEqual(['target-preflight-child']);
