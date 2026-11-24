@@ -31,21 +31,25 @@ describe('teamAcceptedSignInNames', () => {
 });
 
 describe('presentTeamSignInRequired', () => {
-  it('leads to the Team sign-in and carries the page it was opened from', () => {
+  it('leads to the Team sign-in and carries the page it was opened from, without its unrelated query', () => {
     const navigate = vi.fn();
-    const reason = presentTeamSignInRequired({
-      code: 'session_access_authentication_required',
-      teamId: 'team-1',
-      serverId: 'profile-acme',
-      accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
-      navigate,
-      origin: () => '/session/s-1?right=people',
-    });
-    reason.action.onPress();
+    // The web window's address when Sign in is pressed: the Session page with its pane, plus a parameter it does not need.
+    vi.stubGlobal('window', { location: { pathname: '/session/s-1', search: '?serverId=srv_a&right=collaboration&token=secret' } });
+    try {
+      const reason = presentTeamSignInRequired({
+        code: 'session_access_authentication_required',
+        teamId: 'team-1',
+        serverId: 'profile-acme',
+        accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+        navigate,
+      });
+      reason.action.onPress();
+    } finally {
+      vi.unstubAllGlobals();
+    }
     const href = String(navigate.mock.calls[0]?.[0]);
     expect(href.startsWith('/teams/team-1/sign-in?')).toBe(true);
-    expect(new URLSearchParams(href.split('?')[1]).get('returnTo')).toBe(
-      '/session/s-1?right=people',
-    );
+    expect(new URLSearchParams(href.split('?')[1]).get('returnTo')).toBe('/session/s-1?serverId=srv_a&right=collaboration');
+    expect(href).not.toContain('secret');
   });
 });

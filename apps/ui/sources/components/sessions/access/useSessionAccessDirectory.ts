@@ -18,7 +18,6 @@ import { homeDomainFailureFromSnapshotError } from '@/sync/domains/teams/teamSna
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { presentTeamSignInOutdated, presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
-import { readCurrentRouteHref } from '@/components/appShell/workspace/currentRouteLocation';
 import { isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 // The workspace's router: a hosted pane (the Session's Share) navigates through its destination owner.
@@ -306,7 +305,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             refusals.set(source.team.teamId, presentTeamSignInRequired({
                 code: source.failure?.code ?? 'team_authentication_required', teamId: source.team.teamId, serverId,
                 accepted: source.team.authenticationPolicy?.accepted ?? [],
-                navigate: (href) => routerRef.current.push(href as Href), origin: readCurrentRouteHref,
+                navigate: (href) => routerRef.current.push(href as Href),
             }));
         }
         return refusals;

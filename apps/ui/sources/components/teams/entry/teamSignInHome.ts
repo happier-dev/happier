@@ -156,6 +156,25 @@ export function teamSignInReturnPath(params: Readonly<{
 }
 
 /**
+ * The query parameters that reopen the page a sign-in was asked from: the Session destination's Home and its open
+ * pane (Share lives in the People pane). Nothing else of the address is carried.
+ */
+const TEAM_SIGN_IN_ORIGIN_PARAMS = ['serverId', 'right'] as const;
+
+/** The in-app page to come back to after meeting a Team's sign-in rule: its path and only the parameters above. */
+export function teamSignInOrigin(address: Readonly<{ pathname: string; search: string }> | null): string | null {
+    if (!address) return null;
+    const current = new URLSearchParams(address.search);
+    const kept = new URLSearchParams();
+    for (const name of TEAM_SIGN_IN_ORIGIN_PARAMS) {
+        const value = current.get(name);
+        if (value !== null) kept.set(name, value);
+    }
+    const query = kept.toString();
+    return query ? `${address.pathname}?${query}` : address.pathname;
+}
+
+/**
  * Where a successful sign-in to meet a Team's rule lands: the in-app page that asked for it, so the same Share or
  * Start can follow at once, else the Team's own page. The return path arrives in a URL anyone can craft, so it is
  * admitted here as an in-app path only; an address, another origin or a malformed value falls back to the Team.

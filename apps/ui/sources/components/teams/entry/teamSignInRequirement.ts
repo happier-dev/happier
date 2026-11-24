@@ -8,7 +8,9 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
-import { teamSignInReturnPath } from './teamSignInHome';
+import { readCurrentRouteAddress } from '@/components/appShell/workspace/currentRouteLocation';
+
+import { teamSignInOrigin, teamSignInReturnPath } from './teamSignInHome';
 
 /**
  * The sign-ins a Team accepts, each named as it reads inside a sentence ("your Recovery key", "your email and
@@ -49,8 +51,6 @@ export function presentTeamSignInRequired(
     /** The Team's accepted sign-ins as this member reads them; empty when not known here. */
     accepted: readonly TeamAcceptedAuthenticationV1[];
     navigate: (href: string) => void;
-    /** The in-app page to come back to; the sign-in page admits only an in-app path. */
-    origin: () => string | null;
   }>,
 ): Readonly<{
   code: string;
@@ -72,7 +72,8 @@ export function presentTeamSignInRequired(
           teamSignInReturnPath({
             teamId: input.teamId,
             serverId: input.serverId,
-            returnTo: input.origin(),
+            // Read when pressed: the page and only the parameters that reopen it.
+            returnTo: teamSignInOrigin(readCurrentRouteAddress()),
           }),
         ),
     },

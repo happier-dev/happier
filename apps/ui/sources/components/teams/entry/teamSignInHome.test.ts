@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { listServerProfiles, removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { resolveTeamSignInDestination, resolveTeamSignInHome, teamSignInReturnPath } from './teamSignInHome';
+import { resolveTeamSignInDestination, resolveTeamSignInHome, teamSignInOrigin, teamSignInReturnPath } from './teamSignInHome';
 
 function descriptorCarrier(homeServerIdentityId: string): string {
     return JSON.stringify({
@@ -135,5 +135,14 @@ describe('resolveTeamSignInDestination', () => {
         }
         expect(resolveTeamSignInDestination({ teamId: 'team-1', serverId: 'profile-acme', returnTo: null }))
             .toBe('/teams/team-1/sessions?serverId=profile-acme');
+    });
+});
+
+describe('teamSignInOrigin', () => {
+    it('keeps the page and only the parameters that reopen it, never the rest of the query', () => {
+        expect(teamSignInOrigin({ pathname: '/session/s-1', search: '?serverId=srv_a&right=collaboration&token=secret&utm=x' }))
+            .toBe('/session/s-1?serverId=srv_a&right=collaboration');
+        expect(teamSignInOrigin({ pathname: '/', search: '?draft=abc' })).toBe('/');
+        expect(teamSignInOrigin(null)).toBeNull();
     });
 });
