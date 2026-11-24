@@ -1,4 +1,5 @@
 /** ID-only vocabulary: foundational Action admission must not load payload schemas. */
+export const USAGE_QUERY_ACTION_ID_V1 = 'usage.query' as const;
 export const USAGE_HISTORY_ACTION_IDS = { read: 'usage.history.read' } as const;
 export const USAGE_PRICE_ACTION_IDS = { get: 'usage.prices.get', refresh: 'usage.prices.refresh' } as const;
 export function isUsagePriceActionIdV1(value: string): value is typeof USAGE_PRICE_ACTION_IDS[keyof typeof USAGE_PRICE_ACTION_IDS] {
@@ -18,7 +19,7 @@ export function isUsagePrivateRecapActionIdV1(value: string): value is typeof US
   return value === USAGE_PRIVATE_RECAP_ACTION_IDS.compose || value === USAGE_PRIVATE_RECAP_ACTION_IDS.export
     || value === USAGE_PRIVATE_RECAP_ACTION_IDS.deliver;
 }
-export const USAGE_ACTION_IDS = ['usage.query', USAGE_HISTORY_ACTION_IDS.read, USAGE_PRICE_ACTION_IDS.get, USAGE_PRICE_ACTION_IDS.refresh,
+export const USAGE_ACTION_IDS = [USAGE_QUERY_ACTION_ID_V1, USAGE_HISTORY_ACTION_IDS.read, USAGE_PRICE_ACTION_IDS.get, USAGE_PRICE_ACTION_IDS.refresh,
   'usage.export', 'usage.calendar.export', ...Object.values(USAGE_PUBLIC_RECAP_ACTION_IDS), ...Object.values(USAGE_PRIVATE_RECAP_ACTION_IDS)] as const;
 export type UsageActionId = typeof USAGE_ACTION_IDS[number];
 export function isUsageActionIdV1(value: string): value is UsageActionId {

@@ -229,7 +229,7 @@ import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
-import { USAGE_PRICE_ACTION_IDS, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { KvMutationRequestSchema } from '@/app/kv/kvMutate';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -3889,7 +3889,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     // Environment names live in private headers. Listing opens only that
     // projection; the Artifact owner retains requester per-record access.
-    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || root === 'usage.query') && verified.effectActionId === root
+    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || root === USAGE_QUERY_ACTION_ID_V1) && verified.effectActionId === root
         && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read') {
         const read = ArtifactReadHeadersBatchInputV1Schema.safeParse(proof.body);
         return read.success && sameManagedInput(proof.body, read.data)

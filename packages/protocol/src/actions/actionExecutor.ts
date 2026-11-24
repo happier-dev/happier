@@ -4844,13 +4844,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (isUsageActionIdV1(actionId)) {
         return executeUsageAction(actionId, admittedInput, deps.usageActions, ctx, (childId, childInput, operation) => {
           const sessionChild = ctx.executeOrdinaryChildAction;
-          if (childId === 'action.invoke' && sessionChild) {
+          if (childId === ACTION_INVOKE_ACTION_ID_V1 && sessionChild) {
             return executeChild(childId, childInput, { ...ctx, ...operation }, false,
               (id, input, child) => sessionChild(id, input, { actionRequestId: child.actionRequestId,
                 signal: child.signal, externalActionTarget: child.externalActionTarget }));
           }
           return executeHostChild(childId, childInput, { ...ordinaryChildContext(ctx), ...operation,
-            ...(childId === 'action.invoke' ? { requiredContributedActionDangerLevel: 'safe' as const } : {}) });
+            ...(childId === ACTION_INVOKE_ACTION_ID_V1 ? { requiredContributedActionDangerLevel: 'safe' as const } : {}) });
         });
       }
       if (actionId === 'usage.coach.apply' || actionId === 'usage.coach.undo'
@@ -8735,7 +8735,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     const onEffectDispatch = reportEffectDispatch && (() => reportEffectDispatch(true));
     const reviewedChild = readHostReviewedChildOperationV1(context, actionId, input);
-    if (hostInternal && actionId === 'action.invoke' && deps.routeHostChildAction) {
+    if (hostInternal && actionId === ACTION_INVOKE_ACTION_ID_V1 && deps.routeHostChildAction) {
       onEffectDispatch?.();
       const routed = await deps.routeHostChildAction({ actionId, input, context: context! });
       if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
@@ -8744,7 +8744,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const prepared = await prepareInvocation(actionId, input, context, hostInternal, true, undefined,
       inheritedWorkflowSessionScope, onEffectDispatch);
     if (hostInternal && prepared.kind === 'ready' && deps.routeHostChildAction
-      && actionId !== 'action.invoke') {
+      && actionId !== ACTION_INVOKE_ACTION_ID_V1) {
       const spec = getActionSpec(actionId);
       const admitted = prepared.admission;
       if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller, admitted.context.surface ?? 'ui') === 'machine') {

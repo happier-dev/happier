@@ -63,6 +63,7 @@ export async function runProductionCostsJourney(input: Readonly<{
     };
     const viewers = [input.owner, input.teammate, input.collectorAccount];
     expect(input.collectorAccount.accountId).not.toBe(input.owner.accountId);
+    expect(input.collectorAccount.accountId).not.toBe(input.teammate.accountId);
     const readAgentAccounting = async () => {
         const accountingOnly = { includeComparison: false, includeQuota: false,
             includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
@@ -149,7 +150,8 @@ export async function runProductionCostsJourney(input: Readonly<{
                         viewerAccountId: viewer.accountId, accounting, collectorRequests, collectorFailures,
                     })));
                 }
-                expect(accounting).toMatchObject({ status: 'available' });
+                expect(accounting, redactBugReportSensitiveText(JSON.stringify(accounting ?? null)))
+                    .toMatchObject({ status: 'available' });
                 expect(slice.accounting?.totals.eventCount).toBe(4);
                 expect(slice.accounting?.summary?.catalogRevision).toBeTruthy();
                 expect(slice.costFactTotals).toEqual(expect.arrayContaining([

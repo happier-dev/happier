@@ -10,8 +10,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { readProjectExecutionOutputMachineAdmissionMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -562,15 +563,15 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         kind: 'machine' as const, machineId: requesterHistoryWorkspace.machineId, project: requesterHistoryWorkspace,
       } } : {}),
       ...(observationSetup ? { requiredContributedActionDangerLevel: 'safe' } : {}),
-      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === 'usage.query' ? {
+      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? {
         executeOrdinaryChildAction: (actionId, input, options) => {
           const parsed = StrictJsonValueSchema.safeParse(input);
           const setupRead = isWorkflowObservationSetupChildActionV1(operation.actionId, actionId);
-          const costsReference = operation.actionId === 'usage.query' && actionId === 'action.invoke'
+          const costsReference = operation.actionId === USAGE_QUERY_ACTION_ID_V1 && actionId === ACTION_INVOKE_ACTION_ID_V1
             ? readPluginActionExecutionReference(actionId, input) : null;
           const costsTarget = costsReference && formatQualifiedPluginActionId(costsReference) === TELEMETRY_COSTS_READ_ACTION_ID_V1
             && options?.externalActionTarget?.kind === 'machine' ? options.externalActionTarget.machineId : undefined;
-          const allowed = operation.actionId === 'usage.query' ? costsTarget !== undefined
+          const allowed = operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? costsTarget !== undefined
             : setupRead || isWorkflowHostAdmittedChildActionIdV1(actionId);
           if (!allowed || !options?.actionRequestId || !parsed.success) {
             return Promise.resolve({ ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
