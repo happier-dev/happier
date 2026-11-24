@@ -287,7 +287,6 @@ export function formatVoiceApprovalGuidance(canApproveRequests: boolean): string
         canApproveRequests
             ? 'Voice approvals are enabled. Read the request aloud within the sharing policy and ask the person. Use the canonical request tools to approve or deny on the person\'s behalf, following their answer.'
             : 'Voice approvals are off. A tap in the request UI is required; do not approve or deny through Voice, and do not bypass a present_user_required refusal.',
-        'Native Codex Realtime cannot decide requests; use a tap or switch to Local Voice when Voice approvals are enabled.',
         'Never claim it was settled until canonical session updates show the result.',
     ].join(' ');
 }

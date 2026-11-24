@@ -426,7 +426,6 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('Coding assistant is requesting permission to use write in');
     expect(out).toContain('<request_id>perm_voice_1</request_id>');
     expect(out).toContain(canApproveRequests ? 'Voice approvals are enabled' : 'Voice approvals are off');
-    expect(out).toContain('Native Codex Realtime cannot decide requests');
     if (canApproveRequests) expect(out).toContain('Use the canonical request tools to approve or deny');
     else expect(out).toContain('A tap in the request UI is required');
   });
