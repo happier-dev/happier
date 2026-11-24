@@ -171,6 +171,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         bottom: -theme.space.s20,
     },
     /**
+     * A container that ends a lane while editing: that lane closes with it (`laneEndInserterClosing`), so its spine
+     * stops where the closings join back, one `laneJoin` above the container's end.
+     */
+    spineToClosingJoin: {
+        bottom: theme.space.s12,
+    },
+    /**
      * On a phone a block's card runs under its number (`blockCard`), so its spine leaves from the
      * block's end rather than from under the mark: it links the block to the next mark through the gap.
      */
@@ -262,6 +269,17 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /**
+     * A lane whose last block is a container closes with it (FIN-DESIGN-ACCEPT-9 P2): its end inserter shares the
+     * row of the container's own last end inserter and its join the same band, so nested closings take one rhythm
+     * step after the innermost content instead of one per level. The inner inserter stays on top; this lane's is
+     * reached on its own name column, left of the inner one.
+     */
+    laneEndInserterClosing: {
+        // The inner closing: its end inserter row (`inserter`, border included) and its `laneJoin` band.
+        marginTop: -(theme.space.s20 + theme.space.s12),
+        zIndex: 0,
+    },
+    /**
      * The lane's caret, centred on the name's first line and pulled in by the row gap, so its glyph
      * follows the words (its button's own inset is the space between them).
      */
@@ -299,7 +317,11 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
         flexShrink: 1,
     },
-    /** A list item's content on the name column (its ordinal hangs in the gutter): the block, then its "Only when" line. */
+    /** A block's own "Only when …" line under its heading, on the name column, before its card or lanes (X1). */
+    headingCondition: {
+        paddingBottom: theme.space.s4,
+    },
+    /** A list item's content on the name column (its ordinal hangs in the gutter). */
     blockColumn: {
         flexGrow: 1,
         flexShrink: 1,

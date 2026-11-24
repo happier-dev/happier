@@ -53,6 +53,14 @@ const HISTORY_LABEL_KEYS = {
 } as const;
 
 /** The canonical starting repetition for a mode; switching to the current mode keeps it. */
+/**
+ * Whether a loop's last lane ends on its own steps: an "Until" round and an "evaluate" continuation lane both end
+ * with the turn line (`footer` below), so their lane's closing is not its end inserter.
+ */
+export function workflowLoopEndsOnItsSteps(repetition: WorkflowRepetition): boolean {
+    return repetition.kind !== 'until' && repetition.kind !== 'evaluate';
+}
+
 export function repetitionForMode(
     kind: WorkflowRepetition['kind'],
     current: WorkflowRepetition,

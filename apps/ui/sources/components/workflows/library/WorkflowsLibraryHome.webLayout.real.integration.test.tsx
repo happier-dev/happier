@@ -32,7 +32,10 @@ vi.mock('@legendapp/list/react-native', async original =>
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 installWebLayoutBridge();
 
+// A case holds the saved library's first page here to measure its loading state, then releases it.
+let definitionsAnswer: Promise<void> | null = null;
 const fixtureResponse = async (actionId: string) => {
+    if (actionId === 'workflow.definition.list') await definitionsAnswer;
     if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
         kind: 'workflow-definition.v1', definitionId: 'saved', revision: { headerVersion: 1, bodyVersion: 1 },
         metadata: { title: 'Saved workflow' }, ownerAccountId: 'account-a', access: 'owner',
@@ -86,6 +89,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+    definitionsAnswer = null;
     await act(async () => root?.unmount());
     root = null;
     host?.remove();
@@ -124,6 +128,40 @@ describe('Workflows home, as a browser lays it out', () => {
         const steps = text.indexOf(t('workflows.examples.stepCount', { count: 1 }));
         expect(trigger).toBeGreaterThanOrEqual(0);
         expect(steps).toBeGreaterThan(trigger);
+    });
+
+    it.each([1440, 390])('holds the library rows in their own geometry while the first page loads at %i px', async (width) => {
+        const { t } = await import('@/text');
+        let answer!: () => void;
+        definitionsAnswer = new Promise<void>(resolve => { answer = resolve; });
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => {
+            root!.render(<View style={{ width }}><InjectedAuthProvider credentials={boundary!.credentials}>
+                <UniversalSearchRuntimeProvider value={searchRuntime}><WorkflowsLibraryHome /></UniversalSearchRuntimeProvider>
+            </InjectedAuthProvider></View>);
+        });
+        const library = t('workflows.destination.sections.library');
+        const measure = () => measureWebLayout(host!, { viewport: { width, height: 3200 }, texts: [library], settle: replay => act(replay) });
+        const loading = await measure();
+        // The Collection's own loading rows, under the Library section that the rows land in; not the generic page Items.
+        const skeleton = loading.rect('workflows-home:collection:skeleton-row');
+        expect(host.querySelector('[data-testid="workflows-home:loading"]')).toBeNull();
+        expect(host.querySelector('[data-testid="workflows-home:row:saved"]')).toBeNull();
+        const loadingTitle = loading.textRects(library)[0]!;
+        await act(async () => answer());
+        await act(async () => {
+            await vi.waitFor(() => expect(host!.querySelector('[data-testid="workflows-home:row:saved"]')).not.toBeNull());
+        });
+        const loaded = await measure();
+        const row = loaded.rect('workflows-home:row:saved');
+        const loadedTitle = loaded.textRects(library)[0]!;
+        // Nothing moves when the rows arrive: the Library title stays, and the first row starts where the first loading row stood.
+        expect(Math.abs(loadedTitle.top - loadingTitle.top)).toBeLessThanOrEqual(1);
+        expect(Math.abs(loadedTitle.left - loadingTitle.left)).toBeLessThanOrEqual(1);
+        expect(Math.abs(row.top - skeleton.top)).toBeLessThanOrEqual(1);
+        expect(Math.abs(row.left - skeleton.left)).toBeLessThanOrEqual(1);
     });
 
     it.each([1440, 390])('starts every section title on the one page edge at %i px (DESIGN-9 N38)', async (width) => {

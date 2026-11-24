@@ -14,6 +14,13 @@ import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowE
 
 export type WorkflowBlockNameEditor = InlineTextEditor;
 
+/**
+ * The block's own "Only when …" condition, said once directly under its heading on the name column, where an If
+ * states its condition at the start of its branch (FIN-DESIGN-ACCEPT-9 X1). Each block row of the list provides
+ * its own (null without one), so a container's condition never reaches the headings nested in its lanes.
+ */
+export const WorkflowBlockConditionContext = React.createContext<React.ReactNode>(null);
+
 /** Joins a heading's fact to what precedes it; web never collapses these spaces at a flex item's start. */
 const HEADING_FACT_SEPARATOR = '\u00A0\u00B7\u00A0';
 
@@ -75,6 +82,7 @@ export function WorkflowBlockHeading(props: Readonly<{
 }>): React.ReactElement {
     const grid = useWorkflowDocumentGridStyles();
     const { theme } = useUnistyles();
+    const condition = React.useContext(WorkflowBlockConditionContext);
     // A container's name (or a card's title) is sized to its words so its meta follows it ("Side by
     // side · 3 lanes", "Notify me · Happier"); a leaf's name takes the line, as a field does.
     const compound = props.meta !== undefined || props.trailing !== undefined || props.sourceLabel !== undefined;
@@ -132,87 +140,90 @@ export function WorkflowBlockHeading(props: Readonly<{
         : <Text testID={`${props.testID}-source`} numberOfLines={1}
             style={[workflowEditorStyles.headingMeta, { marginLeft: besideNameMarginPx }]}>{HEADING_FACT_SEPARATOR}{props.sourceLabel}</Text>;
     return (
-        <View style={grid.heading}>
-            <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.ordinalColumn]}>
-                {numbered ? (
-                    <View
-                        testID={`${props.testID}-ordinal`}
-                        style={[workflowEditorStyles.ordinal, props.selected === true ? workflowEditorStyles.ordinalSelected : null]}
-                        accessibilityElementsHidden
-                        importantForAccessibility="no-hide-descendants"
+        <View>
+            <View style={grid.heading}>
+                <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.ordinalColumn]}>
+                    {numbered ? (
+                        <View
+                            testID={`${props.testID}-ordinal`}
+                            style={[workflowEditorStyles.ordinal, props.selected === true ? workflowEditorStyles.ordinalSelected : null]}
+                            accessibilityElementsHidden
+                            importantForAccessibility="no-hide-descendants"
+                        >
+                            <Text style={[workflowEditorStyles.ordinalText, props.selected === true ? workflowEditorStyles.ordinalTextSelected : null]}>
+                                {t('workflows.editor.stepOrdinal', { position: Number(props.visibleOrdinal) })}
+                            </Text>
+                        </View>
+                    ) : (
+                        // A container is unnumbered: its kind mark stands in the ordinal column (no tile).
+                        <View testID={`${props.testID}-ordinal-mark`} style={workflowEditorStyles.ordinalMark}
+                            accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                            {kindMark}
+                        </View>
+                    )}
+                </View>
+                <View style={workflowEditorStyles.headingMain}>
+                    {props.nameEditor === undefined ? <HappierPressable
+                        testID={props.testID}
+                        accessibilityRole="button"
+                        accessibilityLabel={[props.accessibilityLabel ?? props.displayName, props.sourceLabel].filter(Boolean).join(' · ')}
+                        {...(props.issue === undefined || props.issue === null ? {} : { accessibilityHint: props.issue })}
+                        onPress={props.onSelect}
+                        style={(state) => [
+                            workflowEditorStyles.actionTarget,
+                            workflowEditorStyles.headingButton,
+                            compound ? null : workflowEditorStyles.headingButtonFill,
+                            state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                        ]}
                     >
-                        <Text style={[workflowEditorStyles.ordinalText, props.selected === true ? workflowEditorStyles.ordinalTextSelected : null]}>
-                            {t('workflows.editor.stepOrdinal', { position: Number(props.visibleOrdinal) })}
-                        </Text>
-                    </View>
-                ) : (
-                    // A container is unnumbered: its kind mark stands in the ordinal column (no tile).
-                    <View testID={`${props.testID}-ordinal-mark`} style={workflowEditorStyles.ordinalMark}
-                        accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                        {kindMark}
-                    </View>
-                )}
-            </View>
-            <View style={workflowEditorStyles.headingMain}>
-                {props.nameEditor === undefined ? <HappierPressable
-                    testID={props.testID}
-                    accessibilityRole="button"
-                    accessibilityLabel={[props.accessibilityLabel ?? props.displayName, props.sourceLabel].filter(Boolean).join(' · ')}
-                    {...(props.issue === undefined || props.issue === null ? {} : { accessibilityHint: props.issue })}
-                    onPress={props.onSelect}
-                    style={(state) => [
-                        workflowEditorStyles.actionTarget,
-                        workflowEditorStyles.headingButton,
-                        compound ? null : workflowEditorStyles.headingButtonFill,
-                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                    ]}
-                >
-                    {nameMark}
-                    {/* The name tells this step from its siblings: it wraps whole, as the editable name does. */}
-                    {showsName ? <Text style={[workflowEditorStyles.headingName,
-                        props.unnamed === 'placeholder' ? workflowEditorStyles.headingNamePlaceholder : null]}>{props.displayName}</Text> : null}
-                    {source}
-                    {meta}
-                </HappierPressable> : (
-                    <View style={[workflowEditorStyles.headingButton, compound ? null : workflowEditorStyles.headingButtonFill]}>
                         {nameMark}
-                        <InlineTextField editor={{ ...props.nameEditor, testID: props.testID, onFocus: props.onSelect, controlRef: nameControlRef,
-                            ...(showsName ? {} : { placeholder: '' }),
-                            // The card's own title, exactly as its card would have said it.
-                            ...(props.unnamed === 'card' ? { placeholder: props.displayName } : {}),
-                            ...(props.issue === undefined || props.issue === null ? {} : { accessibilityHint: props.issue }),
-                            accessibilityLabel: props.accessibilityLabel ?? props.nameEditor.accessibilityLabel }}
-                            placeholderTone={inkPlaceholder ? 'ink' : 'quiet'}
-                            style={[workflowEditorStyles.headingNameInput,
-                                // No name yet: the sentence starts on the name column, with no empty field before it.
-                                sentenceTitle && props.nameEditor.value.length === 0 ? workflowEditorStyles.headingNameCollapsed
-                                    : compound ? { flexGrow: 0, width: nameWidth ?? undefined, maxWidth: '100%' } : { flex: 1 }]} />
+                        {/* The name tells this step from its siblings: it wraps whole, as the editable name does. */}
+                        {showsName ? <Text style={[workflowEditorStyles.headingName,
+                            props.unnamed === 'placeholder' ? workflowEditorStyles.headingNamePlaceholder : null]}>{props.displayName}</Text> : null}
                         {source}
                         {meta}
-                    </View>
-                )}
-                {props.trailing ?? null}
-            </View>
-            {props.nameEditor !== undefined && compound ? (
-                // Sizes the editable name to its words (or its placeholder) at the heading's own width.
-                <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-                    style={workflowEditorStyles.headingNameMeasure}>
-                    <Text testID={`${props.testID}-measure`} style={workflowEditorStyles.headingName}
-                        onLayout={(event) => setNameWidth(Math.ceil(event.nativeEvent.layout.width) + theme.space.s4)}>
-                        {props.nameEditor.value.length > 0 ? props.nameEditor.value
-                            : props.unnamed === 'card' ? props.displayName : showsName ? props.nameEditor.placeholder : ''}
-                    </Text>
+                    </HappierPressable> : (
+                        <View style={[workflowEditorStyles.headingButton, compound ? null : workflowEditorStyles.headingButtonFill]}>
+                            {nameMark}
+                            <InlineTextField editor={{ ...props.nameEditor, testID: props.testID, onFocus: props.onSelect, controlRef: nameControlRef,
+                                ...(showsName ? {} : { placeholder: '' }),
+                                // The card's own title, exactly as its card would have said it.
+                                ...(props.unnamed === 'card' ? { placeholder: props.displayName } : {}),
+                                ...(props.issue === undefined || props.issue === null ? {} : { accessibilityHint: props.issue }),
+                                accessibilityLabel: props.accessibilityLabel ?? props.nameEditor.accessibilityLabel }}
+                                placeholderTone={inkPlaceholder ? 'ink' : 'quiet'}
+                                style={[workflowEditorStyles.headingNameInput,
+                                    // No name yet: the sentence starts on the name column, with no empty field before it.
+                                    sentenceTitle && props.nameEditor.value.length === 0 ? workflowEditorStyles.headingNameCollapsed
+                                        : compound ? { flexGrow: 0, width: nameWidth ?? undefined, maxWidth: '100%' } : { flex: 1 }]} />
+                            {source}
+                            {meta}
+                        </View>
+                    )}
+                    {props.trailing ?? null}
                 </View>
-            ) : null}
-            <View testID={`${props.testID}-heading-actions`} style={[workflowEditorStyles.headingLine, workflowEditorStyles.headingActions]}>
-                {props.accessory ?? null}
-                <WorkflowBlockActionsMenu
-                    blockLabel={props.displayName}
-                    actions={props.actions}
-                    resting={props.actionsResting}
-                    testID={props.actionsTestID}
-                />
+                {props.nameEditor !== undefined && compound ? (
+                    // Sizes the editable name to its words (or its placeholder) at the heading's own width.
+                    <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                        style={workflowEditorStyles.headingNameMeasure}>
+                        <Text testID={`${props.testID}-measure`} style={workflowEditorStyles.headingName}
+                            onLayout={(event) => setNameWidth(Math.ceil(event.nativeEvent.layout.width) + theme.space.s4)}>
+                            {props.nameEditor.value.length > 0 ? props.nameEditor.value
+                                : props.unnamed === 'card' ? props.displayName : showsName ? props.nameEditor.placeholder : ''}
+                        </Text>
+                    </View>
+                ) : null}
+                <View testID={`${props.testID}-heading-actions`} style={[workflowEditorStyles.headingLine, workflowEditorStyles.headingActions]}>
+                    {props.accessory ?? null}
+                    <WorkflowBlockActionsMenu
+                        blockLabel={props.displayName}
+                        actions={props.actions}
+                        resting={props.actionsResting}
+                        testID={props.actionsTestID}
+                    />
+                </View>
             </View>
+            {condition === null ? null : <View style={workflowEditorStyles.headingCondition}>{condition}</View>}
         </View>
     );
 }

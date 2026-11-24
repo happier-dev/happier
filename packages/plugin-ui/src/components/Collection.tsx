@@ -706,7 +706,12 @@ type CollectionCell<Item> =
   /** An empty group's one quiet line (`HappierCollectionGroup.emptyStatement`): a row-sized note, never a focus stop. */
   | Readonly<{ kind: 'statement'; key: string; text: string; item?: undefined }>
   /** The caller's `afterRows`: one cell after the last group, scrolling with the rows, never a focus stop. */
-  | Readonly<{ kind: 'after'; key: string; content: ReactNode; item?: undefined }>;
+  | Readonly<{ kind: 'after'; key: string; content: ReactNode; item?: undefined }>
+  /**
+   * A declared group kept while the first window loads (`retainEmpty`): its loading rows stand under its own heading,
+   * so the rows land where they stood and the heading never arrives with them. Never a focus stop.
+   */
+  | Readonly<{ kind: 'loading'; key: string; rows: number; item?: undefined }>;
 
 /** Table geometry, at normal text size. */
 const TABLE = Object.freeze({
@@ -848,6 +853,8 @@ type CollectionStage<Item> = Readonly<{
   /** A directory row's facts: its fill reaching the page row's inset past the section's text edges (else null). */
   directoryRow: HappierCollectionTableRowFacts | null;
   useRowActions: ((item: Item) => CollectionRowActions) | undefined;
+  /** The Collection's own test id, which a kept group's loading rows name themselves by (`<id>:skeleton-row`). */
+  collectionTestID: string | undefined;
   useRowItem: ((item: Item) => Item) | undefined;
   expandable: boolean;
   /** On a page section's sheet: the rows that draw the sheet's hairline below them (every row but a group's last). */
@@ -2244,6 +2251,7 @@ const CollectionCellView = memo(function CollectionCellView(props: Readonly<{ ce
   return cell.kind === 'item'
     ? <CollectionRow item={cell.item} itemKey={cell.key} beforeBand={cell.beforeBand} />
     : cell.kind === 'statement' ? <CollectionGroupStatement text={cell.text} />
+      : cell.kind === 'loading' ? <CollectionGroupLoadingRows rows={cell.rows} />
       : cell.kind === 'after' ? <View style={afterRowsStyle}>{cell.content}</View>
       : <CollectionPeek item={cell.item} itemKey={cell.itemKey} />;
 });
@@ -2263,6 +2271,27 @@ function CollectionGroupStatement(props: Readonly<{ text: string }>): ReactEleme
   );
 }
 
+/** A kept group's loading rows (`kind: 'loading'`): the shared loading rows at the stage's own row geometry. */
+function CollectionGroupLoadingRows(props: Readonly<{ rows: number }>): ReactElement {
+  const stage = useStage<unknown>();
+  const theme = useHappierUiTheme();
+  const testID = stage.collectionTestID;
+  return (
+    <CollectionSkeletonRows
+      theme={theme}
+      rowHeight={stage.geometry === 'table' ? stage.metrics.tableRow : stage.metrics.listRow}
+      twoLines={stage.geometry === 'list'}
+      viewportHeight={null}
+      rows={props.rows}
+      pageRun
+      glyph={stage.anatomy.loadingGlyph !== false}
+      catalog={stage.rowRole === 'catalogRow' && stage.geometry === 'list'}
+      {...(stage.ruledInsetPx === null ? {} : { ruledInsetPx: stage.ruledInsetPx })}
+      {...(testID === undefined ? {} : { testID })}
+    />
+  );
+}
+
 function renderCollectionCell(cell: CollectionCell<unknown>): ReactElement {
   return <CollectionCellView cell={cell} />;
 }
@@ -2270,6 +2299,10 @@ function renderCollectionCell(cell: CollectionCell<unknown>): ReactElement {
 const AFTER_ROWS_CELL_KEY = 'collection-after-rows';
 /** The air an answer under the rows stands in, as an empty state stands in the empty pane. */
 const afterRowsStyle: HappierPortableStyle = { paddingVertical: 32 };
+
+function loadingCellKey(groupKey: string): string {
+  return `collection-loading:${groupKey}`;
+}
 
 function statementCellKey(groupKey: string): string {
   return `collection-statement:${groupKey}`;
@@ -2644,6 +2677,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // group must not move the header (TRIAGE-DESIGN-ACCEPT-250 F5).
   const onlyGroup = model.declaredGroupCount === 1 && drawnSections.length === 1 ? drawnSections[0]!.group : null;
   const loneGroup = sheetTable && !cards && onlyGroup !== null && onlyGroup.title !== '' ? onlyGroup : null;
+  // The first window is still arriving: a group the caller keeps (`retainEmpty`) holds its loading rows under its heading.
+  const loadingGroups = props.loading === true && model.keys.length === 0;
+  const loadingGroupRows = Math.max(1, Math.round(props.loadingRows ?? PAGE_LOADING_RUN_ROWS));
   const sections = useMemo(() => {
     // A declared untitled section spanning the windowed page already is the table's one sheet.
     // Preserve that row tree on both sides of the responsive transition so a focused row stays mounted.
@@ -2657,7 +2693,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       // List's existing PureComponent row sees only its own data changes.
       const retained = previous?.kind === cell.kind && previous.item === cell.item
         && (cell.kind !== 'item' || (previous.kind === 'item' && previous.beforeBand === cell.beforeBand))
-        && (cell.kind !== 'statement' || (previous.kind === 'statement' && previous.text === cell.text)) ? previous : cell;
+        && (cell.kind !== 'statement' || (previous.kind === 'statement' && previous.text === cell.text))
+        && (cell.kind !== 'loading' || (previous.kind === 'loading' && previous.rows === cell.rows)) ? previous : cell;
       nextCells.set(cell.key, retained);
       return retained;
     };
@@ -2681,6 +2718,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       const group = section.group;
       if (section.items.length === 0 && group?.emptyStatement !== undefined) {
         data.push(retainCell({ kind: 'statement', key: statementCellKey(group.key), text: group.emptyStatement }));
+      } else if (section.items.length === 0 && group !== null && loadingGroups) {
+        data.push(retainCell({ kind: 'loading', key: loadingCellKey(group.key), rows: loadingGroupRows }));
       }
       return {
         key: group?.key ?? `collection-${index}`,
@@ -2705,7 +2744,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
     }
     return nextSections;
-  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, loneGroup, model.keyOf, model.sections, pageSections, pageTracker, pageWindows, sheetTable, tree]);
+  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, loadingGroupRows, loadingGroups, loneGroup, model.keyOf, model.sections, pageSections, pageTracker, pageWindows, sheetTable, tree]);
   // A page section's last row ends its sheet; on a table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
   // A browse list on a phone lies flat on the page (owner 2026-11-15): its sheet divides its rows in the one list-row
@@ -2783,6 +2822,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
           // A nested row stands only in the table: the list beside a detail draws owners only.
           ? { key: cell.key, table: metrics.tableRow, list: (tree?.get(cell.key)?.depth ?? 0) > 0 ? 0 : metrics.listRow }
           : cell.kind === 'statement' || cell.kind === 'after' ? { key: cell.key, table: metrics.tableRow, list: metrics.listRow }
+            : cell.kind === 'loading' ? { key: cell.key, table: cell.rows * metrics.tableRow, list: cell.rows * metrics.listRow }
             : { key: cell.key, table: peekHeights.current.get(cell.itemKey) ?? 0, list: 0 });
       }
     }
@@ -2879,11 +2919,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     directoryRow,
     useRowActions: props.useRowActions,
     useRowItem: props.useRowItem,
+    collectionTestID: props.testID,
     expandable,
     dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, directoryRow, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
+  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, directoryRow, onPeekHeight, onPeekSettled, progress, props.testID, props.useRowActions, props.useRowItem, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple

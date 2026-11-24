@@ -6208,6 +6208,18 @@ describe('grid', () => {
     flat.unmount();
   });
 
+  it("keeps a retained group's heading over its loading rows, so its rows land under it (TH-PLACEHOLDER-PARITY-1124)", async () => {
+    const grouping = { axis: [{ key: 'needs', title: 'Needs you' }], groupOf: (entry: Entry) => entry.group, retainEmpty: true };
+    const view = mount({ presentation: 'list', items: [], loading: true, grouping });
+    view.measure(390, 800);
+    expect(view.queryAll('collection:skeleton-row').length).toBeGreaterThan(0);
+    expect(view.query('collection')?.textContent).toContain('Needs you');
+    await view.update({ items: entries.filter((entry) => entry.group === 'needs'), loading: false });
+    expect(view.queryAll('collection:skeleton-row')).toHaveLength(0);
+    expect(view.query('collection')?.textContent).toContain('Needs you');
+    view.unmount();
+  });
+
   it('holds the table geometry with skeleton rows while loading, never its empty state', async () => {
     const view = mount({
       items: [],

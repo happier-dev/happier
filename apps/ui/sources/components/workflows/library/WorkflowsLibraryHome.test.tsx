@@ -953,10 +953,16 @@ describe('workflow library page anatomy', () => {
         // without dismissing it from the test or leaving the page.
         await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:deleted')).toBeNull(), { timeout: 10_000 });
     });
-    it('shows one loading status rather than selectable placeholder workflows before the library is known', async () => {
+    it('holds the library rows in its Collection\'s own loading geometry, not selectable placeholder workflows, before the library is known', async () => {
         execute.mockImplementation(() => new Promise(() => {}));
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        expect(screen.findHostByTestId('workflows-home:loading')).not.toBeNull();
+        // The library's Collection holds its rows' geometry (table, list or cards) and its Library section, so the
+        // rows land in place; the generic page Items reserve is gone (TH-PLACEHOLDER-PARITY-1124).
+        const collection = screen.findAll(node => node.props.testID === 'workflows-home:collection' && 'model' in node.props)[0]!;
+        expect(collection.props.loading).toBe(true);
+        expect(collection.props.model.sections.map((section: { group: { key: string } | null; items: unknown[] }) =>
+            [section.group?.key, section.items.length])).toEqual([['library', 0]]);
+        expect(screen.findHostByTestId('workflows-home:loading')).toBeNull();
         // The filter chips are real controls and stay put; only a placeholder workflow row would be wrong.
         expect(screen.findAll(node => node.props.accessibilityRole === 'checkbox'
             && !String(node.props.testID).includes('-quick-filter:'))).toHaveLength(0);
@@ -1002,7 +1008,7 @@ describe('workflow library page anatomy', () => {
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
         await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
         // The rows' own Library section is the only one: no second titled placeholder section above it.
-        expect(screen.findHostByTestId('workflows-home:loading')).toBeNull();
+        expect(screen.findHostByTestId('workflows-home:collection:skeleton-row')).toBeNull();
     });
     it('keeps the workflow and stays quiet when the executor deletion confirmation is cancelled', async () => {
         const definitionId = '10000000-0000-4000-8000-000000000051';
@@ -1253,7 +1259,7 @@ describe('workflow library page anatomy', () => {
         try {
             await vi.waitFor(() => expect(execute.mock.calls.some(([id]) => id === 'workflow.run.list')).toBe(true));
             await vi.waitFor(() => expect(screen.findByTestId('workflows-home:empty')).not.toBeNull());
-            expect(screen.findByTestId('workflows-home:loading')).toBeNull();
+            expect(screen.findAll(node => node.props.testID === 'workflows-home:collection' && 'model' in node.props)[0]!.props.loading).toBe(false);
         } finally {
             await act(async () => finishHistory());
             await screen.unmount();

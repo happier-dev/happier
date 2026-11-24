@@ -31,9 +31,6 @@ import { CollectionColumnsMenuButton, CollectionColumnsMenuTrigger, collectionCo
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -193,6 +190,10 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         router.push(`/workflows/${encodeURIComponent(key)}` as never);
     }, [router]);
     const display = useCollectionDisplayOptions('workflow', phone);
+    // The saved library has not answered yet: not failed, no search answered empty, not loaded.
+    const libraryFailed = library.status === 'failed' && library.definitions.length === 0;
+    const libraryLoading = !libraryFailed
+        && (libraryView.inventoryPending || (needle.length === 0 && library.status !== 'loaded'));
     const projects = libraryView.projectsByWorkflow;
     const { workflowSections } = libraryView;
     const groups = React.useMemo(() => {
@@ -207,11 +208,16 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         // The page declares the groups its library holds, filtered or not: a library of its own workflows alone is one
         // section, titled beside its "Built-in" sibling (N38).
         const held = new Set(rows.map(groupOf));
+        // While the saved library's first page is coming, its Library section already stands (title, sheet and the
+        // Collection's own loading rows), so the rows land under it without a jump.
+        const reserveLibrary = libraryLoading && rows.length === 0 && display.groupBy === 'source';
+        if (reserveLibrary) held.add('library');
         return {
             get axis() { return [...sectionGroups.values(), ...source.axis].filter((group) => held.has(group.key)); },
             groupOf,
+            ...(reserveLibrary ? { retainEmpty: true } : {}),
         };
-    }, [display.groupBy, projects, rows, workflowSections]);
+    }, [display.groupBy, libraryLoading, projects, rows, workflowSections]);
     const model = useHappierCollection<LibraryRow>({
         items: rows,
         keyOf: readRowKey,
@@ -335,7 +341,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         </>}
     </>);
 
-    const empty = library.status === 'failed' && library.definitions.length === 0 ? (
+    const empty = libraryFailed ? (
         // Only the saved library failed; Built-in and the examples below still work, so the failure is one
         // line where the Library rows would be (lab `nav-N5` "Couldn't load"), not a page-sized state. It sits
         // in the Collection's empty slot on the rows' edge, as the search's no-match line does.
@@ -355,27 +361,17 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             iconName="magnifying-glass"
             title={t('workflows.destination.noMatch', { query: query.trim() })}
         />
-    ) : library.status === 'loaded' && !libraryView.inventoryPending ? (
+    ) : libraryLoading ? null : (
         // Nothing saved yet, but runs exist (else this is the first visit): say what goes here.
         <EmptyState
             testID="workflows-home:empty"
             layout="line"
             title={t('workflows.destination.libraryEmpty')}
         />
-    ) : (
-        // First load reserves the Library section's rows in their final shape, as the Workflows column does, so
-        // the saved workflows land without a jump (never a lone "Loading…" line).
-        // The empty slot already stands on the rows' edge, so the section adds no inset of its own.
-        <ListPresentationProvider value="page" pageInsets="contained">
-            <ItemGroup title={t('workflows.destination.sections.library')} constrainToContentWidth={false}>
-                <ItemLoadStateRows testID="workflows-home:loading" state={LIBRARY_LOADING} rows={3} lines={2}
-                    accessibilityLabel={t('common.loading')} />
-            </ItemGroup>
-        </ListPresentationProvider>
     );
 
     // Account rows can land before the saved library: only its failure is said beside them. Its first load adds
-    // nothing, since the reserved rows bring their own Library title and the rows already stand under one.
+    // nothing, since those rows already stand in the Library section the loading rows held.
     const libraryStateBesideRows = library.status === 'failed' && library.definitions.length === 0 && model.keys.length > 0;
 
     // The page's scroller stands above the Collection, so the library's rows window in it (`page-virtualized`).
@@ -406,6 +402,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 useRowActions={useLibraryRowActions}
                                 {...(focusRequest === undefined ? {} : { selection: { focusRequest } })}
                                 {...(retainedRowKeys === undefined ? {} : { retainedRowKeys })}
+                                loading={libraryLoading}
                                 empty={empty}
                             />
                         <WorkflowLibraryFreshness library={library} hasRows={library.definitions.length > 0} />
@@ -423,8 +420,6 @@ export function WorkflowsLibraryHome(): React.ReactElement {
 }
 
 const passThroughPageScroller = (children: React.ReactNode) => children;
-
-const LIBRARY_LOADING: ItemLoadState = { kind: 'loading' };
 
 /** A retained link to another Home's trigger keeps that Home's own list and editor. */
 function AddressedAccountTriggersSlot() {

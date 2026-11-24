@@ -57,7 +57,7 @@ import { WorkflowWaitBlockEditor } from './WorkflowWaitBlockEditor';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowGroupEditor } from './WorkflowGroupEditor';
-import { WorkflowLoopEditor } from './WorkflowLoopEditor';
+import { WorkflowLoopEditor, workflowLoopEndsOnItsSteps } from './WorkflowLoopEditor';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { withoutWorkflowStepEngine } from './WorkflowStepInspector';
 import {
@@ -84,6 +84,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 
 import {
+  WorkflowBlockConditionContext,
   WorkflowBlockHeading,
   type WorkflowBlockNameEditor,
 } from './WorkflowBlockHeading';
@@ -594,6 +595,17 @@ type WorkflowBlockListRowContext = Readonly<{
 }>;
 
 /** A row receives changed display facts; edits always resolve against its live list owner. */
+/**
+ * Whether a container's last lane ends on that lane's own end inserter while editing (its last lane holds steps and
+ * draws no footer), so a lane that ends with this container can share its closing (FIN-DESIGN-ACCEPT-9 P2).
+ */
+function workflowContainerEndsOnLaneInserter(block: WorkflowBlock): boolean {
+  if (block.kind === 'if') return (block.otherwise.length > 0 ? block.otherwise : block.then).length > 0;
+  if (block.kind === 'parallel') return (block.branches[block.branches.length - 1]?.blocks.length ?? 0) > 0;
+  if (block.kind === 'loop') return workflowLoopEndsOnItsSteps(block.repetition) && block.body.length > 0;
+  return false;
+}
+
 const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
   row: Readonly<{
     owner: React.RefObject<WorkflowBlockListEditorProps>;
@@ -847,6 +859,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
   // The Sentence view's one card (`onlyBlockId`) stands alone: a leaf draws no spine to blocks it does not show.
   const lonelyLeaf = list.kind === 'root' && props.onlyBlockId !== undefined
     && block.kind !== 'parallel' && block.kind !== 'loop' && block.kind !== 'if';
+  // A lane's last container closes the lane with it: the lane's end inserter and join share its own closing (P2).
+  const closesWithLane = editable && isLast && list.kind !== 'root' && workflowContainerEndsOnLaneInserter(block);
   const spineReach: WorkflowSpineReach | null =
     lonelyLeaf ? null : list.kind === 'root'
       ? !isLast
@@ -860,12 +874,30 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       : !isLast
         ? 'next'
         : editable
-          ? 'endPastInserter'
+          ? closesWithLane ? 'endAtClosingJoin' : 'endPastInserter'
           : 'end';
   // A lone card (the compact grid) runs under its number (`blockCard`); its spine then links its end to the next mark.
   const cardUnderNumber = compactGrid && (block.kind === 'action' || block.kind === 'workflow'
     || (block.kind === 'step' && row.summary === null));
   const SummaryRowFrame = Platform.OS === 'web' ? View : React.Fragment;
+  // The block's own condition, as the document reads it everywhere: one sentence, every arm in it, values as tokens
+  // (FIN-DESIGN-ACCEPT-2 F12), with the whole sentence as its accessible name. It stands once, under the block's
+  // heading where an If states its condition at its branch's start (FIN-DESIGN-ACCEPT-9 X1), never under the card.
+  const conditionLine = block.kind === 'if' || block.onlyWhen === undefined ? null : (() => {
+    const prose = onlyWhenHeadline?.unconditional === true ? null
+      : row.actionPresentation?.condition ?? resolveWorkflowConditionProse(draft, block.onlyWhen);
+    const spoken = prose === null ? onlyWhenHeadline!.sentence
+      : t('workflows.page.inspector.onlyWhenSentence', { condition: prose.sentence });
+    return (
+      <Text
+        testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
+        style={workflowEditorStyles.laneLabel}
+        accessibilityLabel={spoken}
+      >
+        {prose === null ? spoken : <WorkflowReferenceSentence draft={draft} sentence={spoken} references={prose.references} />}
+      </Text>
+    );
+  })();
 
   return (
     <React.Fragment key={block.id}>
@@ -925,8 +957,9 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
           />
         )}
         {/* Selection reads on the block's filled ordinal, never a grey plate behind its card (owner 2026-11-15). */}
-        {/* The block and its condition line, one column: a sibling here must
-                            never take width from the block's card. A container draws the rail. */}
+        {/* The block, one column: a sibling here must never take width from the block's card. A container
+            draws the rail. Its condition line stands under its heading (`WorkflowBlockConditionContext`). */}
+        <WorkflowBlockConditionContext.Provider value={conditionLine}>
         <View style={grid.blockColumn}>
           {row.summary !== null &&
           (block.kind === 'step' || block.kind === 'wait') ? (
@@ -1518,33 +1551,15 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
               </WorkflowContainerBody>
             </View>
           ) : null}
-
-          {block.kind !== 'if' && block.onlyWhen !== undefined ? (() => {
-            // The condition as the document reads it everywhere: one sentence, every arm in it, values as
-            // tokens (FIN-DESIGN-ACCEPT-2 F12), with the whole sentence as its accessible name.
-            const prose = onlyWhenHeadline?.unconditional === true ? null
-              : row.actionPresentation?.condition ?? resolveWorkflowConditionProse(draft, block.onlyWhen);
-            const spoken = prose === null ? onlyWhenHeadline!.sentence
-              : t('workflows.page.inspector.onlyWhenSentence', { condition: prose.sentence });
-            return (
-              <Text
-                testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
-                // A condition reads in one role wherever it stands: the caption an If's "Only when …" lane uses (FIN-DESIGN-ACCEPT-9 X1).
-                style={workflowEditorStyles.laneLabel}
-                accessibilityLabel={spoken}
-              >
-                {prose === null ? spoken : <WorkflowReferenceSentence draft={draft} sentence={spoken} references={prose.references} />}
-              </Text>
-            );
-          })() : null}
         </View>
+        </WorkflowBlockConditionContext.Provider>
         {row.highlighted ? (
           <WorkflowAgentChangeTint blockId={block.id} />
         ) : null}
       </View>
       {/* A nested list's last gap appends there; the root's end row adds after its last block. */}
       {editable && index === blocks.length - 1 && list.kind !== 'root' ? (
-        <View style={grid.laneEndInserter}>
+        <View style={closesWithLane ? [grid.laneEndInserter, workflowEditorStyles.laneEndInserterClosing] : grid.laneEndInserter}>
         <WorkflowAddBlockMenu
           composerScope={composerScope}
           variant="inserter"

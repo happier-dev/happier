@@ -313,6 +313,55 @@ describe('nesting, as a browser lays it out', () => {
     });
 });
 
+describe('nested closings, as a browser lays it out (FIN-DESIGN-ACCEPT-9 P2, X1)', () => {
+    const issues = { kind: 'exists', value: { kind: 'input', name: 'issues' } } as const;
+    const notify = { kind: 'action', id: 'notify', name: 'Read outstanding reviews', actionId: 'notifications.notify_me',
+        input: { message: { kind: 'literal', value: 'Reviews to read' } }, onlyWhen: issues };
+    // A loop holding `ifs` nested named Ifs, the innermost holding one conditional Action.
+    const document = (ifs: number) => {
+        let lane: unknown[] = [notify];
+        for (let level = ifs; level >= 1; level -= 1) {
+            lane = [{ kind: 'if', id: `if${level}`, name: `Check level ${level}`, when: issues, otherwise: [], then: lane }];
+        }
+        return [{ kind: 'loop', id: 'each', name: 'Each item', body: lane,
+            repetition: { kind: 'items', items: { kind: 'input', name: 'issues' }, execution: 'sequential', failurePolicy: 'fail_stop' } }];
+    };
+    async function measureClosing(ifs: number, width: number, grid: 'wide' | 'phone') {
+        const container = await renderDocument(document(ifs), width, null, grid);
+        const layout = await measureWebLayout(container, { viewport: { width, height: 2000 }, settle });
+        const card = layout.rect('workflow-editor-action-notify-card');
+        const add = layout.rect('workflow-editor-add-root');
+        const joins = ['workflow-editor-loop-each-body-label-join',
+            ...Array.from({ length: ifs }, (_, index) => `workflow-editor-if-if${index + 1}-then-label-join`)].map(id => layout.rect(id));
+        return { layout, card, closing: add.top - card.bottom, joins };
+    }
+
+    it.each([[1440, 'wide'], [390, 'phone']] as const)('takes one closing after the innermost card at any depth at %i px', async (width, grid) => {
+        pointer.coarse = grid === 'phone';
+        try {
+            const three = await measureClosing(2, width, grid);
+            await act(async () => root?.unmount());
+            host?.remove();
+            const four = await measureClosing(3, width, grid);
+            // One level deeper adds no closing space: every lane joins back in the innermost lane's band.
+            expect(Math.abs(four.closing - three.closing)).toBeLessThanOrEqual(1);
+            for (const join of four.joins) expect(Math.abs(join.top - four.joins[four.joins.length - 1]!.top)).toBeLessThanOrEqual(1);
+            // That band follows the innermost lane's end inserter row, one rhythm step under the card.
+            expect(four.joins[0]!.top - four.card.bottom).toBeLessThanOrEqual(40);
+        } finally {
+            pointer.coarse = true;
+        }
+    });
+
+    it("says a block's own condition once, under its heading and above its card (X1)", async () => {
+        const { layout } = await measureClosing(3, 390, 'phone');
+        const lines = layout.rects.get('workflow-editor-action-notify-only-when') ?? [];
+        expect(lines).toHaveLength(1);
+        expect(lines[0]!.top).toBeGreaterThanOrEqual(layout.rect('workflow-editor-action-notify-label').bottom - 1);
+        expect(lines[0]!.bottom).toBeLessThanOrEqual(layout.rect('workflow-editor-action-notify-card').top + 1);
+    });
+});
+
 describe('the flow, as a browser lays it out', () => {
     it('joins every mark to the next with one spine, and forks a branch off it and back (lab round 1106 F1)', async () => {
         pointer.coarse = false;

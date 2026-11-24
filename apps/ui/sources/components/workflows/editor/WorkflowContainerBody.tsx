@@ -21,9 +21,10 @@ export function WorkflowContainerBody(props: Readonly<{
 
 /**
  * Where a block's spine runs (lab round 1106 F1): to the next block's mark, to the block's own end
- * (a lane's last block, a list's last container), or past a lane's end inserter while editing.
+ * (a lane's last block, a list's last container), past a lane's end inserter while editing, or, for a
+ * container closing its lane while editing, to the band where the nested closings join back.
  */
-export type WorkflowSpineReach = 'next' | 'end' | 'endPastInserter';
+export type WorkflowSpineReach = 'next' | 'end' | 'endPastInserter' | 'endAtClosingJoin';
 
 /** The spine below one block's mark, in its ordinal column. Drawing only: hidden from assistive technology. */
 export function WorkflowSpineSegment(props: Readonly<{
@@ -41,7 +42,9 @@ export function WorkflowSpineSegment(props: Readonly<{
             style={[
                 workflowEditorStyles.spineSegment,
                 props.reach === 'next' ? workflowEditorStyles.spineToNext
-                    : props.reach === 'end' ? workflowEditorStyles.spineToEnd : workflowEditorStyles.spineToEndPastInserter,
+                    : props.reach === 'end' ? workflowEditorStyles.spineToEnd
+                        : props.reach === 'endAtClosingJoin' ? workflowEditorStyles.spineToClosingJoin
+                            : workflowEditorStyles.spineToEndPastInserter,
                 props.fromBlockEnd === true ? workflowEditorStyles.spineFromBlockEnd : null,
             ]}
         />
