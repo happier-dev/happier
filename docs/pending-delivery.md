@@ -1310,9 +1310,9 @@ Reconnect and restart recovery reuse exactly this path: the same registry and th
 
 ### Waiting for an exact targeted turn
 
-`reply: 'wait'` on a targeted send extends the existing Session wait coordinator above Pending; predecessor `wait: true` is an ingress spelling for that observation. It binds the admitted `(sessionId, runId, localId)` to the retained runtime's exact sidechain, turn, and occurrence evidence. Parent-Session idle, a sibling run's completion, and a generic or terminal run status never complete it, and it does not call `execution.run.wait`. A timeout stops only the observation — it does not cancel, discard, or replay the admitted input.
+`reply: 'wait'` on a targeted send extends the existing Session wait coordinator above Pending. In the CLI, use `--reply wait` or its `--wait` shorthand. It binds the admitted `(sessionId, runId, localId)` to the retained runtime's exact sidechain, turn, and occurrence evidence. Parent-Session idle, a sibling run's completion, and a generic or terminal run status never complete it, and it does not call `execution.run.wait`. A timeout stops only the observation — it does not cancel, discard, or replay the admitted input.
 
-For predecessor `wait: true` observation in 0.3 development, the bound Session host
+For this observation, the bound Session host
 or the host holding the original requester's admitted Account custody reads the
 same canonical current/last input-turn projection as Run Get, including after
 Ensure replaces the runtime occurrence. With that custody, a standalone or other-Session sender

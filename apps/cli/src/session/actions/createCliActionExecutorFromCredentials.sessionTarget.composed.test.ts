@@ -28,13 +28,12 @@ vi.mock('socket.io-client', async importOriginal => {
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { network.observe = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
     it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'archived editor', 'owner',
-        'terminal owner after Machine use withdrawal', 'terminal owner legacy wait after Machine use withdrawal',
+        'terminal owner after Machine use withdrawal',
         'terminal owner reply-wait after Machine use withdrawal'] as const)(
         'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-send-' }, async () => {
             const replyWait = role === 'terminal owner reply-wait after Machine use withdrawal';
-            const legacyWait = role === 'terminal owner legacy wait after Machine use withdrawal';
-            const withdrawn = role === 'terminal owner after Machine use withdrawal' || replyWait || legacyWait;
+            const withdrawn = role === 'terminal owner after Machine use withdrawal' || replyWait;
             const owner = role === 'owner' || withdrawn;
             const accountId = owner ? 'alice' : 'bob';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
@@ -60,22 +59,14 @@ describe('original CLI Session Action delivery', () => {
                     : { share: { accessLevel: role === 'viewer' ? 'view' : 'edit', canApprovePermissions: false } }) });
             const actionId = 'session.message.send';
             const input = { sessionId, message: 'Shared Bot request',
-                ...(legacyWait ? { wait: true, timeoutSeconds: 2 } : { reply: replyWait ? 'wait' : 'none' }), localId: 'shared-input',
+                reply: replyWait ? 'wait' : 'none', localId: 'shared-input',
                 ...(replyWait ? {} : { requestedAction: { v: 1, kind: 'enqueue' } }) };
             const restoredInputPath = `/v2/sessions/${sessionId}/messages/by-local-id/restored-input`;
-            const restoredPrompt = { id: 'prompt', localId: 'restored-input', seq: 1, createdAt: 10, updatedAt: 10,
-                content: { t: 'encrypted', c: encryptSessionPayload({
-                    ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
-                    payload: { role: 'user', content: { type: 'text', text: input.message } },
-                }) } };
-            let committedPrompt = false;
-            if (legacyWait) network.observe = () => createApiSessionSocketStub();
             const replyProgress = { v: 1, mode: 'wait', disposition: 'observing', outcome: { kind: 'pass' } };
             const reads = vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (url.endsWith(`/v2/sessions/${sessionId}`)) {
                     if (role === 'outsider') return { status: 404, data: { error: 'session-not-found' } };
-                    return { status: 200, data: { session: committedPrompt
-                        ? { ...session, latestTurnStatus: 'completed', latestTurnStatusObservedAt: 12 } : session } };
+                    return { status: 200, data: { session } };
                 }
                 if (role === 'outsider' && /\/v2\/sessions(?:\/archived)?\?/.test(url)) {
                     return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
@@ -89,12 +80,6 @@ describe('original CLI Session Action delivery', () => {
                 if (replyWait && url.endsWith(restoredInputPath)) return { status: 404, data: { error: 'message-not-found' } };
                 if (replyWait && url.endsWith(`${restoredInputPath}/reply`)) {
                     return { status: 200, data: { v: 1, status: 'available', progress: replyProgress } };
-                }
-                if (legacyWait && committedPrompt) {
-                    const { pathname } = new URL(url);
-                    if (pathname === restoredInputPath) return { status: 200, data: { message: restoredPrompt } };
-                    if (pathname === `/v2/sessions/${sessionId}/pending`) return { status: 200, data: { pending: [] } };
-                    if (pathname === `/v1/sessions/${sessionId}/messages`) return { status: 200, data: { messages: [restoredPrompt], hasMore: false } };
                 }
                 throw new Error(`Unexpected Home read: ${url}`);
             });
@@ -138,12 +123,10 @@ describe('original CLI Session Action delivery', () => {
                 expect(body).not.toHaveProperty('e2eeTag');
                 if (withdrawn) expect(body).toHaveProperty('targetMachineId', 'alice-machine');
                 else expect(body).not.toHaveProperty('targetMachineId');
-                if (legacyWait) expect(body).not.toHaveProperty('reply');
                 const opened = decryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
                     ciphertextBase64: body.ciphertext });
                 expect(opened).toMatchObject({ content: { text: input.message } });
                 expect(opened).not.toHaveProperty('meta.happierInputRequestV1.actionRequestAttributionV1');
-                committedPrompt = legacyWait;
                 return { status: 200, data: { didWrite: true, terminal: false } };
             });
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true, serverId: configuration.activeServerId,
@@ -161,7 +144,6 @@ describe('original CLI Session Action delivery', () => {
                 expect(await executor.execute(actionId, { ...input, localId: 'restored-input' }, { surface: 'cli' }))
                     .toMatchObject({ ok: true, result: replyWait ? { status: 'replied', localId: 'restored-input', outcome: { kind: 'pass' } }
                         : { status: 'accepted', localId: 'restored-input' } });
-                if (legacyWait) expect(reads.mock.calls.some(([url]) => url.endsWith(restoredInputPath))).toBe(true);
                 return;
             }
             if (role === 'outsider' || role === 'archived editor') {
@@ -369,12 +351,10 @@ describe('original CLI Session Action delivery', () => {
     it.each([
         { login: 'account login with an explicit Machine', terminal: false, reply: 'none' },
         { login: 'ordinary terminal login', terminal: true, reply: 'none' },
-        { login: 'terminal legacy wait', terminal: true, reply: undefined, timeoutSeconds: 2 },
         { login: 'ordinary terminal reply-wait', terminal: true, reply: 'wait' },
         { login: 'ordinary terminal reply-wait with a finite deadline', terminal: true, reply: 'wait', timeoutSeconds: 1 },
     ] as const)('opens Team-only E2EE detail and sends as the authenticated member with $login', async testCase => {
         const { terminal, reply } = testCase;
-        const legacyWait = reply === undefined;
         const timeoutSeconds = 'timeoutSeconds' in testCase ? testCase.timeoutSeconds : undefined;
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-team-send-' }, async () => {
             const accountId = 'team-member';
@@ -411,7 +391,7 @@ describe('original CLI Session Action delivery', () => {
             let readUnansweredTurn = false;
             let disposition = 'observing';
             const sockets = new Set<ReturnType<typeof createApiSessionSocketStub>>();
-            if (reply === 'wait' || legacyWait) network.observe = auth => {
+            if (reply === 'wait') network.observe = auth => {
                 expect(auth.token).toBe(token);
                 const socket = createApiSessionSocketStub();
                 // Home #182 refused this Team editor's Session handshake and admitted its Account socket.
@@ -425,7 +405,7 @@ describe('original CLI Session Action delivery', () => {
             const replyProgress = () => ({ v: 1, mode: 'wait', disposition, ...(pending ? {} : { acceptedTurnId: turnId }),
                 ...(answered ? { outcome: { kind: 'answer', result: { sessionId, messageId: answerId } } } : {}) });
             const row = (id: string, seq: number, payload: object, messageLocalId: string | null = null) => ({
-                id, seq, localId: messageLocalId, createdAt: legacyWait ? 10 : Date.now(), updatedAt: Date.now(),
+                id, seq, localId: messageLocalId, createdAt: Date.now(), updatedAt: Date.now(),
                 content: { t: 'encrypted', c: encryptSessionPayload({ ctx, payload }) },
             });
             vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
@@ -433,11 +413,10 @@ describe('original CLI Session Action delivery', () => {
                 if (pathname === `/v2/sessions/${sessionId}`) {
                     expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
                     return searchParams.get('accessProjectionVersion') === '1'
-                        ? { status: 200, data: { session: legacyWait && answered
-                            ? { ...session, latestTurnStatus: 'completed', latestTurnStatusObservedAt: 11 } : session } }
+                        ? { status: 200, data: { session } }
                         : { status: 404, data: { error: 'session-not-found' } };
                 }
-                if (reply === 'wait' || legacyWait) {
+                if (reply === 'wait') {
                     if (reply === 'wait' && pathname === `/v2/sessions/${sessionId}/messages/reply-capability`) {
                         expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
                         return { status: 200, data: { v: 1, protocolVersions: [1] } };
@@ -463,13 +442,12 @@ describe('original CLI Session Action delivery', () => {
                     }
                     if (pathname === `/v1/sessions/${sessionId}/messages`) {
                         expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
-                        const prompt = row('original-input', 1, { role: 'user', content: { type: 'text', text: 'Team-only input' } }, localId);
                         const assistant = (id: string, seq: number, text: string) => row(id, seq, {
                             role: 'agent', content: { type: 'text', text },
                         });
                         return { status: 200, data: { hasMore: false, messages: [
                             ...(answered ? [assistant(answerId, 2, 'Exact Muse reply')] : []),
-                            ...(legacyWait ? [prompt] : [assistant('unrelated-answer', 3, 'Unrelated assistant text')]),
+                            assistant('unrelated-answer', 3, 'Unrelated assistant text'),
                         ] } };
                     }
                 }
@@ -483,7 +461,7 @@ describe('original CLI Session Action delivery', () => {
             });
             const machineId = 'team-session-publisher';
             const actionId = 'session.message.send';
-            const input = { sessionId, message: 'Team-only input', ...(legacyWait ? { wait: true } : { reply }), localId,
+            const input = { sessionId, message: 'Team-only input', reply, localId,
                 ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
                 requestedAction: { v: 1, kind: 'enqueue' } };
             const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
@@ -497,8 +475,7 @@ describe('original CLI Session Action delivery', () => {
                     expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
                     expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
                     if (reply === 'wait') expect(body).toHaveProperty('reply.mode', 'wait');
-                    if (legacyWait) expect(body).not.toHaveProperty('reply');
-                    pending = true;
+                        pending = true;
                     expect(body).not.toHaveProperty('targetMachineId');
                     const opened = decryptSessionPayload({ ctx, ciphertextBase64: body.ciphertext });
                     expect(opened).toMatchObject({ content: { text: input.message } });
@@ -546,16 +523,6 @@ describe('original CLI Session Action delivery', () => {
             };
             try {
                 await vi.waitFor(() => expect(pending).toBe(true));
-                if (legacyWait) {
-                    await vi.waitFor(() => expect(sockets.size).toBeGreaterThan(0));
-                    expect(completed).toBe(false);
-                    pending = false;
-                    answered = true;
-                    wake();
-                    await expect(result).resolves.toMatchObject({ ok: true, result: { status: 'accepted', localId } });
-                    expect(delivered.mock.calls.map(([url]) => url)).toEqual([`https://home.test/v2/sessions/${sessionId}/pending`]);
-                    return;
-                }
                 // Provider accepted the input and Pending retired. Muse is still working.
                 pending = false;
                 wake();

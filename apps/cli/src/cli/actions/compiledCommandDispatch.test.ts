@@ -526,7 +526,7 @@ describe('compiled Action CLI command dispatch', () => {
       permissionModeOverride: 'plan',
       modelOverride: null,
       timeoutSeconds: 42,
-      wait: true,
+      reply: 'wait',
       localId: 'retry_1',
     });
   });
@@ -537,7 +537,7 @@ describe('compiled Action CLI command dispatch', () => {
       message: 'Go.',
       recipient: { kind: 'execution_run', runId: 'run_9' },
       localId: 'retry_from_json',
-      wait: true,
+      reply: 'wait',
       timeoutSeconds: 19,
     };
     const executions = await run(['session', 'send'], [

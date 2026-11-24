@@ -46,7 +46,7 @@ describe('happier session send (action executor)', () => {
           message: 'Hello',
           permissionModeOverride: 'read-only',
           modelOverride: 'gpt-4o',
-          wait: true,
+          reply: 'wait',
           timeoutSeconds: 30,
         }),
         expect.objectContaining({ surface: 'cli', defaultSessionId: 'sess-1' }),
@@ -56,7 +56,7 @@ describe('happier session send (action executor)', () => {
       expect(parsed).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_send',
-        data: { sessionId: 'sess-1', localId: 'local-1', waited: true },
+        data: { sessionId: 'sess-1', localId: 'local-1', waited: false },
       }));
     } finally {
       output.restore();
@@ -111,14 +111,14 @@ describe('happier session send (action executor)', () => {
           sessionId: 'sess-1',
           message: 'Hello from a flag',
           modelOverride: 'gpt-x',
-          wait: true,
+          reply: 'wait',
         }),
         expect.objectContaining({ surface: 'cli', defaultSessionId: 'sess-1' }),
       );
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_send',
-        data: { sessionId: 'sess-1', localId: 'local-1', waited: true },
+        data: { sessionId: 'sess-1', localId: 'local-1', waited: false },
       }));
     } finally {
       output.restore();
@@ -176,7 +176,7 @@ describe('happier session send (action executor)', () => {
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_send',
-        data: { sessionId: 'sess-1', localId: 'local-1', waited: true },
+        data: { sessionId: 'sess-1', localId: 'local-1', waited: false },
       }));
     } finally {
       output.restore();
@@ -212,7 +212,7 @@ describe('happier session send (action executor)', () => {
         expect(JSON.parse(output.text())).toMatchObject({
           ok: true,
           kind: 'session_send',
-          data: { sessionId: 'sess-1', ...reply },
+          data: { sessionId: 'sess-1', ...reply, waited: true },
         });
       } else {
         expect(output.text()).toContain(reply.outcome.text);
@@ -766,7 +766,7 @@ describe('happier session send --run (targeted execution-run convergence)', () =
   it('waits on the exact targeted turn through the canonical Action, with no CLI-side polling', async () => {
     const input = await canonicalInputFor(['send', 'sess-1', 'Hello', '--run', 'run-9', '--wait', '--timeout', '45']);
     expect(input).toMatchObject({
-      recipient: { kind: 'execution_run', runId: 'run-9' }, wait: true, timeoutSeconds: 45,
+      recipient: { kind: 'execution_run', runId: 'run-9' }, reply: 'wait', timeoutSeconds: 45,
     });
     // One canonical invocation settles the wait; the CLI never reads run state.
     expect(execute).toHaveBeenCalledTimes(1);

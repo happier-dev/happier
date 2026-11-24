@@ -1136,7 +1136,7 @@ describe('createActionExecutor (session control)', () => {
         providerConnectionId: 'pc_work',
         requestedAction: { v: 1, kind: 'send_now' },
         localId: 'caller-retained-1',
-        wait: true,
+        reply: 'wait',
         timeoutSeconds: 42,
       },
       { surface: 'cli', defaultSessionId: null, actionRequestId: 'outer-request-identity', signal: cancellation.signal },
@@ -1151,10 +1151,14 @@ describe('createActionExecutor (session control)', () => {
       providerConnectionId: 'pc_work',
       requestedAction: { v: 1, kind: 'send_now' },
       localId: 'caller-retained-1',
-      wait: true,
+      reply: 'wait',
       timeoutSeconds: 42,
       signal: cancellation.signal,
     }));
+
+    expect(await executor.execute('session.message.send', { sessionId: 's1', message: 'Hello', wait: true },
+      { surface: 'cli', defaultSessionId: null })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(sessionSendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('reuses the Action request identity for generic Session send admission retries', async () => {

@@ -1993,8 +1993,9 @@ describe('Action Spec Registry', () => {
     }).success).toBe(false);
   });
 
-  it('admits one canonical reply mode while refusing mixed legacy wait intent', () => {
+  it('admits explicit reply modes and refuses the predecessor boolean', () => {
     for (const [schema, input] of [
+      [getActionSpec('session.message.send').inputSchema, { sessionId: 's1', message: 'Which revision?' }],
       [PUBLIC_ACTION_INPUT_SCHEMAS['session.message.send'], { sessionId: 's1', message: 'Which revision?' }],
       [PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send'], { sessionId: 's1', message: 'Which revision?', idempotencyKey: 'ask-one' }],
     ] as const) {
@@ -2004,7 +2005,7 @@ describe('Action Spec Registry', () => {
       }
       expect(schema.safeParse({ ...input, reply: 'eventually' }).success).toBe(false);
       expect(schema.safeParse({ ...input, reply: 'wait', timeoutSeconds: 0 }).success).toBe(false);
-      expect(schema.safeParse({ ...input, wait: true }).success).toBe(true);
+      for (const wait of [false, true]) expect(schema.safeParse({ ...input, wait }).success).toBe(false);
     }
   });
 

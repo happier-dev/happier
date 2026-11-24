@@ -483,14 +483,11 @@ describe('compileActionCliCommands', () => {
     })).toContain('--server-id');
   });
 
-  it('compiles the shared send --wait help as message completion, never Session idle', () => {
-    // One compiled command serves the main send and the targeted `--run` send,
-    // so its --wait help cannot claim parent-Session idle semantics (Lane 05
-    // plan 04 §10.2: wait settles the admitted message's own turn).
+  it('compiles the shared send --wait help as a shorthand for the explicit reply mode', () => {
     const command = findCompiledActionCliCommand(['session', 'send']);
     expect(command).not.toBeNull();
     const wait = buildActionCliHelpModel(command!).options.find((row) => row.label.startsWith('--wait'));
-    expect(wait?.description).toContain('Wait for message completion (optional)');
+    expect(wait?.description).toContain('Shorthand for --reply wait');
     expect(wait?.description.toLowerCase()).not.toContain('idle');
   });
 

@@ -200,7 +200,7 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
                 : {}),
             ...(data.reply === 'none' || data.reply === 'wait' || data.reply === 'return'
               ? { reply: data.reply }
-              : typeof data.wait === 'boolean' ? { wait: data.wait } : {}),
+              : {}),
             ...(typeof data.returnToSessionId === 'string' ? { returnToSessionId: data.returnToSessionId } : {}),
             ...(typeof data.timeoutSeconds === 'number' ? { timeoutSeconds: data.timeoutSeconds } : {}),
             ...(serverId ? { serverId } : {}),

@@ -3558,7 +3558,6 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'sess-1',
       message: 'Hello world',
       requestedAction: { v: 1, kind: 'steer_if_active' },
-      wait: true,
       timeoutSeconds: 30,
       permissionModeOverride: 'read_only',
       modelOverride: 'gpt-4o',
@@ -3574,7 +3573,7 @@ describe('createCliActionDeps hook dispatch', () => {
       idOrPrefix: 'sess-1',
       message: 'Hello world',
       requestedAction: { v: 1, kind: 'steer_if_active' },
-      wait: true,
+      wait: false,
       timeoutMs: 30000,
       localId: 'retained-1',
       permissionModeOverride: 'read_only',
@@ -3668,7 +3667,6 @@ describe('createCliActionDeps hook dispatch', () => {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       localId: 'run-input-1',
       requestedAction: { v: 1, kind: 'steer_if_active' },
-      wait: true,
     })).resolves.toEqual({
       status: 'outcomeUnknown',
       localId: 'run-input-1',
@@ -3708,7 +3706,6 @@ describe('createCliActionDeps hook dispatch', () => {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       localId: 'run-input-settled',
       requestedAction: { v: 1, kind: 'steer_if_active' },
-      wait: true,
     })).resolves.toEqual({ status, localId: 'run-input-settled', code });
     expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
   });
@@ -3884,7 +3881,6 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'sess',
       message: 'Hello world',
       requestedAction: { v: 1, kind: 'steer_if_active' },
-      wait: false,
       timeoutSeconds: 15,
     })).resolves.toEqual({ status: 'accepted', localId: 'local-1' });
 

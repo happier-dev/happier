@@ -14,7 +14,7 @@ export const SESSION_SEND_NATIVE_PROVIDER_CONNECTION_TOKEN = 'native';
 /** The caller spelling `--model default` uses to clear a session model override. */
 export const SESSION_SEND_DEFAULT_MODEL_TOKEN = 'default';
 
-/** Legacy wait ingress retains its established CLI budget; canonical reply has none. */
+/** The established CLI budget for plain sends and the --wait shorthand. */
 export const SESSION_SEND_DEFAULT_TIMEOUT_SECONDS = 300;
 
 /**
@@ -79,9 +79,7 @@ export const SessionSendCliInputHints: ActionInputHints = {
     { path: 'model', title: 'Model override, or "default" (optional)', widget: 'text' },
     { path: 'providerConnection', title: 'Provider connection id, or "native" (optional)', widget: 'text' },
     { path: 'localId', title: 'Durable input identity for a safe retry (optional)', widget: 'text' },
-    // Shared by the main send and a targeted `--run` send: `wait` settles the
-    // admitted message's own turn, never parent-Session idle (Lane 05 plan 04 §10.2).
-    { path: 'wait', title: 'Wait for message completion (optional)', widget: 'boolean' },
+    { path: 'wait', title: 'Shorthand for --reply wait', widget: 'boolean' },
     { path: 'reply', title: 'Reply mode (optional)', widget: 'select', options: [
       { value: 'none', label: 'No reply' }, { value: 'wait', label: 'Wait' }, { value: 'return', label: 'Return later' },
     ] },
@@ -110,6 +108,7 @@ export function bindSessionSendCliInput(
     : value.providerConnection === SESSION_SEND_NATIVE_PROVIDER_CONNECTION_TOKEN
       ? null
       : value.providerConnection;
+  const reply = value.reply ?? (value.wait ? 'wait' : undefined);
   // Over canonical whole-input JSON this binder sees only the caller fields the
   // caller actually typed, so each projection is conditional on its source.
   return {
@@ -124,7 +123,7 @@ export function bindSessionSendCliInput(
     // retained — an identity minted out of the caller's reach cannot be named in
     // the failure guidance.
     localId: value.localId ?? actionCliDerivedDefault(context.invocationId),
-    ...(value.reply === undefined ? (value.wait ? { wait: true } : {}) : { reply: value.reply }),
+    ...(reply === undefined ? {} : { reply }),
     ...(value.timeoutSeconds === undefined
       ? value.reply === undefined ? { timeoutSeconds: actionCliDerivedDefault(SESSION_SEND_DEFAULT_TIMEOUT_SECONDS) } : {}
       : { timeoutSeconds: value.timeoutSeconds }),

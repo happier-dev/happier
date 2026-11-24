@@ -9,7 +9,6 @@ export type MessagingActionInputById = {
         idempotencyKey: string;
         sessionId: SessionTargetV1<true>;
         message: string;
-        wait?: boolean | undefined;
         reply?: 'none' | 'return' | 'wait' | undefined;
         timeoutSeconds?: number | undefined;
         recipient?: undefined | {

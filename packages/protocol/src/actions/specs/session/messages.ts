@@ -89,7 +89,6 @@ export const SessionSendUserTextInputFieldsSchema = lazyZodSchema(() => z.strict
   modelOverride: z.optional(z.union([z.string().check(z.trim(), z.minLength(1)), z.null()])),
   providerConnectionId: z.optional(z.nullable(ProviderConnectionIdSchema)),
   modelSelection: z.optional(SessionMessageModelSelectionV1Schema),
-  wait: z.optional(z.boolean()),
   reply: z.optional(z.enum(['none', 'wait', 'return'])),
   /** Exact destination for a person's Ask; never an Agent causal-turn assertion. */
   returnToSessionId: z.optional(asProtocolZod(SessionIdSchema)),
@@ -105,9 +104,6 @@ export function validateSessionSendProviderSelection(
   }
   if (value.requestedAction?.kind === 'recover_execution_run' && value.recipient?.kind !== 'execution_run') {
     ctx.addIssue({ code: 'custom', path: ['recipient'], message: 'Execution Run recovery requires an exact Run recipient' });
-  }
-  if (value.reply !== undefined && value.wait !== undefined) {
-    ctx.addIssue({ code: 'custom', path: ['reply'], message: 'reply and legacy wait cannot be combined' });
   }
   if (value.returnToSessionId !== undefined && value.reply !== 'return') {
     ctx.addIssue({ code: 'custom', path: ['returnToSessionId'], message: 'A human return destination requires return reply mode' });
@@ -148,12 +144,8 @@ export const SessionSendUserTextPluginInputV1Schema = lazyZodSchema(() => z.stri
   // surface refuse an attachment-only input the seam beneath it admits.
   message: z.string(),
   ...PluginSessionUserTextAuthoredFieldSchemasV1,
-  ...z.pick(SessionSendUserTextInputFieldsSchema, { reply: true, wait: true, timeoutSeconds: true }).shape,
-}).check(z.superRefine(requireSessionInputContent), z.superRefine((value, ctx) => {
-  if (value.reply !== undefined && value.wait !== undefined) {
-    ctx.addIssue({ code: 'custom', path: ['reply'], message: 'reply and legacy wait cannot be combined' });
-  }
-})));
+  ...z.pick(SessionSendUserTextInputFieldsSchema, { reply: true, timeoutSeconds: true }).shape,
+}).check(z.superRefine(requireSessionInputContent)));
 
 export const SessionSendSubagentLaunchPluginInputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: SessionTargetV1Schema,
@@ -284,7 +276,6 @@ function createSessionMessageActionSpecs(): readonly [
         { path: 'reply', title: 'Reply mode (optional)', description: 'none sends information; wait observes the exact answer; return hands off its answer to the original Session.', widget: 'select', options: [
           { value: 'none', label: 'No reply' }, { value: 'wait', label: 'Wait' }, { value: 'return', label: 'Return later' },
         ] },
-        { path: 'wait', title: 'Wait for message completion (optional)', widget: 'boolean' },
         { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
       ],
     },

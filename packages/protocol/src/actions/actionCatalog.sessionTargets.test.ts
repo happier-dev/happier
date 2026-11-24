@@ -23,7 +23,7 @@ describe('Session target declaration discovery', () => {
 
   it('publishes Session targets through real strict discovery and input-schema consumers', () => {
     for (const [id, cardinality, extraInput] of [
-      ['session.message.send', 'many', { message: 'Review the change', wait: true }],
+      ['session.message.send', 'many', { message: 'Review the change', reply: 'wait' }],
       ['session.status.get', 'many', {}],
       ['session.open', 'one', {}],
       ['session.stop', 'many', {}],

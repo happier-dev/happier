@@ -59,7 +59,7 @@ describe('CLI host Message admission', () => {
         return { status: 'accepted', localId: request.localId };
       },
     });
-    const result = await deps.sessionSendMessage!({ sessionId, message: 'Continue the Workflow', wait: false,
+    const result = await deps.sessionSendMessage!({ sessionId, message: 'Continue the Workflow',
       requestedAction: { v: 1, kind: 'enqueue' }, actionCaller: { kind: 'workflowRun', runId: workflow.runId, authorization },
       context: { surface: 'agent', authority: 'account_automation', workflowSessionInput: workflow },
     });
@@ -374,7 +374,7 @@ describe('CLI host Message admission', () => {
       getCurrentSessionWorkDepth: () => 0, getCurrentTurnWorkDepth: readWitnessedTurnDepth, machineAdmissionTransport });
     const context = { surface: 'agent' as const, runtimeRunId: 'run-id' };
     await expect(deps.sessionSendMessage({ sessionId: receiverSessionId, message: 'Qualified Session input',
-      localId: 'qualified-input', wait: false,
+      localId: 'qualified-input',
       sessionInputSource: { sourceSessionId, sourceTurnId, sourceInputId: 'session-input', via: 'action',
         causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
       context, callerSurface: 'agent', actionCaller: { kind: 'host' }, requestedAction: { v: 1, kind: 'enqueue' },
@@ -446,7 +446,7 @@ describe('CLI host Message admission', () => {
     expect(content).toMatchObject({ t: 'plain', v: { meta: { happierInputRequestV1: { replyIntent: { mode: 'wait' } } } } });
   });
 
-  it.each(['reply', 'legacy_wait'] as const)('returns the accepted failed turn typed runtime cause with an ordinary CLI %s', async mode => {
+  it('returns the accepted failed turn typed runtime cause with an ordinary CLI reply wait', async () => {
     // Live shape (QA-WAVE-A r3, Gemini invalid key): custody fulfils `failed` on the accepted
     // ordinary turn, whose projection and transcript both carry the typed authentication issue.
     const sessionId = 'cmv3hostadmissionfailedaaa';
@@ -492,13 +492,11 @@ describe('CLI host Message admission', () => {
     });
     const deps = createCliActionDeps({ token: 'test-account-token', sessionId, mode: 'plain', ctx: null,
       credentials: { token: 'test-account-token', encryption: null } });
-    const sent = await deps.sessionSendMessage({ sessionId, localId, message: 'No tools. Reply A_CP2_OK.', ...(mode === 'reply' ? { reply: 'wait' as const } : { wait: true }),
+    const sent = await deps.sessionSendMessage({ sessionId, localId, message: 'No tools. Reply A_CP2_OK.', reply: 'wait',
       callerSurface: 'cli', actionCaller: { kind: 'host' }, context: { surface: 'cli', authority: 'present_user' },
       requestedAction: { v: 1, kind: 'enqueue' } });
-    expect(sent).toEqual(mode === 'reply'
-      ? { status: 'replied', localId, inputMessageRef: expect.objectContaining({ messageId: 'committed-input' }),
-        outcome: { kind: 'failed', runtimeIssueV1 } }
-      : { status: 'failed', localId, code: 'session_input_turn_failed', runtimeIssueV1 });
+    expect(sent).toEqual({ status: 'replied', localId, inputMessageRef: expect.objectContaining({ messageId: 'committed-input' }),
+      outcome: { kind: 'failed', runtimeIssueV1 } });
     expect(SessionMessageSendResultV1Schema.parse(sent)).toEqual(sent);
   });
 
@@ -574,7 +572,7 @@ describe('CLI host Message admission', () => {
     });
     await expect(deps.sessionSendMessage!({
       sessionId, message: 'Start the panel workflow', callerSurface: 'cli',
-      actionCaller: { kind: 'host' }, localId: 'host-input', wait: false,
+      actionCaller: { kind: 'host' }, localId: 'host-input',
       context: { surface: 'cli', authority: 'present_user' },
       requestedAction: { v: 1, kind: 'enqueue' },
     })).resolves.toMatchObject({ status: 'accepted', localId: 'host-input' });
@@ -622,7 +620,7 @@ describe('CLI host Message admission', () => {
       externalActionMachineRequestPrivateKey: new Uint8Array(64),
     });
     const result = await deps.sessionSendMessage!({
-      sessionId, message: 'Run a command that requires approval', localId: 'api-input', wait: false,
+      sessionId, message: 'Run a command that requires approval', localId: 'api-input',
       callerInputConstraints: grant, callerSurface: 'api', actionCaller: { kind: 'host' },
       context: {
         surface: 'api', authority: 'account_automation', externalActionTarget: target,

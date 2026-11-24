@@ -95,8 +95,8 @@ export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
     const sessionId = typeof context.input.sessionId === 'string'
       ? context.input.sessionId
       : null;
-    const waited = context.input.wait === true;
     const replied = result.status === 'replied';
+    const waited = replied && context.input.reply === 'wait';
     if (context.json) {
       const legacyFields = isRunSendSpelling(context)
         ? { sessionId, runId, sent: true }

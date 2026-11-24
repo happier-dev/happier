@@ -117,7 +117,6 @@ export function createCliMessageActionDeps(
       attachments,
       reply,
       returnToSessionId,
-      wait,
       timeoutSeconds,
       permissionModeOverride,
       modelOverride,
@@ -149,7 +148,6 @@ export function createCliMessageActionDeps(
           : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
 
-      const normalizedWait = reply === undefined && wait === true;
       const normalizedTimeoutSeconds =
         typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? timeoutSeconds
@@ -729,7 +727,7 @@ export function createCliMessageActionDeps(
           message: admittedMessageText,
           ...(recipient ? { recipient } : {}),
           requestedAction,
-          wait: normalizedWait,
+          wait: false,
           timeoutMs: reply === undefined ? normalizedTimeoutSeconds * 1000 : resolveSessionMessageAdmissionTimeoutMs(),
           ...(canonicalReplyIntent ? { replyIntent: canonicalReplyIntent } : {}),
           ...(pluginLocalId ?? workflowLocalId
@@ -825,7 +823,7 @@ export function createCliMessageActionDeps(
           && (!actionCaller || actionCaller.kind === 'host')
           ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1(callerSurface, context?.actionRequestAttributionV1) }
           : {}),
-        wait: normalizedWait,
+        wait: false,
         timeoutMs: reply === undefined ? normalizedTimeoutSeconds * 1000 : resolveSessionMessageAdmissionTimeoutMs(),
         ...(canonicalReplyIntent ? { replyIntent: canonicalReplyIntent } : {}),
         ...(context?.authority ? { executionAuthority: context.authority } : {}),
@@ -856,7 +854,7 @@ export function createCliMessageActionDeps(
           ...(displayText ? { displayText } : {}),
           ...(permissionModeOverride ? { permissionModeOverride } : {}),
           ...(modelOverride !== undefined ? { modelOverride } : {}), ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
-          ...(reply === undefined ? { wait: normalizedWait, timeoutSeconds: normalizedTimeoutSeconds }
+          ...(reply === undefined ? { timeoutSeconds: normalizedTimeoutSeconds }
             : { reply, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }) }) });
         return execution.ok ? execution.result : execution;
       }

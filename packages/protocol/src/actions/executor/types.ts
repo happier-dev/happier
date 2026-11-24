@@ -2610,8 +2610,6 @@ export type ActionExecutorDeps = Readonly<{
     reply?: 'none' | 'wait' | 'return';
     /** Exact human-selected return destination; the input owner attests the requester. */
     returnToSessionId?: string;
-    /** Released caller ingress; new producers use reply. */
-    wait?: boolean;
     timeoutSeconds?: number;
     serverId?: string | null;
     callerSurface?: keyof ActionSurfaces | null;
