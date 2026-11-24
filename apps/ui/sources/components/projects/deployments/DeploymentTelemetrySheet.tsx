@@ -36,6 +36,7 @@ import { readDeploymentActionError } from './deploymentActionOutcome';
 import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
+import { createDeploymentReadTransport, type PublicCollectorDomainPage } from './deploymentReadTransport';
 import type { TelemetryCaptureReads } from './telemetryCaptureReads';
 
 export type DeploymentTelemetrySheetInput = Readonly<{
@@ -148,6 +149,12 @@ export function DeploymentTelemetrySheet(
   };
   const [saving, setSaving] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
+  const [publicDomainChoice, setPublicDomainChoice] = React.useState<{
+    machineId: string;
+    domain?: DeploymentUiTelemetryInput['publicCollectorDomain'];
+  } | null>(null);
+  const needsPublicDomain = publicDomainChoice !== null && publicDomainChoice.machineId === collectorId;
+  const publicCollectorDomain = needsPublicDomain ? publicDomainChoice.domain : undefined;
   // The previous collector deletes what it kept when it is replaced or turned off: one in-place confirmation.
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const accountMode = useAccountEncryptionMode();
@@ -158,7 +165,7 @@ export function DeploymentTelemetrySheet(
       ? getMachineDisplayName(machine, allMachines)
       : t('projects.deployments.aMachine');
   };
-  const ready = !requests || collectorId !== null;
+  const ready = !requests || (collectorId !== null && (!needsPublicDomain || publicCollectorDomain !== undefined));
   const change =
     <T,>(set: (value: T) => void) =>
     (value: T) => {
@@ -178,9 +185,11 @@ export function DeploymentTelemetrySheet(
         props.onSaved(result);
         return;
       }
-      if (result.error === 'telemetry_deletion_confirmation_required')
+      if (result.error === 'telemetry_deletion_confirmation_required') {
         setConfirmingDelete(true);
-      else setRefusal(result);
+      } else if (result.error === 'collector_public_domain_required' && collectorId) {
+        setPublicDomainChoice({ machineId: collectorId });
+      } else setRefusal(result);
     } catch (error) {
       const outcome = readDeploymentActionError(error);
       if (outcome.kind === 'refused') setRefusal({ error: outcome.code, details: outcome.failure?.details });
@@ -193,6 +202,7 @@ export function DeploymentTelemetrySheet(
     void submit(() => props.setTelemetry({
       collector: requests && collectorId ? { machineId: collectorId } : null,
       ...(requests ? { capabilities: { metrics, appLlmCost, exceptions } } : {}),
+      ...(requests && publicCollectorDomain ? { publicCollectorDomain } : {}),
       ...(confirmingDelete ? { confirmDelete: true as const } : {}),
     }));
   };
@@ -335,6 +345,13 @@ export function DeploymentTelemetrySheet(
             />
           ) : null}
         </ItemGroup>
+        {canManage && requests && needsPublicDomain && collectorId ? (
+          <ItemGroup title={t('deploymentTelemetry.sheet.collectorPublicDomain')}>
+            <CollectorPublicDomainPicker key={collectorId} lifetime={lifetime} machineId={collectorId}
+              serverId={environment.serverId} selected={publicCollectorDomain?.domainId}
+              disabled={saving} onSelect={domain => setPublicDomainChoice({ machineId: collectorId, domain })} />
+          </ItemGroup>
+        ) : null}
         <ItemGroup title={t('deploymentTelemetry.sheet.record')}>
           <Item
             testID="project-deployments.telemetry.requests"
@@ -484,6 +501,57 @@ function CollectorRoleRecovery({ machine, machineName, lifetime, environment, di
       if (await roles.setRole(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, true)) onEnabled();
     }}
   />;
+}
+
+function CollectorPublicDomainPicker({ lifetime, serverId, machineId, selected, disabled, onSelect }: Readonly<{
+  lifetime: ServerAccountScopeLifetime;
+  serverId: string;
+  machineId: string;
+  selected?: string;
+  disabled: boolean;
+  onSelect(domain: NonNullable<DeploymentUiTelemetryInput['publicCollectorDomain']>): void;
+}>) {
+  const [query, setQuery] = React.useState<{ cursor?: string; app?: NonNullable<PublicCollectorDomainPage['app']> }>({});
+  const [page, setPage] = React.useState<PublicCollectorDomainPage | null>(null);
+  const [failure, setFailure] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    const cancellation = new AbortController();
+    const retirement = lifetime.onRetire(() => cancellation.abort());
+    void createDeploymentReadTransport(lifetime).listPublicCollectorDomains(lifetime.scope,
+      { serverId, machineId, ...query }, { signal: cancellation.signal }).then(result => {
+      if (cancellation.signal.aborted) return;
+      setLoading(false);
+      setFailure(!result.ok);
+      if (result.ok) setPage(previous => ({ ...result.value, items: [...(previous?.items ?? []), ...result.value.items] }));
+    });
+    return () => { cancellation.abort(); retirement.dispose(); };
+  }, [lifetime, serverId, machineId, query]);
+  const load = (cursor?: string) => {
+    setLoading(true);
+    setFailure(false);
+    setQuery({ cursor, ...(page?.app ? { app: page.app } : {}) });
+  };
+  const app = page?.app;
+  return (
+    <>
+      {page && app ? page.items.map(domain => (
+        <Item key={domain.domainId} testID={`project-deployments.telemetry.public-domain.${domain.domainId}`}
+          title={domain.endpoint} selected={selected === domain.domainId} accessibilityRole="radio" showChevron={false}
+          disabled={disabled} onPress={() => onSelect({ environmentId: app.environmentId,
+            targetLinkId: app.targetLinkId, domainId: domain.domainId })} />
+      )) : null}
+      {loading ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : null}
+      {failure ? <SurfaceStateCard size="line" kind="unavailable" title={t('projects.deployments.domainsErrorTitle')}
+        action={{ label: t('common.retry'), onPress: () => load(query.cursor) }} /> : null}
+      {!loading && !failure && page?.nextCursor ? (
+        <Item title={t('common.next')} disabled={disabled} onPress={() => load(page.nextCursor ?? undefined)} />
+      ) : null}
+      {!loading && !failure && page?.items.length === 0 && page.nextCursor === null ? (
+        <SurfaceStateCard size="line" kind="empty" title={t('deploymentTelemetry.sheet.collectorPublicDomainEmpty')} />
+      ) : null}
+    </>
+  );
 }
 
 export function showDeploymentTelemetrySheet(

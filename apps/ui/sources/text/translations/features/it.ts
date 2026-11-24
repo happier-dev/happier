@@ -275,6 +275,8 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Collettore',
     collectorDescription:
       'La Macchina che riceve e conserva ciò che registra questo Ambiente.',
+    collectorPublicDomain: 'Scegli un dominio HTTPS pubblico per il collector',
+    collectorPublicDomainEmpty: 'Per questo collector non è disponibile alcun dominio HTTPS pubblico.',
     machine: 'Macchina',
     noCollector:
       'Nessuna Macchina ha ancora il ruolo Telemetria attivo. Attivalo su una Macchina sempre accesa, nei suoi Ruoli.',

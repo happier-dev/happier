@@ -28,12 +28,15 @@ import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 }
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
     deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
-import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { selectPublicTelemetryCollectorDomainV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { hasDeploymentManagedDataLink } from './deploymentRestore';
@@ -90,7 +93,20 @@ type DeploymentTargetIdentity = Readonly<{
     targetName?: string;
     platform?: string;
 }>;
+export type PublicCollectorDomainChoice = Readonly<{ domainId: string; endpoint: string }>;
+export type PublicCollectorDomainPage = Readonly<{
+    app: DeploymentAppMachineAssociationV1 | null;
+    items: readonly PublicCollectorDomainChoice[];
+    nextCursor: string | null;
+}>;
+
 type UiDeploymentReadTransport = Omit<DeploymentReadTransportV1, 'readEnvironment'> & Readonly<{
+    listPublicCollectorDomains: (scope: DeploymentReadScopeV1, input: Readonly<{
+        serverId: string;
+        machineId: string;
+        app?: DeploymentAppMachineAssociationV1;
+        cursor?: string;
+    }>, options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<PublicCollectorDomainPage>>;
     /** Menu pages and saved identities share private, header-only presentation. */
     readEnvironmentNames: (scope: DeploymentReadScopeV1, query: Readonly<{ cursor?: string; environmentId?: string }>,
         options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<DeploymentEnvironmentNamePage>>;
@@ -146,6 +162,17 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         } finally { account?.dispose(); }
     }
     const home = { serverId: lifetime.scope.serverId };
+    const readDomainHeaders = async (environmentId: string, query: Readonly<{ cursor?: string; limit?: number }>,
+        options: DeploymentReadOptionsV1) => {
+        const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute(DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1,
+            { ...home, environmentId, ...query }, { signal: options.signal }));
+        if (!parsed.success) return failure('invalid_response');
+        const page = parsed.data;
+        if (!page.ok) return failure(page.error);
+        if (page.environmentId !== environmentId || page.domains.some(domain => domain.environmentId !== environmentId))
+            return failure('invalid_response');
+        return { ok: true as const, value: page };
+    };
     const readEnvironmentMetadata = async (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1) => {
         const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(await execute('deployments.environments.get',
             { ...home, environmentId }, { signal: options.signal }));
@@ -383,15 +410,34 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
-        listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
-            const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute('deployments.domains.list',
-                { ...home, environmentId, ...query }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const page = parsed.data;
-            if (!page.ok) return failure(page.error);
-            if (page.environmentId !== environmentId || page.domains.some(domain => domain.environmentId !== environmentId)) {
-                return failure('invalid_response');
+        listPublicCollectorDomains: (scope, input, options) => scoped(scope, options, async account => {
+            const { machineId, serverId, cursor } = input;
+            let app = input.app;
+            if (!app) {
+                const rows = await readMachineRows({ machineIds: [machineId], request: account.request,
+                    readTransport: account.readTransport, signal: options.signal });
+                app = rows.get(machineId)?.deploymentApp ?? undefined;
+                if (!app) return { ok: true, value: { app: null, items: [], nextCursor: null } };
             }
+            const { environmentId, targetLinkId } = app;
+            const page = await readDomainHeaders(environmentId, cursor ? { cursor } : {}, options);
+            if (!page.ok) return page;
+            const items = [];
+            for (const domain of page.value.domains) {
+                const route = await selectPublicTelemetryCollectorDomainV1({
+                    serverId, environmentId, targetLinkId, domainId: domain.id, domain,
+                    collector: { machineId, deploymentId: app.deploymentId, controller: app.controller },
+                    open: (artifactId, signal) => account.readArtifactContent(artifactId, { signal }),
+                    signal: options.signal,
+                });
+                if (route.kind === 'ready') items.push({ domainId: domain.id, endpoint: route.endpoint });
+            }
+            return { ok: true, value: { app, items, nextCursor: page.value.nextCursor } };
+        }),
+        listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
+            const headers = await readDomainHeaders(environmentId, query, options);
+            if (!headers.ok) return headers;
+            const page = headers.value;
             const contents = await readArtifactsByRow(page.domains.map(domain => domain.contentArtifactId),
                 ids => account.readArtifactContents(ids, { signal: options.signal }));
             const items = [];

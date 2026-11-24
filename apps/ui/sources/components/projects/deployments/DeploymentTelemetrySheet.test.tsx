@@ -12,7 +12,7 @@ import {
   waitForTestEvent,
 } from '@/dev/testkit';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -271,6 +271,77 @@ describe('Environment telemetry sheet', () => {
         capabilities: { metrics: false, appLlmCost: false, exceptions: false },
       });
     } finally {
+      await screen.unmount();
+      context.dispose();
+      await account.dispose();
+    }
+  });
+
+  it('submits only the public HTTPS Domain the person chose for the selected collector App', async () => {
+    const { Modal } = await import('@/modal');
+    const app = { environmentId: 'collector-environment', targetLinkId: 'collector-target', deploymentId: 'collector-deployment',
+      controller: { machineId: 'collector-host', installationId: 'collector-installation' } };
+    const collectorId = 'collector-old';
+    let machineReads = 0;
+    const domainReads: string[] = [];
+    const domains = [
+      { id: 'private-domain', hostname: 'private.example.test', public: false },
+      { id: 'primary-domain', hostname: 'primary.example.test', public: true },
+      { id: 'backup-domain', hostname: 'backup.example.test', public: true },
+    ];
+    const account = await createSecretSettingsTestHarness({ handleRequest: async (path, init): Promise<Response | null> => {
+      if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+        machineReads++;
+        return createMachineReadBatchResponseFixture(init.body, id => id === collectorId
+          ? { ...createPlainMachineRowFixture({ id, accountId: 'account-a' }), deploymentApp: app } : null);
+      }
+      if (!path.startsWith(`/v1/deployments/environments/${app.environmentId}/domains`)) return null;
+      domainReads.push(path);
+      return Response.json({ ok: true, environmentId: app.environmentId, revision: 1, nextCursor: null,
+        domains: domains.map(({ id, public: servesPublicly }) => {
+          const placement = { serverId: account.scope.serverId, accountId: account.scope.accountId,
+            environmentId: app.environmentId, targetLinkId: app.targetLinkId, domainId: id,
+            ...app.controller, actionOperationId: 'domain-operation', requestId: 'domain-request', nativeServer: 'private' };
+          const content = { contentArtifactId: `${id}-artifact`, contentHeaderVersion: 1, contentBodyVersion: 1 };
+          const origin = { placement, content, desired: true, listener: 'privateOrigin',
+            telemetryCollector: { machineId: collectorId, deploymentId: app.deploymentId } };
+          return { v: 1, id, environmentId: app.environmentId, targetLinkId: app.targetLinkId,
+            revision: 1, state: 'active', ...content, createdByAccountId: account.scope.accountId, createdAtMs: 1, updatedAtMs: 1,
+            placements: servesPublicly ? [origin, { placement: { ...placement, nativeServer: 'public' },
+              content, desired: true, listener: 'public' }] : [origin] };
+        }) });
+    } });
+    for (const { id, hostname } of domains) {
+      account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: `${id}-artifact`, title: hostname, isDecrypted: true,
+        header: { kind: 'deployment-domain.v1', title: hostname }, body: JSON.stringify({ hostname, target: { kind: 'telemetry' } }),
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, account.scope.accountId));
+    }
+    const context = await captureLazyActionAccountContext(account.scope.serverId);
+    const setTelemetry = vi.fn<Parameters<typeof showDeploymentTelemetrySheet>[0]['setTelemetry']>()
+      .mockResolvedValueOnce({ ok: false, error: 'collector_public_domain_required' })
+      .mockResolvedValueOnce({ ok: true, environmentId: 'production', revision: 2, state: 'redeploy_required' });
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      const base = setUpDetail();
+      const detail = { ...base, environment: { ...base.environment, serverId: account.scope.serverId } };
+      await act(async () => { showDeploymentTelemetrySheet({ detail, lifetime: context.accountLifetime,
+        environmentName: 'Production', setTelemetry, setBindings: vi.fn(), onSaved: vi.fn() }); });
+      expect(domainReads).toHaveLength(0);
+      const before = machineReads;
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      await vi.waitFor(() => expect(screen.findByTestId('project-deployments.telemetry.public-domain.backup-domain')).not.toBeNull());
+      expect(machineReads).toBe(before + 1);
+      expect(domainReads).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.telemetry.public-domain.private-domain')).toBeNull();
+      expect(setTelemetry).toHaveBeenCalledTimes(1);
+      expect(setTelemetry.mock.calls[0]?.[0]).not.toHaveProperty('publicCollectorDomain');
+      await screen.pressByTestIdAsync('project-deployments.telemetry.public-domain.backup-domain');
+      expect(setTelemetry).toHaveBeenCalledTimes(1);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      expect(setTelemetry.mock.calls[1]?.[0]).toMatchObject({ collector: { machineId: collectorId },
+        publicCollectorDomain: { environmentId: app.environmentId, targetLinkId: app.targetLinkId, domainId: 'backup-domain' } });
+    } finally {
+      await act(async () => { Modal.hideAll(); });
       await screen.unmount();
       context.dispose();
       await account.dispose();

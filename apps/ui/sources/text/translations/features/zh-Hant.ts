@@ -274,6 +274,8 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     purpose: 'Happier 從這個應用程式記錄什麼，以及保存在哪裡。',
     collector: '收集器',
     collectorDescription: '接收並保存此環境所記錄內容的機器。',
+    collectorPublicDomain: '為收集器選擇公開的 HTTPS 網域',
+    collectorPublicDomainEmpty: '此收集器沒有公開的 HTTPS 網域。',
     machine: '機器',
     noCollector:
       '還沒有機器開啟遙測角色。請在一台始終在線的機器的「角色」中開啟它。',

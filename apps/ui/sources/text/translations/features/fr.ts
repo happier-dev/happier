@@ -275,6 +275,8 @@ const fr: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Collecteur',
     collectorDescription:
       'La Machine qui reçoit et conserve ce que cet Environnement enregistre.',
+    collectorPublicDomain: 'Choisir un domaine HTTPS public pour le collecteur',
+    collectorPublicDomainEmpty: 'Ce collecteur ne dispose d’aucun domaine HTTPS public.',
     machine: 'Machine',
     noCollector:
       'Aucune Machine n’a encore son rôle Télémétrie activé. Activez-le pour une Machine toujours allumée, dans ses Rôles.',

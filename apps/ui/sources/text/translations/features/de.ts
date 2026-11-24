@@ -270,6 +270,8 @@ const de: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Collector',
     collectorDescription:
       'Die Maschine, die empfängt und speichert, was diese Umgebung aufzeichnet.',
+    collectorPublicDomain: 'Öffentliche HTTPS-Domain für den Collector auswählen',
+    collectorPublicDomainEmpty: 'Für diesen Collector ist keine öffentliche HTTPS-Domain verfügbar.',
     machine: 'Maschine',
     noCollector:
       'Noch keine Maschine hat die Telemetrie-Rolle aktiviert. Aktiviere sie für eine Maschine, die immer läuft, in deren Rollen.',

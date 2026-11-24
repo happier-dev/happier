@@ -275,6 +275,8 @@ const pt: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Coletor',
     collectorDescription:
       'A Máquina que recebe e guarda o que este Ambiente registra.',
+    collectorPublicDomain: 'Escolha um domínio HTTPS público para o coletor',
+    collectorPublicDomainEmpty: 'Este coletor não tem um domínio HTTPS público.',
     machine: 'Máquina',
     noCollector:
       'Nenhuma Máquina tem ainda o papel Telemetria ativado. Ative-o numa Máquina sempre ligada, nos Papéis dela.',

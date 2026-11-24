@@ -275,6 +275,8 @@ const ru: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Сборщик',
     collectorDescription:
       'Машина, которая получает и хранит то, что записывает это Окружение.',
+    collectorPublicDomain: 'Выберите общедоступный домен HTTPS для коллектора',
+    collectorPublicDomainEmpty: 'У этого коллектора нет общедоступного домена HTTPS.',
     machine: 'Машина',
     noCollector:
       'Ни у одной Машины ещё не включена роль «Телеметрия». Включите её для всегда работающей Машины в её Ролях.',

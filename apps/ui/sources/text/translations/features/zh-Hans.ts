@@ -274,6 +274,8 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     purpose: 'Happier 从这个应用记录什么，以及保存在哪里。',
     collector: '收集器',
     collectorDescription: '接收并保存此环境所记录内容的机器。',
+    collectorPublicDomain: '为收集器选择公开 HTTPS 域名',
+    collectorPublicDomainEmpty: '此收集器没有公开 HTTPS 域名。',
     machine: '机器',
     noCollector:
       '还没有机器开启遥测角色。请在一台始终在线的机器的“角色”中开启它。',

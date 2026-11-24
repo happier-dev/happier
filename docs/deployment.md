@@ -3305,13 +3305,14 @@ When a Team Environment has no collector,
 **Deploy a collector next to your relay** opens the existing Store review in
 that Project and asks the person to choose the destination Machine.
 
-The in-development platform integration resolves an explicitly selected
-telemetry Domain through the same owner. The Domain must be active and its
-admitted collector origin must match the enrolled collector App deployment and
-controller installation. The owner returns HTTPS for a direct public Caddy
-listener or a prepared Cloudflare Tunnel. An older Domain without the collector
-reference needs a fresh Add review. Platform configuration consumes this lookup
-separately.
+Vercel Telemetry setup asks the person to choose a public HTTPS Domain for
+the selected collector's App. The picker refreshes the admitted Machine
+association and lists Domains in that App's Environment. The Domain owner
+requires an active route whose origin matches the App deployment and controller
+installation. Eligible routes serve a direct public Caddy listener or a prepared
+Cloudflare Tunnel. An older Domain without the collector reference needs a
+fresh Add review. Saving sends the exact selected Domain to the reviewed
+telemetry Action. The Action resolves the HTTPS endpoint for the exporter.
 
 Own-server Deploy review shows the selected remote telemetry collector Machine
 and when its private route resolves. When the deploy starts, the executor reads

@@ -275,6 +275,8 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     collector: 'Col·lector',
     collectorDescription:
       'La Màquina que rep i guarda el que registra aquest Entorn.',
+    collectorPublicDomain: 'Tria un domini HTTPS públic per al recol·lector',
+    collectorPublicDomainEmpty: 'Aquest recol·lector no té cap domini HTTPS públic.',
     machine: 'Màquina',
     noCollector:
       'Encara cap Màquina té el rol de Telemetria activat. Activa’l en una Màquina que estigui sempre encesa, als seus Rols.',

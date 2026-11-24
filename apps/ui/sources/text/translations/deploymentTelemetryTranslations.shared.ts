@@ -69,6 +69,8 @@ export type Copy = Readonly<{
     purpose: string;
     collector: string;
     collectorDescription: string;
+    collectorPublicDomain: string;
+    collectorPublicDomainEmpty: string;
     machine: string;
     rotate: string;
     rotateDescription: string;
@@ -182,6 +184,8 @@ const en: Copy = {
     collector: 'Collector',
     collectorDescription:
       'The Machine that receives and keeps what this Environment records.',
+    collectorPublicDomain: 'Choose a public HTTPS Domain for the collector',
+    collectorPublicDomainEmpty: 'There is no public HTTPS Domain for this collector.',
     machine: 'Machine',
     rotate: 'Rotate collector credential',
     rotateDescription: 'Replaces the current credential. Deploy again to send telemetry with the new credential.',

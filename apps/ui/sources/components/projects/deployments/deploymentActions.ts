@@ -63,7 +63,7 @@ export type DeploymentUiBackupConfigureInput = DeploymentBackupConfigureInputV1 
 export type DeploymentUiDomainAddInput = DeploymentDomainAddInputV1 extends infer T
     ? T extends unknown ? Omit<T, 'serverId' | 'domainId' | 'requestKey'> & Readonly<{ domainId?: string; requestKey?: string }> : never : never;
 export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>;
-export type DeploymentUiTelemetryInput = Pick<DeploymentEnvironmentTelemetrySetInputV1, 'collector' | 'capabilities' | 'confirmDelete' | 'rotate'>;
+export type DeploymentUiTelemetryInput = Pick<DeploymentEnvironmentTelemetrySetInputV1, 'collector' | 'capabilities' | 'confirmDelete' | 'rotate' | 'publicCollectorDomain'>;
 /** The host Action's typed pre-write refusals, kept with their details so the sheet recovers in place. */
 export type DeploymentUiTelemetryResult = DeploymentEnvironmentTelemetrySetSuccessV1
     | Readonly<{ ok: false; error: DeploymentTelemetrySetRefusalV1; details?: unknown }>
