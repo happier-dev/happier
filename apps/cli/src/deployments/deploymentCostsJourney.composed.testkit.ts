@@ -61,8 +61,8 @@ export async function runProductionCostsJourney(input: Readonly<{
         return response;
     };
     const viewers = [input.owner, input.teammate];
-    const readAgentContributions = async () => {
-        const accountingOnly = { includeContributions: true, includeComparison: false, includeQuota: false,
+    const readAgentAccounting = async () => {
+        const accountingOnly = { includeComparison: false, includeQuota: false,
             includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
             includeWorkEvidence: false, includeCoach: false };
         const batch = UsageQueryBatchResultSchema.parse(await input.owner.accepted('usage.query', { queries: [
@@ -70,15 +70,18 @@ export async function runProductionCostsJourney(input: Readonly<{
             // Catch an erroneous App ledger write even if it omits Session identity, without selecting unrelated traffic.
             { ...accountingOnly, modelIds: ['dbw-f17-priced', 'dbw-f17-unpriced'] },
         ] }));
-        return batch.results.map(slice => {
-            expect(slice.accounting).toBeDefined();
-            expect(slice.accounting?.contributions).toBeDefined();
-            return { session: slice.shownQuery.session, modelIds: slice.shownQuery.modelIds,
-                contributions: [...(slice.accounting?.contributions ?? [])].sort((left, right) => left.id.localeCompare(right.id)) };
-        });
+        const agent = batch.results.find(slice => slice.shownQuery.session?.includes(input.agentSessionId));
+        const appModels = batch.results.find(slice => slice.shownQuery.modelIds.includes('dbw-f17-priced'));
+        expect(agent?.accounting?.totals).toMatchObject({ eventCount: 1, tokens: { input: 7, output: 3, total: 10 } });
+        expect(appModels?.accounting?.totals.eventCount).toBe(0);
+        return { agent: agent?.accounting?.totals, appModels: appModels?.accounting?.totals };
     };
-    const originals = await Promise.all(viewers.map(async viewer => settingSchema.parse(
-        await viewer.accepted('settings.get', { anchor: 'usage.modelPrices' })).value));
+    // These separate Account clients share one CLI process in this fixture.
+    // Finish each settings refresh before the next client publishes its scope.
+    const originals: unknown[] = [];
+    for (const viewer of viewers) {
+        originals.push(settingSchema.parse(await viewer.accepted('settings.get', { anchor: 'usage.modelPrices' })).value);
+    }
     try {
         for (const [index, viewer] of viewers.entries()) {
             await viewer.accepted('settings.set', { anchor: 'usage.modelPrices', value: {
@@ -86,14 +89,14 @@ export async function runProductionCostsJourney(input: Readonly<{
                     cacheReadUsdPerMillion: 0, cacheWriteUsdPerMillion: 0 },
             } });
         }
-        const agentBefore = await readAgentContributions();
-        expect(agentBefore.some(slice => slice.contributions.some(row => row.sessionId === input.agentSessionId))).toBe(true);
+        const agentBefore = await readAgentAccounting();
         const since = Date.now();
         const emitted = emittedSchema.parse(await (await request('/llm')).json());
         await request('/flush'); // The genuine SDK owns protobuf encoding, HTTP, export completion and retry identity.
+        const service = { serviceName: emitted.producer.serviceName,
+            ...(emitted.producer.serviceVersion ? { serviceVersion: emitted.producer.serviceVersion } : {}) };
         const operands = { source: { kind: 'environment' as const, serverId: input.serverId, environmentId: input.environmentId },
-            since, until: Date.now(), serviceName: emitted.producer.serviceName,
-            ...(emitted.producer.serviceVersion ? { serviceVersion: emitted.producer.serviceVersion } : {}), granularity: 'hour' as const };
+            since, until: Date.now(), ...service, granularity: 'hour' as const };
         const read = async (viewer: Viewer) => {
             const result = DatabaseCaptureCostsReadResultV1Schema.parse(await viewer.accepted(
                 TELEMETRY_COSTS_READ_ACTION_ID_V1, operands, input.collectorMachineId));
@@ -113,14 +116,15 @@ export async function runProductionCostsJourney(input: Readonly<{
         expect(ownerRead.items.some(item => item.modelId === 'dbw-f17-unpriced')).toBe(true);
         expect(ownerRead.items.find(item => item.reportedCost)?.reportedCost).toEqual({ amount: 0.02, currency: 'USD' });
         expect(JSON.stringify(ownerRead)).not.toMatch(/f17-private-prompt|f17-private-completion|f17-private-tool/);
-        const projections = await Promise.all(viewers.map(async (viewer, index) => {
+        const projections: ReturnType<typeof projectDatabaseCaptureUsageV1>[] = [];
+        for (const [index, viewer] of viewers.entries()) {
             const overrides = UsageModelPriceOverridesV1Schema.parse(settingSchema.parse(
                 await viewer.accepted('settings.get', { anchor: 'usage.modelPrices' })).value);
             const catalog = UsageModelPriceCatalogSchema.parse(await viewer.accepted('usage.prices.get', {
                 modelIds: ['dbw-f17-priced', 'dbw-f17-unpriced'],
             }));
-            return projectDatabaseCaptureUsageV1(index === 0 ? ownerRead : teammateRead, catalog, overrides, { granularity: 'hour' });
-        }));
+            projections.push(projectDatabaseCaptureUsageV1(index === 0 ? ownerRead : teammateRead, catalog, overrides, { granularity: 'hour' }));
+        }
         expect(projections[0]!.accounting.totals.tokens).toEqual(projections[1]!.accounting.totals.tokens);
         expect(projections[0]!.accounting.totals.cost.apiEquivalentUsd).toBeGreaterThan(0);
         expect(projections[1]!.accounting.totals.cost.apiEquivalentUsd)
@@ -138,7 +142,7 @@ export async function runProductionCostsJourney(input: Readonly<{
             const measure = { kind: 'spend', costMode: 'api_equivalent' };
             const demand = TelemetryMetricsReadResultV1Schema.parse(await viewer.accepted(TELEMETRY_METRICS_READ_ACTION_ID_V1, {
                 serverId: input.serverId, environmentId: input.environmentId, since: operands.since, until: operands.until,
-                serviceName: operands.serviceName, serviceVersion: operands.serviceVersion, measure,
+                ...service, measure,
             }, input.collectorMachineId));
             expect(demand.result.measurements).toMatchObject({ value: expected!.amountUsd, unit: 'USD',
                 basis: 'catalog_estimate', completeness: 'partial' });
@@ -154,8 +158,7 @@ export async function runProductionCostsJourney(input: Readonly<{
                 action: { pluginId: 'happier.machine.services', localId: 'health/setup' },
                 input: { v: 1, subject: { kind: 'environment', environmentId: input.environmentId }, checks: [{
                     checkId, kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, binding: { kind: 'healthCheck' },
-                    config: { environmentId: input.environmentId, serviceName: operands.serviceName,
-                        serviceVersion: operands.serviceVersion, measure, windowMs: 3_600_000,
+                    config: { environmentId: input.environmentId, ...service, measure, windowMs: 3_600_000,
                         threshold: { operator: 'above', value: expected!.amountUsd / 2 } },
                     periodMs: 1000, consecutiveFailuresBeforeAlerting: 1,
                 }], investigation: { mode: 'inbox' } },
@@ -168,7 +171,7 @@ export async function runProductionCostsJourney(input: Readonly<{
             expect(saved.measurements).toMatchObject({ value: expected!.amountUsd, unit: 'USD',
                 basis: 'catalog_estimate', completeness: 'partial' });
         }
-        expect(await readAgentContributions()).toEqual(agentBefore);
+        expect(await readAgentAccounting()).toEqual(agentBefore);
         console.info('F17 real SDK calls share raw accounting across two admitted Account price preferences', {
             environmentId: input.environmentId, attempts: emitted.attempts, currency: 'USD',
             ownerAccountId: input.owner.accountId, teammateAccountId: input.teammate.accountId,
