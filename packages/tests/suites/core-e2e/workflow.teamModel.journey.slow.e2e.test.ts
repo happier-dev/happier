@@ -123,7 +123,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     const ref = { service, accountId: randomUUID() };
     const metadata = { displayName: 'FIN synthetic Muse', providerIdentity: { accountId: ref.accountId } };
     const payload = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key',
-      payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'fin-synthetic-muse-key' } }, metadata, now: Date.now() });
+      payload: { v: 1, values: { credentialMode: 'manual', apiKey: 'fin-synthetic-muse-key' } }, metadata, now: Date.now() });
     const imported = await fetchJson<unknown>(`${home.server.baseUrl}/v4/connect/qualified/credential`, {
       method: 'POST', headers: { Authorization: `Bearer ${owner.credentials.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(QualifiedConnectedAccountCredentialMutationV4Schema.parse({ ref, authenticationModeId: 'api-key',

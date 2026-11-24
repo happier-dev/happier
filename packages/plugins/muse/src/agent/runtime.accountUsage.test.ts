@@ -56,7 +56,7 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     connectedServiceSelectionsEnv: environment });
   const usageCredential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref,
       authenticationModeId: 'native-import', configurationRevision: 'cfg-work', revisionSemantics: 'revisioned', credentialRevision,
-      content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', accountToken: 'synthetic-oauth-token',
+      content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', accessToken: 'synthetic-oauth-token',
         nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'login',
         nativeSubsActive: 'true', expiresAtMs: String(Date.UTC(2100, 0, 1)),
       } } },

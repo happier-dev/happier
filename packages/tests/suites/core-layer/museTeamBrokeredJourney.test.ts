@@ -90,7 +90,7 @@ it('shares Muse through Meta into recipient Pi, hides it from Muse, and refuses 
   const account = { service, accountId: 'muse-inference' };
   const stored = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref: account,
     authenticationModeId: 'api-key', content: { t: 'plain', v: { v: 1,
-      values: { credentialMode: 'manual', inferenceKey: 'synthetic-owner-muse-key' } } },
+      values: { credentialMode: 'manual', apiKey: 'synthetic-owner-muse-key' } } },
     metadata: { scopes: [], kind: 'token' }, expectedCredentialRevision: null });
   expect(stored.status).toBe('written');
   const credential = await db.serviceAccountToken.findFirstOrThrow({ where: {

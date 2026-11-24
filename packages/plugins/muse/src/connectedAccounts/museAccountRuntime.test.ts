@@ -2,12 +2,12 @@ import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@ha
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountCompletionObservation, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner, createConnectedAccountCredentialSettlement, invokeConnectedAccountAuthenticationRuntime } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner, createConnectedAccountCredentialRedaction, createConnectedAccountCredentialSettlement, invokeConnectedAccountAuthenticationRuntime } from '@happier-dev/cli-common/connectedAccounts';
 import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { museAccountDescriptor, museNativeConnectedAccountPurpose, MUSE_ACCOUNT_SERVICE } from './declarations.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { museAccountConnectedResult, museConnectedAccountRuntime as runtime } from './museAccountRuntime.js';
+import { museAccountConnectedResult, museConnectedAccountRuntime as runtime, stageMuseNativeCredentials } from './museAccountRuntime.js';
 
 function fixture(responses: unknown[] = [], httpStatus = 200) {
   const values = new Map<string, string>();
@@ -36,10 +36,19 @@ function deviceMode() {
 }
 
 describe('Muse account runtime', () => {
+  it.each(['device', 'native-import'] as const)('registers the staged token and key with the real collector in %s mode, never the mode marker', async (modeId) => {
+    const f = fixture();
+    await stageMuseNativeCredentials(f.context.attemptCredentials, { access_token: 'synthetic-account-token', api_key: 'synthetic-key', api_base_url: 'https://api.meta.ai/v1', obtained_via: 'device', mechanism: 'oauth' });
+    const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse(museAccountDescriptor.authentication.modes.find((candidate) => candidate.id === modeId));
+    const secrets = createConnectedAccountCredentialRedaction({ mode, credential: { v: 1, values: Object.fromEntries(f.values) }, configuration: {} }).readSecretValues();
+    expect(secrets).toEqual(expect.arrayContaining(['synthetic-account-token', 'synthetic-key']));
+    expect(secrets).not.toContain('native');
+  });
+
   it.each([[200, 'ok'], [401, 'needsReauth'], [503, 'networkUnavailable'], [new Error('synthetic-secret'), 'networkUnavailable']] as const)(
     'tests saved subscription credentials with a read-only model request (%s)', async (response, status) => {
       const f = fixture([response instanceof Error ? response : { data: [] }], typeof response === 'number' ? response : 200);
-      for (const [key, value] of Object.entries({ credentialMode: 'native', inferenceKey: 'synthetic-key', accountToken: 'synthetic-secret', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
+      for (const [key, value] of Object.entries({ credentialMode: 'native', apiKey: 'synthetic-key', accessToken: 'synthetic-secret', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
       const before = [...f.values];
       const result = await runtime.testConnection!(f.context);
       expect(result.status).toBe(status);
@@ -50,7 +59,7 @@ describe('Muse account runtime', () => {
 
   it('keeps valid access-only Muse health connected and explains why its remote test is unsupported', async () => {
     const f = fixture();
-    for (const [key, value] of Object.entries({ credentialMode: 'native', accountToken: 'synthetic-member-access', expiresAtMs: String(Date.now() + 60_000), nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
+    for (const [key, value] of Object.entries({ credentialMode: 'native', accessToken: 'synthetic-member-access', expiresAtMs: String(Date.now() + 60_000), nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
     expect(await runtime.status(f.context)).toMatchObject({ status: 'connected', accessMode: 'subscription' });
     expect(await runtime.testConnection!(f.context)).toMatchObject({ status: 'unsupported', reason: expect.any(String) });
     expect(f.requests).toEqual([]);
@@ -62,7 +71,7 @@ describe('Muse account runtime', () => {
   it('materializes an access-only Team snapshot without inference or refresh credentials', async () => {
     const f = fixture();
     const expiry = Date.now() + 60_000;
-    for (const [key, value] of Object.entries({ credentialMode: 'native', accountToken: 'synthetic-member-access',
+    for (const [key, value] of Object.entries({ credentialMode: 'native', accessToken: 'synthetic-member-access',
       expiresAtMs: String(expiry), nativeExpiresAt: String(Math.floor(expiry / 1000)), nativeMechanism: '\"oauth\"',
       nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'device_code' })) f.values.set(key, value);
     const result = await runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context);
@@ -108,7 +117,7 @@ describe('Muse account runtime', () => {
     const f = fixture();
     f.values.set('credentialMode', 'native');
     f.values.set('nativeMechanism', '"oauth"');
-    f.values.set('inferenceKey', 'synthetic-key');
+    f.values.set('apiKey', 'synthetic-key');
     await expect(runtime.materialize(request, f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_credentials_unavailable' });
   });
   it.each([
@@ -217,7 +226,7 @@ describe('Muse account runtime', () => {
       const opened = accountMode === 'plain'
         ? openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode, envelope: storedContent })
         : openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode, envelope: storedContent, material });
-      expect(opened).toMatchObject({ v: 1, values: { accountToken: 'synthetic-account-token', inferenceKey: 'synthetic-key', credentialMode: 'native' } });
+      expect(opened).toMatchObject({ v: 1, values: { accessToken: 'synthetic-account-token', apiKey: 'synthetic-key', credentialMode: 'native' } });
       await owner.beginConnect({ service: MUSE_ACCOUNT_SERVICE, modeId: 'device' });
       await awaitDeviceStart();
       now += 10001;
@@ -251,7 +260,7 @@ describe('Muse account runtime', () => {
       const manualPayload = accountMode === 'plain'
         ? openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode, envelope: storedContent })
         : openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode, envelope: storedContent, material });
-      expect(manualPayload).toEqual({ v: 1, values: { credentialMode: 'manual' }, secretRefs: { inferenceKey: 'happier:shared-secret:v1:synthetic-promoted-key' } });
+      expect(manualPayload).toEqual({ v: 1, values: { credentialMode: 'manual' }, secretRefs: { apiKey: 'happier:shared-secret:v1:synthetic-promoted-key' } });
     } finally { await owner.dispose(); clock.mockRestore(); }
   });
   it('performs one connection mint after pending/slowdown and reuses staged completion', async () => {
@@ -337,9 +346,9 @@ describe('Muse account runtime', () => {
   it('does not turn an account-token expiry into an unreported inference-key expiry', async () => {
     const f = fixture();
     f.values.set('credentialMode', 'native');
-    f.values.set('inferenceKey', 'synthetic-still-unexpired-key');
+    f.values.set('apiKey', 'synthetic-still-unexpired-key');
     f.values.set('nativeMechanism', '"oauth"');
-    f.values.set('accountToken', 'synthetic-expired-account-token');
+    f.values.set('accessToken', 'synthetic-expired-account-token');
     f.values.set('expiresAtMs', '1');
     await expect(runtime.status(f.context)).resolves.toMatchObject({ status: 'connected' });
     expect(await runtime.status(f.context)).not.toHaveProperty('expiresAt');
@@ -353,8 +362,8 @@ describe('Muse account runtime', () => {
     const f = fixture();
     f.values.set('credentialMode', 'native');
     f.values.set('nativeMechanism', '"api_key"');
-    f.values.set('accountToken', 'native-account-token');
-    f.values.set('inferenceKey', 'native-api-key');
+    f.values.set('accessToken', 'native-account-token');
+    f.values.set('apiKey', 'native-api-key');
     await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'native-api-key' } });
     await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: {} });
     expect(f.requests).toHaveLength(0);

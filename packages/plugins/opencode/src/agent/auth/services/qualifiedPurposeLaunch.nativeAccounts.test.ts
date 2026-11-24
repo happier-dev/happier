@@ -148,7 +148,7 @@ describe('OpenCode selected native accounts', () => {
     const f = launchFixture({ purpose: 'meta-inference',
       service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
       materialize: museAccountRuntimeDefinition.materialize,
-      context: producerContext({ credentialMode: 'native', inferenceKey: 'fake-raw-muse', accountToken: 'fake-identity' }) });
+      context: producerContext({ credentialMode: 'native', apiKey: 'fake-raw-muse', accessToken: 'fake-identity' }) });
     const boundary = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49213', managedServerRequest: async input => {
       const path = input.pathAndQuery.split('?')[0]!;
       if (path === '/event') return { ok: true, status: 200, headers: { 'content-type': 'text/event-stream' },

@@ -1,6 +1,7 @@
 export * from './authenticationTypes.js';
 export * from './credentialSettlement.js';
 export * from './credentialMaterial.js';
+export * from './credentialRedaction.js';
 export * from './materialError.js';
 export * from './authenticationAttemptOwner.js';
 export * from './authenticationCommand.js';

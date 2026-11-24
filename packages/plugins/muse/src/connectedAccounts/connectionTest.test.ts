@@ -23,14 +23,14 @@ function fixture(values: Readonly<Record<string, string>>, outcome: number | Err
 
 describe('Muse no-usage connection check', () => {
   it.each(['manual', 'native'] as const)('checks the %s inference key with the model read, without minting a key', async credentialMode => {
-    const f = fixture({ inferenceKey: 'synthetic-token', accountToken: 'synthetic-account', credentialMode,
+    const f = fixture({ apiKey: 'synthetic-token', accessToken: 'synthetic-account', credentialMode,
       ...(credentialMode === 'native' ? { nativeApiBaseUrl: 'https://api.meta.ai/v1/' } : {}) });
     expect(await runtime.testConnection!(f.context)).toMatchObject({ status: 'ok' });
     expect(f.requests).toEqual([expect.objectContaining({ url: 'https://api.meta.ai/v1/models', method: 'GET', redirect: 'error',
       headers: expect.objectContaining({ Authorization: 'Bearer synthetic-token', 'x-api-version': '1.0.0' }) })]);
   });
   it('does not send a native key to an uncharacterized server', async () => {
-    const f = fixture({ inferenceKey: 'synthetic-token', credentialMode: 'native', nativeApiBaseUrl: 'https://other.example/v1' });
+    const f = fixture({ apiKey: 'synthetic-token', credentialMode: 'native', nativeApiBaseUrl: 'https://other.example/v1' });
     expect(await runtime.testConnection!(f.context)).toMatchObject({ status: 'unsupported', reason: expect.any(String) });
     expect(f.requests).toEqual([]);
   });
@@ -39,7 +39,7 @@ describe('Muse no-usage connection check', () => {
     [401, 'needsReauth'], [403, 'unsupported'], [429, 'networkUnavailable'], [503, 'networkUnavailable'],
     [new Error('synthetic-token must never escape'), 'networkUnavailable'],
   ] as const)('reports a secret-free %s failure as %s', async (outcome, status) => {
-    const f = fixture({ inferenceKey: 'synthetic-token', credentialMode: 'manual' }, outcome);
+    const f = fixture({ apiKey: 'synthetic-token', credentialMode: 'manual' }, outcome);
     const result = await runtime.testConnection!(f.context);
     expect(result).toMatchObject({ status, code: expect.any(String), reason: expect.any(String) });
     expect(JSON.stringify(result)).not.toContain('synthetic-token');
@@ -47,7 +47,7 @@ describe('Muse no-usage connection check', () => {
   });
   it('preserves cancellation instead of reporting a connection failure', async () => {
     const failure = new Error('cancelled');
-    const f = fixture({ inferenceKey: 'synthetic-token', credentialMode: 'manual' }, failure);
+    const f = fixture({ apiKey: 'synthetic-token', credentialMode: 'manual' }, failure);
     f.abortDuringRequest();
     await expect(runtime.testConnection!(f.context)).rejects.toBe(failure);
   });

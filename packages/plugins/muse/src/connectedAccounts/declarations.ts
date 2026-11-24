@@ -27,7 +27,7 @@ export const museAccountDescriptor = {
       { id: 'api-key', kind: 'manual', apiKey: true, title: 'API key', outcomeReconciliation: 'none',
         // Meta documents dashboard keys at dev.meta.ai: shown once, prefixed LLM_ (research/MUSE-AUTH-REFERENCES-1112 §F).
         setup: { url: 'https://dev.meta.ai/', checklist: ['Sign in at [dev.meta.ai] and create an API key.', 'Copy it now, Meta shows it only once, and paste it here.'] },
-        credentialFieldKeys: { apiKey: 'inferenceKey' },
+        credentialFieldKeys: { apiKey: 'apiKey' },
         fields: [{ id: 'apiKey', title: 'Meta API key', schema: { type: 'string', minLength: 1 }, secret: true,
           presentation: { placeholder: 'LLM_…' } }] },
       { id: 'native-import', kind: 'manual', title: 'Import native login', credentialOrigin: 'native_import', outcomeReconciliation: 'none',

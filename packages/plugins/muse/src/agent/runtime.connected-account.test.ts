@@ -18,7 +18,7 @@ it.each(['manual', 'native-with-key', 'native-oauth-only'] as const)('carries th
   const nativeLogin = credentialMode !== 'manual';
   const hasInferenceKey = credentialMode !== 'native-oauth-only';
   const account = await createMuseForegroundConnectedAccountFixture(['work', 'personal'], nativeLogin ? {
-    credentialMode: 'native', ...(hasInferenceKey ? { inferenceKey: 'synthetic-selected-muse-key' } : {}), accountToken: 'synthetic-selected-oauth-token',
+    credentialMode: 'native', ...(hasInferenceKey ? { apiKey: 'synthetic-selected-muse-key' } : {}), accessToken: 'synthetic-selected-oauth-token',
     nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'login', nativeMechanism: '"oauth"', nativeSubsActive: 'true',
     expiresAtMs: String(Date.UTC(2100, 0, 1)),
   } : undefined);

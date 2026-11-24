@@ -18,8 +18,8 @@ async function fixture(response: Readonly<{ result?: JsonValue; error?: JsonValu
   const directory = await mkdtemp(join(tmpdir(), 'happier-muse-quota-test-'));
   const auditPath = join(directory, 'native.json');
   const launchPath = join(directory, 'launch.json');
-  const values = new Map(Object.entries({ credentialMode: 'native', accountToken: 'synthetic-oauth-token',
-    ...(key ? { inferenceKey: 'synthetic-selected-key' } : {}), nativeMechanism: '"oauth"',
+  const values = new Map(Object.entries({ credentialMode: 'native', accessToken: 'synthetic-oauth-token',
+    ...(key ? { apiKey: 'synthetic-selected-key' } : {}), nativeMechanism: '"oauth"',
     nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'device_code',
     expiresAtMs: String(Date.UTC(2100, 0, 1)) }));
   const login = await readMuseLoginRecording();

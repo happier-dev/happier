@@ -61,7 +61,7 @@ describe('Pi native selected accounts through service materialization and launch
     await writeFile(join(directory, 'models.json'), models);
     const { accounts } = accountBoundary({ purpose: 'meta-inference', provider: 'meta',
       service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, mode: 'api-key',
-      runtime: museAccountRuntimeDefinition, credentials: { credentialMode: 'manual', inferenceKey: 'fake-raw-muse' } });
+      runtime: museAccountRuntimeDefinition, credentials: { credentialMode: 'manual', apiKey: 'fake-raw-muse' } });
     const session = await createPiAgentRuntime().sessions.open({
       kind, ...(kind === 'resume' ? { providerSessionId: 'pi-shared' } : {}), sessionId: 'managed-muse', cwd: directory,
       providerBinding: { connectionId: ProviderConnectionIdSchema.parse('pc_managed_muse'),

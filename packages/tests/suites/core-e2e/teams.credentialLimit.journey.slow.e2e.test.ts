@@ -86,7 +86,7 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
     const ref = { service, accountId: randomUUID() };
     const metadata = { displayName: 'Synthetic journey Muse', providerIdentity: { accountId: ref.accountId } };
     const payload = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key',
-      payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'synthetic-limit-journey-key' } }, metadata, now: Date.now() });
+      payload: { v: 1, values: { credentialMode: 'manual', apiKey: 'synthetic-limit-journey-key' } }, metadata, now: Date.now() });
     const imported = await fetchJson<unknown>(`${fixture.server.baseUrl}/v4/connect/qualified/credential`, {
       method: 'POST', headers: { Authorization: `Bearer ${owner.credentials.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(QualifiedConnectedAccountCredentialMutationV4Schema.parse({ ref, authenticationModeId: 'api-key',

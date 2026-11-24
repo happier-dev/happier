@@ -55,8 +55,8 @@ describe('Muse explicit native import', () => {
       expect(status).toMatchObject({ status: 'connected' });
       expect(status).not.toHaveProperty('diagnostic');
       expect(values.get('expiresAtMs')).toBeUndefined();
-      expect(values.get('accountToken')).toBe(token);
-      expect(values.get('inferenceKey')).toBe('synthetic-native-key');
+      expect(values.get('accessToken')).toBe(token);
+      expect(values.get('apiKey')).toBe('synthetic-native-key');
       const result = await museConnectedAccountRuntime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, context);
       if (result.kind !== 'files') throw new Error('Expected file materialization');
       expect(JSON.parse(new TextDecoder().decode(result.files['muse/auth.json']))).toEqual(JSON.parse(bytes));

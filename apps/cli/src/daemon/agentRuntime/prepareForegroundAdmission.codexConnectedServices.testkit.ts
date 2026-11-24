@@ -52,12 +52,12 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
     payload: { v: 1, values: agentId === 'anthropic' ? { token: 'synthetic-selected-anthropic-key' } : agentId === 'muse'
-      ? museCredentialValues ?? { credentialMode: 'manual', inferenceKey: 'synthetic-selected-muse-key' }
+      ? museCredentialValues ?? { credentialMode: 'manual', apiKey: 'synthetic-selected-muse-key' }
       : { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
     randomBytes: length => new Uint8Array(length),
   });
   const otherMuseContent = agentId === 'muse' ? sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
-    payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'synthetic-other-muse-key' } },
+    payload: { v: 1, values: { credentialMode: 'manual', apiKey: 'synthetic-other-muse-key' } },
     randomBytes: length => new Uint8Array(length),
   }) : content;
   const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({
