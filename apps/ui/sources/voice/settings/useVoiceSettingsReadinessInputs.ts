@@ -64,5 +64,7 @@ export function useVoiceSettingsReadinessInputs(voice: VoiceSettings, options: R
     () => resolveVoiceDaemonRouteDiagnosticReason(localAvailability),
     [localAvailability],
   );
-  return { happierVoiceSupported, executionMachine, daemonModelCatalog, localAvailability, daemonRouteDiagnosticReason };
+  /** The selected service keeps speech models on the execution machine (Local neural STT or TTS). */
+  const requiresDaemonModels = requiresDaemonSttModel || requiresDaemonTtsModel;
+  return { happierVoiceSupported, executionMachine, daemonModelCatalog, localAvailability, daemonRouteDiagnosticReason, requiresDaemonModels };
 }

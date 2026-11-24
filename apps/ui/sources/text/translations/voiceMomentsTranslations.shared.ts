@@ -12,12 +12,13 @@ export type VoiceMomentsTranslation = Readonly<{
     setupStart: string;
     setupContinue: string;
     setupDescription: string;
-    setupLightCaption: (params: Readonly<{ done: number; total: number }>) => string;
+    setupPanelTitle: string;
     setupServiceTitle: string;
     setupServiceDetail: string;
     setupChange: string;
     setupReadinessTitle: (params: Readonly<{ service: string }>) => string;
     setupReadinessDone: string;
+    setupReadinessDoneOnMachine: (params: Readonly<{ machine: string }>) => string;
     setupReadinessTitleGeneric: string;
     setupReadinessUnknown: string;
     setupReadinessCheck: string;
@@ -45,6 +46,8 @@ export type VoiceMomentsTranslation = Readonly<{
     setupDoneAction: string;
     setupSettingsAction: string;
     setupClose: string;
+    setupNotNow: string;
+    setupFooterNote: string;
     needsYouEnded: string;
     needsYouReview: string;
     briefWantsTo: (params: { action: string }) => string;
@@ -83,13 +86,14 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupNextInstalling: 'installing',
         setupStart: 'Set up',
         setupContinue: 'Continue',
-        setupDescription: 'Talk to your sessions out loud: ask what’s happening, start work, decide from anywhere. Four steps; you can leave and come back.',
-        setupLightCaption: ({ done, total }) => `${done} of ${total} ready`,
+        setupDescription: 'Ask what’s happening, start work, or think out loud. Your words show up in the chat like any message.',
+        setupPanelTitle: 'Talk to your sessions',
         setupServiceTitle: 'Choose who listens',
         setupServiceDetail: 'What hears you and speaks back. You can change it later.',
         setupChange: 'Change',
         setupReadinessTitle: ({ service }) => `Finish setting up ${service}`,
         setupReadinessDone: 'Everything it needs is set up',
+        setupReadinessDoneOnMachine: ({ machine }) => `Speech models installed on ${machine}`,
         setupReadinessTitleGeneric: 'Get the service ready',
         setupReadinessUnknown: 'Open its settings to check what it still needs.',
         setupReadinessCheck: 'Check setup',
@@ -106,7 +110,7 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupTryTitle: 'Try it',
         setupTryLead: 'Say it out loud',
         setupTryPhrase: 'What are my sessions doing?',
-        setupTryAction: 'Try it',
+        setupTryAction: 'Start talking',
         setupTryDone: 'Tried it',
         setupTryNeedsService: 'Available once the service is ready.',
         setupDoneTitle: 'Voice is ready',
@@ -117,6 +121,8 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupDoneAction: 'Done',
         setupSettingsAction: 'Voice settings',
         setupClose: 'Close',
+        setupNotNow: 'Not now',
+        setupFooterNote: 'Nothing is sent until you speak.',
         needsYouEnded: 'An approval is still waiting.',
         needsYouReview: 'Review request',
         briefWantsTo: ({ action }) => `Wants to ${action}`,

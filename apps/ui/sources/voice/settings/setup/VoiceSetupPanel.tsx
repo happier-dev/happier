@@ -24,7 +24,8 @@ import { VoiceSetupTryPhrase } from './VoiceSetupTryPhrase';
 /** Below this width the planet sits above the steps (lab SBp) instead of beside them (SB). */
 const SIDE_BY_SIDE_MIN_WIDTH_PX = 600;
 const PLANET_SIDE_PX = 168;
-const PLANET_STACKED_PX = 96;
+/** Narrow (popover, phone sheet): the planet stands beside the title as the block's mark (lab T1/TB). */
+const PLANET_STACKED_PX = 44;
 const PLANET_COLUMN_PX = 200;
 
 /** What the open block shows. Every fact is derived by its owner; the panel only lays it out. */
@@ -44,6 +45,8 @@ export type VoiceSetupPanelModel = Readonly<{
     firstSuccess?: VoiceMarkEvent | null;
     /** The resolved `voice.toggle` binding (rebindable), or null where there is no keyboard. */
     shortcutLabel: string | null;
+    /** The machine that holds the service's speech models, when it runs on one: step 2 names it once ready. */
+    speechModelsMachine?: string | null;
 }>;
 
 export type VoiceSetupPanelActions = Readonly<{
@@ -88,8 +91,6 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
     const failed = isVoiceSetupFailed(facts);
     const lightProgress = readVoiceSetupLight(facts);
     const light = React.useMemo(() => planetLightForProgress(lightProgress), [lightProgress]);
-    // One message per state: once ready, the title says so; the count only speaks during the steps.
-    const caption = complete ? null : t('voiceMoments.setupLightCaption', { done: facts.doneCount, total: facts.total });
     const daybreak = useDaybreakWash();
 
     const steps = React.useMemo(
@@ -106,8 +107,21 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
         [actions, changingService, facts.steps, model, props.renderTry, sideBySide],
     );
 
+    // A narrow card sets the title beside the planet (its mark) and the outcome beneath at full width; a wide one
+    // gives the planet its own column and stacks both beside it.
+    const title = (
+        <Text accessibilityRole="header" style={[styles.title, sideBySide ? null : styles.titleStacked]}>
+            {complete ? t('voiceMoments.setupDoneTitle') : t('voiceMoments.setupPanelTitle')}
+        </Text>
+    );
+    const description = (
+        <Text style={styles.description}>
+            {complete ? t('voiceMoments.setupDoneBody') : t('voiceMoments.setupDescription')}
+        </Text>
+    );
+
     return (
-        <View testID={props.testID} onLayout={onLayout} style={[styles.root, sideBySide ? null : styles.rootStacked]} accessibilityLabel={t('voiceMoments.setupTitle')}>
+        <View testID={props.testID} onLayout={onLayout} style={[styles.root, sideBySide ? null : styles.rootStacked]} accessibilityLabel={complete ? t('voiceMoments.setupDoneTitle') : t('voiceMoments.setupPanelTitle')}>
             {daybreak ? <View pointerEvents="none" style={[styles.wash, daybreak]} /> : null}
             <View style={sideBySide ? styles.sideBySide : styles.stacked}>
                 <View style={sideBySide ? styles.visualSide : styles.visualStacked}>
@@ -121,15 +135,11 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                         size={sideBySide ? PLANET_SIDE_PX : PLANET_STACKED_PX}
                         testID={`${props.testID}.planet`}
                     />
-                    {caption ? <Text testID={`${props.testID}.caption`} style={styles.caption}>{caption}</Text> : null}
+                    {sideBySide ? null : title}
                 </View>
                 <View style={styles.body}>
-                    <Text accessibilityRole="header" style={styles.title}>
-                        {complete ? t('voiceMoments.setupDoneTitle') : t('voiceMoments.setupTitle')}
-                    </Text>
-                    <Text style={styles.description}>
-                        {complete ? t('voiceMoments.setupDoneBody') : t('voiceMoments.setupDescription')}
-                    </Text>
+                    {sideBySide ? title : null}
+                    {description}
                     {complete ? (
                         <>
                             {/* The first reply finishes setup while the conversation is still on: it stays in view. */}
@@ -157,9 +167,22 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                             </View>
                         </>
                     ) : (
-                        <View style={styles.steps}>
-                            <SetupSteps testID={`${props.testID}.steps`} steps={steps} />
-                        </View>
+                        <>
+                            <View style={styles.steps}>
+                                <SetupSteps testID={`${props.testID}.steps`} steps={steps} />
+                            </View>
+                            {/* The block can be left at any step; nothing is sent before the person speaks (lab TB/T1). */}
+                            <View style={styles.stepsFooter}>
+                                <Text style={styles.footerNote}>{t('voiceMoments.setupFooterNote')}</Text>
+                                <RoundButton
+                                    testID={`${props.testID}.notNow`}
+                                    size="small"
+                                    display="inverted"
+                                    title={t('voiceMoments.setupNotNow')}
+                                    onPress={actions.onClose}
+                                />
+                            </View>
+                        </>
                     )}
                 </View>
             </View>
@@ -252,7 +275,16 @@ function buildStep(
             };
         }
         case 'readiness': {
-            if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupReadinessDone') };
+            if (step.state === 'done') {
+                return {
+                    key: step.id,
+                    testID,
+                    state: 'done',
+                    title: model.speechModelsMachine
+                        ? t('voiceMoments.setupReadinessDoneOnMachine', { machine: model.speechModelsMachine })
+                        : t('voiceMoments.setupReadinessDone'),
+                };
+            }
             const current = stepMarker(step.state) === 'current';
             const reason = model.readiness?.reason ?? (current ? t('voiceMoments.setupReadinessUnknown') : undefined);
             const action = model.readiness?.action ?? t('voiceMoments.setupReadinessCheck');
@@ -332,16 +364,11 @@ function buildStep(
                 body: current ? (
                     model.tryLive && context.renderTry ? context.renderTry : (
                         <>
+                            {/* The card is the action: pressing the phrase starts the try (lab T1). */}
                             <VoiceSetupTryPhrase
                                 testID={`${testID}.phrase`}
                                 heard={resolveVoiceSetupHeardPhrase(t('voiceMoments.setupTryPhrase'), null)}
-                            />
-                            <RoundButton
-                                testID={`${testID}.try`}
-                                size="small"
-                                title={t('voiceMoments.setupTryAction')}
-                                disabled={!model.canStart}
-                                onPress={actions.onTry}
+                                start={{ label: t('voiceMoments.setupTryAction'), disabled: !model.canStart, onPress: actions.onTry }}
                             />
                             {model.startRefusal ? <RoundButton
                                 testID={`${testID}.recover`}
@@ -409,7 +436,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 28,
     },
     stacked: {
-        gap: 14,
+        gap: theme.space.s8,
     },
     wash: {
         position: 'absolute',
@@ -428,13 +455,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     visualStacked: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 14,
+        gap: theme.space.s12,
     },
-    caption: {
-        ...Typography.default(),
-        ...happierPageTextMetrics('rowDescription'),
-        color: theme.colors.text.secondary,
-        fontVariant: ['tabular-nums'],
+    titleStacked: {
+        flex: 1,
+        minWidth: 0,
     },
     body: {
         flex: 1,
@@ -457,6 +482,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     steps: {
         marginTop: theme.space.s16,
+    },
+    stepsFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s12,
+        marginTop: 18,
+    },
+    footerNote: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('rowDescription'),
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.tertiary,
     },
     doneTry: {
         marginTop: theme.space.s16,

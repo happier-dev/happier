@@ -2887,8 +2887,8 @@ describe('useVoiceAttemptControl idle targeting', () => {
           reasonKey: 'voice.readiness.ready', recoveryAction: 'none' } });
       const screen = await renderScreen(React.cloneElement(panel, { model: { ...panel.props.model, facts } }));
       try {
-        expect(screen.findByTestId('voice-setup.step.first_turn.try')?.props.disabled).toBe(false);
-        await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.try'); });
+        expect(screen.findByTestId('voice-setup.step.first_turn.phrase')?.props.disabled).toBe(false);
+        await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.phrase'); });
         await waitForTestEvent(
           routing.controller.subscribe,
           routing.controller.getSnapshot,
@@ -2930,9 +2930,9 @@ describe('useVoiceAttemptControl idle targeting', () => {
     }
     const screen = await renderScreen(<InjectedAuthProvider credentials={connection?.credentials ?? null}><Scene /></InjectedAuthProvider>);
     try {
-      const button = screen.findByTestId('voice-setup.step.first_turn.try');
+      const button = screen.findByTestId('voice-setup.step.first_turn.phrase');
       expect(button).not.toBeNull();
-      await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.try'); });
+      await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.phrase'); });
       expect(button?.props.disabled).toBe(true);
       expect(screen.getTextContent()).toContain(t('commandPalette.commands.sessionRequiredBody'));
       expect(screen.findByTestId('voice-top-bar-rest')?.props.accessibilityLabel).toBe(t('commandPalette.commands.newSessionTitle'));

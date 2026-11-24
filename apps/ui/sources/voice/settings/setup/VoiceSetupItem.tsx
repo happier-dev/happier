@@ -146,6 +146,8 @@ export function useVoiceSetupBlock(input: Readonly<{
         onOpenSettings: () => router.push(SETTINGS_ROUTES.voice as never),
     }), [allow, closePanel, dismiss, executeValue, readinessModel.selectService, recoveryAction, router, tryIt, voiceSettings.providerId]);
 
+    // Step 2 names its fact once ready: where the speech models live, when the service keeps them on a machine.
+    const speechModelsMachine = inputs.requiresDaemonModels ? inputs.executionMachine.machineLabel : null;
     const model = React.useMemo((): VoiceSetupPanelModel => ({
         facts: setup.facts,
         serviceTitle,
@@ -157,7 +159,8 @@ export function useVoiceSetupBlock(input: Readonly<{
         firstSuccess,
         // The chord is shown where there is a keyboard to press it.
         shortcutLabel: phone ? null : shortcutLabel,
-    }), [firstSuccess, phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, voice.live, voice.canStart, voice.startRefusal]);
+        speechModelsMachine,
+    }), [firstSuccess, phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, speechModelsMachine, voice.live, voice.canStart, voice.startRefusal]);
 
     if (!voiceEnabled || setup.hidden || (setup.facts.complete && !panelOpen)) return null;
     return {
@@ -294,7 +297,8 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
             testID="voice-setup.try"
             heard={heard}
             microphone={{
-                label: props.voice.micStateLabel,
+                // The capture owner's track name ("MacBook Pro Microphone") while it runs, else the mic state.
+                label: props.voice.inputDeviceLabel ?? props.voice.micStateLabel,
                 state: replyVisibleWhileThinking ? t('voiceAssistant.connected') : props.voice.statusWord,
                 trailing: <VoiceTransport voice={props.voice} size="island" />,
             }}

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -25,14 +25,18 @@ export const VoiceSetupTryPhrase = React.memo(function VoiceSetupTryPhrase(
       trailing?: React.ReactNode;
     }> | null;
     reply?: string | null;
+    /**
+     * Before the try: the card is the press target that starts it, and its microphone line names the action
+     * (the device itself is only known once capture runs).
+     */
+    start?: Readonly<{ label: string; disabled: boolean; onPress: () => void }> | null;
   }>,
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
-  const { heard } = props;
-  return (
-    <View testID={props.testID} style={styles.root}>
-      <View style={styles.card}>
+  const { heard, start } = props;
+  const body = (
+    <>
         <Text style={styles.lead}>{t('voiceMoments.setupTryLead')}</Text>
         {heard.kind === 'own' ? (
           <Text testID={`${props.testID}.heard`} style={styles.phraseHeard}>
@@ -50,7 +54,12 @@ export const VoiceSetupTryPhrase = React.memo(function VoiceSetupTryPhrase(
             {heard.rest}
           </Text>
         )}
-        {props.microphone ? (
+        {start ? (
+          <View style={styles.micLine}>
+            <Icon name="microphone" size={14} color={start.disabled ? theme.colors.text.disabled : theme.colors.text.primary} />
+            <Text numberOfLines={1} style={start.disabled ? styles.startLabelDisabled : styles.startLabel}>{start.label}</Text>
+          </View>
+        ) : props.microphone ? (
           <View style={styles.micLine}>
             <Icon
               name="microphone"
@@ -66,7 +75,25 @@ export const VoiceSetupTryPhrase = React.memo(function VoiceSetupTryPhrase(
             {props.microphone.trailing}
           </View>
         ) : null}
-      </View>
+    </>
+  );
+  return (
+    <View testID={start ? undefined : props.testID} style={styles.root}>
+      {start ? (
+        <Pressable
+          testID={props.testID}
+          accessibilityRole="button"
+          accessibilityLabel={`${start.label}: ${heard.kind === 'own' ? heard.text : heard.heard + heard.rest}`}
+          accessibilityState={{ disabled: start.disabled }}
+          disabled={start.disabled}
+          onPress={start.onPress}
+          style={({ pressed }) => [styles.card, pressed ? styles.cardPressed : null]}
+        >
+          {body}
+        </Pressable>
+      ) : (
+        <View style={styles.card}>{body}</View>
+      )}
       {props.reply ? (
         <View testID={`${props.testID}.reply`} style={styles.reply}>
           <Text style={styles.replyLabel}>{t('voicePresence.title')}</Text>
@@ -109,6 +136,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s8,
     marginTop: theme.space.s10,
+  },
+  cardPressed: {
+    opacity: 0.8,
+  },
+  startLabel: {
+    ...Typography.variant('meta', 'semiBold'),
+    color: theme.colors.text.primary,
+  },
+  startLabelDisabled: {
+    ...Typography.variant('meta', 'semiBold'),
+    color: theme.colors.text.disabled,
   },
   micLabel: {
     ...Typography.variant('meta'),

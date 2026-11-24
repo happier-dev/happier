@@ -75,8 +75,7 @@ describe('VoiceSetupPanel', () => {
         screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, false, false] })} actions={handlers} />);
 
         expect(screen.findByTestId('voice-setup.step.readiness.recover')).toBeNull();
-        expect(screen.findByTestId('voice-setup.step.first_turn.try')).toBeNull();
-        expect(screen.findByTestId('setup.caption')).not.toBeNull();
+        expect(screen.findByTestId('voice-setup.step.first_turn.phrase')).toBeNull();
         screen.pressByTestId('voice-setup.step.microphone.allow');
         expect(handlers.onAllowMicrophone).toHaveBeenCalledTimes(1);
         expect(handlers.onTry).not.toHaveBeenCalled();
@@ -110,14 +109,34 @@ describe('VoiceSetupPanel', () => {
     it('sends a service that is not ready to its recovery and only then offers Try', async () => {
         const handlers = actions();
         screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, false, true, false] })} actions={handlers} />);
-        expect(screen.findByTestId('voice-setup.step.first_turn.try')).toBeNull();
+        expect(screen.findByTestId('voice-setup.step.first_turn.phrase')).toBeNull();
         screen.pressByTestId('voice-setup.step.readiness.recover');
         expect(handlers.onRecover).toHaveBeenCalledTimes(1);
         await screen.unmount();
 
         screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, false] })} actions={handlers} />);
-        screen.pressByTestId('voice-setup.step.first_turn.try');
+        // The phrase card is the action: one press target, no second "Try it" beside the step's title.
+        screen.pressByTestId('voice-setup.step.first_turn.phrase');
         expect(handlers.onTry).toHaveBeenCalledTimes(1);
+    });
+
+    it('names where the speech models live once the service is ready on a machine', async () => {
+        const facts = { ...model({ done: [true, true, false, false] }), speechModelsMachine: 'devbox' };
+        screen = await renderScreen(<VoiceSetupPanel testID="setup" model={facts} actions={actions()} />);
+
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupReadinessDoneOnMachine', { machine: 'devbox' }));
+        expect(screen.getTextContent()).not.toContain(t('voiceMoments.setupReadinessDone'));
+    });
+
+    it('can be left at every step with Not now, and the ready state closes through Done instead', async () => {
+        const handlers = actions();
+        screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [false, false, false, false] })} actions={handlers} />);
+        screen.pressByTestId('setup.notNow');
+        expect(handlers.onClose).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+
+        screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, true] })} actions={handlers} />);
+        expect(screen.findByTestId('setup.notNow')).toBeNull();
     });
 
     it('ends on the ready state, whose Done is the only way forward', async () => {
@@ -125,8 +144,6 @@ describe('VoiceSetupPanel', () => {
         screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, true] })} actions={handlers} />);
 
         expect(screen.findByTestId('setup.steps')).toBeNull();
-        // One message per state: the title already says Voice is ready, so the planet carries no caption.
-        expect(screen.findByTestId('setup.caption')).toBeNull();
         screen.pressByTestId('setup.done');
         expect(handlers.onDone).toHaveBeenCalledTimes(1);
     });

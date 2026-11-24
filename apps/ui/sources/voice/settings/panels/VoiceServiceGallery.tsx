@@ -21,10 +21,13 @@ import type { VoiceReadinessTone } from '@/voice/settings/pipeline/VoiceReadines
 export const VOICE_SERVICE_OFF_ID = '__off__';
 
 /**
- * In the setup card a service tile keeps its name, what it uses and its readiness. Sized so the
- * desktop card's step column holds two tiles side by side (lab SB) while a phone's stacks them (SBp).
+ * In the setup card a service tile keeps its name, what it uses and its readiness. Two tiles stand side by
+ * side only where each keeps its description to a couple of lines (a wide setup panel, lab SB); a narrower
+ * step column (the composer popover, a phone sheet) draws one row per service with its readiness at the
+ * row's end (lab TB), so every step and the footer stay in view.
  */
-const SETUP_TILE_MIN_WIDTH_PX = 170;
+const SETUP_TILE_MIN_WIDTH_PX = 240;
+const SETUP_TWO_COLUMN_MIN_WIDTH_PX = 2 * SETUP_TILE_MIN_WIDTH_PX;
 
 /** One renderer for the public identity declaration, independent of plugin origin. */
 export function VoiceServiceMark(props: Readonly<{ identity: VoiceServiceMarkIdentity | undefined; size?: number }>): React.ReactElement | null {
@@ -77,18 +80,22 @@ export function VoiceServiceGallery(props: Readonly<{
   const { theme } = useUnistyles();
   const setup = props.presentation === 'setup';
   const windowWidth = useWindowDimensions().width;
-  const [narrow, setNarrow] = React.useState(() => windowWidth < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+  // The width the gallery itself gets decides its shape; before layout it assumes the narrow form.
+  const [width, setWidth] = React.useState<number | null>(null);
   const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-    const width = event.nativeEvent.layout.width;
-    if (!Number.isFinite(width) || width <= 0) return;
-    const next = width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
-    setNarrow((current) => (current === next ? current : next));
+    const next = event.nativeEvent.layout.width;
+    if (!Number.isFinite(next) || next <= 0) return;
+    setWidth((current) => (current === next ? current : next));
   }, []);
+  const narrow = (width ?? windowWidth) < PAGE_LIST_METRICS.rowStackBelowWidthPx;
+  const setupRows = setup && (width ?? 0) < SETUP_TWO_COLUMN_MIN_WIDTH_PX;
   const options = React.useMemo((): Array<SelectionTile<string>> => [
     ...props.tiles.map((tile) => ({
       id: tile.id,
       title: tile.title,
-      subtitle: tile.subtitle,
+      // A setup row is the service's name and readiness: every step stays in view in a narrow card, and the
+      // chosen service's description returns on step 1's done line.
+      subtitle: setupRows ? undefined : tile.subtitle,
       mark: tile.mark,
       disabled: tile.disabled,
       badge: tile.badge,
@@ -101,7 +108,7 @@ export function VoiceServiceGallery(props: Readonly<{
       mark: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
       testID: 'settings.voice.provider.off',
     }]),
-  ], [props.tiles, setup, theme.colors.text.secondary]);
+  ], [props.tiles, setup, setupRows, theme.colors.text.secondary]);
   const statusById = React.useMemo(
     () => new Map(props.tiles.map((tile) => [tile.id, tile.status])),
     [props.tiles],
@@ -132,12 +139,17 @@ export function VoiceServiceGallery(props: Readonly<{
   }
 
   return (
-    <View onLayout={props.onOpenServiceList ? onLayout : undefined}>
+    <View onLayout={props.onOpenServiceList || setup ? onLayout : undefined}>
     <SelectionTiles<string>
       options={options}
       value={selectedId}
       density="compact"
-      {...(setup ? { subtitleLines: 0, minimumColumns: 2, maximumColumns: 2, minimumTileWidth: SETUP_TILE_MIN_WIDTH_PX } : { subtitleLines: 0, minimumColumns: 3 })}
+      {...(setupRows
+        // One line per service: the chosen row is marked by its ink outline, its readiness at the row's end.
+        ? { subtitleLines: 0, maximumColumns: 1, footerPlacement: 'trailing' as const, selectionMark: 'outline' as const, tileGap: 'tight' as const }
+        : setup
+          ? { subtitleLines: 0, minimumColumns: 2, maximumColumns: 2, minimumTileWidth: SETUP_TILE_MIN_WIDTH_PX }
+          : { subtitleLines: 0, minimumColumns: 3 })}
       accessibilityLabel={t('settingsVoice.pages.conversations.serviceTitle')}
       testIdPrefix="settings.voice.service"
       onChange={(next) => {
@@ -162,7 +174,7 @@ export function VoiceServiceGallery(props: Readonly<{
                 />
               </View>
             ) : null}
-            <Text numberOfLines={setup ? undefined : 1} style={styles.footerText}>{status.text}</Text>
+            <Text numberOfLines={setup && !setupRows ? undefined : 1} style={styles.footerText}>{status.text}</Text>
           </View>
         );
       }}
