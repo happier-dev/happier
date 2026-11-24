@@ -1,5 +1,4 @@
 import { RpcError } from '@happier-dev/protocol/rpc/errors';
-import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 /**
  * HTTP client helpers for daemon communication
@@ -66,7 +65,6 @@ import {
   type ForegroundAgentRuntimeSessionOptionsRequestV1,
   type ForegroundAgentRuntimeSessionOptionsResponseV1,
 } from './agentRuntime/foregroundAdmissionContract';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { RestartAllSessionRunnersRequestV1Schema, RestartAllSessionRunnersResultV1Schema, RestartSessionRunnerRequestV1Schema, RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { RestartSessionRunnerRequestV2Schema, RestartSessionRunnerConfirmedBackgroundRequestSchema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
@@ -1055,21 +1053,33 @@ export async function admitDaemonForegroundAgentRuntime(
   const result = await daemonPost(
     FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
     body,
-    options,
+    { ...options, includeFailureDiagnostics: true },
   );
   throwIfDaemonAdmissionRefused(result);
-  const parsed =
-    ForegroundAgentRuntimeAdmissionResponseV1Schema.safeParse(result);
+  const parsed = ForegroundAgentRuntimeAdmissionResponseV1Schema.safeParse(
+    result?.httpStatus ? result.response : result,
+  );
   if (parsed.success) return parsed.data;
+  const transportFailure = result?.transportErrorCode;
+  const httpStatus = result?.httpStatus;
+  if (transportFailure || httpStatus || result?.errorCode === 'daemon_unavailable') {
+    const detail = transportFailure ? ` (${transportFailure})` : httpStatus ? ` (HTTP ${httpStatus})` : '';
+    return {
+      ok: false,
+      error: {
+        kind: 'launch_error',
+        code: 'daemon_unavailable',
+        message: `Could not reach foreground admission on the Happier daemon${detail}.`,
+      },
+    };
+  }
   return {
     ok: false,
-    error: createProviderErrorV1(
-      'provider_agent_runtime_unsupported',
-      {
-        connectionId:
-          (body.selection ? readSessionModelSelectionProviderConnectionId(body.selection) : null) ?? undefined,
-      },
-    ),
+    error: {
+      kind: 'launch_error',
+      code: 'daemon_invalid_response',
+      message: 'The Happier daemon returned an invalid foreground admission response.',
+    },
   };
 }
 

@@ -6,7 +6,10 @@ export class DirectProviderLaunchError extends Error {
   readonly providerError: ProviderErrorV1;
 
   constructor(providerError: ProviderErrorV1) {
-    super(providerError.code);
+    const cause = providerError.failureCause;
+    super(cause
+      ? `${providerError.code} (${cause.phase}: ${cause.errorCode ?? cause.errorClass})`
+      : providerError.code);
     this.name = 'DirectProviderLaunchError';
     this.providerError = providerError;
   }

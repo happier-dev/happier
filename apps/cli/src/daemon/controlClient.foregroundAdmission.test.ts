@@ -1,5 +1,4 @@
 import http from 'node:http';
-import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -166,9 +165,17 @@ describe('daemon control client: foreground Agent runtime admission', () => {
     }).success).toBe(false);
   });
 
-  it.each([1, 2] as const)('normalizes an older daemon refusal with V%s Provider identity', async version => {
-    const server = http.createServer((_request, response) => {
-      response.statusCode = 404;
+  it.each([
+    { reply: 'older daemon without the route', status: 404, code: 'daemon_unavailable' },
+    { reply: 'invalid success body', status: 200, code: 'daemon_invalid_response' },
+    { reply: 'disconnected transport', status: null, code: 'daemon_unavailable' },
+  ])('classifies $reply without attributing it to the Provider', async ({ status, code }) => {
+    const server = http.createServer((request, response) => {
+      if (status === null) {
+        request.socket.destroy();
+        return;
+      }
+      response.statusCode = status;
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ error: 'route_not_found' }));
     });
@@ -195,10 +202,6 @@ describe('daemon control client: foreground Agent runtime admission', () => {
         foregroundPid: process.pid,
         directory: '/workspace',
         agentId: 'codex',
-        selection: SessionModelSelectionSchema.parse({ v: version, updatedAt: 1, ref: {
-          agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a', providerConnectionId: 'pc_work',
-          ...(version === 2 ? { source: 'account_provider_connection' } : {}),
-        } }),
         backendTarget: {
           kind: 'backend',
           backendId: 'codex',
@@ -207,8 +210,8 @@ describe('daemon control client: foreground Agent runtime admission', () => {
       })).resolves.toMatchObject({
         ok: false,
         error: {
-          code: 'provider_agent_runtime_unsupported',
-          connectionId: 'pc_work',
+          kind: 'launch_error',
+          code,
         },
       });
     } finally {

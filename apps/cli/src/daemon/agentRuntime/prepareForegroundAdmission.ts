@@ -11,6 +11,7 @@ import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -136,7 +137,34 @@ function refusal(
   return { ok: false, error };
 }
 
+function unsupportedForegroundRuntime(
+  phase: `foreground.${string}`,
+  context: Parameters<typeof createProviderErrorV1>[1],
+  failureCause: NonNullable<ProviderErrorV1['failureCause']> = {
+    phase, errorClass: 'Error', errorCode: null, httpStatus: null,
+  },
+): ProviderErrorV1 {
+  return createProviderErrorV1('provider_agent_runtime_unsupported', {
+    ...context,
+    failureCause,
+  });
+}
+
 class ForegroundSessionAccountAdmissionError extends Error {}
+
+function projectForegroundPreparationException(
+  error: unknown,
+  phase: 'foreground.admission' | 'foreground.claim',
+  context: Parameters<typeof createProviderErrorV1>[1],
+): ProviderErrorV1 {
+  if (error instanceof ForegroundSessionAccountAdmissionError) {
+    return createProviderErrorV1('provider_authorization_changed', context);
+  }
+  const failureCause = projectActionFailureCauseV1(error, phase);
+  const { errorClass, errorCode } = failureCause;
+  logger.warn('[foreground admission] Runtime preparation failed', { phase, errorClass, errorCode });
+  return unsupportedForegroundRuntime(phase, context, failureCause);
+}
 
 function readForegroundAccountSnapshot(dependencies: PrepareForegroundAgentRuntimeAdmissionDependencies) {
   try {
@@ -587,8 +615,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
   }
   const initialExactProfileSnapshot = readExactForegroundProfileSnapshot(request, launchProfileArtifacts, readAccountSettingsSnapshot);
   if (request.profileId && !initialExactProfileSnapshot) {
-    return refusal(createProviderErrorV1(
-      'provider_agent_runtime_unsupported',
+    return refusal(unsupportedForegroundRuntime(
+      'foreground.profile_selection',
       {
         machineId: request.machineId,
         sourceProfileId: request.profileId,
@@ -778,7 +806,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       || selectedAgent.identity.localId !== request.agentTarget.identity.localId)
       || request.runtimeDescriptorV1 && (!selectedAgent?.identity
         || !agentRoutingIdAddressesContributionIdentityV1(request.runtimeDescriptorV1.agentId, selectedAgent.identity))) {
-      return refusal(createProviderErrorV1('provider_agent_runtime_unsupported', { machineId: request.machineId }));
+      return refusal(unsupportedForegroundRuntime('foreground.agent_identity', { machineId: request.machineId }));
     }
     if (selectedAgent?.identity) {
       // Bind the selected Account row through the same launch owner as daemon
@@ -797,7 +825,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
     });
     const foregroundMemberIdentity = foregroundPreparedIdentity?.kind === 'member' ? foregroundPreparedIdentity.identity : undefined;
     if (foregroundMemberIdentity && !request.runtimeDescriptorV1) {
-      return refusal(createProviderErrorV1('provider_agent_runtime_unsupported', { machineId: request.machineId }));
+      return refusal(unsupportedForegroundRuntime('foreground.member_runtime_descriptor', { machineId: request.machineId }));
     }
     const foregroundNativeIdentity = foregroundPreparedIdentity?.identity;
     const agentLaunchTarget = foregroundNativeIdentity ? {
@@ -828,8 +856,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
       || bridge.authorization.descriptor.backendId
         !== request.backendTarget.backendId
     ) {
-      return refusal(createProviderErrorV1(
-        'provider_agent_runtime_unsupported',
+      return refusal(unsupportedForegroundRuntime(
+        'foreground.runtime_bridge',
         request.selection
           ? {
               connectionId:
@@ -851,8 +879,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
       )
       || !registration.isCurrent()
     ) {
-      return refusal(createProviderErrorV1(
-        'provider_agent_runtime_unsupported',
+      return refusal(unsupportedForegroundRuntime(
+        'foreground.runtime_registration',
         { machineId: request.machineId },
       ));
     }
@@ -913,8 +941,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
         !dependencies.activateSessionPurposeBindings
         || !dependencies.resolveExternalAgentSessionPurposeBindingSnapshot
       ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
+        return refusal(unsupportedForegroundRuntime(
+          'foreground.purpose_binding_owner',
           { machineId: request.machineId },
         ));
       }
@@ -925,24 +953,24 @@ export async function prepareForegroundAgentRuntimeAdmission(
             externalPurposeDeclarations.authorizedPurposes,
           signal: registration.retirementSignal,
         });
-      if (
-        registration.retirementSignal.aborted
-        || !registration.isCurrent()
-        || !externalSnapshot
-        || !hasExactQualifiedPurposeSnapshot(
-          externalSnapshot,
-          externalPurposeDeclarations.authorizedPurposes,
-        )
-      ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
+      if (registration.retirementSignal.aborted || !registration.isCurrent()) {
+        return refusal(unsupportedForegroundRuntime(
+          'foreground.runtime_registration',
+          { machineId: request.machineId },
+        ));
+      }
+      if (!externalSnapshot || !hasExactQualifiedPurposeSnapshot(
+        externalSnapshot, externalPurposeDeclarations.authorizedPurposes,
+      )) {
+        return refusal(unsupportedForegroundRuntime(
+          'foreground.purpose_binding_snapshot',
           { machineId: request.machineId },
         ));
       }
       if (externalSnapshot.teamResourceSelections.length > 0) {
         if (!dependencies.resolveSessionTeamCredentialBindingIntents) {
-          return refusal(createProviderErrorV1(
-            'provider_agent_runtime_unsupported',
+          return refusal(unsupportedForegroundRuntime(
+            'foreground.team_credential_binding_owner',
             { machineId: request.machineId },
           ));
         }
@@ -961,8 +989,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
           ));
         }
         if (registration.retirementSignal.aborted || !registration.isCurrent()) {
-          return refusal(createProviderErrorV1(
-            'provider_agent_runtime_unsupported',
+          return refusal(unsupportedForegroundRuntime(
+            'foreground.runtime_registration',
             { machineId: request.machineId },
           ));
         }
@@ -1006,8 +1034,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
         )
       )
     ) {
-      return refusal(createProviderErrorV1(
-        'provider_agent_runtime_unsupported',
+      return refusal(unsupportedForegroundRuntime(
+        'foreground.connected_service_activation',
         { machineId: request.machineId },
       ));
     }
@@ -1121,8 +1149,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
         connectedServiceAuth
         && !connectedServiceAuth.qualifiedPurposeBindingSnapshot
       ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
+        return refusal(unsupportedForegroundRuntime(
+          'foreground.connected_service_purpose_snapshot',
           { machineId: request.machineId },
         ));
       }
@@ -1135,8 +1163,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
           connectedServiceAuth.connectedServicesBindings,
           sessionPurposeBindingSnapshot,
         )) {
-          return refusal(createProviderErrorV1(
-            'provider_agent_runtime_unsupported',
+          return refusal(unsupportedForegroundRuntime(
+            'foreground.connected_service_projection',
             { machineId: request.machineId },
           ));
         }
@@ -1148,8 +1176,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
           || !dependencies.connectedAccountRequestAuthRegistry
           || !dependencies.resolveConnectedAccountRequestAuthHttpPort
         ) {
-          return refusal(createProviderErrorV1(
-            'provider_agent_runtime_unsupported',
+          return refusal(unsupportedForegroundRuntime(
+            'foreground.connected_service_request_auth',
             { machineId: request.machineId },
           ));
         }
@@ -1169,8 +1197,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
         || !dependencies.connectedAccountRequestAuthRegistry
         || !dependencies.resolveConnectedAccountRequestAuthHttpPort
       ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
+        return refusal(unsupportedForegroundRuntime(
+          'foreground.connected_service_request_auth',
           { machineId: request.machineId },
         ));
       }
@@ -1677,8 +1705,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
             if (!finalSpawnEnvironment.ok) {
               return {
                 ok: false as const,
-                error: createProviderErrorV1(
-                  'provider_agent_runtime_unsupported',
+                error: finalSpawnEnvironment.providerError ?? unsupportedForegroundRuntime(
+                  'foreground.final_spawn_environment',
                   {
                     connectionId:
                       (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
@@ -1923,8 +1951,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
             ) {
               return {
                 ok: false as const,
-                error: createProviderErrorV1(
-                  'provider_agent_runtime_unsupported',
+                error: unsupportedForegroundRuntime(
+                  'foreground.profile_secret_recovery',
                   {
                     connectionId:
                       (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
@@ -1940,8 +1968,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
             }
             return {
               ok: false as const,
-              error: createProviderErrorV1(
-                error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
+              error: projectForegroundPreparationException(
+                error, 'foreground.claim',
                 {
                   connectionId:
                     (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
@@ -1960,8 +1988,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
       },
     };
   } catch (error) {
-    return refusal(createProviderErrorV1(
-      error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
+    return refusal(projectForegroundPreparationException(
+      error, 'foreground.admission',
       {
         connectionId:
           (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null) ?? undefined,

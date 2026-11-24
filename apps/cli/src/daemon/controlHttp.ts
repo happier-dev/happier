@@ -135,7 +135,7 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
   if (!state?.httpPort) {
     const error = 'No daemon running, no state file found';
     await logControlError(error);
-    return { error };
+    return { error, ...(options.includeFailureDiagnostics ? { errorCode: 'daemon_unavailable' } : {}) };
   }
   let requestIssued = false;
   let cancelDeadline: (() => void) | undefined;

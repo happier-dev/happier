@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { join } from 'node:path';
@@ -26,10 +26,47 @@ import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runt
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdmissionContract';
+import { createForegroundAdmissionError } from '@/cli/foregroundAdmissionFailure';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
+import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('foreground admission composed real Provider authorization seam', () => {
+  it('preserves the selected Profile refusal in runner and terminal output', async () => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(
+        await fixture.prepare({ profileId: 'missing-profile' }),
+      );
+      expect(response).toMatchObject({ ok: false, error: {
+        code: 'provider_agent_runtime_unsupported',
+        failureCause: { phase: 'foreground.profile_selection' },
+      } });
+      if (response.ok || !('v' in response.error)) throw new Error('Expected a Provider refusal');
+      expect(createForegroundAdmissionError(response.error).message).toContain('foreground.profile_selection');
+      expect(presentProviderCliRefusal(response.error).join('\n')).toContain('foreground.profile_selection');
+    });
+  });
+
+  it('carries only the safe exception class and code when bootstrap storage fails', async () => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const tmp = join(fixture.home, 'tmp');
+      const blockedDirectory = join(tmp, resolveReleaseRingScopedBasename(
+        'foreground-agent-runtime-bootstraps', configuration.publicReleaseRing,
+      ));
+      await mkdir(tmp, { recursive: true });
+      await writeFile(blockedDirectory, 'A file blocks creation of this directory');
+      const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(
+        await fixture.prepare({ profileId: undefined, selection: undefined }),
+      );
+      expect(response).toMatchObject({ ok: false, error: {
+        code: 'provider_agent_runtime_unsupported',
+        failureCause: { phase: 'foreground.admission', errorClass: 'Error', errorCode: null },
+      } });
+      expect(JSON.stringify(response)).not.toContain(fixture.home);
+    });
+  });
+
   it.each(['directly', 'sandbox'] as const)('preserves native fork locality under %s Session policy', async kind => {
     await withForegroundProviderFixture({}, async fixture => {
       const result = await fixture.prepare({ profileId: undefined, nativeFork: true }, {
