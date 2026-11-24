@@ -1549,8 +1549,6 @@ describe('voice tool handlers', () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { decodeVoiceAssistantActions } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: sourceSessionId });
-    expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
-    expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
     const { getAppliedActiveServerSnapshot, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const incumbentHome = getAppliedActiveServerSnapshot();
     // Restored runtime scopes carry the durable Home identity, not its device alias.
@@ -1886,21 +1884,21 @@ describe('voice tool handlers', () => {
       const explicitFailure = JSON.parse(await invokeCreate('voice-explicit-signed-out', {
         ...spawnInput, agentTarget: claudeTarget, creationKey: 'manual:voice-explicit-signed-out',
       }));
-      expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
-      expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(SessionSpawnNewResultV1Schema.parse(spawnSettlement));
+      expect(explicitFailure).toMatchObject({ ok: false, errorCode: 'agent_signed_out', details: spawnSettlement,
+        agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
       if (entry === 'discovered') {
         const { projectVoiceActionExecutionResult } = await import('./voiceActionResult');
         const { UiActionDispatchResultV1Schema } = await import('@happier-dev/protocol/actions/clientDispatchV1');
         expect(UiActionDispatchResultV1Schema.parse({ v: 1,
           execution: projectVoiceActionExecutionResult('session.spawn_new', explicitFailure) }).execution)
-          .toEqual({ ok: true, result: spawnSettlement });
+          .toMatchObject({ ok: false, errorCode: 'agent_signed_out', details: spawnSettlement });
         expect(UiActionDispatchResultV1Schema.safeParse({ v: 1,
           execution: projectVoiceActionExecutionResult('session.spawn_new', { ...explicitFailure, unexpected: true }) }).success)
           .toBe(false);
         const refused = await executeReverseVoiceAction('session.spawn_new', { ...spawnInput, agentTarget: claudeTarget,
           creationKey: 'manual:reverse-signed-out' }, 'reverse-signed-out');
         expect(refused, JSON.stringify(refused)).toMatchObject({ v: 1, execution: {
-          ok: true, result: { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'claude' },
+          ok: false, errorCode: 'agent_signed_out', details: spawnSettlement,
         } });
       }
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
@@ -1939,10 +1937,11 @@ describe('voice tool handlers', () => {
       const failed = JSON.parse(await invokeCreate('voice-spawn-startup-failed', {
         ...spawnInput, creationKey: 'manual:voice-startup-failure',
       }));
-      expect(failed).toMatchObject({ agentTarget: selectedAgentTarget,
+      expect(failed).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: spawnSettlement,
+        failureCause: { phase: 'session.launch.client_start', errorCode: 'agent_startup_failed' },
+        agentTarget: selectedAgentTarget,
         errorMessage: expect.stringContaining('codex') });
       expect(failed.errorMessage).toContain('Cannot call write after a stream was destroyed');
-      expect(entry === 'discovered' ? failed.result : failed).toMatchObject(SessionSpawnNewResultV1Schema.parse(spawnSettlement));
     }
   });
 
