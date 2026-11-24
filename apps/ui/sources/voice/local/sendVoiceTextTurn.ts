@@ -555,7 +555,11 @@ async function dispatchVoiceTextTurn(
   }
   try {
     throwIfAborted();
+    const directAddress = currentToolSessionAddress?.sessionId === sessionId
+      ? currentToolSessionAddress
+      : resolveSessionAddressFromLocalState(storage.getState(), sessionId);
     const submission = await sync.submitMessage(sessionId, userText, undefined, undefined, {
+      ...(directAddress ? { serverId: directAddress.serverId } : {}),
       callerSurface: 'voice_turn',
       forceImmediate: true,
       hostAdmissionOrigin: 'voice',

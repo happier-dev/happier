@@ -628,7 +628,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     }));
   });
 
-  it('submits direct coding-session voice turns through durable immediate delivery', async () => {
+  it('submits direct coding-session voice turns to their exact Home without a Session inventory lookup', async () => {
     conversationModeState.current = 'direct_session';
     const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
 
@@ -647,6 +647,37 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       && request.path === `/v1/actions/${SESSION_MESSAGE_SEND_ACTION_ID_V1}`))
       .toMatchObject([{ home: 'voice', accountId: 'account-a' }]);
     expect(pendingWrites()).toEqual([]);
+    expect(account.requests.filter(request => request.method === 'GET'
+      && (request.path === '/v2/sessions' || request.path === '/v1/sessions'))).toEqual([]);
+  });
+
+  it('sends a direct turn to the control Session Home when Voice targets another Session', async () => {
+    conversationModeState.current = 'direct_session';
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    const bindings = voiceSessionBindingStore.getState();
+    bindings.bind({
+      adapterId: 'local_conversation',
+      controlSessionId: 's1',
+      conversationSessionId: 'carrier-s1',
+      conversationSessionAddress: { serverId: account.homes.voice!.id, sessionId: 'carrier-s1' },
+      targetSessionAddress: { serverId: account.homes.other!.id, sessionId: 'other-session' },
+      transcriptMode: 'native_session',
+      lifetime: 'runtime_attempt',
+      updatedAt: Date.now(),
+    });
+    try {
+      await sendVoiceTextTurn({
+        sessionId: 's1',
+        settings: buildAccountSettings(),
+        userText: 'send to the control Session',
+        playbackController: createVoicePlaybackController(),
+        voiceAgentSessions,
+      });
+      expect(sessionSends).toMatchObject([{ sessionId: 's1', message: 'send to the control Session' }]);
+    } finally {
+      bindings.unbind('carrier-s1');
+    }
   });
 
   it('does not admit a direct coding-session voice turn after cancellation', async () => {
