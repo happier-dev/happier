@@ -9,6 +9,7 @@ import { createActionExecutor as createRawActionExecutor, type ActionExecutorDep
 import { ActionDiscoveryDefinitionSummaryV1Schema, ActionDiscoveryDefinitionV1Schema, type ActionDefinitionV1 } from './actionDefinitionV1.js';
 import { actionSpecToActionDefinitionV1 } from './actionCatalog.js';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
+import { reviewStartExecutionRunCompletion } from './specs/executionRunCompletion.js';
 import { ActionIdSchema, WorkflowActionIdV1Schema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
@@ -19,6 +20,7 @@ import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
 import { WidgetLayoutFragmentActionIdV1Schema } from '../widgets/fragmentActionIdsV1.js';
 import { ReviewCommentActionIdV1Schema } from '../reviews/comments/actions.js';
+import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { PluginPermissionGrantActionIdV1Schema } from '../plugins/permissions/actions.js';
 import { AutomationEventActionIdV1Schema, AutomationConversationActionIdV1Schema } from '../automations/automationActionSpecsV1.js';
 import { ArtifactAccessActionIdV1Schema } from '../artifacts/artifactAccessV1.js';
@@ -1139,6 +1141,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it.each(['returned', 'thrown', 'unknown', 'malformed', 'contradictory'] as const)('preserves native launch creation evidence for %s fanout failures', async (failureKind) => {
     const deps = createDeps();
+    const records = createInMemoryReviewRecordPortV1();
+    deps.reviewRecords = () => records;
     deps.reviewEnginesList = vi.fn(async () => ({
       items: [{ value: 'coderabbit', label: 'CodeRabbit' }],
     }));
@@ -1163,20 +1167,24 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     const res = await executor.execute('review.start', {
       sessionId: 'session_1',
-      engineIds: ['coderabbit'],
+      reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
+      comparisonId: 'c'.repeat(64),
+      source: { kind: 'branch', head: 'HEAD', base: 'main' },
+      cwd: '/repo',
       instructions: 'Review this task.',
       changeType: 'committed',
       base: { kind: 'none' },
-    });
+    }, { defaultSessionId: 'session_1', defaultSessionMachineId: 'machine-1' });
 
     expect(res).toEqual({
       ok: true,
       result: {
         intent: 'review',
         sessionId: 'session_1',
+        reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
         results: [
           {
-            key: 'coderabbit',
+            key: 'step-1-reviewer-1',
             ok: false,
             errorCode: 'execution_run_not_allowed',
             error: 'Unable to resolve a default base branch for CodeRabbit review.',
@@ -1186,9 +1194,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
       },
     });
     if (!res.ok) throw new Error('Review Action did not dispatch');
-    expect(getActionSpec('review.start').completion?.launched(res.result)).toEqual({
+    expect(reviewStartExecutionRunCompletion.launched(res.result)).toEqual({
       runs: [],
-      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed',
+      failed: [{ key: 'step-1-reviewer-1', errorCode: 'execution_run_not_allowed',
         runCreation: failureKind === 'returned' || failureKind === 'thrown' ? 'noRunCreated' : 'outcomeUnknown' }],
     });
   });
