@@ -37,7 +37,8 @@ async function clickLocatorWithFallback(locator: Locator): Promise<void> {
     }
 }
 
-async function ensureSwitchEnabled(toggle: Locator) {
+async function ensureSettingsSwitchEnabled(page: Page, testId: string) {
+    const toggle = page.getByRole('switch').filter({ has: page.getByTestId(testId) });
     await expect(toggle).toHaveCount(1, { timeout: 60_000 });
     if ((await toggle.getAttribute('aria-checked')) !== 'true') {
         await toggle.click();
@@ -48,8 +49,8 @@ async function ensureSwitchEnabled(toggle: Locator) {
 async function enableAutomationsInSettings(params: Readonly<{ baseUrl: string; page: Page }>) {
     await enableEnhancedSessionWizard({ page: params.page, baseUrl: params.baseUrl, timeoutMs: 180_000 });
     await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/settings/features?happier_hmr=0`, 180_000);
-    await ensureSwitchEnabled(params.page.getByTestId('settings-feature-experiments-toggle'));
-    await ensureSwitchEnabled(params.page.getByTestId('settings-feature-toggle-automations'));
+    await ensureSettingsSwitchEnabled(params.page, 'settings-feature-experiments-toggle');
+    await ensureSettingsSwitchEnabled(params.page, 'settings-feature-toggle-automations');
 }
 
 async function selectMachineForNewSession(params: Readonly<{
