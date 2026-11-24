@@ -15,6 +15,7 @@ import { DatabaseStatsCoverageV1Schema, DatabaseStatsGroupV1Schema, DatabaseStat
     DatabaseStatsTableV1Schema, DatabaseStatsIndexV1Schema, DatabaseStatsActivityV1Schema,
     DatabaseStatsReasonV1Schema } from './databaseStats.js';
 import { DatabaseStatsReadV1Schema, DatabaseStatsOperationInputV1Schema } from './databaseOperands.js';
+import { DatabaseCaptureFindingVerificationV1Schema } from '../databaseCaptureOperands.js';
 
 export const DATABASE_INSIGHT_SOURCES_POINT_ID_V1 = 'insight-sources';
 export const DATABASE_INSIGHT_SOURCE_PROTOCOL_ID_V1 = 'happier.database/insight-source';
@@ -58,6 +59,16 @@ export const DatabaseFindingObservationV1Schema = z.strictObject(observation);
 export type DatabaseFindingObservationV1 = z.infer<typeof DatabaseFindingObservationV1Schema>;
 export const DatabaseFindingObservationV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingObservationV1Schema);
 export const DatabaseFindingSourceScopeV1ProtocolSchema = projectZodProtocolSchema(MachineTargetV1Schema);
+
+const sourceTitle = z.string().check(z.minLength(1));
+const sourceFindingFields = {
+    ...observation, kind: z.string().check(z.minLength(1)), title: sourceTitle,
+    normalizedShape: z.optional(z.string()), omittedTextReason: z.optional(z.string()),
+    exercise: z.optional(z.string()),
+};
+export const DatabaseCaptureFindingDetailV1Schema = z.strictObject({
+    ...sourceFindingFields, verification: DatabaseCaptureFindingVerificationV1Schema,
+});
 
 /** Structural names stay source-local; Event observations remain numeric only. */
 const findingObject = z.discriminatedUnion('kind', [
@@ -154,13 +165,8 @@ export const DatabaseFindingBriefBuildResultV1Schema = z.union([
 ]);
 export type DatabaseFindingBriefBuildResultV1 = z.infer<typeof DatabaseFindingBriefBuildResultV1Schema>;
 
-const sourceTitle = z.string().check(z.minLength(1));
 const sourceListEntry = z.strictObject({ recordKey, title: sourceTitle, summary: DatabaseFindingSummaryV1Schema });
-const sourceFinding = z.strictObject({
-    ...observation, kind: z.string().check(z.minLength(1)), title: sourceTitle,
-    normalizedShape: z.optional(z.string()), omittedTextReason: z.optional(z.string()),
-    exercise: z.optional(z.string()),
-});
+const sourceFinding = z.strictObject(sourceFindingFields);
 const sourceListResult = z.union([
     DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), findings: z.array(sourceListEntry) }),
 ]);

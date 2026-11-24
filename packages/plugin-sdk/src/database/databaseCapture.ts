@@ -4,20 +4,25 @@ import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/
 import { DatabaseFailureV1Schema } from './schemas/databaseOperations.js';
 import { DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
+import {
+    databaseCaptureSelectedPage as selectedPage,
+    databaseCaptureSourceInput as sourceInput,
+    DatabaseCaptureCursorV1Schema,
+    DatabaseCapturePageV1Schema,
+    DatabaseCaptureTraceGetInputV1Schema,
+    DatabaseCaptureTracesListInputV1Schema,
+} from './databaseCaptureOperands.js';
+import { DatabaseCaptureFindingDetailV1Schema } from './schemas/databaseFindings.js';
 
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
+export { DatabaseCaptureCursorV1Schema, DatabaseCapturePageV1Schema, DatabaseCaptureTraceGetInputV1Schema,
+    DatabaseCaptureTracesListInputV1Schema } from './databaseCaptureOperands.js';
 
 const id = z.string().check(z.minLength(1));
 const count = z.number().check(z.int(), z.nonnegative());
 const time = z.number().check(z.int(), z.nonnegative());
 const optionalText = z.optional(z.nullable(z.string()));
 const optionalNumber = z.optional(z.nullable(z.number()));
-
-export const DatabaseCaptureCursorV1Schema = z.strictObject({ at: time, id });
-export const DatabaseCapturePageV1Schema = z.strictObject({
-    limit: z.number().check(z.int(), z.positive()),
-    before: z.optional(DatabaseCaptureCursorV1Schema),
-});
 
 /** Lists exclude demanded details; log prefixes are bounded, redacted display projections. */
 export const DatabaseCaptureSummaryV1Schema = z.strictObject({
@@ -44,10 +49,6 @@ export const DatabaseCaptureEndpointV1Schema = z.extend(DatabaseCaptureEndpointC
 export const DatabaseCaptureLogCorrelationV1Schema = z.strictObject({
     logId: id, traceId: id, spanId: z.nullable(id), spanObservationId: z.nullable(id),
 });
-const sourceInput = { source: DatabaseCaptureSourceV1Schema };
-const selectedPage = {
-    ...sourceInput, page: DatabaseCapturePageV1Schema, since: z.optional(time), until: z.optional(time),
-};
 const summaryPage = z.strictObject({
     ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, items: z.array(DatabaseCaptureSummaryV1Schema), nextCursor: z.optional(DatabaseCaptureCursorV1Schema),
 });
@@ -66,14 +67,13 @@ export const DatabaseCaptureQueryGetInputV1Schema = z.strictObject({ ...sourceIn
 export const DatabaseCaptureQueryGetResultV1Schema = z.union([DatabaseFailureV1Schema,
     z.strictObject({ ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, detail: z.nullable(z.record(z.string(), z.json())) }),
 ]);
-export const DatabaseCaptureTracesListInputV1Schema = z.strictObject(selectedPage);
 export const DatabaseCaptureTracesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);
-export const DatabaseCaptureTraceGetInputV1Schema = z.strictObject({ ...sourceInput, traceId: id, page: z.strictObject({ limit: DatabaseCapturePageV1Schema.shape.limit }) });
 export const DatabaseCaptureTraceGetResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({
     ok: z.literal(true), ...sourceInput, traceId: id, summaries: z.array(DatabaseCaptureSummaryV1Schema),
     repeatedQueries: z.array(DatabaseCaptureRepeatedQueryV1Schema),
     slowChildSpans: z.array(DatabaseCaptureSummaryV1Schema),
     logCorrelations: z.array(DatabaseCaptureLogCorrelationV1Schema),
+    findings: z.optional(z.array(DatabaseCaptureFindingDetailV1Schema)),
 })]);
 export const DatabaseCaptureLogsListInputV1Schema = z.strictObject({
     ...selectedPage, serviceName: z.optional(z.string()), severityNumber: z.optional(count),

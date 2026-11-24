@@ -10496,6 +10496,13 @@ selected observation as the baseline. Explicit baselines preserve the
 existing request semantics. A client that omits the baseline requires the
 matching bundled declaration and daemon from 0.3 development source.
 
+In unreleased 0.3, the selected capture trace result may include committed
+findings. Each finding retains the emitting Machine, observation window,
+coverage, and the typed capture trace and trace-list inputs for verification.
+Earlier results omit these findings. Use a matching client and daemon for the
+closed trace result shape. Capture admission and stored observations keep their
+existing contracts.
+
 In unreleased 0.3, `session.access.context.set` returns the direct Team grants
 remaining at the end of the operation, including their access levels. An empty
 list means there are no direct Team grants. Earlier results omit `teamGrants`,

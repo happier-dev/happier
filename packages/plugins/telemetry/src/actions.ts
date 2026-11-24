@@ -10,6 +10,7 @@ import type { CaptureRuntime } from './runtime.js';
 import type { CaptureListInput } from './store/capture.js';
 import type { createCaptureBackgroundOwner } from './background.js';
 import { readCaptureCostWindow } from './costs.js';
+import { projectCaptureFindings } from './analysis/findings.js';
 
 /** Internal producer bindings. Public Action schemas and target admission remain
  * with the Database catalogue/access owners; operands here have already been admitted. */
@@ -234,12 +235,19 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
             return page(await createCaptureReader(selected.runtime.store).requests({ ...input.page, since: input.since,
                 until: input.until, worktree: selected.partition }), input.page.limit);
         },
-        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1) {
-            const trace = await createCaptureReader(selected.runtime.store).trace({ worktree: selected.partition,
+        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1, collectorMachineId?: string) {
+            const { source, runtime, partition } = selected;
+            const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
                 traceId: input.traceId, pageSize: input.page.limit });
-            return { ok: true as const, source: selected.source, traceId: input.traceId, summaries: [...trace.summaries],
+            const machineId = source.kind === 'worktree' ? source.machineId : collectorMachineId;
+            const findings = machineId === undefined ? undefined : [...projectCaptureFindings({
+                source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
+                coverage: runtime.ingest.coverage(partition),
+            }, trace.summaries, trace.repeatedQueries)];
+            return { ok: true as const, source, traceId: input.traceId, summaries: [...trace.summaries],
                 repeatedQueries: trace.repeatedQueries.map(query => ({ ...query, observationIds: [...query.observationIds], callsites: [...query.callsites] })),
-                slowChildSpans: trace.slowChildSpans, logCorrelations: trace.logCorrelations };
+                slowChildSpans: trace.slowChildSpans, logCorrelations: trace.logCorrelations,
+                ...(findings && { findings }) };
         },
         async listCapturedLogs(input: database.DatabaseCaptureLogsListInputV1) {
             return page(await selected.runtime.store.list({ ...input.page, since: input.since, until: input.until,
@@ -296,7 +304,7 @@ export function createCapturePublicActionProducers(options: Readonly<{
             return withSource(input, context, database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, readers => readers.listCapturedTraces(input));
         },
         async getCapturedTrace(input, context) {
-            return withSource(input, context, database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, readers => readers.getCapturedTrace(input));
+            return withSource(input, context, database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, readers => readers.getCapturedTrace(input, context.chosenMachine?.machineId));
         },
         async listCapturedLogs(input, context) {
             return withSource(input, context, database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1, readers => readers.listCapturedLogs(input));

@@ -6,8 +6,8 @@
 
 import type {
   DatabaseCaptureEndpointV1,
-  DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
+export { captureSummaryFailed } from '../../analysis/requestFailure.js';
 
 /** One route's observed window: requests, errors and time, as the capture store counted them (D27 #9). */
 export type CaptureEndpointView = Readonly<{
@@ -54,13 +54,6 @@ export function captureEndpointTitle(
   endpoint: DatabaseCaptureEndpointV1,
 ): string {
   return `${endpoint.method} ${endpoint.route}`;
-}
-
-/** A request failed when its server answered 5xx or its span says so. */
-export function captureSummaryFailed(
-  summary: DatabaseCaptureSummaryV1,
-): boolean {
-  return (summary.httpStatusCode ?? 0) >= 500 || summary.outcome === 'error';
 }
 
 /** OpenTelemetry severity number ranges, named as the log record states its level. */
