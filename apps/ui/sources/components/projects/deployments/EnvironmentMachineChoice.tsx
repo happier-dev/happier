@@ -29,8 +29,13 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
     const controller = new AbortController();
     const serverId = lifetime.scope.serverId;
     const homeId = getServerProfileById(serverId)?.serverIdentityId ?? serverId;
-    const settle = (result: HostCurrentState['result']) => {
-      if (!controller.signal.aborted && lifetime.isCurrent()) setState({ lifetime, machineId, result,
+    const settle = (plan: HostCurrentState['result']) => {
+      if (controller.signal.aborted || !lifetime.isCurrent()) return;
+      const target = plan.ok ? plan.plan.targets.find(target => target.homeId === homeId && target.machineId === machineId) : undefined;
+      const result: HostCurrentState['result'] = target && 'status' in target
+        ? { ok: false, errorCode: target.errorCode, error: target.errorCode, details: { reason: target.reason } }
+        : plan;
+      setState({ lifetime, machineId, result,
         setup: { items: [result.ok ? readDeployHostRecipe(result.plan, machineId)?.item ?? DEPLOY_HOST_DOCKER_ITEM : DEPLOY_HOST_DOCKER_ITEM] } });
     };
     readMachineSetupSoftwareCurrentPlan({ executeAction: frontDoor, context: { surface: 'ui', serverId,

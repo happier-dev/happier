@@ -144,9 +144,9 @@ it('says a ready Machine is ready to host deploys in its Where card (journey-dep
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });
 
-it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness out of recipe inputs and opens the Machine setup owner (%s)', async outcome => {
+it.each(['unknown', 'unavailable', 'offline-target'] as const)('keeps unknown hosting readiness out of recipe inputs and opens the Machine setup owner (%s)', async outcome => {
   const { t } = await import('@/text');
-  const serverIdentityId = `srv_${(outcome === 'unknown' ? '4' : '5').repeat(32)}`;
+  const serverIdentityId = `srv_${(outcome === 'unknown' ? '4' : outcome === 'unavailable' ? '5' : '6').repeat(32)}`;
   const serverId = await homes.addHome({ name: 'Host unchecked', serverUrl: `https://deploy-host-${outcome}.test`,
     accountId: 'alice', serverIdentityId, currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -173,9 +173,12 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
         if (!('targets' in input)) throw new Error('Expected the production combined Plan request');
         const target = input.targets[0]!;
         modes.push(target.mode);
-        return { targets: [{ homeId: target.homeId, machineId: target.machineId, plan: {
-          desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [],
-        } }], review: { machineId: 'host', machines: [{ machineId: 'host', online: true }] } };
+        const { homeId, machineId } = target;
+        return { targets: [outcome === 'offline-target'
+          ? { homeId, machineId, status: 'unavailable', reason: 'offline', errorCode: 'machine_offline' }
+          : { homeId, machineId, plan: {
+              desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [],
+            } }], review: { machineId: 'host', machines: [{ machineId: 'host', online: outcome !== 'offline-target' }] } };
       } });
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
       id: 'host', installationId: 'host-installation', activeAt: Date.now(),
@@ -196,8 +199,9 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
       expect(retainDraftAndOpenSetup).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
         target: { machineId: 'host', serverId: serverIdentityId }, tab: { id: 'setup' } }));
       expect(modes).toEqual([undefined]);
-      if (outcome === 'unavailable') {
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('errors.machineNotAnswering')));
+      if (outcome === 'unavailable' || outcome === 'offline-target') {
+        const reason = outcome === 'offline-target' ? t('errors.daemonUnavailableBody') : t('errors.machineNotAnswering');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reason));
         expect(screen.getTextContent()).not.toContain('reconnect_machine');
       }
       expect(homes.requestsFor('/v1/actions/machines.setup.plan').filter(request => request.serverId === serverId && request.method === 'POST')).toHaveLength(1);
