@@ -1521,11 +1521,9 @@ export async function startDaemon(
       }),
       sanitizeRetainedMaterializedHome: sanitizeStoppedConnectedServiceMaterializedHome,
     });
-    void connectedServiceMaterializedHomeCleanupScheduler.reconcile().catch((error) => {
-      logger.debug('[DAEMON RUN] Connected-service materialized home startup reconciliation failed (non-fatal)', error);
-    });
-    // Later cleanup is edge-driven: every runner exit runs `cleanupPendingMaterializedHomes` (session
-    // control `onChildExited`), and startup reconciles above. No hourly sweep (I6).
+    // Startup reconciles once the initial plugin catalog is published (below), so each Agent's
+    // retained-home hook is present. Later cleanup is edge-driven: every runner exit runs
+    // `cleanupPendingMaterializedHomes` (session control `onChildExited`). No hourly sweep (I6).
 
     let onTrackedSessionPidPromoted:
       NonNullable<
@@ -2198,6 +2196,9 @@ export async function startDaemon(
       initialPluginRegistryPublished,
       pluginRuntimeInitialization,
     ]);
+    void connectedServiceMaterializedHomeCleanupScheduler.reconcile().catch((error) => {
+      logger.debug('[DAEMON RUN] Connected-service materialized home startup reconciliation failed (non-fatal)', error);
+    });
     // Publish the restart fence before any spawn admission can reuse a stale
     // process. Physical retirement waits for machine mutation custody below.
     await reconcileAgentRuntimeRestartDisposition({

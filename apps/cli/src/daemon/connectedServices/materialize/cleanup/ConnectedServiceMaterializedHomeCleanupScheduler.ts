@@ -1,5 +1,5 @@
 import { lstat, readdir, realpath, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationKeyForPath';
@@ -321,6 +321,8 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     }
     await Promise.all(homeRootDirs.map(async (homeRootDir) => {
       if (!await this.#isContainedDirectory(homeRootDir, this.#baseDir).catch(() => false)) return;
+      // A Session resumed since the live set was read owns its home again.
+      if (normalizeMaterializationKeys(this.deps.getLiveMaterializationKeys()).has(basename(homeRootDir))) return;
       await runFileOperationWithTimeout({
         operation: 'sanitizeRetainedHome',
         path: homeRootDir,

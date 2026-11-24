@@ -398,6 +398,34 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
+  it('does not sanitize a home whose Session became live after the start pass read its live set', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-resumed-');
+    try {
+      const baseDir = join(root, 'materialized');
+      await createIdentityRoot(baseDir, 'resumed-home');
+      const guestRoot = await createIdentityRoot(join(baseDir, 'requester-accounts', 'account-guest'), 'csm_guest-resumed');
+      let liveReads = 0;
+      const sanitizedHomeRoots: string[] = [];
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000_000,
+        attemptTtlMs: 1_000_000,
+        // Both Sessions resume right after the pass took its first live set.
+        getLiveMaterializationKeys: () => (liveReads++ === 0 ? [] : ['resumed-home', 'csm_guest-resumed']),
+        getRetainedMaterializationKeys: async () => ['resumed-home'],
+        sanitizeRetainedMaterializedHome: async (homeRootDir) => {
+          sanitizedHomeRoots.push(homeRootDir);
+        },
+      });
+      await scheduler.reconcile();
+      expect(sanitizedHomeRoots).toEqual([]);
+      await expectExists(guestRoot);
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
   it('never invokes a retained-home sanitizer when none is contributed', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-no-sanitizer-');
     try {
