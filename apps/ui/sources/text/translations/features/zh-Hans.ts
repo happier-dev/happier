@@ -266,6 +266,7 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
   recording: {
     title: '记录',
     keptOn: ({ machine }) => `保存在 ${machine}。`,
+    appCollector: ({ name }) => `正在使用你自己的采集器 · ${name}`,
     nextDeploy: '更改将在下次部署时生效。',
   },
   state: { on: '开', off: '关' },

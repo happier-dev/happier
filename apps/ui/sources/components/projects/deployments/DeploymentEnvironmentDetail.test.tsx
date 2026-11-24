@@ -581,7 +581,7 @@ it('waits for the serving receipt to confirm delivery of managed telemetry befor
   } finally { await screen.unmount(); controller.retire(); }
 });
 
-it.each([true, false])('shows app-controlled sampling only for a serving member (serving: %s)', async current => {
+it.each([true, false])('shows app-controlled telemetry only for a serving member (serving: %s)', async current => {
   const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
   const { ModalProvider } = await import('@/modal');
   const { t } = await import('@/text');
@@ -592,7 +592,7 @@ it.each([true, false])('shows app-controlled sampling only for a serving member 
   const serving = createDeploymentReceiptDetailV1({ deployment: { ...fixture.deployment, id: servingId },
     content: { ...fixture.content, machineResults: fixture.content.machineResults.map(member => ({ ...member,
       currentDeploymentId: current ? servingId : 'previous-deployment',
-      telemetrySampling: [{ service: 'app', provenance: 'authored' }],
+      telemetrySampling: [{ service: 'app', provenance: 'authored', collectorOrigin: 'appOwned' }],
     })) } });
   const { controller } = controllerFor({ detail, receipt: serving });
   const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
@@ -604,6 +604,9 @@ it.each([true, false])('shows app-controlled sampling only for a serving member 
   try {
     await waitForContent(screen, 'project-deployments.environment.services');
     await selectEnvironmentTab(screen, 'telemetry');
+    const collector = screen.findByTestId('project-deployments.telemetry.app-collector');
+    if (current) expect(collector?.props.children).toContain('app');
+    else expect(collector).toBeNull();
     await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
     await waitForContent(screen, 'project-deployments.telemetry.menu.settings');
     await screen.pressByTestIdAsync('project-deployments.telemetry.menu.settings');

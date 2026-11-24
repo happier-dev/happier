@@ -266,6 +266,7 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
   recording: {
     title: '記録',
     keptOn: ({ machine }) => `${machine} に保存されます。`,
+    appCollector: ({ name }) => `独自のコレクターを使用中 · ${name}`,
     nextDeploy: '変更は次回のデプロイで反映されます。',
   },
   state: { on: 'オン', off: 'オフ' },

@@ -266,6 +266,7 @@ const ru: Shared_deploymentTelemetryTranslations.Copy = {
   recording: {
     title: 'Запись',
     keptOn: ({ machine }) => `Хранится на ${machine}.`,
+    appCollector: ({ name }) => `Используется ваш коллектор · ${name}`,
     nextDeploy: 'Изменения вступят в силу при следующем развёртывании.',
   },
   state: { on: 'Вкл.', off: 'Выкл.' },

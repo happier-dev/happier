@@ -3349,7 +3349,8 @@ won. When Compose selects the app's own collector, launch records
 `collectorOrigin: 'appOwned'` on the same service entry, even without an observed
 sampler. An omitted fact is unknown. This record carries no collector endpoint,
 token, sampler value or ratio. Contributed targets omit collector origin when
-their serving launch cannot attest it.
+their serving launch cannot attest it. In the Environment’s Telemetry tab, the
+service name accompanies this status when the exact serving Receipt attests it.
 
 The cross-Machine source path uses an ordinary Domain with
 `target: { kind: 'telemetry' }`. The Domain owner captures the selected collector's

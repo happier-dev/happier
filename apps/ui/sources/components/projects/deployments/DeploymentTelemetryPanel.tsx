@@ -72,6 +72,7 @@ export function DeploymentTelemetryPanel(
     /** Whether the serving native deployment delivered this collector's bindings, when observed. */
     telemetryApplied?: boolean;
     appAuthoredSampling?: boolean;
+    appCollectorServices?: readonly string[];
     /** Re-read the Environment after a save, so the next save carries its new revision. */
     onChanged: () => void;
   }>,
@@ -80,6 +81,9 @@ export function DeploymentTelemetryPanel(
   const environment = detail.environment;
   const collectorId = environment.telemetryMachineId ?? null;
   const canManage = environment.capabilities.manageBindings;
+  const appCollectorLabel = props.appCollectorServices?.length
+    ? t('deploymentTelemetry.recording.appCollector', { name: props.appCollectorServices.join(', ') })
+    : undefined;
   const open = React.useCallback((readCaptureStatus?: TelemetryCaptureReads['status']) => {
     if (!lifetime) return;
     showDeploymentTelemetrySheet({
@@ -102,7 +106,7 @@ export function DeploymentTelemetryPanel(
         title={t('deploymentTelemetry.empty.title', {
           name: props.environmentName,
         })}
-        subtitle={t('deploymentTelemetry.empty.body')}
+        subtitle={appCollectorLabel ?? t('deploymentTelemetry.empty.body')}
         {...(canManage && lifetime
           ? {
               primaryAction: {
@@ -124,6 +128,7 @@ export function DeploymentTelemetryPanel(
       collectorId={collectorId}
       active={props.active ?? true}
       telemetryApplied={props.telemetryApplied}
+      appCollectorLabel={appCollectorLabel}
       onOpenSettings={canManage && lifetime ? open : null}
     />
   );
@@ -244,6 +249,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   collectorId: string;
   active: boolean;
   telemetryApplied: boolean | undefined;
+  appCollectorLabel?: string;
   onOpenSettings: ((readStatus?: TelemetryCaptureReads['status']) => void) | null;
 }>) {
   const { detail, lifetime, collectorId, active, telemetryApplied } = props;
@@ -398,6 +404,11 @@ function DeploymentTelemetryTabs(props: Readonly<{
             offline ? t('deploymentTelemetry.offline.reason') : t('deploymentTelemetry.unavailable.reason')}`}
           action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
         />
+      ) : null}
+      {props.appCollectorLabel ? (
+        <Text variant="meta" style={styles.facts} testID="project-deployments.telemetry.app-collector">
+          {props.appCollectorLabel}
+        </Text>
       ) : null}
       <View style={styles.bar}>
         <View style={styles.tabs}>

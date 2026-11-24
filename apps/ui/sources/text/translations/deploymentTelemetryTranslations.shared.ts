@@ -16,6 +16,7 @@ export type Copy = Readonly<{
   recording: Readonly<{
     title: string;
     keptOn: (p: MachineName) => string;
+    appCollector: (p: Name) => string;
     nextDeploy: string;
     waiting: string;
     receiving: (p: Readonly<{ time: string }>) => string;
@@ -131,6 +132,7 @@ const en: Copy = {
   recording: {
     title: 'Recording',
     keptOn: ({ machine }) => `Kept on ${machine}.`,
+    appCollector: ({ name }) => `Uses your own collector · ${name}`,
     nextDeploy: 'Changes apply at the next deploy.',
     waiting: 'Waiting for first data',
     receiving: ({ time }) => `Receiving · ${time}`,

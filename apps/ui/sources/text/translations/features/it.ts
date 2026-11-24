@@ -266,6 +266,7 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
   recording: {
     title: 'Registrazione',
     keptOn: ({ machine }) => `Conservata su ${machine}.`,
+    appCollector: ({ name }) => `Usa il tuo collettore · ${name}`,
     nextDeploy: 'Le modifiche si applicano al prossimo deploy.',
   },
   state: { on: 'Attivo', off: 'Disattivo' },
