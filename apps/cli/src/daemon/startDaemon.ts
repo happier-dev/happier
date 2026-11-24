@@ -1928,6 +1928,9 @@ export async function startDaemon(
         if (!machine) throw new Error('agent_isolation_unavailable');
         return machine.prepareAgentIsolationMember(input);
       },
+      // The snapshot below is unread until registration assigns apiMachineForSessions,
+      // which happens right before this settles.
+      awaitReadable: () => machineProviderBindingSettled,
       read() {
         const snapshot = apiMachineForSessions?.getAgentIsolationSnapshot()
           ?? { enabled: true, status: { kind: 'unavailable' as const, code: 'metadata_unavailable' as const } };

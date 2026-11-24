@@ -2331,6 +2331,14 @@ servers) consume it. An unread
 policy, an enabled policy and an enabled-but-unavailable policy never select it,
 so Use keeps working inside isolation or keeps its typed refusal
 (`agent_isolation_unavailable`, `machine_manage_required` for source control).
+The policy is unread until the daemon's Machine registration settles. A Session
+start that arrives then (`createSessionAgentIsolationMemberPreparation`) waits
+once for that registration through the launch context's `awaitReadable`, bounded
+only by the request's own cancellation, and then decides on the real policy;
+a settled daemon pays no wait or extra read. A start cancelled first, or a policy
+still unread, refuses `agent_isolation_unavailable` with reason
+`metadata_unavailable`, which the spawn result reports as retryable ("this
+Machine is still starting").
 Placement binds nothing by path: on such a Machine the guest's Agent already
 runs as the owner's operating-system user. Other people's Sessions stay behind
 Home's Session proof, their terminals behind terminal custody, their Services

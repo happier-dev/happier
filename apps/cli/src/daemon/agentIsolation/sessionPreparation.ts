@@ -6,7 +6,18 @@ import type { RequesterAccountActionCustody } from '../sessionEncryption/request
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
 import { selectHostRequesterExecutionIdentity, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext,
-  type HostRequesterExecutionIdentity, type HostRequesterExecutionIdentityInput } from './agentIsolationLaunchPolicy';
+  type HostRequesterExecutionIdentity, type HostRequesterExecutionIdentityInput, isHostAgentIsolationPolicyUnread,
+  refuseIsolationNotReady } from './agentIsolationLaunchPolicy';
+
+/** No timer: the request's own cancellation bounds a wait on a readiness that may never come. */
+function untilSettledOrAborted(readable: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => { signal.removeEventListener('abort', done); resolve(); };
+    signal.addEventListener('abort', done, { once: true });
+    void readable.then(done, done);
+  });
+}
 
 /** Private admitted sources remain distinct: current Account custody never
  * replaces an unavailable historical Session requester. */
@@ -33,7 +44,15 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
     const signal = input.signal ? AbortSignal.any([lifetimeSignal, input.signal]) : lifetimeSignal;
     signal.throwIfAborted();
     const birth = requester?.bootstrap;
-    const policy = options.agentIsolation?.read();
+    let policy = options.agentIsolation?.read();
+    const awaitReadable = options.agentIsolation?.awaitReadable;
+    if (awaitReadable && isHostAgentIsolationPolicyUnread(policy)) {
+      // A start in the first seconds after a daemon start waits once for Machine
+      // registration (or this request's cancellation), then decides on the real policy.
+      await untilSettledOrAborted(awaitReadable(), signal);
+      policy = options.agentIsolation?.read();
+      if (policy && isHostAgentIsolationPolicyUnread(policy)) refuseIsolationNotReady(policy.status, 'agent_isolation_unavailable', 'exec');
+    }
     const isolationEnabled = policy?.enabled === true;
     let identity: HostRequesterExecutionIdentity;
     let homeServerIdentityId: string;

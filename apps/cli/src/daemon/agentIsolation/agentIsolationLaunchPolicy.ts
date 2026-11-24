@@ -62,12 +62,22 @@ function throwNativeAdmissionRefusal(error: PluginError, reason: HostAgentIsolat
     throw error;
 }
 
-function refuseIsolationNotReady(status: HostAgentIsolationLaunchSnapshot['status'], code: string,
+/** The daemon has not read this Machine's isolation policy yet (Machine
+ * registration still settling). Unread is never "isolation off". */
+export function isHostAgentIsolationPolicyUnread(snapshot: Pick<HostAgentIsolationLaunchSnapshot, 'status'> | undefined): boolean {
+    return snapshot?.status.kind === 'unavailable' && snapshot.status.code === 'metadata_unavailable';
+}
+
+export function refuseIsolationNotReady(status: HostAgentIsolationLaunchSnapshot['status'], code: string,
     launchKind?: HostAgentIsolationLaunchKind): never {
     const reason = status.kind === 'unavailable' ? status.code : 'isolation_not_ready';
+    // An unread policy fails closed as "this Machine is not ready yet", which a
+    // later start can pass; it is not "isolation is required and not set up".
+    const unread = reason === 'metadata_unavailable';
     throwNativeAdmissionRefusal(new PluginError({ code,
-        message: 'Requester execution protection is unavailable', retryable: false,
-        details: { reason, status: status.kind, ...(status.kind === 'applying' ? { phase: status.phase } : {}),
+        message: unread ? 'This Machine is still starting' : 'Requester execution protection is unavailable', retryable: unread,
+        details: { reason, status: status.kind, ...(status.kind === 'applying' ? { phase: status.phase }
+            : unread ? { phase: 'native_execution_preparation' } : {}),
             ...(status.kind === 'unavailable' && status.probeFailure ? { probeFailure: status.probeFailure } : {}),
             ...(launchKind ? { launchKind } : {}) } }), reason, launchKind, status);
 }
@@ -468,6 +478,9 @@ export type HostAgentIsolationLaunchContext = Readonly<{
     }>>;
     /** Failed native launch only: return the typed refusal when a visible retry is needed. */
     onNativeLaunchFailure?(): Promise<'agent_isolation_unavailable' | undefined>;
+    /** Daemon startup: resolves once the Machine's isolation policy is readable
+     * (Machine registration settled). Stays pending while registration fails. */
+    awaitReadable?(): Promise<void>;
     /** Identity custody also exists when the optional Machine policy/transport
      * port is absent. Absence is not a disabled or effective policy snapshot. */
     read(): HostAgentIsolationLaunchSnapshot | undefined;

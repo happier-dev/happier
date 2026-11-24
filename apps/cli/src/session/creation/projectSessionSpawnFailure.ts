@@ -113,8 +113,10 @@ export function projectSessionSpawnFailure(input: Readonly<{
   }
   const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
   const effortRefusal = code === REASONING_EFFORT_NOT_ALLOWED;
+  // An unread Machine isolation policy is a Machine still starting: a later start can pass.
+  const machineNotReady = detail.success && detail.data.agentIsolationRefusal?.reason === 'metadata_unavailable';
   const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (effortRefusal || modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
-    || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
+    || code === 'agent_isolation_unavailable' && !machineNotReady || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,

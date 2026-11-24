@@ -32,7 +32,9 @@ export function projectAgentIsolationLaunchRefusal(
     message:
       detail && Reflect.get(detail, 'readinessCode')
         ? 'Member execution launch qualification failed.'
-        : 'Member execution setup is unavailable.',
+        : detail && Reflect.get(detail, 'reason') === 'metadata_unavailable'
+          ? 'This Machine is still starting. Try again in a moment.'
+          : 'Member execution setup is unavailable.',
   };
   const nativeFailure = detail
     ? Reflect.get(detail, 'nativeFailure')
