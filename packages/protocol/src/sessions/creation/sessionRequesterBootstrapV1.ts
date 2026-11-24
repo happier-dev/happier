@@ -119,8 +119,51 @@ const RequesterAccountContextPurposeV1Schema = lazyZodSchema(() => z.union([
     machineId: z.string().check(z.trim(), z.minLength(1)), installationId: z.string().check(z.trim(), z.minLength(1)),
   }), request: WorkspaceSyncPrepareBetweenRequestV1Schema }),
 ]));
+// Name the extension's member schemas so declaration emit can reference them.
+type ExternalActionRequesterInvocationV1Shape = {
+  selectedActionInput: z.ZodMiniOptional<typeof PrivateMountedSelectedActionInputV1Schema>;
+  presentUserSessionSend: z.ZodMiniOptional<z.ZodMiniString>;
+  sessionListAccess: z.ZodMiniOptional<z.ZodMiniEnum<{
+    [Access in Exclude<ActionExecutorContext['sessionListAccess'], 'mounted_ui' | undefined>]: Access;
+  }>>;
+  actionRequestAttributionV1: z.ZodMiniOptional<typeof ActionRequestAttributionV1Schema>;
+  callerPermissionMode: z.ZodMiniOptional<z.ZodMiniNullable<z.ZodMiniType<
+    ReturnType<typeof AgentPermissionIntentV1Schema.parse>,
+    Parameters<typeof AgentPermissionIntentV1Schema.parse>[0]
+  >>>;
+  callerInputConstraints: z.ZodMiniOptional<typeof CallerInputConstraintsV1Schema>;
+  workspaceWrites: z.ZodMiniOptional<typeof RoleArtifactV1Schema.shape.workspaceWrites>;
+  defaultSessionId: z.ZodMiniOptional<z.ZodMiniString>;
+  sessionCreationDefaults: z.ZodMiniOptional<z.ZodMiniObject<{
+    context: typeof ManagedSessionDefaultsContextV1Schema;
+    defaultPermissionMode: typeof SessionSpawnNewInputV2Schema.shape.permissionMode;
+    unavailableDefaults: z.ZodMiniOptional<z.ZodMiniArray<typeof ActionExecuteFailureSchema>>;
+    managedPresetAcquisition: z.ZodMiniOptional<typeof ManagedAcquireInputV1Schema>;
+    managedPresetControllerAccess: z.ZodMiniOptional<typeof ManagedControllerAccessV1Schema>;
+    authoredChoices: z.ZodMiniObject<{
+      executionTarget: z.ZodMiniOptional<typeof SessionSpawnNewInputV2Schema.shape.executionTarget>;
+      agentTarget: z.ZodMiniOptional<typeof SessionSpawnNewInputV2Schema.shape.agentTarget>;
+      sessionPlacement: z.ZodMiniOptional<typeof SessionPlacementSelectionV1Schema>;
+    }, z.core.$strict>;
+  }, z.core.$strict>>;
+  reviewedParent: z.ZodMiniOptional<typeof WorkflowApprovedOperationParentV1Schema>;
+  presentUserConfirmation: z.ZodMiniOptional<z.ZodMiniObject<{
+    actionId: typeof ActionIdSchema;
+    inputDigest: z.ZodMiniString;
+    reviewDigest: z.ZodMiniOptional<z.ZodMiniString>;
+    reviewedDeploymentInput: z.ZodMiniOptional<typeof StrictJsonValueSchema>;
+    requestId: z.ZodMiniString;
+    accountId: z.ZodMiniString;
+    serverId: z.ZodMiniString;
+    target: z.ZodMiniNullable<typeof ExternalActionTargetV1Schema>;
+  }, z.core.$strict>>;
+};
+
 /** Host-stamped facts inside the existing private box, never a public Action field. */
-export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.extend(ExternalActionRequesterInvocationBaseV1Schema, {
+export const ExternalActionRequesterInvocationV1Schema: ReturnType<typeof z.extend<
+  typeof ExternalActionRequesterInvocationBaseV1Schema,
+  ExternalActionRequesterInvocationV1Shape
+>> = lazyZodSchema(() => z.extend(ExternalActionRequesterInvocationBaseV1Schema, {
   /** Transient mounted selection. The receiver verifies its signed commitment before use. */
   selectedActionInput: z.optional(PrivateMountedSelectedActionInputV1Schema),
   presentUserSessionSend: z.optional(z.string().check(z.trim(), z.minLength(1))),
