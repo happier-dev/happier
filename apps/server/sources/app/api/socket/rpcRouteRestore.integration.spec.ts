@@ -199,6 +199,39 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await triggerSocketHandler(second, "disconnect");
     });
 
+    for (const release of ["unregisters", "disconnects"] as const) {
+        it(`removes the route it restored when it ${release} after the socket that took over left first`, async () => {
+            const method = "machine-1:spawn-happy-session";
+            const userRpcListeners = new Map<string, Socket>();
+            const allRpcListeners = new Map<string, Map<string, Socket>>([[userId, userRpcListeners]]);
+            const ctx = { io: {} as Server, redisRegistry: { enabled: true as const, instanceId: "instance-1" } };
+            const first = createFakeSocket({ id: "socket-1", emit: vi.fn() });
+            const second = createFakeSocket({ id: "socket-2", emit: vi.fn() });
+            rpcHandler(userId, first as unknown as Socket, userRpcListeners, allRpcListeners, ctx);
+            rpcHandler(userId, second as unknown as Socket, userRpcListeners, allRpcListeners, ctx);
+            const observer = createCoordinator("observer", new Set());
+
+            await triggerSocketHandler(first, SOCKET_RPC_EVENTS.REGISTER, { method });
+            await triggerSocketHandler(second, SOCKET_RPC_EVENTS.REGISTER, { method });
+            await triggerSocketHandler(second, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+            // The first socket still serves the method, so its refresh brings the route back.
+            await runRefreshTick();
+            expect(await observer.lookupSocketId(userId, method)).toBe("socket-1");
+
+            if (release === "unregisters") {
+                await triggerSocketHandler(first, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+            } else {
+                await triggerSocketHandler(first, "disconnect");
+            }
+            await getRedisClient().ping();
+
+            expect(await observer.lookupSocketId(userId, method)).toBeNull();
+
+            if (release === "unregisters") await triggerSocketHandler(first, "disconnect");
+            await triggerSocketHandler(second, "disconnect");
+        });
+    }
+
     it("restores nothing for a socket that disconnected after another socket took its methods over", async () => {
         const userRpcListeners = new Map<string, Socket>();
         const allRpcListeners = new Map<string, Map<string, Socket>>([[userId, userRpcListeners]]);

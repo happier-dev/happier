@@ -334,13 +334,15 @@ export function rpcHandler(
 
             const listeners = resolveUserRpcListeners('get');
             // Released even when another socket took the method over first, so this socket's
-            // refresh never restores a route it withdrew.
+            // refresh never restores a route it withdrew. Its Redis mapping goes too: the refresh
+            // may have restored it after the other socket left, and the removal only deletes a
+            // mapping that names this socket.
             ownedMethods.delete(method);
             if (listeners.get(method) === socket) {
                 listeners.delete(method);
-                await redisRegistry.removeSocketRegistration(userId, method, socket.id);
                 pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
             }
+            await redisRegistry.removeSocketRegistration(userId, method, socket.id);
             await redisRegistry.stopRefreshLoopIfIdle();
 
             socket.emit(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
@@ -854,12 +856,15 @@ export function rpcHandler(
             }
         }
 
-        // Cleared even when another socket took every method over: the refresh loop restores
-        // missing mappings for owned methods, and must stop with the socket.
+        // Every method this socket claimed loses its Redis mapping, including ones another socket
+        // took over locally: the refresh may have restored those after the other socket left, and
+        // the cleanup only deletes mappings that name this socket. Owned methods are cleared so
+        // the refresh loop stops with the socket.
+        const redisMethodsToRemove = [...new Set([...methodsToRemove, ...ownedMethods])];
         ownedMethods.clear();
-        if (methodsToRemove.length > 0) {
-            methodsToRemove.forEach(method => listeners.delete(method));
-            void redisRegistry.cleanupMethodsForSocket(userId, methodsToRemove, socket.id);
+        methodsToRemove.forEach(method => listeners.delete(method));
+        if (redisMethodsToRemove.length > 0) {
+            void redisRegistry.cleanupMethodsForSocket(userId, redisMethodsToRemove, socket.id);
         }
 
         pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
