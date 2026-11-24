@@ -4366,6 +4366,22 @@ function readAutomationExistingSessionTargetId(
         : null;
 }
 
+/** Validate the retained target even when the trigger needs no database write. */
+async function validateRetainedSessionLifecycleTriggerTargetTx(
+    tx: Tx,
+    automation: Pick<AutomationListItem, "targetType" | "templateCiphertext">,
+    trigger: AutomationTriggerItem,
+    serverIdentityId: string | null,
+): Promise<void> {
+    if (automation.targetType !== "existing_session" || trigger.kind !== "sessionLifecycle") return;
+    validateSessionLifecycleExecutionTargetInequality({
+        automationTargetType: automation.targetType,
+        automationExistingSessionId: readAutomationExistingSessionTargetId(automation),
+        input: decodeAutomationSessionLifecycleConfiguration(trigger).definition,
+        serverIdentityId: serverIdentityId ?? await readCurrentServerIdentityId(process.env, tx),
+    });
+}
+
 function assertAutomationTriggerKindsForDefinition(
     templateCiphertext: string,
     triggerKinds: readonly (AutomationTriggerKind | undefined)[],
@@ -5767,21 +5783,21 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 )?.existingSessionId }
                 : {}),
         });
+        const changedTriggerIds = new Set<string>();
         for (const item of params.input.triggers) {
-            if (item.kind !== "existing") continue;
-            const trigger = existing.triggers.find((candidate) => candidate.id === item.triggerId)!;
-            if (item.trigger || trigger.kind !== "sessionLifecycle") continue;
-            validateSessionLifecycleExecutionTargetInequality({
-                automationTargetType: effectiveAutomation.targetType,
-                automationExistingSessionId: effectiveExistingSessionId,
-                input: decodeAutomationSessionLifecycleConfiguration(trigger).definition,
-                serverIdentityId: await readCurrentServerIdentityId(process.env, tx),
-            });
-        }
+            if (item.kind === "new") {
+                changedTriggerIds.add(item.triggerId);
+                continue;
+            }
+            const trigger = existingTriggersById.get(item.triggerId)!;
+            const unchanged = automationTriggerPatchMatches(existing, trigger, item);
+            if (!unchanged) changedTriggerIds.add(item.triggerId);
 
-        const changedTriggerIds = new Set(params.input.triggers.filter(item => item.kind === "new"
-            || !automationTriggerPatchMatches(existing,
-                existingTriggersById.get(item.triggerId)!, item)).map(item => item.triggerId));
+            // A changed definition or re-arm checks the target during registration.
+            if (unchanged || (!item.trigger && (trigger.enabled || item.enabled !== true))) {
+                await validateRetainedSessionLifecycleTriggerTargetTx(tx, effectiveAutomation, trigger, serverIdentityId);
+            }
+        }
         const definitionChanged = currentDefinition?.changed === true
             || params.input.name !== existing.name || params.input.description !== existing.description
             || params.input.enabled !== existing.enabled
@@ -6182,7 +6198,10 @@ export async function updateAutomationTrigger(params: Readonly<{
 
         const now = new Date();
         const nextEnabled = params.enabled ?? existing.enabled;
-        if (automationTriggerPatchMatches(automation, existing, params)) return automation;
+        if (automationTriggerPatchMatches(automation, existing, params)) {
+            await validateRetainedSessionLifecycleTriggerTargetTx(tx, automation, existing, serverIdentityId);
+            return automation;
+        }
         const nextRevision = existing.revision + 1;
         let data: Prisma.AutomationTriggerUncheckedUpdateInput;
         let nextKind = existing.kind;
