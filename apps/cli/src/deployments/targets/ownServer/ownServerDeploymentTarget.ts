@@ -91,6 +91,8 @@ export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Rea
     state: DeploymentStateV1;
     content: DeploymentContentV1;
     teardownProof?: DeploymentTeardownProofV1;
+    /** Live Link revision captured by the admitted platform observer before contacting the provider. */
+    observedTargetLinkRevision?: number;
 }> & Pick<DeploymentTransitionInputV1, 'telemetryMachineId' | 'telemetryTokenHash'>;
 
 /** The installed daemon lends its existing ports; this is not another effect dispatcher. */

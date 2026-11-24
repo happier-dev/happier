@@ -388,7 +388,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
         environmentRevision: number,
         controller: NonNullable<DeploymentReceiptDetailV1['deployment']['acceptedExecution']>['controller'],
-        providerRefusal?: ActionExecuteFailure) {
+        providerRefusal?: ActionExecuteFailure, observedTargetLinkRevision?: number) {
         const absenceFailure = receipt.deployment.operation === 'teardown' ? readProviderTeardownAbsenceFailure(observation) : null;
         if (absenceFailure) {
             await host.writeTransition({ environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
@@ -417,7 +417,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 machines: [controller], workloadAbsent: true, retainedProviderResource: false,
                 steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
             } } : {}),
-            content: observed, context });
+            content: observed, context,
+            ...(observedTargetLinkRevision === undefined ? {} : { observedTargetLinkRevision }) });
         return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true,
             failureCause: written.failureCause };
     }
@@ -453,7 +454,9 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             if (receipt.deployment.operation !== 'teardown' && !content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
             return await withRole<HostReviewedChildrenPreparationV1>({ environmentId: request.input.environmentId,
                 targetLinkId: receipt.deployment.targetLinkId, context: request.context }, environment, 'observe', async scope => {
+                // The provider read follows the retained Receipt. The live Link revision is a separate settlement operand.
                 const input = DeploymentTargetRoleInputSchemasV1.observe.parse({ ...scope.common,
+                    expectedTargetLinkRevision: content.platform.targetLinkRevision,
                     deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
                     actionOperationId: receipt.deployment.actionOperationId,
                     operation: receipt.deployment.operation,
@@ -485,7 +488,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                                 && observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
                                 return failure('outcome_unknown');
                             const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision,
-                                accepted.controller);
+                                accepted.controller, undefined, receipt.deployment.operation === 'deploy'
+                                    && receipt.deployment.cancelRequestedAtMs !== undefined ? scope.common.expectedTargetLinkRevision : undefined);
                             return written.ok ? { ok: true, result: written } : written;
                         } catch (error) { return projectDeploymentException(error, { signal: context.signal }); }
                     } };
@@ -544,6 +548,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 if ((role === 'rollback' || role === 'promote') && (!previous || !priorProviderDeploymentId)) return failure('deployment_conflict');
                 const { repositoryAccess: _currentRepositoryAccess, preparedNative: _currentPreparedNative, ...common } = scope.common;
                 const input = DeploymentTargetRoleInputSchemasV1[role].parse({ ...common,
+                    ...(role === 'observe' ? { expectedTargetLinkRevision: content.platform.targetLinkRevision } : {}),
                     ...(preparedPlatform.repositoryAccess ? { repositoryAccess: preparedPlatform.repositoryAccess } : {}),
                     ...(preparedPlatform.preparedNative ? { preparedNative: preparedPlatform.preparedNative } : {}),
                     deploymentId: receipt!.deployment.id, expectedDeploymentRevision: receipt!.deployment.revision,

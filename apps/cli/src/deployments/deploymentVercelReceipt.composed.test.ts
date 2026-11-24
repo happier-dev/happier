@@ -64,12 +64,14 @@ it.each([
     { scenario: 'ERROR', title: 'settles the retained Vercel receipt from ERROR' },
     { scenario: 'status access revoked', title: 'stops following a Vercel receipt when the provider refuses its status read' },
     { scenario: 'status unavailable', title: 'retains an in-progress Vercel receipt when the provider status service is unavailable' },
+    { scenario: 'cancelled while provider finished', title: 'settles a late Stop from the exact provider receipt after the Link revision advances' },
     { scenario: 'concurrent observer', title: 'returns the settled Vercel receipt when another observer activates it during the provider read' },
     { scenario: 'exact SHA', title: 'prepares an exact-SHA Vercel deploy without Compose' },
     { scenario: 'Session GitHub HEAD', title: 'prepares Vercel from native GitHub HEAD through its retained Session MCP' },
 ] as const)('$title through its real runtime', async ({ scenario }) => {
     const sessionHead = scenario === 'Session GitHub HEAD';
-    const readyState = scenario === 'exact SHA' || sessionHead || scenario === 'concurrent observer' ? 'READY' : scenario;
+    const stopped = scenario === 'cancelled while provider finished';
+    const readyState = scenario === 'exact SHA' || sessionHead || stopped || scenario === 'concurrent observer' ? 'READY' : scenario;
     const accountId = 'owner', origin = 'https://platform-home.test', serverId = 'srv_vercel_receipt_home';
     const providerAccountId = 'team_reviewed', projectId = 'prj_reviewed', sha = 'f'.repeat(40);
     const app = fastify();
@@ -299,6 +301,11 @@ it.each([
         seed(receipt.contentArtifactId, 'deployment-receipt.v1', { ...candidate.content,
             platform: { ...candidate.content.platform, observation: { v: 1, state: 'running',
                 providerDeploymentId: 'dpl_reviewed', observedAtMs: 1 } } });
+        if (stopped) {
+            receipt = { ...receipt, state: 'outcome_unknown', revision: 3, cancelRequestedAtMs: 2 };
+            row.targetLink = { ...row.targetLink, revision: row.targetLink.revision + 1 };
+        }
+        const settledRevision = receipt.revision + 1;
         if (scenario === 'concurrent observer') settleConcurrentObservation = () => {
             // The provider response overlaps the Home boundary's other observer,
             // which has committed this receipt and advanced its serving Link.
@@ -321,8 +328,12 @@ it.each([
         const statusRefused = scenario === 'status access revoked';
         const state = statusRefused ? 'outcome_unknown' : readyState === 'READY' ? 'succeeded' : 'failed';
         expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true, result: {
-            state, deploymentId: receipt.id, deploymentRevision: 3 } });
-        expect(receipt).toMatchObject({ state, revision: 3 });
+            state, deploymentId: receipt.id, deploymentRevision: settledRevision } });
+        expect(receipt).toMatchObject({ state, revision: settledRevision });
+        if (stopped) {
+            expect(receipt.cancelRequestedAtMs).toBe(2);
+            expect(transitions[0]).toMatchObject({ expectedTargetLinkRevision: row.targetLink.revision });
+        }
         expect(transitions).toHaveLength(1);
         if (scenario === 'concurrent observer') {
             expect(transitions[0]).toMatchObject({ expectedTargetLinkRevision: candidate.content.platform.targetLinkRevision });
@@ -334,6 +345,7 @@ it.each([
         if (!decoded || typeof decoded !== 'object' || !('body' in decoded) || typeof decoded.body !== 'string')
             throw new Error('Expected persisted receipt content');
         const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(decoded.body));
+        expect(content.platform.targetLinkRevision).toBe(candidate.content.platform.targetLinkRevision);
         expect(content.platform.observation).toMatchObject({ state, providerDeploymentId: 'dpl_reviewed' });
         if (statusRefused) {
             expect(content.failure).toMatchObject({ code: 'deployment_access_denied', phase: 'observe', effectAttempted: true });
@@ -342,7 +354,7 @@ it.each([
         expect(JSON.stringify({ observed, stored })).not.toContain('provider-private-output-must-not-escape');
         expect(JSON.stringify({ observed, stored })).not.toContain('preview-fixture-secret');
         expect(await executor.execute('deployments.receipts.observe', input, context))
-            .toMatchObject({ ok: true, result: { state, deploymentRevision: 3 } });
+            .toMatchObject({ ok: true, result: { state, deploymentRevision: settledRevision } });
         expect(transitions).toHaveLength(1);
         expect(providerRequests).toHaveLength(1);
     } finally {

@@ -371,7 +371,11 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         && input.kind === 'settle' && (input.state === 'succeeded' || input.state === 'running_unverified');
     const resumedTeardown = !observing && row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
         && input.state === 'running' && !row.cancelRequestedAt;
-    if (row.cancelRequestedAt && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
+    // An exact platform observer can confirm the provider finished before Stop took effect.
+    // Receipt and Link CAS and the newer-receipt guard still own serving publication.
+    const confirmedLateStop = observedSettlement && row.operation === 'deploy' && input.state === 'succeeded';
+    if (row.cancelRequestedAt && !confirmedLateStop
+        && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
         return deploymentFailure('deployment_conflict');
     }
     if (row.revision !== input.expectedRevision || (!resumedTeardown && !observedSettlement && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)

@@ -4769,9 +4769,12 @@ reply. The write records `cancelRequestedAtMs` and overall `outcome_unknown`,
 releasing the Environment's effect slot. It preserves protected member evidence,
 the last uniform release and native resources. Repeating the acknowledged request
 does not publish another change, and cancellation cannot resume that receipt's
-queued/running stages. A later native success cannot advance the uniform pointer
-past a newer attempt. This is uncertainty, not proof that native work stopped;
-the next effect still needs its target owner's current-state observation. Loaded
+queued/running stages. For a platform Deploy, receipt Observe reads the exact retained
+provider deployment. The captured controller may settle a confirmed success after
+Stop. The receipt keeps the stop-request timestamp and uses the admitted Link
+revision for serving publication. A Link change after Observe starts
+or a newer receipt prevents the old attempt from becoming the uniform release. The initial response
+acknowledges the stop request while the provider outcome is still unknown. Loaded
 rollout recovery and multi-Machine execution remain program integration work.
 
 The deployment read controller derives `memberVersions` from its already-opened

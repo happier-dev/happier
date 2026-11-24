@@ -28,7 +28,7 @@ describe('storage-only cancellation through the sole receipt transition route', 
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each(['platform', 'platform-retained-builder', 'own-server', 'own-server-alias'] as const)(
+    it.each(['platform', 'platform-retained-builder', 'own-server', 'own-server-alias', 'late platform Stop', 'superseded platform Stop'] as const)(
         'captures and settles %s from persisted target custody through signed HTTP', async target => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
@@ -115,6 +115,52 @@ describe('storage-only cancellation through the sole receipt transition route', 
             // The URL uses the existing sole receipt transition route.
             const running = await transition(stage);
             expect(running.statusCode, running.body).toBe(200);
+            if (target === 'late platform Stop' || target === 'superseded platform Stop') {
+                const receiptRevision = running.json().deploymentRevision;
+                const cancelPath = `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`;
+                await db.deploymentTargetLink.update({ where: { id: linked.targetLinkId }, data: { revision: { increment: 1 } } });
+                const cancelled = await app.inject({ method: 'POST', url: cancelPath,
+                    headers: { authorization: `Bearer ${token}` },
+                    payload: { serverId, environmentId: environment.id, deploymentId: receipt.id, kind: 'cancel',
+                        expectedReceiptRevision: receiptRevision } });
+                expect(cancelled.json()).toMatchObject({ ok: true, state: 'outcome_unknown', deploymentRevision: receiptRevision + 1 });
+                const confirmed: Omit<DeploymentTransitionInputV1, 'proof'> = { ...stage, kind: 'settle', state: 'succeeded',
+                    expectedRevision: receiptRevision + 1, expectedTargetLinkRevision: linked.targetLinkRevision + 1 };
+                // An ordinary signed deployment continuation cannot undo a Stop.
+                expect((await transition(confirmed)).statusCode).toBe(409);
+                if (target === 'superseded platform Stop') {
+                    const next = { ...input, expectedRevision: cancelled.json().revision,
+                        expectedTargetLinkRevision: confirmed.expectedTargetLinkRevision,
+                        requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await artifact('deployment-receipt.v1') };
+                    const { actionOperationId: _nextOperation, ...nextAction } = next;
+                    const newer = await app.inject({ method: 'POST', url: path, payload: next,
+                        headers: await createSignedExternalActionPostHeadersForTests(app, { accountId: owner.id, machineId,
+                            installationId, privateKey: keys.secretKey, actionId: 'deployments.deploy',
+                            actionInput: nextAction, path, body: next }) });
+                    expect(newer.statusCode, newer.body).toBe(200);
+                }
+                const proof = signMachineInstallationProof({ payload: { version: 1, machineId, installationId, accountId: owner.id,
+                    deploymentTransition: { serverId, environmentId: environment.id, deploymentId: receipt.id,
+                        actionOperationId: receipt.actionOperationId, expectedRevision: confirmed.expectedRevision,
+                        requestBodyDigest: computeDeploymentTransitionRequestDigestV1(confirmed) } }, privateKey: keys.secretKey });
+                const payload = { ...confirmed, proof };
+                const observed = await app.inject({ method: 'POST', url: cancelPath, payload,
+                    headers: await createSignedExternalActionPostHeadersForTests(app, { accountId: owner.id, machineId,
+                        installationId, privateKey: keys.secretKey, actionId: 'deployments.receipts.observe',
+                        actionInput: { serverId, environmentId: environment.id, deploymentId: receipt.id }, path: cancelPath, body: payload }) });
+                if (target === 'superseded platform Stop') {
+                    expect(observed.statusCode, observed.body).toBe(409);
+                    expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: linked.targetLinkId } })).activeDeploymentId).toBeNull();
+                    return;
+                }
+                expect(observed.statusCode, observed.body).toBe(200);
+                expect(observed.json()).toMatchObject({ ok: true, state: 'succeeded', deploymentRevision: receiptRevision + 2 });
+                expect(await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).toMatchObject({
+                    state: 'succeeded', cancelRequestedAt: expect.any(Date), settledAt: expect.any(Date) });
+                expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: linked.targetLinkId } }))
+                    .toMatchObject({ activeDeploymentId: receipt.id, revision: linked.targetLinkRevision + 2 });
+                return;
+            }
             const nextController = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
                 metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: 'test',
                     homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
