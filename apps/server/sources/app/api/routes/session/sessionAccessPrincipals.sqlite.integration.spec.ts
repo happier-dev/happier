@@ -157,12 +157,14 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         } });
     });
 
-    it("answers a member whose sign-in this Team does not accept with the refusal the write gives, and tells no one else", async () => {
+    it("allows a qualifying member, explains a refused sign-in to a member, and hides the Team from a non-member", async () => {
         const accepted = [{ kind: "home_method", methodId: "key_challenge" }];
-        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
-        const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        // Recovery-key evidence is current only for an Account that can use that method.
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
+        const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
         const restricted = await db.team.create({ data: {
-            name: "Willow Design Studio", authenticationPolicy: { v: 1, mode: "restricted", accepted },
+            name: "Willow Design Studio", sessionCreationPolicy: "team_required",
+            authenticationPolicy: { v: 1, mode: "restricted", accepted },
         } });
         const open = await db.team.create({ data: { name: "Open studio" } });
         for (const teamId of [restricted.id, open.id]) {
@@ -184,13 +186,25 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
             code: "session_access_authentication_required", accepted,
         } });
 
+        const qualified = await decide(member.id, restricted.id, true);
+        expect(qualified.statusCode).toBe(200);
+        expect(qualified.json()).toEqual({ v: 1, principals: [], creationDecision: {
+            v: 1, teamId: restricted.id, teamName: restricted.name, requiredByPolicy: true,
+            defaultGrant: { accessLevel: "edit", canApprovePermissions: false },
+            externalSharingPolicy: "allowed",
+        } });
+
         const unrestricted = await decide(member.id, open.id, false);
+        expect(unrestricted.statusCode).toBe(200);
         expect(unrestricted.json().creationDecision).toMatchObject({ teamId: open.id });
         expect(unrestricted.json()).not.toHaveProperty("creationRefusal");
 
         // A non-member learns nothing about the Team or its sign-in rule.
-        const stranger = await decide(outsider.id, restricted.id, false);
-        expect(stranger.json()).toEqual({ v: 1, principals: [], creationDecision: null });
+        for (const qualified of [false, true]) {
+            const stranger = await decide(outsider.id, restricted.id, qualified);
+            expect(stranger.statusCode).toBe(200);
+            expect(stranger.json()).toEqual({ v: 1, principals: [], creationDecision: null });
+        }
     });
 
     it("rejects authority fields and incomplete Group references at the strict request boundary", async () => {
