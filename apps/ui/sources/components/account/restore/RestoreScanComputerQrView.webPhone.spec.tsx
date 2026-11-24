@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -60,6 +61,7 @@ const { disconnectActiveServerConnection } = await import('@/sync/runtime/orches
 const { buildHomeQrInviteDeepLink } = await import('@/auth/pairing/pairingUrl');
 const { encryptBox } = await import('@/encryption/libsodium');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { clearPendingTerminalConnect, setPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
 const { default: RestoreRoute } = await import('@/app/(app)/restore/index');
 const { redirectSystemPath } = await import('@/app/+native-intent');
 const { installDesktopDeepLinks } = await import('@/desktop/deepLinks/installDesktopDeepLinks');
@@ -577,6 +579,28 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(profiles.getActiveServerSnapshot().serverId).toBe(profiles.resolveServerProfileScopeIdForIdentifier(targetHomeId));
         expect(boundary.replace).toHaveBeenCalledWith('/');
         expect(boundary.preventRemove).toHaveBeenLastCalledWith(false);
+    });
+    it('resumes the retained terminal approval after signing into its Home by phone QR', async () => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        await profiles.setActiveServerId(targetHomeId);
+        setPendingTerminalConnect({
+            publicKeyB64Url: encodeBase64(new Uint8Array(32).fill(4), 'base64url'),
+            serverUrl: home.canonicalServerUrl,
+            serverIdentityId: home.homeServerIdentityId,
+            homeConnectionDescriptor: home,
+            pairing: {
+                secretB64Url: encodeBase64(new Uint8Array(32).fill(5), 'base64url'),
+                createdAtMs: Date.now(),
+                expiresAtMs: Date.now() + 60_000,
+            },
+        });
+        try {
+            const screen = await mount({ entryIntent: 'enter_home', embedded: true });
+            await scan(screen);
+            expect(boundary.replace.mock.calls).toEqual([['/terminal/connect']]);
+        } finally {
+            clearPendingTerminalConnect();
+        }
     });
     it.each(['retry', 'return'] as const)('keeps the adopted Home after focus storage failure and allows %s', async response => {
         const setItem = browser.window.Storage.prototype.setItem; let refused = false;

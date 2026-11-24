@@ -1,5 +1,6 @@
 import type { Href } from 'expo-router';
 
+import { resolveTerminalConnectPostAuthResume } from '@/auth/terminal/terminalConnectContinuation';
 import { cancelFirstArrivalStep, runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { setHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 import { getDeviceType } from '@/utils/platform/responsive';
@@ -22,6 +23,7 @@ export function resolvePostAuthLanding(input: Readonly<{
     teamContinuation?: string;
     continuation?: Href;
     returnTo?: string | null;
+    resumePendingTerminal?: boolean;
     revealHome?: (href: '/' | '/home') => void;
 }>): void {
     let target: Href | null = null;
@@ -32,6 +34,15 @@ export function resolvePostAuthLanding(input: Readonly<{
         cancelFirstArrivalStep();
         input.replace(target);
         return;
+    }
+    if (input.resumePendingTerminal) {
+        const terminal = resolveTerminalConnectPostAuthResume();
+        if (terminal) {
+            cancelFirstArrivalStep();
+            // The root can wait for scope hydration using its existing Account subscription.
+            input.replace(terminal.kind === 'ready' ? terminal.href : '/');
+            return;
+        }
     }
     const home = getDeviceType() === 'phone' ? '/home' : '/';
     revealFirstArrivalHome('workflow', () => (input.revealHome ?? input.replace)(home));

@@ -73,7 +73,7 @@ import {
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
-import { openEnrolledHomeOrReturnToShell } from '@/auth/pairing/openEnrolledHome';
+import { openEnrolledHomeOrReturnToShell, type OpenEnrolledHomeResult } from '@/auth/pairing/openEnrolledHome';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { EnrolledComputerSetup } from './EnrolledComputerSetup';
 
@@ -321,7 +321,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const [activeInvite, setActiveInvite] = React.useState<HomeQrInviteV2 | null>(null);
     const [pendingRequesterApproval, setPendingRequesterApproval] = React.useState<RequesterApproval | null>(null);
     const [navigationLocked, setNavigationLocked] = React.useState(false);
-    const [shellNavigationRequested, setShellNavigationRequested] = React.useState(false);
+    const [shellNavigationRequested, setShellNavigationRequested] = React.useState<Exclude<OpenEnrolledHomeResult, 'cancelled'> | null>(null);
     const [desktopEnrollment, setDesktopEnrollment] = React.useState<Readonly<{
         profileId: string;
         targetLabel: string;
@@ -458,7 +458,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     React.useEffect(() => {
         if (!shellNavigationRequested || navigationLocked) return;
-        resolvePostAuthLanding({ replace: router.replace });
+        resolvePostAuthLanding({ replace: router.replace, resumePendingTerminal: shellNavigationRequested === 'opened' });
     }, [navigationLocked, router, shellNavigationRequested]);
 
     /** Persist the enrollment result under the explicit target Home without touching focus. */
@@ -502,7 +502,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             refreshAuth: auth.refreshFromActiveServer,
         });
         if (result !== 'cancelled' && isCurrentAttempt(attemptId)) {
-            setShellNavigationRequested(true);
+            setShellNavigationRequested(result);
         }
         return result === 'opened';
     }, [auth.refreshFromActiveServer, isCurrentAttempt]);
@@ -1281,7 +1281,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         refreshAuth: auth.refreshFromActiveServer,
                     });
                     if (result !== 'cancelled' && desktopCompletionGenerationRef.current === generation) {
-                        setShellNavigationRequested(true);
+                        setShellNavigationRequested(result);
                     }
                 })();
             }} />

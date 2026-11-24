@@ -26,7 +26,7 @@ import { usePreventRemove } from '@react-navigation/native';
 import { RequesterCodeCard } from './RequesterCodeCard';
 import { PairingLinkDisclosure } from '@/components/auth/pairing/PairingLinkDisclosure';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
-import { openEnrolledHomeOrReturnToShell } from '@/auth/pairing/openEnrolledHome';
+import { openEnrolledHomeOrReturnToShell, type OpenEnrolledHomeResult } from '@/auth/pairing/openEnrolledHome';
 import { cancelFirstArrivalStep, holdFirstArrivalStep } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
@@ -243,7 +243,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         beforeAdoption: firstRun && Platform.OS === 'web' && props.entryIntent === 'enter_home' ? beforeAdoption : undefined,
     });
     const pairing = reversePairing.presentation;
-    const [shellNavigationRequested, setShellNavigationRequested] = React.useState(false);
+    const [shellNavigationRequested, setShellNavigationRequested] = React.useState<Exclude<OpenEnrolledHomeResult, 'cancelled'> | null>(null);
     const [setupCompletedProfileId, setSetupCompletedProfileId] = React.useState<string | null>(null);
     const requiresComputerSetup = isDesktopHost() && pairing.phase === 'succeeded'
         && setupCompletedProfileId !== pairing.profileId;
@@ -324,14 +324,14 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         }).then((result) => {
             if (result !== 'opened' && firstRun) cancelFirstArrivalStep();
             if (result !== 'cancelled' && openGenerationRef.current === generation) {
-                setShellNavigationRequested(true);
+                setShellNavigationRequested(result);
             }
         });
     }, [auth.refreshFromActiveServer, canLeaveApproved, firstRun, pairing, props.entryIntent, requiresComputerSetup]);
 
     React.useEffect(() => {
         if (!shellNavigationRequested || claimOwnsNavigation) return;
-        resolvePostAuthLanding({ replace: router.replace });
+        resolvePostAuthLanding({ replace: router.replace, resumePendingTerminal: shellNavigationRequested === 'opened' });
     }, [claimOwnsNavigation, router, shellNavigationRequested]);
 
     React.useEffect(() => () => {

@@ -1,7 +1,8 @@
 import { Platform } from 'react-native';
 import { focusTerminalConnectHome } from './focusTerminalConnectHome';
-import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { isTerminalPairingExpired } from '@/sync/domains/pending/pendingTerminalConnect.shared';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerUrl, resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
@@ -148,4 +149,15 @@ export async function focusTerminalConnectTarget(params: Readonly<{
 
 export function terminalConnectResumeHref(): '/terminal/connect' | '/terminal' {
     return Platform.OS === 'web' ? '/terminal/connect' : '/terminal';
+}
+
+export function resolveTerminalConnectPostAuthResume():
+    | Readonly<{ kind: 'ready'; href: ReturnType<typeof terminalConnectResumeHref> }>
+    | Readonly<{ kind: 'awaiting_account' }>
+    | null {
+    if (!getPendingTerminalConnect()) return null;
+    // The retained request can only resume on its Home Account after scope hydration.
+    return getActiveServerAccountScope()
+        ? { kind: 'ready', href: terminalConnectResumeHref() }
+        : { kind: 'awaiting_account' };
 }

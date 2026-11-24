@@ -8,7 +8,6 @@ import { MainView } from '@/components/navigation/shell/MainView';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext } from '@/components/appShell/workspace/WorkspaceRouteHostingContext';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
 import { HostedSignedOutRouteContext } from '@/components/onboarding/preAuth/SignedOutRecoveryWorkflow';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
@@ -24,7 +23,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
-import { terminalConnectResumeHref } from '@/auth/terminal/terminalConnectContinuation';
+import { resolveTerminalConnectPostAuthResume } from '@/auth/terminal/terminalConnectContinuation';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 
 const stylesheet = StyleSheet.create({
@@ -116,10 +115,11 @@ export function Home() {
                 },
             });
         };
-        if (getPendingTerminalConnect()) {
+        const terminal = resolveTerminalConnectPostAuthResume();
+        if (terminal) {
             // Custody is only claimed by its Home Account. Leave the entry in place
             // while that binding hydrates, without showing Home or a lower-priority route.
-            if (scope) apply(terminalConnectResumeHref());
+            if (terminal.kind === 'ready') apply(terminal.href);
             return;
         }
 
