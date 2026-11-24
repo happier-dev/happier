@@ -1,7 +1,10 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { type DatabaseCaptureCostsReadResultV1 } from '@happier-dev/database-protocol';
-import { UsageModelPriceOverridesV1Schema, UsageModelPriceReadResultSchema } from '@happier-dev/plugin-sdk/usage';
+import {
+    UsageModelPriceOverridesV1Schema,
+    readAppCallsPricingV1,
+} from '@happier-dev/plugin-sdk/usage';
 import { type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { CaptureRuntime } from './runtime.js';
 import type { CostOperandsInput } from './store/costs.js';
@@ -23,15 +26,17 @@ export async function readCaptureCostWindow(runtime: CaptureRuntime, input: Cost
 /** The caller loads this once for all windows in one Action; nothing is retained between viewers or invocations. */
 export async function loadCaptureCostPricingContext(context: PluginInvocationContext,
     modelIds: readonly string[]): Promise<CaptureCostPricingContext> {
-    const settings = await context.services.actions.execute('settings.get', { anchor: 'usage.modelPrices' }, { signal: context.signal });
-    if (isPluginActionApprovalRequestCreated(settings)) throw new PluginError({ code: 'approval_required' });
-    const viewerOverrides = UsageModelPriceOverridesV1Schema.parse('unset' in settings ? {} : settings.value);
-    // Mapping targets are price identifiers, not copied tariffs or locally resolved aliases.
-    const selectedIds = [...new Set([...modelIds, ...Object.values(viewerOverrides).flatMap(value => value.kind === 'map' ? [value.modelId] : [])])];
-    const prices = await context.services.actions.execute('usage.prices.get', { modelIds: selectedIds }, { signal: context.signal });
-    if (isPluginActionApprovalRequestCreated(prices)) throw new PluginError({ code: 'approval_required' });
-    const delivered = UsageModelPriceReadResultSchema.parse(prices);
-    const catalog: UsageModelPriceCatalog = 'models' in delivered ? delivered
-        : { v: delivered.v, models: {}, provenance: delivered.provenance };
-    return { catalog, viewerOverrides };
+    return readAppCallsPricingV1({
+        modelIds,
+        readOverrides: async () => {
+            const settings = await context.services.actions.execute('settings.get', { anchor: 'usage.modelPrices' }, { signal: context.signal });
+            if (isPluginActionApprovalRequestCreated(settings)) throw new PluginError({ code: 'approval_required' });
+            return UsageModelPriceOverridesV1Schema.parse('unset' in settings ? {} : settings.value);
+        },
+        readCatalog: async selectedIds => {
+            const prices = await context.services.actions.execute('usage.prices.get', { modelIds: selectedIds }, { signal: context.signal });
+            if (isPluginActionApprovalRequestCreated(prices)) throw new PluginError({ code: 'approval_required' });
+            return prices;
+        },
+    });
 }

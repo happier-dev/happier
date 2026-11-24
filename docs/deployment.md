@@ -3275,6 +3275,13 @@ of the serving release. An intervening repeat keeps that boundary. An
 unestablished label or insufficient retained evidence returns Inconclusive.
 Disarming the Workflow stops further automatic evaluations.
 
+App LLM cost reads return the selected collector's token operands, reported
+currency and coverage. Account-placed Usage reads price those operands using
+`usage.prices.get` and the invoking Account's model price overrides. A saved
+spend check uses the Account operating its observer daemon. The retained
+result identifies that Account and the API-equivalent USD catalog revision.
+An incompletely priced population leaves the threshold inconclusive.
+
 The Environment Telemetry tab is the deployment host's reader for this retained
 data. Its Endpoints, Traces, Logs and Queries tabs use the selected time window
 and the Environment's collector assignment. The tab retains results for the

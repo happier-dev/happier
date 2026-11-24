@@ -56,31 +56,27 @@ async function fixture() {
         }),
         check: () => host.invokeAction(databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1), {
             sourceInstanceId: 'saved', checkId: 'spend',
-        }, { chosenMachine: { machineId: 'collector', installationId: 'installed' } }),
+        }, { chosenMachine: { machineId: 'collector', installationId: 'installed' },
+            requesterAccount: { accountId: 'check-owner' } }),
         async close() { vi.useRealTimers(); await host.dispose(); await lease.release(); sqlite.close(); },
     };
 }
 
-describe('app spend in the existing Metric and Key flow owners', () => {
-    it('shares viewer-priced Usage facts with the Metric series and saved spend threshold without enabling Metrics', async () => {
+describe('App spend on the collector', () => {
+    it('prices a saved check with its owning Account and leaves viewer pricing outside the collector', async () => {
         const f = await fixture();
         try {
             vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(2000);
-            expect(await f.read()).toMatchObject({ result: { measurements: { measure: 'spend', value: 6,
-                unit: 'USD', basis: 'catalog_estimate', completeness: 'complete' } },
-                trend: [{ since: 1000, until: 2000, value: 6, unit: 'USD', count: 1 }],
-                usage: { totals: { cost: { apiEquivalentUsd: 6 } }, priceCatalog: { provenance: { revision: 'spend-owner-revision' } },
-                    costFacts: expect.arrayContaining([expect.objectContaining({ kind: 'reported', amountUsd: 4.25, currency: 'EUR' })]) } });
+            await expect(f.read()).rejects.toMatchObject({ code: 'unsupported_action' });
+            expect(f.priceCalls()).toBe(0);
             expect(await f.check()).toMatchObject({ status: 'up', measurements: { value: 6, unit: 'USD' } });
             f.setOverrides({ model: { kind: 'rates', inputUsdPerMillion: 10, outputUsdPerMillion: 20 } });
-            expect(await f.read()).toMatchObject({ result: { measurements: { value: 30 } }, trend: [{ value: 30 }],
-                usage: { totals: { cost: { apiEquivalentUsd: 30 } } } });
             const failed = await f.check();
             expect(failed).toMatchObject({ status: 'degraded', measurements: { value: 30, unit: 'USD' },
                 cause: { reason: 'threshold_exceeded' }, evidence: { items: expect.arrayContaining([
-                    expect.objectContaining({ text: expect.stringContaining('spend-owner-revision') }),
+                    expect.objectContaining({ text: expect.stringMatching(/API-equivalent estimate.*check-owner.*spend-owner-revision/) }),
                 ]) } });
-            expect(f.priceCalls()).toBe(4); // One catalog request per demanded pricing context, never per retained call.
+            expect(f.priceCalls()).toBe(2); // One catalog read for each saved check evaluation.
         } finally { await f.close(); }
     });
 
@@ -90,14 +86,13 @@ describe('app spend in the existing Metric and Key flow owners', () => {
             vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(2000);
             await f.lease.runtime.store.write([{ id: 'unknown', kind: 'span', source: 'otlp', worktree: 'environment:env', at: 1100,
                 serviceName: 'api', genAi: { ...genAi, modelId: 'unpriced', requestedModel: 'unpriced', reportedCost: null } }]);
-            expect(await f.read()).toMatchObject({ result: { status: 'unknown', measurements: { completeness: 'unknown' } },
-                usage: { costFacts: expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 1 })]) } });
+            expect(await f.check()).toMatchObject({ status: 'unknown', measurements: { completeness: 'unknown',
+                reasons: expect.arrayContaining(['unpriced_calls']) } });
             f.lease.runtime.recordCoverage('environment:env', 'capture_write_failed');
             expect(await f.check()).toMatchObject({ status: 'unknown', measurements: { completeness: 'unknown',
                 reasons: expect.arrayContaining(['capture_coverage_lost']) } });
             f.disable();
             const before = f.priceCalls();
-            expect(await f.read()).toMatchObject({ result: { status: 'unknown', measurements: { reasons: ['app_llm_cost_disabled'] } }, trend: [] });
             expect(await f.check()).toMatchObject({ status: 'unknown', measurements: { reasons: ['app_llm_cost_disabled'] } });
             expect(f.priceCalls()).toBe(before);
         } finally { await f.close(); }

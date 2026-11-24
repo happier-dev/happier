@@ -6,16 +6,18 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { SERVICE_CHECK_RESPONSE_WINDOW_MS, type ServiceCheckCollectorTrend } from './serviceCheckPresentation';
 import { readTelemetryCheckHistory } from './telemetryMetricSeries';
 
+type CollectorTrend = Awaited<ReturnType<typeof readTelemetryCheckHistory>>;
+
 export type ServiceCheckCollectorTrendRead =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'unavailable' }>
-  | Readonly<{ kind: 'ready'; read: TelemetryMetricsReadResultV1 }>;
+  | Readonly<{ kind: 'ready'; read: CollectorTrend }>;
 
 export type ServiceCheckCollectorTrendReader = (
   input: Parameters<typeof readTelemetryCheckHistory>[0],
   signal: AbortSignal,
-) => Promise<TelemetryMetricsReadResultV1>;
+) => Promise<CollectorTrend>;
 
 /** The collector read through the Action front door, on the Machine the check runs on. */
 const readThroughFrontDoor: ServiceCheckCollectorTrendReader = (input, signal) =>

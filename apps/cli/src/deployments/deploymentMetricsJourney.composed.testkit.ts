@@ -12,7 +12,28 @@ import { healthResultProjectionPageSchema } from '../../../../packages/plugins/m
 
 const producerSchema = z.object({ serviceName: z.string(), serviceVersion: z.string().optional(), serviceInstanceId: z.string() });
 const flushSchema = z.object({ enabled: z.literal(true), heapUsed: z.number(), producer: producerSchema });
-const setupSchema = z.object({ sourceInstanceId: z.string(), sourceContractVersion: z.literal(1), sourceConfig: z.unknown() });
+export const productionTelemetryHealthSetupSchema = z.object({ sourceInstanceId: z.string(), sourceContractVersion: z.literal(1), sourceConfig: z.unknown() });
+
+export async function adoptProductionTelemetryHealthCheck(input: Readonly<{
+    serverUrl: string; collectorMachineId: string; credentials: ReturnType<typeof readS0ControllerCredentials>;
+    signal: AbortSignal; setup: ReturnType<typeof productionTelemetryHealthSetupSchema.parse>;
+    accepted(name: string, value: unknown): Promise<unknown>;
+}>) {
+    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await callExactMachineRpc({
+        credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.collectorMachineId,
+        method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+        request: { machineId: input.collectorMachineId, locale: 'en', deferredSections: true, supportedEventObservationBindingVersions: [1] },
+        requireCurrentMachine: true, signal: input.signal,
+    }));
+    const event = projection.automationEligibleEvents?.find(entry => entry.event.identity.pluginId === 'happier.machine.services'
+        && entry.event.identity.localId === 'health-check-failed');
+    if (!event?.observationBinding) throw new Error('Collector must publish its saved-check observer materialization');
+    await input.accepted('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
+        trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity,
+            sourceInstanceId: input.setup.sourceInstanceId, sourceContractVersion: input.setup.sourceContractVersion, sourceConfig: input.setup.sourceConfig,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: event.observationBinding.materializationRef },
+            filter: null, maximumObservationAgeMs: null }, includeEventDefinition: true });
+}
 
 /** F15 extends F14's real SDK workload, credentialed Actions, Home and collector B.
  * It deliberately uses the saved-check scheduler and Account result projection. */
@@ -66,7 +87,7 @@ export async function runProductionMetricsJourney(input: Readonly<{
     expect((await read({ ...routeMeasure, routes: [{ method: 'GET', route: '/not-emitted' }] })).result.status).toBe('unknown');
 
     const checkId = 'checkout-error-rate';
-    const setup = setupSchema.parse(await input.acceptedOnCollector('action.invoke', {
+    const setup = productionTelemetryHealthSetupSchema.parse(await input.acceptedOnCollector('action.invoke', {
         action: { pluginId: 'happier.machine.services', localId: 'health/setup' },
         input: { v: 1, subject: { kind: 'environment', environmentId: input.environmentId },
             checks: [{ checkId, kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, binding: { kind: 'healthCheck' },
@@ -76,20 +97,7 @@ export async function runProductionMetricsJourney(input: Readonly<{
                     threshold: { operator: 'above', value: 0.1 } },
                 periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }], investigation: { mode: 'inbox' } },
     }));
-    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await callExactMachineRpc({
-        credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.collectorMachineId,
-        method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-        request: { machineId: input.collectorMachineId, locale: 'en', deferredSections: true, supportedEventObservationBindingVersions: [1] },
-        requireCurrentMachine: true, signal: input.signal,
-    }));
-    const event = projection.automationEligibleEvents?.find(entry => entry.event.identity.pluginId === 'happier.machine.services'
-        && entry.event.identity.localId === 'health-check-failed');
-    if (!event?.observationBinding) throw new Error('F15 collector must publish its real saved-check observer materialization');
-    await input.accepted('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
-        trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity,
-            sourceInstanceId: setup.sourceInstanceId, sourceContractVersion: setup.sourceContractVersion, sourceConfig: setup.sourceConfig,
-            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: event.observationBinding.materializationRef },
-            filter: null, maximumObservationAgeMs: null }, includeEventDefinition: true });
+    await adoptProductionTelemetryHealthCheck({ ...input, setup });
     const retained = async () => {
         const page = healthResultProjectionPageSchema.parse(await input.accepted('action.invoke', {
             action: { pluginId: 'happier.machine.services', localId: 'health/results' }, input: {},

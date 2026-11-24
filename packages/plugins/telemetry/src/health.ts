@@ -8,6 +8,7 @@ import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { projectTelemetryMetricsActionReadResultV1 } from '@happier-dev/plugin-sdk/database';
 import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import {
+    APP_CALLS_SPEND_EVIDENCE_LABEL, appCallsPricingModelIds,
     projectAppCallsUsageV1 as projectDatabaseCaptureUsageV1,
     projectAppCallsCostMetricSeriesV1 as projectDatabaseAppCostMetricSeriesV1,
 } from '@happier-dev/plugin-sdk/usage';
@@ -150,9 +151,8 @@ export async function readKeyFlowWindows(runtime: CaptureRuntime, inputs: readon
     const costReads = await Promise.all(inputs.map(input => input.measure.kind !== 'spend' ? undefined
         : readCaptureCostWindow(runtime, { worktree: telemetryPartition(input.environmentId), serviceName: input.serviceName,
             serviceVersion: input.serviceVersion, since: input.since, until: input.until, granularity: 'hour' })));
-    const modelIds = [...new Set(costReads.flatMap(read => read?.items.flatMap(item =>
-        [item.modelId, item.requestedModel].filter((id): id is string => id !== null)) ?? []))];
-    const pricing = costReads.some(read => read !== undefined) ? await loadCaptureCostPricingContext(context, modelIds) : undefined;
+    const windows = costReads.filter(read => read !== undefined);
+    const pricing = windows.length ? await loadCaptureCostPricingContext(context, appCallsPricingModelIds(windows)) : undefined;
     return Promise.all(inputs.map(async (input, index): Promise<KeyFlowWindow> => {
         if (input.measure.kind !== 'spend') return readKeyFlowWindow(runtime, { ...input, measure: input.measure });
         const read = costReads[index]!;
@@ -177,13 +177,14 @@ export async function readKeyFlowWindows(runtime: CaptureRuntime, inputs: readon
 
 /** Finite health evidence retains the catalog label without storing a tariff or another check result. */
 export function evaluateKeyFlowWindow(selected: Pick<KeyFlowWindow, 'measurements' | 'usage'>,
-    threshold: Parameters<typeof evaluateKeyFlow>[1], observedAt: number, machineId: string) {
+    threshold: Parameters<typeof evaluateKeyFlow>[1], observedAt: number, machineId: string, checkAccountId?: string) {
     const result = evaluateKeyFlow(selected.measurements, threshold, observedAt, machineId);
     const catalog = selected.usage?.priceCatalog;
     if (!catalog) return result;
+    const accountBasis = checkAccountId ? ` Check Account ${checkAccountId} (its Usage prices).` : '';
     return { ...result, evidence: { v: 1 as const, items: [...result.evidence!.items,
-        { source: { kind: 'alert' as const, label: 'App LLM cost' }, author: { kind: 'process' as const },
-            text: `API-equivalent estimate in USD; catalog revision ${catalog.provenance.revision}.` }] } };
+        { source: { kind: 'alert' as const, label: APP_CALLS_SPEND_EVIDENCE_LABEL }, author: { kind: 'process' as const },
+            text: `API-equivalent estimate in USD.${accountBasis} Catalog revision ${catalog.provenance.revision}.` }] } };
 }
 
 function metadata(id: typeof TELEMETRY_METRICS_READ_ACTION_ID_V1 | typeof TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1) {
@@ -219,7 +220,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             if (!reason && (!machineId || !runtime)) reason = 'collector_unavailable';
             const selected = reason ? { measurements: unknown(input, reason) } : (await readKeyFlowWindows(runtime!, [input], context))[0]!;
             return HealthCheckResultV1ProtocolSchema.parse(projectNativeJsonValueForTransport(
-                evaluateKeyFlowWindow(selected, config.threshold, context.invokedAtMs, machineId)));
+                evaluateKeyFlowWindow(selected, config.threshold, context.invokedAtMs, machineId, context.requesterAccount?.accountId)));
         },
     },
     [databaseActionLocalIdV1(TELEMETRY_METRICS_READ_ACTION_ID_V1)]: {
@@ -245,14 +246,16 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             const admitted = await admit({ serverId: input.serverId, environmentId: input.environmentId });
             const runtime = localCaptureBackground.readRuntime();
             const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);
-            const selected: KeyFlowWindow = reason ? { measurements: unknown(input, reason), routes: [], trend: [] }
-                : (await readKeyFlowWindows(runtime!, [input], context))[0]!;
+            if (input.measure.kind === 'spend') {
+                throw new PluginError({ code: 'unsupported_action', message: 'Read App calls spend through the Account Usage query.' });
+            }
+            const selected = reason ? { measurements: unknown(input, reason), routes: [], trend: [] }
+                : await readKeyFlowWindow(runtime!, { ...input, measure: input.measure });
             const evaluate = (measurement: KeyFlowMeasurements) => evaluateKeyFlow(measurement, undefined, context.invokedAtMs, admitted.collectorMachineId);
             return projectTelemetryMetricsActionReadResultV1({
                 result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
                 routes: selected.routes.map(route => ({ method: route.method, route: route.route,
                     result: evaluate(route.measurements) })), trend: selected.trend,
-                ...(selected.usage ? { usage: selected.usage } : {}),
             });
         },
     },

@@ -32,6 +32,7 @@ import { isReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIds
 import { ReviewHumanStateV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { executeCliReviewHumanAction } from '@/api/reviewHumanAction';
 import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { readUsageAppCallsAccounting, readUsageAppCallsEnvironmentIds } from '@happier-dev/plugin-sdk/usage';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { bindPublicProfileActionPorts } from '@happier-dev/protocol/actions/executor/publicProfileActions';
 import { buildPublicProfileSnapshot } from '@happier-dev/protocol/account/publicProfileSnapshot';
@@ -88,7 +89,7 @@ import {
   type ExternalActionMachineRequestSigningKey,
 } from '@/api/externalActionExecutionAuthorization';
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
-import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { readUsageAccountingSnapshots } from './usageAccountingReads';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
@@ -633,13 +634,19 @@ export function createAccountServerActionDeps(input: Readonly<{
         get: context => readPrices(false, context),
         refresh: context => readPrices(true, context),
       },
-      query: async (request, context) => {
+      query: async (request, context, readChild) => {
         const mismatch = await accountServerTargetMismatch(context);
         if (mismatch) return mismatch;
         const retired = (): ActionExecuteFailure => ({ ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' });
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
         const accountingNowMs = Date.now();
-        const accountingReads = resolveUsagePageAccountingReads(request.queries, accountingNowMs);
+        const appEnvironments = (query: (typeof request.queries)[number]) => readUsageAppCallsEnvironmentIds(query.sources);
+        const reads = resolveUsagePageAccountingReads(request.queries, accountingNowMs);
+        const accountingReads = reads.filter(({ query }) => !appEnvironments(query));
+        const appReads = reads.flatMap(plan => {
+          const environmentIds = appEnvironments(plan.query);
+          return environmentIds ? [{ ...plan, environmentIds }] : [];
+        });
         // A selected Project asks for every key its usage may carry (owner 11-08), from one census read. Without the
         // census (an external read principal, or the read failing) the Project's anchor alone.
         let projectScopeKeys: ((projectKey: string) => Iterable<string>) | undefined;
@@ -725,7 +732,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const profileRequest = bindHomeDomainActionHttpRequestV1('account.profile.get', {});
           const profile = AccountProfileResponseSchema.parse(await read(profileRequest.path));
           accountId = profile.id;
-          pools = await Promise.all(request.queries.map(async query => ({ query,
+          pools = await Promise.all(request.queries.filter(query => !appEnvironments(query)).map(async query => ({ query,
             value: await Promise.all(profile.connectedAccountGroupsV4.map(async group => {
               const machineId = query.machines.length === 1 ? query.machines[0] : undefined;
               let selection: UsageQueryPoolSnapshot['selection'] = { status: 'unsupported', errorCode: 'machine_context_unavailable' };
@@ -761,7 +768,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             })),
           })));
           const { readCliUsageQuota } = await import('@/usage/readCliUsageQuota');
-          const quotaReads = await readCliUsageQuota({ queries: request.queries, nowMs: accountingNowMs, context, readQuota,
+          const quotaReads = await readCliUsageQuota({ queries: request.queries.filter(query => !appEnvironments(query)), nowMs: accountingNowMs, context, readQuota,
             sources: profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth')
               .map(account => ({ bindingKind: 'account', ref: account.ref })),
           });
@@ -776,7 +783,39 @@ export function createAccountServerActionDeps(input: Readonly<{
         if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
         const accounting = snapshots.filter((snapshot): snapshot is UsageAccountingSourceSnapshot => !('ok' in snapshot));
-        const detail = await readCliUsageDetail({ queries: request.queries.filter(query => query.includeAccounting && (query.includeSessionEvidence || query.includeWorkEvidence)),
+        const appAccounting = await Promise.all(appReads.map(async (plan): Promise<UsageAccountingSourceSnapshot> => {
+          const { query, period, environmentIds } = plan;
+          if (query.population === 'public_eligible_personal') return { query, period, status: 'unsupported' };
+          if (!readChild || pricingOverrides === undefined) {
+            return { query, period, status: 'error', errorCode: 'usage_app_prices_unavailable' };
+          }
+          const overrides = pricingOverrides;
+          const execute: Parameters<typeof readUsageAppCallsAccounting>[0]['execute'] = async (id, value, operation) => {
+            const result = await readChild(id, value, operation);
+            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+            return result.result;
+          };
+          try {
+            const value = await readUsageAppCallsAccounting({
+              execute, serverId: serverIdentityId ?? serverId, request: usageQueryToAnalyticsRequest({ ...query, period }, accountingNowMs),
+              environmentIds,
+              readOverrides: () => overrides,
+              readCatalog: async modelIds => {
+                const result = await readChild(USAGE_PRICE_ACTION_IDS.get, { modelIds }, { signal: context.signal });
+                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                return result.result;
+              },
+              signal: context.signal,
+            });
+            return { query, period, status: 'available', value };
+          } catch (error) {
+            await check();
+            return { query, period, status: 'error',
+              errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'usage_query_failed' };
+          }
+        }));
+        accounting.push(...appAccounting);
+        const detail = await readCliUsageDetail({ queries: request.queries.filter(query => !appEnvironments(query) && query.includeAccounting && (query.includeSessionEvidence || query.includeWorkEvidence)),
           accounting, credentials, serverId, serverHttpBaseUrl, accountEncryptionMode,
           allowPrivateRead: !context.externalActionCredential && !context.externalActionExecutionAuthorization,
           nowMs: accountingNowMs, signal: context.signal, assertCurrent: check,

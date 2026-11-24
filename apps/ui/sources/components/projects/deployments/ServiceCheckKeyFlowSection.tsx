@@ -11,6 +11,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
+import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 import {
@@ -56,6 +57,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
   const config = props.trend.config;
   const threshold = config.threshold;
   const routeFlow = config.measure.kind === 'route';
+  const spend = config.measure.kind === 'spend';
   const errorsMeasured = config.measure.kind === 'route' && config.measure.statistic === 'errorRate';
   const source = props.collectorLabel
     ? t(`${m}.keyFlowSource`, { machine: props.collectorLabel })
@@ -66,7 +68,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
     const point = (interval: Interval, y: number | null) => ({ id: JSON.stringify([interval.since, interval.until]), x: interval.until, y,
       label: formatClock(interval.until) });
     const latency: HappierSeries = { id: 'latency', label: config.measure.kind === 'runtime' ? config.measure.metricName
-      : t(`${m}.keyFlowLatency`, { statistic: latencyWord(config) }), color,
+      : spend ? t(`${m}.keyFlowSpend`) : t(`${m}.keyFlowLatency`, { statistic: latencyWord(config) }), color,
       points: read.read.trend.map((interval) => point(interval, serviceCheckCollectorLatency(config, interval))) };
     const errors: HappierSeries = { id: 'errors', label: t(`${m}.keyFlowErrors`), color,
       points: read.read.trend.map((interval) => point(interval, interval.errorRate ?? null)) };
@@ -75,7 +77,8 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
     const last = read.read.trend[read.read.trend.length - 1];
     const axisTicks = first && last ? serviceCheckWindowEnds(first.since, last.until, Date.now()) : undefined;
     return { latency, errors, axisTicks };
-  }, [color, config, read]);
+  }, [color, config, read, spend]);
+  const formatValue = routeFlow ? formatServiceCheckLatency : spend ? (value: number) => formatUsageCost(value, 'USD') : String;
   const limitLabel = t(`${m}.keyFlowLimit`);
   // Both trend heads carry one detail line, so the two plots start level beside each other.
   const span = t(`${m}.keyFlowRoutesWindow`);
@@ -83,7 +86,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
   const twoUp = width !== null && width >= CHART_MIN_WIDTH_PX * 2;
   return (
     <>
-      <ItemGroup title={t(`${m}.keyFlowTrend`, { statistic: latencyWord(config) })} surface="none" testID="services.check.keyFlow.trend"
+      <ItemGroup title={spend ? t(`${m}.keyFlowSpend`) : t(`${m}.keyFlowTrend`, { statistic: latencyWord(config) })} surface="none" testID="services.check.keyFlow.trend"
         action={<Text variant="meta" style={styles.caption}>{source}</Text>}>
         {read.kind === 'loading' || read.kind === 'idle' ? (
           <SurfaceStateCard kind="loading" size="line" title={t(`${m}.keyFlowReading`)} testID="services.check.keyFlow.loading" />
@@ -92,11 +95,11 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
         ) : charts ? (
           <View style={[styles.charts, twoUp ? styles.chartsRow : null]} onLayout={(event) => setWidth(Math.round(event.nativeEvent.layout.width))}>
             <View style={styles.chart} testID="services.check.keyFlow.latency">
-              <ChartHead title={charts.latency.label} latest={latestOf(charts.latency, routeFlow ? formatServiceCheckLatency : String)}
-                detail={errorsMeasured ? span : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}`} />
+              <ChartHead title={charts.latency.label} latest={latestOf(charts.latency, formatValue)}
+                detail={errorsMeasured || spend ? span : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}`} />
               <StackedSeriesChart theme={pluginTheme} label={charts.latency.label} series={[charts.latency]} variant="line" size="full"
-                showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
-                {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.limitTone } } : {})} />
+                showLegend={false} showReadout={false} {...(routeFlow || spend ? { valueFormatter: formatValue } : {})} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
+                {...(!errorsMeasured && !spend ? { threshold: { value: threshold.value, label: limitLabel, tone: props.limitTone } } : {})} />
             </View>
             {routeFlow ? (
               <View style={styles.chart} testID="services.check.keyFlow.errors">

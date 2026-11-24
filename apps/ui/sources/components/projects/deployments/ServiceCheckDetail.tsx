@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { APP_CALLS_SPEND_EVIDENCE_LABEL } from '@happier-dev/plugin-sdk/usage';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -299,6 +300,10 @@ export function ServiceCheckDetail(
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
   const recent = shown ? readServiceCheckRecent(shown) : null;
   const shownKeyFlow = definition?.keyFlow ?? null;
+  const spendBasis = shownKeyFlow?.measure.kind === 'spend'
+    ? shown?.result.evidence?.items?.find(item => item.source.kind === 'alert'
+      && item.source.label === APP_CALLS_SPEND_EVIDENCE_LABEL)?.text
+    : undefined;
   const causeText = shownKeyFlow && shown ? serviceCheckKeyFlowCauseText(shownKeyFlow, shown.result) : serviceCheckCauseText(shown?.result.cause);
   const latencies = recent
     ? recent.results.slice(0, PAGE_RESULTS).flatMap((result) => (result.latencyMs === undefined ? [] : [result])).reverse()
@@ -494,6 +499,7 @@ export function ServiceCheckDetail(
           <FactStrip facts={stripFacts} layout="columns" scale="headline"
             narrow={factsWidth !== null && factsWidth < stripFacts.length * FACT_MIN_WIDTH_PX} />
         </View>
+        {spendBasis ? <Text variant="meta" style={styles.captionText}>{spendBasis}</Text> : null}
       </ItemGroup>
       {collectorTrend ? (
         <ServiceCheckKeyFlowSection scope={row.scope} trend={collectorTrend} collectorLabel={collectorLabel}

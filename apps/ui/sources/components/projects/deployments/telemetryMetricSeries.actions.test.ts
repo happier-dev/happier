@@ -52,6 +52,7 @@ describe('collector-selected Check history through the Action front door', () =>
     expect(calls).toEqual([{ action, input: selection, target: { kind: 'machine', machineId: 'collector-b' },
       serverId: scope.serverId, signal: abort.signal }]);
     expect(read).toEqual(response);
+    if (!('result' in read)) throw new Error('Route history must include the collector measurement');
     expect(metrics.readTelemetryMetricSeries(read, { id: 'checkout', label: 'Checkout' })).toMatchObject({
       series: { points: [{ x: since + 1000, y: 80 }, { x: until, y: null }] },
       measurements: { window: { since, until }, completeness: 'partial', reasons: ['boundary_gap'] },

@@ -11,6 +11,9 @@ import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happ
 import { readProjectExecutionOutputMachineAdmissionMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -131,7 +134,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   const actionSettingsProvider = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createActionSettingsProvider({
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   }));
-  const execute = async (operation: SessionActionOperation, authority: SessionActionAuthority, observationSetup?: true): Promise<ActionExecuteResult> => {
+  const execute = async (operation: SessionActionOperation, authority: SessionActionAuthority, observationSetup?: true, targetMachineId?: string): Promise<ActionExecuteResult> => {
     const elapsedSubphasesMs: Partial<Record<ActionStartPhaseV1, number>> = {};
     const recordPhase = params.machineId
       ? createExternalActionStartDiagnosticRecorder(operation.actionId, operation.requestId, params.machineId)
@@ -448,6 +451,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         ? await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.authorization',
           () => readRequesterHomeWithinActionLifetime(async () => !await authority.isCurrent() ? null
             : await prepare({ operation, authority, isCallerCurrent, sessionActionOrigin,
+              ...(targetMachineId ? { targetMachineId } : {}),
               ...(workflowTarget ? { workflowTarget } : {}) }), authority.signal)) : undefined;
     } catch (error) {
       logRefusal('external_authorization_preparation_failed');
@@ -552,19 +556,24 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         kind: 'machine' as const, machineId: requesterHistoryWorkspace.machineId, project: requesterHistoryWorkspace,
       } } : {}),
       ...(observationSetup ? { requiredContributedActionDangerLevel: 'safe' } : {}),
-      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave ? {
+      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === 'usage.query' ? {
         executeOrdinaryChildAction: (actionId, input, options) => {
           const parsed = StrictJsonValueSchema.safeParse(input);
           const setupRead = isWorkflowObservationSetupChildActionV1(operation.actionId, actionId);
-          if ((!setupRead && !isWorkflowHostAdmittedChildActionIdV1(actionId)) || !options?.actionRequestId || !parsed.success) {
+          const costsReference = operation.actionId === 'usage.query' && actionId === 'action.invoke'
+            ? readPluginActionExecutionReference(actionId, input) : null;
+          const costsTarget = costsReference && formatQualifiedPluginActionId(costsReference) === TELEMETRY_COSTS_READ_ACTION_ID_V1
+            && options?.externalActionTarget?.kind === 'machine' ? options.externalActionTarget.machineId : undefined;
+          const allowed = operation.actionId === 'usage.query' ? costsTarget !== undefined
+            : setupRead || isWorkflowHostAdmittedChildActionIdV1(actionId);
+          if (!allowed || !options?.actionRequestId || !parsed.success) {
             return Promise.resolve({ ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
           }
-          // Retain the Session's witness. Save's proof cannot sign a new
-          // Workflow operation or authorize a contributed observation read.
+          // The child keeps the Session witness and receives its own exact Home proof.
           return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
             witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
             ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) },
-          options.signal ? { ...authority, signal: options.signal } : authority, setupRead ? true : undefined);
+          options.signal ? { ...authority, signal: options.signal } : authority, setupRead || costsTarget ? true : undefined, costsTarget);
         },
       } : {}),
       ...(external?.verifyMachineAdmissionCurrent ? {

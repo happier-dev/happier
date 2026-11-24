@@ -1,7 +1,11 @@
 import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TelemetryMetricsReadResultV1Schema,
   type TelemetryKeyFlowConfigV1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { appCallsPricingModelIds, projectAppCallsCostMetricSeriesV1, projectAppCallsUsageV1,
+  readAppCallsOperandsV1, readAppCallsPricingV1 } from '@happier-dev/plugin-sdk/usage';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { HappierSeries } from '@happier-dev/plugin-ui/presentation';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readUsageAppCallsPriceOverrides } from '@/sync/api/account/usageAppCallsAccounting';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -15,8 +19,23 @@ export async function readTelemetryCheckHistory(
     since: number; until: number }>,
   execute = createFrontDoorUiActionExecutor(undefined, { serverId: input.scope.serverId, expectedAccountId: input.scope.accountId }),
   operation?: UiActionOperation,
-): Promise<TelemetryMetricsReadResultV1> {
+): Promise<TelemetryMetricsReadResultV1 | Pick<TelemetryMetricsReadResultV1, 'routes' | 'trend'>> {
   const { environmentId, serviceName, serviceVersion, measure } = input.config;
+  if (measure.kind === 'spend') {
+    const raw = await readAppCallsOperandsV1(execute, input.collectorMachineId, {
+      source: { kind: 'environment', serverId: input.scope.serverId, environmentId },
+      serviceName, ...(serviceVersion === undefined ? {} : { serviceVersion }),
+      since: input.since, until: input.until, granularity: 'hour',
+    }, operation?.signal);
+    const { catalog, viewerOverrides } = await readAppCallsPricingV1({
+      modelIds: appCallsPricingModelIds([raw]),
+      readOverrides: () => readUsageAppCallsPriceOverrides(input.scope),
+      readCatalog: modelIds => execute(USAGE_PRICE_ACTION_IDS.get, { modelIds }, operation),
+    });
+    const spend = projectAppCallsUsageV1(raw, catalog, viewerOverrides, { granularity: 'hour', costMode: measure.costMode });
+    // This is the viewer's trend. The retained result carries the owner-priced threshold decision.
+    return { routes: [], trend: [...projectAppCallsCostMetricSeriesV1(spend)] };
+  }
   const read = await execute('action.invoke', {
     action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!,
     input: { serverId: input.scope.serverId, environmentId, serviceName,

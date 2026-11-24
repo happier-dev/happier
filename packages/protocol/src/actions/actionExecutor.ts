@@ -4840,7 +4840,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       // Switch by actionId; keep substrate generic.
       if (isUsageActionIdV1(actionId)) {
-        return executeUsageAction(actionId, admittedInput, deps.usageActions, ctx);
+        return executeUsageAction(actionId, admittedInput, deps.usageActions, ctx, (childId, childInput, operation) => {
+          const sessionChild = ctx.executeOrdinaryChildAction;
+          if (childId === 'action.invoke' && sessionChild) {
+            return executeChild(childId, childInput, { ...ctx, ...operation }, false,
+              (id, input, child) => sessionChild(id, input, { actionRequestId: child.actionRequestId,
+                signal: child.signal, externalActionTarget: child.externalActionTarget }));
+          }
+          return executeHostChild(childId, childInput, { ...ordinaryChildContext(ctx), ...operation,
+            ...(childId === 'action.invoke' ? { requiredContributedActionDangerLevel: 'safe' as const } : {}) });
+        });
       }
       if (actionId === 'usage.coach.apply' || actionId === 'usage.coach.undo'
         || actionId === 'usage.coach.dismiss' || actionId === 'usage.coach.snooze') {

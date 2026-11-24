@@ -1,12 +1,8 @@
 import { expect, vi } from 'vitest';
 import { z } from 'zod';
-import { DatabaseCaptureCostsReadResultV1Schema, TELEMETRY_COSTS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1, TelemetryMetricsReadResultV1Schema } from '@happier-dev/database-protocol';
-import {
-    projectAppCallsUsageV1 as projectDatabaseCaptureUsageV1,
-    projectAppCallsCostMetricSeriesV1 as projectDatabaseAppCostMetricSeriesV1,
-} from '@happier-dev/plugin-sdk/usage';
+import { DatabaseCaptureCostsReadResultV1Schema, TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
 import { HealthCheckResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckV1';
-import { UsageModelPriceCatalogSchema, UsageModelPriceOverridesV1Schema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { randomUUID } from 'node:crypto';
@@ -16,11 +12,12 @@ import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/ag
 import { configuration } from '@/configuration';
 import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
 import type { readS0ControllerCredentials } from './deploymentDaemonIngress.testkit';
+import { adoptProductionTelemetryHealthCheck, productionTelemetryHealthSetupSchema } from './deploymentMetricsJourney.composed.testkit';
+import { healthResultProjectionPageSchema } from '../../../../packages/plugins/machine-services/src/healthResultProjection';
 
 type Viewer = Readonly<{ accountId: string; accepted(name: string, input: unknown, machineId?: string): Promise<unknown> }>;
 const settingSchema = z.object({ anchor: z.literal('usage.modelPrices'), value: z.unknown() });
 const emittedSchema = z.object({ attempts: z.literal(4), producer: z.object({ serviceName: z.string(), serviceVersion: z.string().optional() }) });
-const healthSetupSchema = z.object({ sourceInstanceId: z.string() });
 
 /** Seed through the ordinary mode-aware Session writer and Agent observation publisher. */
 export async function createProductionCostsAgentBaseline(input: Readonly<{
@@ -47,12 +44,12 @@ export async function createProductionCostsAgentBaseline(input: Readonly<{
 /** F17 extends the real SDK exporter and two Account-bound Action executors from F14.
  * The collector returns the same authorized raw calls; each viewer's persisted settings price them. */
 export async function runProductionCostsJourney(input: Readonly<{
-    serverId: string; environmentId: string; appUrl: string; signal: AbortSignal;
+    serverId: string; serverUrl: string; environmentId: string; appUrl: string; signal: AbortSignal;
     /** A fixture Session with a real, already published Agent usage observation. */
     agentSessionId: string;
     owner: Viewer; teammate: Viewer;
     collectorMachineId: string;
-    acceptedOnCollector(name: string, value: unknown): Promise<unknown>;
+    collectorAccount: Viewer & { credentials: ReturnType<typeof readS0ControllerCredentials> };
 }>) {
     expect(input.owner.accountId).not.toBe(input.teammate.accountId);
     const request = async (path: string) => {
@@ -60,7 +57,8 @@ export async function runProductionCostsJourney(input: Readonly<{
         expect(response.status, path).toBe(200);
         return response;
     };
-    const viewers = [input.owner, input.teammate];
+    const viewers = [input.owner, input.teammate, input.collectorAccount];
+    expect(input.collectorAccount.accountId).not.toBe(input.owner.accountId);
     const readAgentAccounting = async () => {
         const accountingOnly = { includeComparison: false, includeQuota: false,
             includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
@@ -116,61 +114,64 @@ export async function runProductionCostsJourney(input: Readonly<{
         expect(ownerRead.items.some(item => item.modelId === 'dbw-f17-unpriced')).toBe(true);
         expect(ownerRead.items.find(item => item.reportedCost)?.reportedCost).toEqual({ amount: 0.02, currency: 'USD' });
         expect(JSON.stringify(ownerRead)).not.toMatch(/f17-private-prompt|f17-private-completion|f17-private-tool/);
-        const projections: ReturnType<typeof projectDatabaseCaptureUsageV1>[] = [];
-        for (const [index, viewer] of viewers.entries()) {
-            const overrides = UsageModelPriceOverridesV1Schema.parse(settingSchema.parse(
-                await viewer.accepted('settings.get', { anchor: 'usage.modelPrices' })).value);
-            const catalog = UsageModelPriceCatalogSchema.parse(await viewer.accepted('usage.prices.get', {
-                modelIds: ['dbw-f17-priced', 'dbw-f17-unpriced'],
+        const readSpend = async (viewer: Viewer) => {
+            const batch = UsageQueryBatchResultSchema.parse(await viewer.accepted('usage.query', { queries: [{
+                sources: [usageAppCallsSourceId(input.environmentId)],
+                period: { startMs: operands.since, endMs: operands.until }, granularity: 'hour',
+                costBasis: 'api_equivalent', metric: 'cost', includeSeries: true,
+                includeComparison: false, includeQuota: false, includeQuotaHistory: false,
+                includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            }] }));
+            const slice = batch.results[0]!;
+            expect(slice.sources.find(source => source.source === 'accounting')).toMatchObject({ status: 'available' });
+            expect(slice.accounting?.totals.eventCount).toBe(4);
+            expect(slice.accounting?.summary?.catalogRevision).toBeTruthy();
+            expect(slice.costFactTotals).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'reported', amountUsd: 0.02, currency: 'USD' }),
+                expect.objectContaining({ kind: 'unpriced', amountUsd: null }),
+            ]));
+            return slice;
+        };
+        const ownerSpend = await readSpend(input.owner);
+        const teammateSpend = await readSpend(input.teammate);
+        expect(teammateSpend.accounting?.totals.tokens).toEqual(ownerSpend.accounting?.totals.tokens);
+        const amount = (slice: typeof ownerSpend) => resolveUsageCostBasis(slice.accounting!.totals.cost, 'api_equivalent')!.amountUsd;
+        expect(amount(ownerSpend)).toBeGreaterThan(0);
+        expect(amount(teammateSpend)).toBeCloseTo(2 * amount(ownerSpend));
+        expect(teammateSpend.accounting?.series).toEqual(expect.arrayContaining([
+            expect.objectContaining({ cost: expect.objectContaining({ apiEquivalentUsd: expect.any(Number) }) }),
+        ]));
+
+        // The collector Account runs the observer. The partial monetary population cannot settle a threshold.
+        const checkId = 'f17-app-spend';
+        const measure = { kind: 'spend', costMode: 'api_equivalent' };
+        const onCollector = (name: string, value: unknown) => input.collectorAccount.accepted(name, value, input.collectorMachineId);
+        const setup = productionTelemetryHealthSetupSchema.parse(await onCollector('action.invoke', {
+            action: { pluginId: 'happier.machine.services', localId: 'health/setup' },
+            input: { v: 1, subject: { kind: 'environment', environmentId: input.environmentId }, checks: [{
+                checkId, kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, binding: { kind: 'healthCheck' },
+                config: { environmentId: input.environmentId, ...service, measure, windowMs: 3_600_000,
+                    threshold: { operator: 'above', value: amount(ownerSpend) / 2 } },
+                periodMs: 1000, consecutiveFailuresBeforeAlerting: 1,
+            }], investigation: { mode: 'inbox' } },
+        }));
+        await adoptProductionTelemetryHealthCheck({ ...input, credentials: input.collectorAccount.credentials,
+            accepted: input.collectorAccount.accepted, setup });
+        const saved = await vi.waitFor(async () => {
+            const page = healthResultProjectionPageSchema.parse(await input.collectorAccount.accepted('action.invoke', {
+                action: { pluginId: 'happier.machine.services', localId: 'health/results' }, input: {},
             }));
-            projections.push(projectDatabaseCaptureUsageV1(index === 0 ? ownerRead : teammateRead, catalog, overrides, { granularity: 'hour' }));
-        }
-        expect(projections[0]!.accounting.totals.tokens).toEqual(projections[1]!.accounting.totals.tokens);
-        expect(projections[0]!.accounting.totals.cost.apiEquivalentUsd).toBeGreaterThan(0);
-        expect(projections[1]!.accounting.totals.cost.apiEquivalentUsd)
-            .toBeGreaterThan(projections[0]!.accounting.totals.cost.apiEquivalentUsd!);
-        for (const projection of projections) {
-            expect(projection.subject).toBe('app_calls');
-            expect(projection.accounting.coverage.status).toBe('partial');
-            expect(projection.accounting.contributions?.every(row => row.sessionId === null && row.turnId === null && row.agentId === null)).toBe(true);
-        }
-        // The same saved Key flow kind must use its owning Account's live price preference.
-        // This is a demanded finite check; the existing health scheduler remains its sole lifecycle owner.
-        for (const [index, viewer] of viewers.entries()) {
-            const expected = resolveUsageCostBasis(projections[index]!.accounting.totals.cost, 'api_equivalent');
-            expect(expected?.amountUsd).toBeGreaterThan(0);
-            const measure = { kind: 'spend', costMode: 'api_equivalent' };
-            const demand = TelemetryMetricsReadResultV1Schema.parse(await viewer.accepted(TELEMETRY_METRICS_READ_ACTION_ID_V1, {
-                serverId: input.serverId, environmentId: input.environmentId, since: operands.since, until: operands.until,
-                ...service, measure,
-            }, input.collectorMachineId));
-            expect(demand.result.measurements).toMatchObject({ value: expected!.amountUsd, unit: 'USD',
-                basis: 'catalog_estimate', completeness: 'partial' });
-            expect(demand.trend).toEqual(projectDatabaseAppCostMetricSeriesV1(projections[index]!));
-            expect(demand.usage?.priceCatalog).toEqual(projections[index]!.accounting.priceCatalog);
-            expect(demand.usage?.costFacts).toEqual(projections[index]!.accounting.costFacts);
-            expect(demand.usage?.coverage).toEqual(projections[index]!.accounting.coverage);
-            // The reader Team deliberately has no Machine grant. Only the owner configures
-            // the saved observer on the collector; both viewers retain the demand read above.
-            if (index !== 0) continue;
-            const checkId = 'f17-app-spend';
-            const setup = healthSetupSchema.parse(await input.acceptedOnCollector('action.invoke', {
-                action: { pluginId: 'happier.machine.services', localId: 'health/setup' },
-                input: { v: 1, subject: { kind: 'environment', environmentId: input.environmentId }, checks: [{
-                    checkId, kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, binding: { kind: 'healthCheck' },
-                    config: { environmentId: input.environmentId, ...service, measure, windowMs: 3_600_000,
-                        threshold: { operator: 'above', value: expected!.amountUsd / 2 } },
-                    periodMs: 1000, consecutiveFailuresBeforeAlerting: 1,
-                }], investigation: { mode: 'inbox' } },
-            }));
-            const saved = HealthCheckResultV1ProtocolSchema.parse(await input.acceptedOnCollector(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, {
-                sourceInstanceId: setup.sourceInstanceId, checkId,
-            }));
-            expect(saved.status).toBe('down');
-            expect(saved.cause?.observerMachineId).toBe(input.collectorMachineId);
-            expect(saved.measurements).toMatchObject({ value: expected!.amountUsd, unit: 'USD',
-                basis: 'catalog_estimate', completeness: 'partial' });
-        }
+            const check = page.items.find(item => item.source?.sourceInstanceId === setup.sourceInstanceId)
+                ?.projection.checks.find(item => item.checkId === checkId);
+            return HealthCheckResultV1ProtocolSchema.parse(check?.result);
+        }, { timeout: 30_000, interval: 1000 });
+        expect(saved.status).toBe('unknown');
+        expect(saved.cause?.observerMachineId).toBe(input.collectorMachineId);
+        expect(saved.measurements).toMatchObject({ unit: 'USD', basis: 'catalog_estimate', completeness: 'unknown',
+            reasons: expect.arrayContaining(['unpriced_calls']) });
+        expect(saved.evidence.items).toEqual(expect.arrayContaining([expect.objectContaining({
+            text: expect.stringContaining(`API-equivalent estimate in USD. Check Account ${input.collectorAccount.accountId} (its Usage prices)`),
+        })]));
         expect(await readAgentAccounting()).toEqual(agentBefore);
         console.info('F17 real SDK calls share raw accounting across two admitted Account price preferences', {
             environmentId: input.environmentId, attempts: emitted.attempts, currency: 'USD',

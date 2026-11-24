@@ -24,6 +24,10 @@ import { composePublicUsageRecap } from '../../usage/composePublicUsageRecap.js'
 import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery.js';
 import { projectUsageQueryResultIssues } from '../../usage/usageAnalyticsContracts.js';
 
+export type UsageActionReadChild = (actionId: 'deployments.environments.list' | 'action.invoke' | typeof USAGE_PRICE_ACTION_IDS.get,
+  input: unknown, operation?: Readonly<{ signal?: AbortSignal; externalActionTarget?: { kind: 'machine'; machineId: string } }>) =>
+  Promise<ActionExecuteResult>;
+
 export type UsageActionPorts = Readonly<{
   /** The Account Usage owner holds progress and its local cancellation signal. */
   history?(input: UsageHistoryReadInput, context: ActionExecutorContext): Promise<UsageHistoryReadState | ActionExecuteFailure>;
@@ -32,7 +36,7 @@ export type UsageActionPorts = Readonly<{
     get(context: ActionExecutorContext): Promise<UsageModelPriceCatalog | ActionExecuteFailure>;
     refresh(context: ActionExecutorContext): Promise<UsageModelPriceCatalog | ActionExecuteFailure>;
   }>;
-  query(request: UsageQueryBatchInput, context: ActionExecutorContext): Promise<UsageQueryBatchResult | ActionExecuteFailure>;
+  query(request: UsageQueryBatchInput, context: ActionExecutorContext, readChild?: UsageActionReadChild): Promise<UsageQueryBatchResult | ActionExecuteFailure>;
   /** Optional authorized retained-B opener for explicitly selected calendar accounts. Never refreshes a provider. */
   readQuota?(input: ConnectedServiceQuotaGetInputV1, context: ActionExecutorContext): Promise<ConnectedServiceQuotaGetResultV1 | ActionExecuteFailure>;
   /** Optional client-only rasterization boundary. Headless hosts can read query/B facts without image rendering. */
@@ -46,9 +50,9 @@ export type UsageActionPorts = Readonly<{
 const failure = (errorCode: string, details?: ActionExecuteFailure['details']): ActionExecuteFailure =>
   ({ ok: false, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) });
 
-export function executeUsageAction(actionId: 'usage.query', value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteFailure | Readonly<{ ok: true; result: UsageQueryBatchResult }>>;
-export function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteResult>;
-export async function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteResult> {
+export function executeUsageAction(actionId: 'usage.query', value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext, readChild?: UsageActionReadChild): Promise<ActionExecuteFailure | Readonly<{ ok: true; result: UsageQueryBatchResult }>>;
+export function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext, readChild?: UsageActionReadChild): Promise<ActionExecuteResult>;
+export async function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext, readChild?: UsageActionReadChild): Promise<ActionExecuteResult> {
   if (context.signal?.aborted) return failure('cancelled');
   if (!ports) return failure('unsupported_action');
   if (actionId === USAGE_HISTORY_ACTION_IDS.read) {
@@ -72,7 +76,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
   }
   const read = async (input: UsageQueryBatchInput): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
     const { queries } = normalizeUsageQueryBatchInput(input);
-    const raw = await ports.query({ queries }, context);
+    const raw = await ports.query({ queries }, context, readChild);
     if (context.signal?.aborted) return failure('cancelled');
     const refusal = readActionFailureEnvelope(raw);
     if (refusal) return refusal;

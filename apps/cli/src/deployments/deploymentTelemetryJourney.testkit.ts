@@ -1137,9 +1137,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     if (process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1') {
                         const agentSessionId = await createProductionCostsAgentBaseline({ serverUrl: home.baseUrl,
                             machineId: home.machineId, credentials, signal: lifetime.signal });
-                        await runProductionCostsJourney({ serverId: home.serverId, environmentId, appUrl: movedAppUrl,
-                            signal: lifetime.signal, agentSessionId, collectorMachineId: secondCollector.machineId, acceptedOnCollector,
-                            owner: { accountId: home.accountId, accepted }, teammate });
+                        await runProductionCostsJourney({ serverId: home.serverId, serverUrl: home.baseUrl, environmentId, appUrl: movedAppUrl,
+                            signal: lifetime.signal, agentSessionId, collectorMachineId: secondCollector.machineId,
+                            owner: { accountId: home.accountId, accepted }, teammate, collectorAccount: collectorOperator });
                     }
                     if (process.env.HAPPIER_RUN_DBW_EXCEPTIONS_F18A === '1') {
                         await runProductionExceptionsJourney({ serverId: home.serverId, environmentId, appUrl: movedAppUrl,

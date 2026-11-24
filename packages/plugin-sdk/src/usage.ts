@@ -59,5 +59,9 @@ export function buildUsageObservationEffect(params: Readonly<{
 export type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 export { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCostFacts';
 
-export { projectAppCallsUsageV1, projectAppCallsUsageSourcesV1, projectAppCallsCostMetricSeriesV1 } from './appCallsUsage.js';
+export { APP_CALLS_SPEND_EVIDENCE_LABEL, projectAppCallsUsageV1, projectAppCallsUsageSourcesV1, projectAppCallsCostMetricSeriesV1 } from './appCallsUsage.js';
 export type { AppCallsUsageV1, AppCallsUsagePartV1, AppCallsUsageWindowV1, AppCallsUsageCoverageV1, AppCallsCostMetricIntervalV1 } from './appCallsUsage.js';
+
+export { readUsageAppCallsEnvironmentIds, usageAppCallsSourceId } from './appCallsUsage.js';
+export { appCallsPricingModelIds, listUsageAppEnvironments, readAppCallsOperandsV1, readAppCallsPricingV1, readUsageAppCallsAccounting } from './appCallsUsageRead.js';
+export type { UsageAppCallsExecute, UsageAppEnvironment } from './appCallsUsageRead.js';

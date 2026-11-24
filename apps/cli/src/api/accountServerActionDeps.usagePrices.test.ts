@@ -1,3 +1,8 @@
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
+import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -48,6 +53,71 @@ describe('CLI and MCP model prices through captured Account Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
     await app.close();
   });
+  it('uses the invoking Account prices for collector operands on the CLI and agent surfaces', async () => {
+    const app = fastify();
+    const catalog = { v: 1, models: { sample: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 } },
+      provenance: { source: 'litellm', origin: 'bundled', asOfMs: 100, revision: 'app-cost', fetchStatus: 'ready' } };
+    app.get('/v1/account/usage/prices', async () => catalog);
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, signingKeyFingerprint: null,
+      contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+    app.get('/v2/account/settings', async request => {
+      const inputUsdPerMillion = request.headers.authorization === 'Bearer viewer-a' ? 5 : 11;
+      return { content: { t: 'plain', v: { usageModelPriceOverridesV1: { sample: { kind: 'rates', inputUsdPerMillion,
+        outputUsdPerMillion: 0 } } } }, version: 1 };
+    });
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
+    const source = { kind: 'environment', serverId: 'home', environmentId: 'env' };
+    const tokens = { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 1_000_000 };
+    const read = async (token: string, surface: 'agent' | 'cli') => {
+      const routed: unknown[] = [];
+      const deps = createAccountServerActionDeps({ token, credentials: { token, encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'http://usage.test' });
+      const executor = createActionExecutor({
+        ...createUnavailableActionTransportDeps(), ...deps,
+        deploymentAction: async actionId => {
+          expect(actionId).toBe('deployments.environments.list');
+          return { ok: true, nextCursor: null,
+            items: [createDeploymentEnvironmentHeaderV1({ id: 'env', serverId: 'home', telemetryMachineId: 'collector' })] };
+        },
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings,
+          approvalWaivedSurfaces: { 'usage.query': [surface], 'action.invoke': [surface],
+            'deployments.environments.list': [surface], 'usage.prices.get': [surface] } }),
+        routeHostChildAction: async ({ actionId, input, context }) => {
+          routed.push({ actionId, input, target: context.externalActionTarget });
+          return { ok: true, result: { ok: true, source, since: 100, until: 200,
+            items: [{ bucketStartMs: 0, provider: null, modelId: 'sample', requestedModel: null, operation: null,
+              callCount: 1, tokens, tokenCategories: tokens, reportedCost: { amount: 3, currency: 'USD' },
+              firstSeenMs: 150, lastSeenMs: 150 }],
+            coverage: { callCount: 1, tokenCategoryCallCount: 1, reportedCostCallCount: 1, lostObservations: 0, reason: null } } };
+        },
+      });
+      const result = await executor.execute('usage.query', { queries: [normalizeUsageQuery({
+        period: { startMs: 100, endMs: 200 }, sources: [usageAppCallsSourceId('env')],
+        costBasis: 'api_equivalent', includeComparison: false, includeQuota: false, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false,
+      })] }, { surface, serverId: 'home', authority: 'account_automation' });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect(routed).toEqual([{ actionId: 'action.invoke', target: { kind: 'machine', machineId: 'collector' },
+        input: { action: parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1),
+          input: { source, since: 100, until: 200, granularity: 'day' } } }]);
+      const accounting = slice.sources.find(item => item.source === 'accounting');
+      expect(accounting, JSON.stringify(accounting)).toMatchObject({ status: 'available' });
+      return slice.accounting!.totals;
+    };
+    try {
+      const cli = await read('viewer-a', 'cli');
+      const agent = await read('viewer-b', 'agent');
+      expect(cli.tokens).toEqual(agent.tokens);
+      expect(resolveUsageCostBasis(cli.cost, 'api_equivalent')?.amountUsd).toBe(5);
+      expect(resolveUsageCostBasis(agent.cost, 'api_equivalent')?.amountUsd).toBe(11);
+      expect(cli.cost.reportedUsd).toBe(3);
+      expect(agent.cost.reportedUsd).toBe(3);
+    } finally { await app.close(); }
+  });
+
   it('re-prices historical usage through ordinary model-price settings Actions and keeps vendor facts unchanged', async () => {
     const app = fastify();
     const tokens = { input: 1_000_000, output: 500_000, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_500_000 };
