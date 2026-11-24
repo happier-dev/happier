@@ -405,30 +405,28 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
     });
 
-    it('retains settled Services detail and its guided automation step during credential resolution', () => withPopoverWebGlobals(async () => {
+    it('retains settled Services detail and the open Automation sentence during credential resolution', () => withPopoverWebGlobals(async () => {
         const row = service('Continuity', { capabilities: { start: true, stop: true, restart: true, logs: false, accounting: false } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
         try {
-            await vi.waitFor(() => expect(screen.findHostByTestId('subject-triggers-set-up')).not.toBeNull());
-            await screen.pressByTestIdAsync('subject-triggers-set-up');
+            await vi.waitFor(() => expect(screen.findHostByTestId('subject-triggers-add')).not.toBeNull());
+            await screen.pressByTestIdAsync('subject-triggers-add');
             await act(async () => reportPopoverContentLayout(screen.tree, { width: 500, height: 600 }));
-            await vi.waitFor(() => expect(screen.findHostByTestId('guided-automation-next')).not.toBeNull());
-            await screen.pressByTestIdAsync('guided-automation-next');
-            expect(screen.findByTestId('guided-automation-lookAt')).not.toBeNull();
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflow-builder-open-editor')).not.toBeNull());
             const loadingPublications: unknown[] = [];
             const stepReplacements: unknown[] = [];
             const unsubscribe = screen.tree.subscribe(() => {
                 if (screen.findHostByTestId('machine-service-loading')) loadingPublications.push(true);
-                if (!screen.findByTestId('guided-automation-lookAt')) stepReplacements.push(true);
+                if (!screen.findByTestId('workflow-builder-open-editor')) stepReplacements.push(true);
             });
             try {
                 await act(async () => { await homes.switchAccount(serverId, accountId, { currentAccount: true }); });
-                await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findHostByTestId('subject-triggers-set-up')).not.toBeNull(); });
+                await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findHostByTestId('subject-triggers-add')).not.toBeNull(); });
                 expect(loadingPublications).toHaveLength(0);
                 expect(stepReplacements).toHaveLength(0);
-                expect(screen.findByTestId('guided-automation-lookAt')).not.toBeNull();
+                expect(screen.findByTestId('workflow-builder-open-editor')).not.toBeNull();
             } finally { unsubscribe(); }
         } finally { await screen.unmount(); }
     }));

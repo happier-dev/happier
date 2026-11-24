@@ -23,6 +23,7 @@ import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testki
 import { createLockedEncryptedSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { renderScreen as renderUiScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup, createRootLayoutFeaturesResponse, createDeferred } from '@/dev/testkit';
+import { t } from '@/text';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createAgentApprovalRequest } from '@/dev/testkit/harness/approvalInbox';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -108,7 +109,7 @@ describe('approval field semantics shared by card and page', () => {
             })}
           />,
         );
-        // An unresolved Group is unavailable in the readable summary. Its exact
+        // An unresolved principal is unavailable in the readable summary. Its exact
         // submitted identity remains in Technical details alongside the other IDs.
         await waitForHomeGovernance(() => expect(readRenderedText(screen)).not.toContain('common.loading'));
         const text = await readRenderedTextWithRowContent(screen);
@@ -116,12 +117,8 @@ describe('approval field semantics shared by card and page', () => {
         expect(screen.findByType(ApprovalTechnicalDetails).props.lines).toContainEqual(
           expect.objectContaining({ key: 'principal', value: literal }),
         );
-        if (kind === 'group') {
-          expect(text).toContain('common.unavailable');
-          expect(text).not.toContain(literal);
-        } else {
-          expect(text).toContain(literal);
-        }
+        expect(text).toContain('common.unavailable');
+        expect(text).not.toContain(literal);
         expect(text).not.toContain('Kind');
         await screen.unmount();
       }
@@ -1406,8 +1403,7 @@ describe('ApprovalDetailScreen', () => {
     );
     // The readable reason leads; its typed code waits in the technical disclosure.
     const reason = approvalItem(screen, 'approvals.status')?.props.subtitle;
-    expect(typeof reason).toBe('string');
-    expect(reason).not.toContain('provider_unavailable');
+    expect(reason).toBe('session.startFailure.cause.provider_unavailable');
     const { ApprovalTechnicalDetails } = await import('./ActionApprovalFieldsCard');
     // One disclosure: the Home's original operand, the concurrency revision and the failure code.
     expect(screen.findAllByType(ApprovalTechnicalDetails as never).map((node) => node.props.lines)).toEqual([
@@ -3634,8 +3630,9 @@ describe('ApprovalDetailScreen', () => {
       { key: 'continuation.teamId', label: 'Team ID', value: 'team-acme' },
     ]));
     expect(text).toContain('Acme Platform');
-    expect(text).toContain('member');
-    expect(text).toContain('from_membership');
+    expect(text).toContain('teams.role.member');
+    expect(text).toContain('teams.settings.option.fromJoining');
+    expect(text).not.toContain('from_membership');
     expect(screen.findByTestId('approvals.unrepresentable-details')).toBeNull();
     expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(
       false,

@@ -25,7 +25,7 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema }
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { ActionInputFormModal } from '@/components/plugins/actions/ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from '@/components/plugins/actions/actionInputForm';
-import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { changeTextTestInstance, expandDisclosureAsync, pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -208,7 +208,14 @@ it.each([
                 return Response.json(exactIntentRead);
             }
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-            if (path === '/v3/automations' || path === '/v3/automations/query') return Response.json({ automations: [], nextCursor: null });
+            if (path === '/v3/automations/query') {
+                const query = JSON.parse(String(init?.body));
+                if (query.subject) {
+                    return Response.json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
+                }
+                return Response.json({ automations: [], nextCursor: null });
+            }
+            if (path === '/v3/automations') return Response.json({ automations: [], nextCursor: null });
             return http.request(input, init);
         } });
     const { storage } = await import('@/sync/domains/state/storage');
@@ -290,15 +297,24 @@ it.each([
             deploymentEnvironment={{ serverId: connection.serverId, projectSourceId: 'source-checkout',
                 environmentId: setupInput.environmentId }} /></ListPresentationProvider>);
         await waitForHomeGovernance(() => expect(screen!.findByTestId('subject-triggers-starter:deploymentFailed')).not.toBeNull());
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'subject-triggers-starter:deploymentFailed'));
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        try {
+            await pressTestInstanceAsync(screen.findAllByType(Item)
+                .find(row => row.props.testID === 'subject-triggers-starter:deploymentFailed'));
+            await pressTestInstanceAsync(screen.findAllByType(RoundButton)
+                .find(button => button.props.testID === 'workflow-builder-open-editor'));
+        } finally {
+            restorePopoverGlobals();
+        }
         const route = vi.mocked(router.push).mock.calls.at(-1)?.[0];
         if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('Expected the ordinary sentence route');
         const seed = readWorkflowDefinitionDraftSeed(String(route.params?.definitionDraftSeedId), lifetime.scope);
-        if (!seed?.eventSeed) throw new Error('Expected the source enrollment intent in the ordinary draft');
-        expect(seed).toMatchObject({ name: 'Production', initialView: 'sentence', eventSeed: {
+        const eventSeed = seed?.incompleteTriggers?.pending[0]?.eventSeed;
+        if (!eventSeed) throw new Error('Expected the source enrollment intent in the ordinary draft');
+        expect(seed).toMatchObject({ name: 'Production', initialView: 'sentence' });
+        expect(eventSeed).toMatchObject({
             eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed, monitoringMachineId: machineId, setupInput,
-        } });
-        const eventSeed = seed.eventSeed;
+        });
         function SentenceEventControl() {
             const [when, setWhen] = React.useState<React.ComponentProps<typeof WorkflowTriggerBlock>['when']>({
                 kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef,
@@ -326,9 +342,11 @@ it.each([
                     : catalogEvent ? 'event_observer_unavailable' : 'event_contribution_not_current', retryable: false,
                 ...(runtimeUnavailable ? { reason: 'plugin_account_execution_unavailable' } : {}),
             });
-            const details = screen.findAllByType(Item).find(row => row.props.testID === 'automation-event-source-unavailable.details.header');
-            expect(details, 'A settled source failure must retain its typed cause behind Details').toBeDefined();
-            await pressTestInstanceAsync(details);
+            const detailsId = 'automation-event-source-unavailable.details';
+            await expandDisclosureAsync(
+                [...screen.findAllByTestId(detailsId), ...screen.findAllByTestId(`${detailsId}.header`)],
+                detailsId,
+            );
             expect(screen.getTextContent()).toContain(model.sourceFailure.code);
             expect(screen.getTextContent()).toContain(model.sourceFailure.reason);
             expect.soft(screen.getTextContent()).not.toContain('common.loading');
