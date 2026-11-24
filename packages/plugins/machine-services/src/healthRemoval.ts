@@ -6,7 +6,7 @@ import { HEALTH_REMOVE_ACTION_ID } from './actionIds.js';
 
 const identifier = defineProtocolString({ minLength: 1 });
 const inputSchema = defineProtocolObject({ automationId: identifier, triggerId: identifier, checkId: identifier }, { policy: 'closed' });
-const resultSchema = defineProtocolUnion([
+export const savedHealthRemovalResultSchema = defineProtocolUnion([
     defineProtocolObject({ status: defineProtocolLiteral('removed') }, { policy: 'closed' }),
     defineProtocolObject({ status: defineProtocolLiteral('approvalRequested'), artifactId: identifier }, { policy: 'closed' }),
 ]);
@@ -16,7 +16,7 @@ export const savedHealthRemovalActions = {
         title: 'Remove saved health check', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
         surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'destructive', approvalScope: 'healthCheck',
         confirmation: { title: 'Remove this health check?', body: 'The selected check will stop running.' },
-        inputSchema, resultSchema,
+        inputSchema, resultSchema: savedHealthRemovalResultSchema,
         async run(input: unknown, context: PluginInvocationContext) {
             const { automationId, triggerId, checkId } = inputSchema.parse(input);
             const options = { signal: context.signal };

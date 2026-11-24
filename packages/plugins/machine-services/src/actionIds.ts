@@ -12,6 +12,7 @@ export function readSavedBuiltinHealthCheckAction(kind: PluginContributionRef): 
 }
 
 export const HEALTH_REMOVE_ACTION_ID = 'health/remove';
+export const HEALTH_REMOVE_ACTION_REF = { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: HEALTH_REMOVE_ACTION_ID } as const;
 
 /** Retained Account reads, distinct from Actions that execute a fresh health probe. */
 export const HEALTH_RESULTS_ACTION_ID = 'health/results';

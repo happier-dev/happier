@@ -120,7 +120,7 @@ async function callTriggerAction<TResult>(
         if (!active || !sameTriggerAccountScope(active, options.accountLifetime.scope)) return result;
     }
     // Exact set/detail reads and deliberate private reviews are not list membership observations.
-    if (actionId === 'workflow.trigger.list' && 'automationId' in request) return result;
+    if (actionId === 'workflow.trigger.list' && ('automationId' in request || 'healthSource' in request)) return result;
     const lifetimeSession = 'lifetimeSession' in request && typeof request.lifetimeSession === 'object' && request.lifetimeSession !== null
         ? request.lifetimeSession : null;
     const sessionId = lifetimeSession && 'sessionId' in lifetimeSession && typeof lifetimeSession.sessionId === 'string'

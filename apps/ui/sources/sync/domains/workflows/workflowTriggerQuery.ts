@@ -7,6 +7,7 @@ import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/e
 export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1): string {
     if ('lifetimeSession' in request) return `session:${request.lifetimeSession.sessionId}`;
     if ('subject' in request || 'actionId' in request) return `selected:${createCanonicalJsonSigningInput(request)}`;
+    if ('healthSource' in request) return `health:${createCanonicalJsonSigningInput(request)}`;
     if ('workflow' in request) return `workflow:${request.workflow}`;
     if ('managedTarget' in request) return `managed:${JSON.stringify([request.managedTarget.homeId, request.managedTarget.managedId])}`;
     if ('scope' in request) return request.scope;
@@ -16,6 +17,7 @@ export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1): 
 export function workflowTriggerRequestForQueryKey(queryKey: string): WorkflowTriggerListRequestV1 | null {
     if (queryKey.startsWith('session:')) return { lifetimeSession: { sessionId: queryKey.slice('session:'.length) } };
     if (queryKey.startsWith('selected:')) return WorkflowTriggerListRequestV1Schema.parse(JSON.parse(queryKey.slice('selected:'.length)));
+    if (queryKey.startsWith('health:')) return WorkflowTriggerListRequestV1Schema.parse(JSON.parse(queryKey.slice('health:'.length)));
     if (queryKey.startsWith('workflow:')) return { workflow: queryKey.slice('workflow:'.length) };
     if (queryKey.startsWith('managed:')) {
         const [homeId, managedId]: [string, string] = JSON.parse(queryKey.slice('managed:'.length));
@@ -27,7 +29,7 @@ export function workflowTriggerRequestForQueryKey(queryKey: string): WorkflowTri
 /** Undefined means an unavailable private source supplies no new target authority. */
 export function matchesWorkflowTriggerQuery(queryKey: string, set: WorkflowTriggerSetV1 | undefined): boolean | undefined {
     // Only the selected query producer admits membership; a local write supplies no such decision.
-    if (queryKey.startsWith('selected:')) return undefined;
+    if (queryKey.startsWith('selected:') || queryKey.startsWith('health:')) return undefined;
     if (queryKey === 'account_source_unavailable') return set !== undefined && !set.scopeSessionId && isWorkflowTriggerSourceGoneV1(set);
     if (queryKey.startsWith('managed:')) {
         if (!set?.target) return undefined;

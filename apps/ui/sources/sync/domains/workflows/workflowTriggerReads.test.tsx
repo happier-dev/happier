@@ -68,6 +68,19 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
+    it('loads the Environment’s saved checks through one exact Home query', async () => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the real Account lifetime');
+        const environmentId = 'staging-checks';
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+        const hook = await renderHook(() => useWorkflowTriggerSets({ healthSource: { environmentId } }, lifetime));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toMatchObject([
+            { path: '/v3/automations/query', input: { healthCheckSources: { environmentId } } },
+        ]);
+    });
+
     it('preserves an outstanding person approval without publishing a trigger write', async () => {
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
         const approval = { kind: 'approval_request_created', artifactId: 'pending-trigger-review', actionId: 'workflow.trigger.add' } as const;

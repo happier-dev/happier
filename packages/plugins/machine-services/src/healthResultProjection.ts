@@ -1,6 +1,7 @@
 import { HealthCheckResultV1ProtocolSchema, HealthCheckSubjectV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
-export { HEALTH_RESULTS_ACTION_ID, HEALTH_RESULTS_ACTION_REF } from './actionIds.js';
+export { HEALTH_REMOVE_ACTION_REF, HEALTH_RESULTS_ACTION_ID, HEALTH_RESULTS_ACTION_REF } from './actionIds.js';
+export { savedHealthRemovalResultSchema } from './healthRemoval.js';
 export { runSavedHealthCheck, type SavedHealthCheckRunInput } from './savedHealthCheckRun.js';
 import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
     ProtocolAutomationTriggerRevisionV1Schema } from '@happier-dev/plugin-sdk/protocol';

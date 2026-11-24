@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTriggerPullRequestLinksV1, WorkflowAttachedTriggerPageV1, WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { SessionTriggerPullRequestLinksV1, WorkflowAttachedTriggerPageV1, WorkflowTriggerHealthSourceV1, WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -12,6 +12,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 
 const EMPTY_SETS: readonly WorkflowTriggerSetV1[] = [];
+const EMPTY_HEALTH_SOURCES: readonly WorkflowTriggerHealthSourceV1[] = [];
 const noRetry = () => {};
 
 /**
@@ -31,11 +32,13 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         unavailableAccount?: Readonly<{ retry?: () => void }>;
     }>): {
     sets: readonly WorkflowTriggerSetV1[];
+    healthSources: readonly WorkflowTriggerHealthSourceV1[];
     attachedPage: AttachedTriggerPage | undefined;
     /** Session context from the same admitted lifetime page, never a second list read. */
     pullRequestLinks?: SessionTriggerPullRequestLinksV1;
     loadMore: () => void;
     status: 'loading' | 'ready' | 'failed';
+    failure?: unknown;
     retry: () => void;
     retryable?: boolean;
     acknowledge: (written: WorkflowTriggerSetV1) => void;
@@ -53,6 +56,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const requestedScope = request && 'scope' in request ? request.scope : 'account_inline';
     const queryKey = request === null ? '' : workflowTriggerQueryKey(request);
     const selected = request !== null && ('subject' in request || 'actionId' in request);
+    const health = request !== null && 'healthSource' in request;
     const retainFocusedSettlement = !addressed && context === undefined && queryKey === 'account_all';
     // Addressed reads for the focused Account share its canonical Automation
     // projection, including local Action receipts before a socket wake arrives.
@@ -64,22 +68,25 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const identity = React.useMemo(() => ({}), [queryKey, scopeKey, lifetime]);
     const committedIdentity = React.useRef(identity);
     React.useLayoutEffect(() => { committedIdentity.current = identity; }, [identity]);
-    const selector = React.useMemo(() => focused ? createWorkflowTriggerSetSelector(queryKey, workflow !== null)
-        : () => EMPTY_SETS, [focused, queryKey, workflow]);
+    const selector = React.useMemo(() => focused && !health ? createWorkflowTriggerSetSelector(queryKey, workflow !== null)
+        : () => EMPTY_SETS, [focused, health, queryKey, workflow]);
     const sets = getStorage()(selector);
     const changeSelector = React.useMemo<(state: AutomationsDomain) => object | number>(() => {
         if (retainFocusedSettlement) return getStorage().getState().selectFocusedAccountTriggerRevision;
-        if (selected || !focused || queryKey === '') return () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
+        if (selected || health || !focused || queryKey === '') return () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
         return createWorkflowTriggerChangeSelector(sessionId, workflow, requestedScope,
             readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined);
-    }, [retainFocusedSettlement, selected, focused, queryKey, sessionId, workflow, requestedScope, readRequest]);
+    }, [retainFocusedSettlement, selected, health, focused, queryKey, sessionId, workflow, requestedScope, readRequest]);
     const changeSignal = getStorage()(changeSelector);
     // Start from the held rows while any refresh required by the query owner runs.
-    const [state, setState] = React.useState<{ identity: object; status: 'loading' | 'ready' | 'failed' }>(
+    const [state, setState] = React.useState<{ identity: object; status: 'loading' | 'ready' | 'failed'; failure?: unknown }>(
         () => ({ identity, status: request === null
             || (focused && getStorage().getState().workflowTriggerSetIdsByQuery[queryKey] !== undefined) ? 'ready' : 'loading' }),
     );
     const snapshot = React.useRef<Readonly<{ identity: object; sets: readonly WorkflowTriggerSetV1[] }> | null>(null);
+    const [healthSnapshot, setHealthSnapshot] = React.useState<Readonly<{
+        identity: object; sources: readonly WorkflowTriggerHealthSourceV1[];
+    }> | null>(null);
     const [attachments, setAttachments] = React.useState<Readonly<{ identity: object; page: AttachedTriggerPage }> | null>(null);
     const [sessionContext, setSessionContext] = React.useState<Readonly<{
         identity: object; pullRequestLinks: SessionTriggerPullRequestLinksV1;
@@ -155,12 +162,18 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         listWorkflowTriggerPage(pageRequest, { signal: controller.signal, context, accountLifetime: lifetime, retainFocusedSettlement }).then(result => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {
                 let snapshotChanged = false;
-                if (addressed) {
+                if (addressed && !health) {
                     const previous = snapshot.current?.identity === identity ? snapshot.current.sets : undefined;
                     const sets = retainKeyedRows(previous, result.sets, set => set.automationId);
                     snapshotChanged = sets !== previous;
                     snapshot.current = { identity, sets };
                 }
+                if (health) setHealthSnapshot(current => {
+                    const previous = current?.identity === identity ? current.sources : undefined;
+                    const sources = retainKeyedRows(previous, result.healthSources ?? EMPTY_HEALTH_SOURCES,
+                        row => JSON.stringify([row.automationId, row.triggerId]));
+                    return current?.identity === identity && sources === previous ? current : { identity, sources };
+                });
                 if (selected) setAttachments(current => {
                     const previous = current?.identity === identity ? current.page : undefined;
                     const page: AttachedTriggerPage = {
@@ -179,19 +192,17 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
                 setState(current => !snapshotChanged && current.identity === identity && current.status === 'ready'
                     ? current : { identity, status: 'ready' });
             }
-        }).catch(() => {
+        }).catch(failure => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {
                 publishSessionContext(undefined);
-                setState(current => ({
-                    ...(current.identity === identity ? current : {}), identity, status: 'failed',
-                }));
+                setState({ identity, status: 'failed', failure });
             }
         });
         return () => {
             controller.abort(); retirement.dispose();
             if (pendingRead.current === pending) pendingRead.current = null;
         };
-    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, context, retainFocusedSettlement]);
+    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, health, context, retainFocusedSettlement]);
     // A settled failure stays actionable even while realtime reconnects. Home recovery
     // still retries the read automatically without turning its failed answer into loading.
     const homeSettling = useActiveHomeSettling() && !addressed;
@@ -211,6 +222,8 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     return { sets: request === null ? EMPTY_SETS : addressed ? state.identity === identity && accountLifetime?.isCurrent()
         ? focused ? sets : snapshot.current?.identity === identity ? snapshot.current.sets : EMPTY_SETS
         : EMPTY_SETS : sets, attachedPage,
+        healthSources: healthSnapshot?.identity === identity && lifetime?.isCurrent() ? healthSnapshot.sources : EMPTY_HEALTH_SOURCES,
+        failure: state.identity === identity && status === 'failed' ? state.failure : undefined,
         pullRequestLinks: sessionContext?.identity === identity && lifetime?.isCurrent() ? sessionContext.pullRequestLinks : undefined,
         loadMore, status: request === null ? 'ready' as const : status, retry,
         retryable: unavailableAccount === undefined || unavailableAccount.retry !== undefined, acknowledge };
