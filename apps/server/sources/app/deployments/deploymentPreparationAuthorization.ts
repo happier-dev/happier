@@ -214,7 +214,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     }
     let environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] } },
         select: { id: true, projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true,
-            previewTemplateEnvironment: { select: { id: true, projectSourceId: true } }, purpose: true, deletedAt: true,
+            telemetryMachineId: true, previewTemplateEnvironment: { select: { id: true, projectSourceId: true } }, purpose: true, deletedAt: true,
             targetLinks: { select: { id: true, predecessorTargetLinkId: true, contentArtifactId: true, activeDeploymentId: true, machineId: true, machines: { select: { machineId: true } } } },
             domains: { select: { id: true, contentArtifactId: true,
                 ...(backup ? { capturedPlacements: true, state: true, deletedAt: true } : {}) } } } });
@@ -287,6 +287,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         artifactIds.add(environment.contentArtifactId);
         machineIds.add(environment.controllerMachineId);
         if (environment.buildMachineId) machineIds.add(environment.buildMachineId);
+        // The selected collector is this Environment's placement; its telemetry Domain reads it.
+        if (environment.telemetryMachineId) machineIds.add(environment.telemetryMachineId);
         for (const link of environment.targetLinks) {
             if (backup && !receiptTargets?.some(target => target.environmentId === environment.id && target.targetLinkId === link.id)) continue;
             artifactIds.add(link.contentArtifactId);

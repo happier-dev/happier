@@ -8,8 +8,8 @@ import {
   createLightSqliteHarness,
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
-import { isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
-  readDeclaredDeploymentPreparationHttpRead, readDeploymentLinkPreparationHttpPurpose,
+import { isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, isDeploymentPreparationMachineReadHttpPurposeInTx,
+  isDeploymentReadOperandInAdmittedScopeInTx, readDeclaredDeploymentPreparationHttpRead, readDeploymentLinkPreparationHttpPurpose,
   readDeploymentPreparationHttpReadPurpose } from './deploymentPreparationAuthorization';
 
 // The admitted deployment scope is the one decider for declared read operands.
@@ -170,6 +170,31 @@ describe('admitted deployment read scope (real SQLite)', () => {
         id: 'x',
       }),
     ).toBeNull();
+  });
+
+  // F14: a telemetry Domain add reads the Environment's selected collector Machine
+  // (environment.telemetryMachineId) before placing its route; the Domain owner binds that same Machine.
+  it('admits a Domain root read of its Environment\'s collector Machine and refuses an unrelated Machine', async () => {
+    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const machine = async () => (await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: '{}' } })).id;
+    const [controller, collector, unrelated] = [await machine(), await machine(), await machine()];
+    const source = await db.projectSource.create({ data: { createdByAccountId: account.id, name: 'Collector scope',
+      owner: { kind: 'account', accountId: account.id }, audience: {}, attachments: [] } });
+    const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: account.id,
+      header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+    const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.id, createdByAccountId: account.id,
+      protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: controller,
+      telemetryMachineId: collector, contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+    const root = { serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: account.id, custodianAccountId: account.id,
+      authentication: { kind: 'account', tokenEpoch: 0 }, machineId: controller, installationId: 'installation',
+      actionId: 'deployments.domains.add', requestId: crypto.randomUUID(), requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: controller }, environmentId: environment.id,
+    } satisfies ExternalActionExecutionAuthorizationBindingV1;
+    const readMachine = (machineId: string) => isDeploymentPreparationMachineReadHttpPurposeInTx(db, root,
+      'deployments.domains.add', { method: 'GET', path: `/v1/machines/${machineId}` });
+    expect(await readMachine(controller)).toBe(true);
+    expect(await readMachine(collector)).toBe(true);
+    expect(await readMachine(unrelated)).toBe(false);
   });
 
   it('spends a Link root only on a write carrying exactly its recorded replacement', async () => {
