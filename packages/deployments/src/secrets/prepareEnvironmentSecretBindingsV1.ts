@@ -42,8 +42,9 @@ type Destinations = Readonly<{
     domainDestinations?: EnvironmentDomainSecretDestinationsV1;
 }>;
 
-function refuse(code: 'secret_missing' | 'client_required' | 'personal_secret_requires_promotion'): never {
-    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+function refuse(code: 'secret_missing' | 'client_required' | 'personal_secret_requires_promotion', phase?: string): never {
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(phase ? { failureCause: { phase, errorClass: 'Error', errorCode: code, httpStatus: null } } : {}) });
 }
 function sharedResourceId(binding: EnvironmentSecretBindingV1): string {
     if (binding.source.kind !== 'secret') return refuse('secret_missing');
@@ -56,7 +57,7 @@ function orderedUses(bindings: readonly EnvironmentSecretBindingV1[]) {
         || JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
 function destinationsFor(binding: EnvironmentSecretBindingV1, destinations: Destinations,
-    operational: ReadonlyMap<string, OperationalDestination>) {
+    operational: readonly OperationalDestination[]) {
     if (binding.purpose === 'variable' || binding.purpose === 'backupDestination') return environmentSecretBindingInstallationsV1(binding, destinations)!
         .map(installation => ({ installation, use: binding }));
     if (binding.purpose === 'registry') {
@@ -73,8 +74,8 @@ function destinationsFor(binding: EnvironmentSecretBindingV1, destinations: Dest
             ? domains.domains.find(domain => domain.domainId === binding.domainId)?.installations ?? [] : [])
             .map(installation => ({ installation, use: binding }));
     }
-    const destination = operational.get(environmentSecretBindingIdentityV1(binding));
-    return (destination && sameBinding(destination.binding, binding) ? destination.installations : [])
+    // A replaced role names both its incumbent and its new use; each binding takes only its own exact destination.
+    return (operational.find(destination => sameBinding(destination.binding, binding))?.installations ?? [])
         .map(installation => ({ installation, use: binding }));
 }
 
@@ -106,9 +107,9 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
         if (error && typeof error === 'object' && 'code' in error && error.code === 'deployment_invalid') return refuse('secret_missing');
         throw error;
     }
-    const operational = new Map(input.operationalDestinations?.map(destination => [environmentSecretBindingIdentityV1(destination.binding), destination]));
+    const operational = input.operationalDestinations ?? [];
     const previousDestinations = input.previousDestinations ?? input;
-    const previousOperational = new Map(previousDestinations.operationalDestinations?.map(destination => [environmentSecretBindingIdentityV1(destination.binding), destination]));
+    const previousOperational = previousDestinations.operationalDestinations ?? [];
     const groups = new Map<string, { subject: MachineSecretGrantSubjectV1; installation: EnvironmentSecretInstallation; uses: EnvironmentSecretBindingV1[] }>();
     const previousUses = new Map<string, EnvironmentSecretBindingV1[]>();
     const subjectFor = (binding: EnvironmentSecretBindingV1, installation: EnvironmentSecretInstallation): MachineSecretGrantSubjectV1 => {
@@ -131,7 +132,7 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
         // Runtime variables and backup references may be authored before placement;
         // their current installations alone determine whether anything is sealed.
         if (!destinations.length && binding.purpose !== 'backupDestination'
-            && (binding.purpose !== 'variable' || binding.phase !== 'runtime')) return refuse('secret_missing');
+            && (binding.purpose !== 'variable' || binding.phase !== 'runtime')) return refuse('secret_missing', 'deployment.bindings.prepare.destination');
         for (const { installation, use } of destinations) {
             const subject = subjectFor(use, installation);
             const key = machineSecretGrantSubjectKey(subject);

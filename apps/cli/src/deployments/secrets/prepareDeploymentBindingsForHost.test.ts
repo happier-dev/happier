@@ -79,13 +79,15 @@ it.each([
         name: 'saves an authored managed writer role next to a Railway runtime without publishing provider Variables' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true,
         name: 'seals a managed read role to its admitted controller without a runtime target' },
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true, replaceManagedDataRole: true,
+        name: 'replaces a saved managed database login on a data-only Environment and seals only the new Saved Secret' },
     { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, missingCustody: true,
         name: 'refuses missing requester custody before E2EE owner material can be acquired' },
     { placementChange: false, mode: 'plain' as const, external: false, atomicMove: true, name: 'saves reviewed database connection definition and ordinary secret bindings in one Environment update' },
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, replaceManagedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -173,6 +175,9 @@ it.each([
     const providerVariable = { purpose: 'variable', phase: 'build', name: 'RAILWAY_PROFILE',
         source: { kind: 'value', value: 'fixture-provider-value' } } as const;
     if (providerRuntime) detail.content.bindings = [providerVariable];
+    // The incumbent login is another Saved Secret for the same Link and role; the person replaces it.
+    if (replaceManagedDataRole && managedDataLink) detail.content.bindings = [{ purpose: 'dataRole', targetLinkId: managedDataLink.id,
+        role: 'readOnlyPassword', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('previous-credential'), resourceRevision: 1 } }];
     if (preTargetWithBuilder) {
         const build: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
             grantRef: bindingGrantRef(2), source: { kind: 'secret', ref, resourceRevision: 1 } };
@@ -205,6 +210,7 @@ it.each([
     const dataRoleTargetLinkIdsByAdmission: string[][] = [];
     let current = true;
     let denyBindingAdmission = false;
+    let omitController = false;
     const artifactWrites: string[] = [];
     const secretContent = external
         ? { v: 2 as const, name: 'Credential', kind: 'token' as const, source: { kind: 'external' as const,
@@ -296,7 +302,7 @@ it.each([
             bindingPreparation: { runtimeInstallations: preTarget || providerRuntime ? [] : [installation],
                 ...(environment.buildMachineId ? { buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation } : {}),
                 ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}),
-                ...(dataRoleTargetLinkIds.length ? { controllerInstallation: controller } : {}) } } };
+                ...(dataRoleTargetLinkIds.length && !omitController ? { controllerInstallation: controller } : {}) } } };
         }
         if (uncodedReadFailure) throw new Error('binding_read_unavailable token=private-boundary-token');
         environmentReads++;
@@ -413,6 +419,18 @@ it.each([
             return;
         }
         if (preTarget) {
+            if (replaceManagedDataRole) {
+                // Without an admitted controller the new login has no recipient: nothing is read or written,
+                // and the refusal names its branch.
+                omitController = true;
+                expect(await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home', environmentId: environment.id,
+                    expectedRevision: environment.revision, set: bindings, remove: [] }, {})).toMatchObject({ ok: false,
+                    errorCode: 'secret_missing', failureCause: { phase: 'deployment.bindings.prepare.destination' } });
+                expect({ materialReads, writes: writes.length }).toEqual({ materialReads: 0, writes: 0 });
+                omitController = false;
+                dataRoleTargetLinkIdsByAdmission.length = 0;
+                bindingAdmissionReads = 0;
+            }
             for (let attempt = 0; attempt < (configureChild ? 1 : 2); attempt++) {
                 const bindingInput = { serverId: 'home', environmentId: environment.id,
                     expectedRevision: environment.revision, set: bindings, remove: [] };

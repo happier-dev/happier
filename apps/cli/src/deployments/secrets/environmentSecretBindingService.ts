@@ -1,10 +1,15 @@
 import { prepareEnvironmentSecretBindingsV1 } from '@happier-dev/deployments';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { LaunchSecretReferenceOverlayError, materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
 import { sealMachineSecretGrant } from './machineSecretGrant';
+
+/** The Saved Secret could not be read under this operation's custody. */
+const materialMissing = () => new PluginError({ code: 'secret_missing', message: 'Environment binding custody is unavailable',
+    failureCause: { phase: 'deployment.bindings.prepare.material', errorClass: 'Error', errorCode: 'secret_missing', httpStatus: null } });
 
 export type EnvironmentOperationalSecretBinding = Exclude<EnvironmentSecretBindingV1, { purpose: 'variable' }>;
 export type EnvironmentSecretInstallation = Readonly<{ machineId: string; installationId: string; publicKey: Uint8Array }>;
@@ -41,17 +46,20 @@ export async function prepareEnvironmentSecretBindings(input: Destinations & Rea
             try {
                 const value = materializeSavedSecretReferenceBinding({ requirementName: binding.ref,
                     binding: { ref: binding.ref, revision: binding.resourceRevision }, materializer, exactReference: true });
-                if (value == null) throw new PluginError({ code: 'secret_missing', message: 'Environment binding custody is unavailable' });
+                if (value == null) throw materialMissing();
                 return value;
             } catch (error) {
-                if (error instanceof LaunchSecretReferenceOverlayError) throw new PluginError({ code: 'secret_missing', message: 'Environment binding custody is unavailable' });
+                if (error instanceof LaunchSecretReferenceOverlayError) throw materialMissing();
                 throw error;
             }
         } } : {}),
     }); } catch (error) {
         if (error instanceof Error && 'code' in error && (error.code === 'secret_missing'
             || error.code === 'client_required' || error.code === 'personal_secret_requires_promotion')) {
-            throw new PluginError({ code: error.code, message: 'Environment binding custody is unavailable' });
+            // The inner owner's typed cause names which refusal fired; the message stays content-free.
+            const carriesCause = 'failureCause' in error || isPluginError(error) && error.data.failureCause !== undefined;
+            throw new PluginError({ code: error.code, message: 'Environment binding custody is unavailable',
+                ...(carriesCause ? { failureCause: projectActionFailureCauseV1(error) } : {}) });
         }
         throw error;
     }

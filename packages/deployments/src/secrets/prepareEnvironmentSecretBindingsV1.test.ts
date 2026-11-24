@@ -99,3 +99,32 @@ describe('Environment reference grant preparation', () => {
         if (previous === next) expect(prepared.grants[0]!.sealedContent).toBe(initial.grants[0]!.sealedContent);
     });
 });
+
+describe('managed database login replacement', () => {
+    const controller = { machineId: 'controller', installationId: 'controller-installation', publicKey: new Uint8Array(32) };
+    const login = (resourceId: string): Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole' }> => ({ purpose: 'dataRole', targetLinkId: 'database-link', role: 'write',
+        source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } });
+    const sealGrant: Parameters<typeof prepareEnvironmentSecretBindingsV1>[0]['sealGrant'] = input =>
+        sealMachineSecretGrantEnvelopeV1({ ...input, seal: plaintext => Buffer.from(plaintext).toString('base64') });
+    const prepare = (operationalDestinations: readonly ReturnType<typeof login>[], resolved: string[]) =>
+        prepareEnvironmentSecretBindingsV1({ environmentId: 'environment', bindings: [login('public-login')],
+            previousBindings: [login('private-login')], runtimeInstallations: [], existingGrants: [], sealGrant,
+            // The host admission names the controller for the incumbent and the replacement use of one Link role.
+            operationalDestinations: operationalDestinations.map(binding => ({ binding, installations: [controller] })),
+            async resolveSecret(source) { resolved.push(source.ref); return 'login-url'; }, async assertCurrent() {} });
+
+    it('seals the replacement Saved Secret to the admitted controller', async () => {
+        const resolved: string[] = [];
+        const prepared = await prepare([login('public-login'), login('private-login')], resolved);
+        expect(resolved).toEqual([formatSharedSavedSecretRefV1('public-login')]);
+        expect(prepared.requiredSecretUses).toEqual([{ resourceId: 'public-login', resourceRevision: 1,
+            machineId: 'controller', installationId: 'controller-installation' }]);
+    });
+
+    it('never seals a replacement through the incumbent login destination alone', async () => {
+        const resolved: string[] = [];
+        await expect(prepare([login('private-login')], resolved)).rejects.toMatchObject({ code: 'secret_missing',
+            failureCause: { phase: 'deployment.bindings.prepare.destination' } });
+        expect(resolved).toEqual([]);
+    });
+});
