@@ -225,7 +225,7 @@ describe('provisioner picker demand', () => {
     ['answers chooser Trust before settling the Linux probe', 'linux', 'chooser'],
     ['keeps the Windows fallback after chooser Trust', 'windows', 'chooser'],
     ['uses the admitted guest after Inbox Accept without waiting for another Trust click or browsing the provisional guest', 'linux', 'inbox'],
-    ['explains that Inbox Accept already attached the guest when the chooser declines', 'linux', 'decline'],
+    ['continues into the attached workspace when chooser Decline follows Inbox Accept', 'linux', 'decline'],
   ] as const)('%s', (_description, platform, decision) => withPopoverWebGlobals(async () => {
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
@@ -266,7 +266,7 @@ describe('provisioner picker demand', () => {
     const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
     const { Modal } = await import('@/modal');
     const accepted = { managedId: 'attached-host', operation: { operationId: 'attach-operation' } };
-    const admitted = decision === 'inbox' ? { ...accepted, managedId: 'retained-host' } : accepted;
+    const admitted = decision === 'chooser' ? accepted : { ...accepted, managedId: 'retained-host' };
     const prompt = { kind: 'ssh.trustHost', message: 'Trust this SSH host?', host: 'example.test',
       keyType: 'ssh-ed25519', fingerprint: 'SHA256:fixture', existingFingerprint: null } as const;
     const scope = { accountId: 'owner', machineId: controller.machineId };
@@ -367,9 +367,15 @@ describe('provisioner picker demand', () => {
           resolve(true);
         }
       });
-      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(decision === 'decline'
-        ? { kind: 'failed', code: 'action_operation_unavailable', message: 'You already answered this trust question in the Inbox. The workspace is attached.' }
-        : platform === 'linux' ? { kind: 'attached', managedId: admitted.managedId, controller } : { kind: 'unsupported_platform' }));
+      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(platform === 'linux'
+        ? { kind: 'attached', managedId: admitted.managedId, controller } : { kind: 'unsupported_platform' }));
+      if (decision === 'decline') {
+        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        const notice = readPresentationNotice();
+        if (notice) onTestFinished(() => retirePresentationNotice(notice.key));
+        const { t } = await import('@/text');
+        expect(notice).toMatchObject({ severity: 'info', message: t('files.pane.serverFolderTrustAlreadyAnswered') });
+      }
       if (decision === 'inbox') expect(Modal.hide).toHaveBeenCalled();
       expect(trustAnswers).toEqual([{ id: 'tool.systemTasks', method: 'respond',
         params: { taskId: 'trust-task', expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } } }]);

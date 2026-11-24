@@ -10,6 +10,7 @@ import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { awaitActionApprovalResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { submitActionOperationTaskAnswer } from '@/components/inbox/actionOperations/useActionOperationTaskQuestion';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
@@ -161,25 +162,32 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
                     confirmSshHostKey(prompt, { signal: cancellation.signal }).then(trusted => ({ kind: 'decision' as const, trusted })),
                 ]);
                 if (input.signal.aborted) return failed('aborted');
+                let settled = first.kind === 'decision' ? undefined : first;
                 if (first.kind === 'decision') {
                     const answer = await submitActionOperationTaskAnswer({ serverId, snapshot }, { trusted: first.trusted }, input.signal);
                     if (input.signal.aborted) return failed('aborted');
                     if (!answer.ok) {
-                        if (!first.trusted && answer.errorCode === 'action_operation_unavailable') {
-                            const settled = await settlement;
-                            if (input.signal.aborted) return failed('aborted');
-                            if (settled.kind === 'found'
-                                && settled.operation.state === 'succeeded'
-                                && settled.operation.domainRef?.kind === 'managedMachine'
-                                && settled.operation.domainRef.bootstrapTask?.id === question?.id) {
-                                return finishFailure(failed(answer.errorCode, t('files.pane.serverFolderTrustAlreadyAnswered')));
-                            }
+                        if (first.trusted || answer.errorCode !== 'action_operation_unavailable') {
+                            return finishFailure(failed(answer.errorCode));
                         }
-                        return finishFailure(failed(answer.errorCode));
+                        settled = await settlement;
+                        if (input.signal.aborted) return failed('aborted');
+                        if (settled.kind !== 'found'
+                            || settled.operation.state !== 'succeeded'
+                            || settled.operation.domainRef?.kind !== 'managedMachine'
+                            || settled.operation.domainRef.bootstrapTask?.id !== question?.id) {
+                            return finishFailure(failed(answer.errorCode));
+                        }
+                        publishPresentationNotice({
+                            key: `remote-workspace-trust:${serverId}:${operationId}`,
+                            severity: 'info',
+                            message: t('files.pane.serverFolderTrustAlreadyAnswered'),
+                        });
+                    } else if (!first.trusted) {
+                        return finishFailure(failed('host_trust_declined'));
                     }
-                    if (!first.trusted) return finishFailure(failed('host_trust_declined'));
                 }
-                const settled = first.kind === 'decision' ? await settlement : first;
+                settled ??= await settlement;
                 if (settled.kind !== 'found') return finishFailure(settled);
                 terminal = readActionOperationTerminalResultV1(settled.operation);
                 if (!terminal) return finishFailure(failed('invalid_action_output'));
