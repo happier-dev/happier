@@ -184,7 +184,6 @@ function resolveGettingStartedMachines(
         || (!machinesFor(serverId) && isHomeUnavailable(input.machineListStatusByServerId?.[serverId]))
     ));
     const selectedServerIds = input.selection.allowedServerIds.filter((serverId) => !unavailableServerIds.includes(serverId));
-    const activeServerMachines = machinesFor(input.selection.activeServerId);
     const perServer = selectedServerIds.map((serverId) => {
         const machines = machinesFor(serverId);
         if (!machines) {
@@ -193,6 +192,9 @@ function resolveGettingStartedMachines(
         return summarize(machines, serverId, resolveScopeId);
     });
     const selectedMachines = computeMachinesSummary(perServer);
+    const activeServerMachines = selectedMachines.machineCount === 0 && !selectedMachines.hasUnknownServers
+        ? machinesFor(input.selection.activeServerId)
+        : null;
     const activeServerSummary = activeServerMachines
         ? summarize(activeServerMachines, input.selection.activeServerId, resolveScopeId)
         : null;
@@ -252,17 +254,18 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     const activeProfile = input.activeServerProfile;
     const serverName = resolveHomeDisplayLabel(activeProfile, activeProfile.id);
     const targetLabel = resolveTargetLabel(input, serverName);
-    const machines = resolveSessionGettingStartedMachinesSummary(input);
     // No first Session read can settle until these credentials recover. Keep a genuinely
     // pending Home waiting, but let terminal unbound Homes expose the existing setup/recovery.
     const credentialRecoveryRequired = isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(input.selection.activeServerId))
         && input.selection.allowedServerIds.every(serverId => isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(serverId)));
 
-    const kind = computeSessionGettingStartedDecision({
-        sessionsReady: input.sessionsReady || credentialRecoveryRequired,
-        sessionCount: input.sessionCount,
-        machines,
-    });
+    const sessionsReady = input.sessionsReady || credentialRecoveryRequired;
+    // Loading and existing Sessions only need inventory membership and whether a Home answered.
+    // Daemon presence matters when guidance must decide how to start a first Session.
+    const machines = sessionsReady && input.sessionCount === 0
+        ? resolveSessionGettingStartedMachinesSummary(input)
+        : resolveGettingStartedMachines(input, rows => ({ machineCount: rows.length, onlineCount: 0 }));
+    const kind = computeSessionGettingStartedDecision({ sessionsReady, sessionCount: input.sessionCount, machines });
 
     const showServerSetup = Boolean(activeProfile.serverUrl) && activeProfile.serverUrl !== DEFAULT_HAPPIER_CLOUD_SERVER_URL;
 

@@ -15,14 +15,22 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+
+// Guidance reads activity admitted by the presence owner.
+function createObservedMachineFixture(overrides: Partial<Machine>): Machine {
+    const machine = createMachineFixture(overrides);
+    publishMachineActivityForTest([machine]);
+    return machine;
+}
 
 type FixtureMachinesInput = Omit<SessionGettingStartedMachinesInput, 'activeMachines' | 'machineListByServerId'> & {
     activeMachines: readonly Partial<Machine>[];
     machineListByServerId: Readonly<Record<string, readonly Partial<Machine>[] | null | undefined>>;
 };
 function normalizeFixtureMachines(input: FixtureMachinesInput): SessionGettingStartedMachinesInput {
-    const machines = (rows: readonly Partial<Machine>[]) => rows.map((row, index) => createMachineFixture({
+    const machines = (rows: readonly Partial<Machine>[]) => rows.map((row, index) => createObservedMachineFixture({
         ...row, id: row.id ?? `fixture-machine-${index}`, activeAt: row.activeAt ?? (row.active === true ? Date.now() : 0),
     }));
     const serverIds = new Set([...input.selection.allowedServerIds, input.selection.activeServerId, ...Object.keys(input.machineListByServerId)]);
@@ -88,12 +96,45 @@ describe('computeSessionGettingStartedDecision', () => {
 });
 
 describe('buildSessionGettingStartedViewModel', () => {
+    it.each([1, 370])('does not walk %i Machine rows when Session guidance does not need presence', (fleetSize) => {
+        const serverId = 'session-guidance-fleet';
+        const accountId = 'session-guidance-account';
+        const machines = Array.from({ length: fleetSize }, (_, index) => createObservedMachineFixture({
+            id: `session-guidance-machine-${index}`, active: true, activeAt: Date.now(),
+        }));
+        let rowsRead = 0;
+        const fleet = new Proxy(machines, {
+            get(target, key, receiver) {
+                if (typeof key === 'string' && /^\d+$/.test(key)) rowsRead++;
+                return Reflect.get(target, key, receiver);
+            },
+        });
+        const input = {
+            activeMachines: fleet,
+            selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://session-guidance.test' },
+            machineListByServerId: { [serverId]: fleet },
+            accountScopeResolutionsByServerId: new Map([[serverId, { kind: 'bound' as const, scope: { serverId, accountId } }]]),
+        };
+
+        expect(buildScopedViewModel({ ...input, sessionsReady: false, sessionCount: 0 }).kind).toBe('loading');
+        const readsWhileLoading = rowsRead;
+        rowsRead = 0;
+        expect(buildScopedViewModel({ ...input, sessionsReady: true, sessionCount: 1 }).kind).toBe('select_session');
+        expect({ readsWhileLoading, readsWithSession: rowsRead }).toEqual({ readsWhileLoading: 0, readsWithSession: 0 });
+
+        rowsRead = 0;
+        expect(buildScopedViewModel({ ...input, sessionsReady: true, sessionCount: 0 }).kind).toBe('create_session');
+        expect(rowsRead).toBe(fleetSize);
+    });
+
     it.each([
         { availability: { kind: 'locked' as const, reason: 'content_unreadable' as const }, metadata: null },
         { availability: { kind: 'available' as const }, metadata: null, active: true, activeAt: Date.now() },
     ])('FX28 settles unavailable Machine content into setup guidance: %j', machineContent => {
         const serverId = 'fx28-locked-home';
-        const machine = createMachineFixture({ id: 'fx28-locked-machine', active: false, ...machineContent });
+        const machine = createObservedMachineFixture({ id: 'fx28-locked-machine', active: false, ...machineContent });
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true, sessionCount: 0, activeMachines: [machine],
             selection: { activeTarget: { kind: 'server', id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
@@ -105,7 +146,7 @@ describe('buildSessionGettingStartedViewModel', () => {
 
     it.each(['signed_out', 'unavailable', 'unknown_home'] as const)('FX28 reports settled %s credentials rather than waiting for presence', kind => {
         const serverId = 'fx28-terminal-home';
-        const machine = createMachineFixture({ id: 'fx28-terminal-machine', activeAt: Date.now() });
+        const machine = createObservedMachineFixture({ id: 'fx28-terminal-machine', activeAt: Date.now() });
         const input = {
             sessionsReady: true, sessionCount: 0, activeMachines: [machine],
             selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
@@ -127,7 +168,7 @@ describe('buildSessionGettingStartedViewModel', () => {
     it('keeps unknown daemon presence separate from known stopped Machines', () => {
         const serverId = 'pending-daemon-home';
         const accountId = 'pending-daemon-account';
-        const machine = createMachineFixture({ id: 'pending-daemon-machine', activeAt: Date.now() });
+        const machine = createObservedMachineFixture({ id: 'pending-daemon-machine', activeAt: Date.now() });
         const input = { sessionsReady: true, sessionCount: 0, activeMachines: [machine],
             selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
             serverSelectionGroups: [], activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://pending-daemon.test' },
@@ -156,7 +197,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const profile = await upsertServerProfile({ serverUrl: 'https://bulk-guidance.example.test', name: 'Bulk guidance' });
         const serverId = profile.id;
         const identity = 'srv_bulk_guidance';
-        const machines = Array.from({ length: 138 }, (_, index) => createMachineFixture({
+        const machines = Array.from({ length: 138 }, (_, index) => createObservedMachineFixture({
             id: `bulk-guidance-${index}`, active: true, activeAt: Date.now(),
         }));
         const read = (rows: readonly Machine[]) => resolveScopedMachinesSummary({
@@ -189,7 +230,7 @@ describe('buildSessionGettingStartedViewModel', () => {
     });
     it('does not offer session creation from a request-failed or replaced fleet member', () => {
         const serverId = 'fleet-guidance-home';
-        const machine = createMachineFixture({ id: 'fleet-guidance-machine', active: true, activeAt: Date.now() });
+        const machine = createObservedMachineFixture({ id: 'fleet-guidance-machine', active: true, activeAt: Date.now() });
         const input = { sessionsReady: true, sessionCount: 0, activeMachines: [machine],
             selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
             serverSelectionGroups: [], activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://fleet-guidance.test' },
@@ -290,7 +331,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 legacyServerIds: ['old-local-relay'],
             } as any,
             machineListByServerId: {
-                srv_local_relay: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+                srv_local_relay: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             },
         });
 
@@ -306,7 +347,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 allowedServerIds: ['srv-a'],
             },
             machineListByServerId: {
-                'srv-a': [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+                'srv-a': [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             },
         })).toEqual({
             hasUnknownServers: false,
@@ -366,7 +407,7 @@ describe('buildSessionGettingStartedViewModel', () => {
             },
             serverSelectionGroups: [],
             activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-            machineListByServerId: { 'srv-a': [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })] },
+            machineListByServerId: { 'srv-a': [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })] },
         } as const;
         const model = buildSessionGettingStartedViewModel(input);
 
@@ -428,7 +469,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
-            activeMachines: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+            activeMachines: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-a' },
                 activeServerId: 'srv-a',
@@ -464,7 +505,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
-            activeMachines: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+            activeMachines: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-a' },
                 activeServerId: 'srv-a',
@@ -482,7 +523,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
-            activeMachines: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+            activeMachines: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-b' },
                 activeServerId: 'srv-a',
@@ -491,7 +532,7 @@ describe('buildSessionGettingStartedViewModel', () => {
             serverSelectionGroups: [],
             activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
             machineListByServerId: {
-                'srv-a': [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+                'srv-a': [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
                 'srv-b': [],
             },
         });
@@ -503,7 +544,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
-            activeMachines: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+            activeMachines: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-b' },
                 activeServerId: 'srv-a',
@@ -523,7 +564,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
-            activeMachines: [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
+            activeMachines: [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })],
             selection: {
                 activeTarget: { kind: 'group', id: 'g', groupId: 'g' },
                 activeServerId: 'srv-a',
@@ -531,7 +572,7 @@ describe('buildSessionGettingStartedViewModel', () => {
             },
             serverSelectionGroups: [{ id: 'g', name: 'All' }],
             activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-            machineListByServerId: { 'srv-a': [createMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })] },
+            machineListByServerId: { 'srv-a': [createObservedMachineFixture({ id: 'guidance-active', active: true, activeAt: Date.now() })] },
             machineListStatusByServerId: { 'srv-a': 'idle', 'srv-b': 'error' },
         });
 
