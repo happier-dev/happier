@@ -6,6 +6,10 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createEnvironmentTelemetrySetForHost } from './setForHost';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 const rowKey = tweetnacl.sign.keyPair().publicKey;
@@ -27,7 +31,11 @@ function run(
     metadataKey?: Uint8Array;
   }>,
   extraBindings: readonly ReturnType<typeof createDeploymentVariableBindingV1>[] = [],
-  vercel?: { selected?: true; publiclyServed?: true },
+  vercel?: {
+    selected?: true;
+    publiclyServed?: true;
+    rotateOn?: Pick<Parameters<typeof createEnvironmentTelemetrySetForHost>[0], 'credentials' | 'serverHttpBaseUrl' | 'savedSecretOperationContext'>;
+  },
 ) {
   const detail = createDeploymentEnvironmentDetailV1();
   detail.environment.telemetryMachineId = 'collector';
@@ -57,6 +65,7 @@ function run(
     ],
   });
   const invoked: unknown[] = [];
+  const domainReads: string[] = [];
   const set = createEnvironmentTelemetrySetForHost({
     credentials: {
       token: 't',
@@ -65,6 +74,7 @@ function run(
     } as never,
     serverId: 'home',
     serverHttpBaseUrl: 'https://home.test',
+    ...vercel?.rotateOn,
     readEnvironment: async () => ({
       environment: detail.environment,
       content: detail.content,
@@ -88,6 +98,7 @@ function run(
     }),
     ...(vercel ? { publicCollectorDomain: {
       async get({ domainId, environmentId }: Pick<typeof selectedDomain, 'domainId' | 'environmentId'>) {
+        domainReads.push(domainId);
         expect({ domainId, environmentId }).toEqual({ domainId: selectedDomain.domainId, environmentId: selectedDomain.environmentId });
         const placements = vercel.publiclyServed
           ? [origin, { ...origin, listener: 'public', placement: { ...origin.placement, nativeServer: 'https' } }] : [origin];
@@ -123,12 +134,12 @@ function run(
       serverId: 'home',
       environmentId: detail.environment.id,
       expectedRevision: detail.environment.revision,
-      collector: { machineId: 'collector' },
+      ...(vercel?.rotateOn ? { rotate: true as const } : { collector: { machineId: 'collector' } }),
       ...(vercel?.selected ? { publicCollectorDomain: selectedDomain } : {}),
     },
     context,
   );
-  return { result, invoked };
+  return { result, invoked, domainReads };
 }
 const pinOf = (key: Uint8Array) => ({
   machineId: 'collector',
@@ -189,6 +200,35 @@ describe('Vercel collector exporter', () => {
       expect.objectContaining({ name: 'OTEL_EXPORTER_OTLP_HEADERS', valueFormat: 'otelAuthorizationHeader',
         source: expect.objectContaining({ kind: 'secret' }) }),
     ]) })]);
+  });
+
+  it('rotates the existing collector token while keeping its chosen endpoint', async () => {
+    const fixture = await createSavedSecretsCliHttpFixture();
+    try {
+      const credentials = await fixture.deps.readCredentialsFn?.();
+      if (!credentials) throw new Error('Missing fixture credentials');
+      const endpoint = { ...createDeploymentVariableBindingV1({
+        phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+        source: { kind: 'value', value: 'https://collector.example.test/' },
+      }), managedBy: 'telemetry' as const };
+      const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({
+        credentials, serverHttpBaseUrl: fixture.origin, isCurrent: async () => true,
+        snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 7, loadedAtMs: 1,
+          scopeKey: fixture.inHome(() => resolveAccountSettingsScopeKey(credentials)), settingsSecretsReadKeys: [] },
+      });
+      const { result, invoked, domainReads } = fixture.inHome(() => run({ encryptionMode: 'plain' }, [endpoint], {
+        rotateOn: { credentials, serverHttpBaseUrl: fixture.origin, savedSecretOperationContext },
+      }));
+      const outcome = await result;
+      expect('errorCode' in outcome ? outcome.errorCode : outcome.ok).toBe(true);
+      expect(domainReads).toEqual([]);
+      expect(fixture.writes).toMatchObject([{ resourceId: 'resource-id', expectedRevision: 37 }]);
+      expect(invoked).toEqual([expect.objectContaining({ set: expect.arrayContaining([
+        expect.objectContaining({ name: endpoint.name, source: endpoint.source }),
+        expect.objectContaining({ name: 'OTEL_EXPORTER_OTLP_HEADERS',
+          source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-id', resourceRevision: 38 } }),
+      ]) })]);
+    } finally { await fixture.close(); }
   });
 
   it('requires a person-selected Domain and rejects a private-only Domain before writing', async () => {

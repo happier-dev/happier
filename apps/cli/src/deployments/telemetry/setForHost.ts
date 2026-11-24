@@ -69,6 +69,9 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             if (previousMachineId !== null && previousMachineId !== machineId && !input.confirmDelete) {
                 return refuse('telemetry_deletion_confirmation_required', { machineId: previousMachineId });
             }
+            const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
+                binding.purpose === 'variable' && binding.managedBy === 'telemetry'
+                && TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.some(name => name === binding.name));
             let collectorPin: DeploymentTelemetryCollectorPinV1 | null = null;
             let exporterEndpoint: EnvironmentVariableBindingInputV1['source'] = { kind: 'deploymentFact', fact: 'telemetryEndpoint' };
             if (machineId !== null) {
@@ -91,25 +94,28 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 const runtimeLink = current.targetLinks.find(link => link.id === current.environment.runtimeTargetLinkId);
                 if (runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'vercel') {
                     const selected = input.publicCollectorDomain;
-                    if (!selected) return refuse('collector_public_domain_required');
-                    const { deploymentApp } = machine;
-                    if (!deploymentApp || selected.environmentId !== deploymentApp.environmentId
-                        || selected.targetLinkId !== deploymentApp.targetLinkId) return refuse('target_mismatch');
-                    const domain = host.publicCollectorDomain ?? refuse('admission_unavailable');
-                    const route = await readTelemetryCollectorDomainForHost({ kind: 'publicHttps', serverId: input.serverId,
-                        ...selected, collector: { machineId, deploymentId: deploymentApp.deploymentId, controller: deploymentApp.controller },
-                        signal: context.signal, get: operand => domain.get(operand, context), open: id => domain.open(id, context) });
-                    if (route.kind !== 'ready') {
-                        if (route.failure && 'errorCode' in route.failure) return route.failure;
-                        return refuse(route.reason, route.state ? { state: route.state } : route.failureCause);
+                    if (!selected) {
+                        // Rotate carries the endpoint from the admitted collector binding into the existing CAS.
+                        const retained = owned.find(binding => binding.phase === 'runtime' && binding.name === 'OTEL_EXPORTER_OTLP_ENDPOINT')?.source;
+                        if (!keepCollector || retained?.kind !== 'value') return refuse('collector_public_domain_required');
+                        exporterEndpoint = retained;
+                    } else {
+                        const { deploymentApp } = machine;
+                        if (!deploymentApp || selected.environmentId !== deploymentApp.environmentId
+                            || selected.targetLinkId !== deploymentApp.targetLinkId) return refuse('target_mismatch');
+                        const domain = host.publicCollectorDomain ?? refuse('admission_unavailable');
+                        const route = await readTelemetryCollectorDomainForHost({ kind: 'publicHttps', serverId: input.serverId,
+                            ...selected, collector: { machineId, deploymentId: deploymentApp.deploymentId, controller: deploymentApp.controller },
+                            signal: context.signal, get: operand => domain.get(operand, context), open: id => domain.open(id, context) });
+                        if (route.kind !== 'ready') {
+                            if (route.failure && 'errorCode' in route.failure) return route.failure;
+                            return refuse(route.reason, route.state ? { state: route.state } : route.failureCause);
+                        }
+                        exporterEndpoint = { kind: 'value', value: route.endpoint };
                     }
-                    exporterEndpoint = { kind: 'value', value: route.endpoint };
                 }
             }
             const pinChanged = !sameStrictJsonValue(current.content.telemetryCollector ?? null, collectorPin);
-            const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
-                binding.purpose === 'variable' && binding.managedBy === 'telemetry'
-                && TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.some(name => name === binding.name));
             const remove = owned.map(binding => ({ purpose: 'variable' as const, name: binding.name, phase: binding.phase }));
             if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged && !pinChanged) return success(input.expectedRevision);
             const set: EnvironmentSecretBindingInputV1[] = [];
