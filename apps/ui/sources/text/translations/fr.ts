@@ -9052,6 +9052,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
           updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 mise à jour attend le prochain tour' : `${count} mises à jour attendent le prochain tour`,
           deliveryStatus: {
             blocked: 'Bloqué',
+            held: 'Retenu',
             delivering: 'Livraison en cours',
             queuedInClaude: 'En file d’attente dans Claude · envoi après l’étape en cours',
             notStarted: 'Pas démarrée',

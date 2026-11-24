@@ -79,7 +79,8 @@ import {
   useApprovalDecisionHandler,
   type ApprovalDecisionOptions,
 } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
-import { presentActionFailureOutcome, presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { presentApprovalResultDelivery, readApprovalResultDelivery } from '@/components/approvals/approvalResultDelivery';
 import { useRetargetNavigationFocusReturnIntent } from '@/keyboard/focusReturn';
 import { useApprovalSessionReading } from './useApprovalSessionReading';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
@@ -581,17 +582,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
           : parsed.request.status;
   const statusLabel = formatApprovalStatusLabel(displayStatus);
   const originalDelivery = (recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined)
-    ?? (parsed.kind === 'built_in' && parsed.request.v === 2 ? parsed.request.delivery : undefined);
-  const deliveryFailure = originalDelivery?.status === 'rejected'
-    ? presentActionFailureOutcome({ errorCode: originalDelivery.code, error: originalDelivery.code, failureCause: originalDelivery.failureCause }) : null;
+    ?? (parsed.kind === 'built_in' ? readApprovalResultDelivery(parsed.request) : undefined);
   // The result's delivery is the receipt's own fact, said in the Session ask-record words; a delivered result stays quiet.
-  const heldCause = originalDelivery?.status === 'held' && originalDelivery.failureCause && 'errorCode' in originalDelivery.failureCause
-    ? originalDelivery.failureCause.errorCode : null;
-  const deliveryReceipt = deliveryFailure ? { detail: t('session.askRecord.notSent'), subtitle: deliveryFailure.reason ?? undefined }
-    : originalDelivery?.status === 'held' ? { detail: t('session.askRecord.waitsForYou'),
-      subtitle: heldCause === 'held_by_person' ? t('errors.sessionHeldByPerson') : undefined }
-      : originalDelivery?.status === 'outcomeUnknown'
-        ? { detail: t('session.askRecord.unsure'), subtitle: t('session.askRecord.unsureHint') } : null;
+  const deliveryReceipt = presentApprovalResultDelivery(originalDelivery);
+  const deliveryFailure = deliveryReceipt?.failure ?? null;
   const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'host_action'
     || parsed.request.status !== 'failed' && parsed.request.status !== 'outcome_unknown'
     || parsed.request.execution?.ok !== false

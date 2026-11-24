@@ -62,6 +62,7 @@ import { SavedSkillResult } from '@/components/tools/renderers/system/SavedSkill
 import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
 import { useApprovalAutomaticChecksPresentation } from '@/components/approvals/useApprovalAutomaticChecksPresentation';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { presentApprovalResultDelivery, readApprovalResultDelivery } from '@/components/approvals/approvalResultDelivery';
 
 
 type ApprovalPromptCardArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
@@ -274,6 +275,9 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     // A declined request keeps its review at its originating call: what was asked, and that the person said no.
     const declined = (props.approval.status === 'rejected' || props.approval.status === 'canceled') && executionFailure === null;
     const toolOutput = declined ? props.toolOutput?.trim() || undefined : undefined;
+    // Where a settled result went, from the record's own receipt (the approval page's Delivery row); delivered stays quiet.
+    const deliveryReceipt = React.useMemo(() => props.approval.status === 'open' || declined ? null
+        : presentApprovalResultDelivery(readApprovalResultDelivery(props.approval)), [declined, props.approval]);
     const { dismiss: dismissFailure } = useFailedApprovalDismissal();
     const artifactId = props.artifact.id;
     const onDismissFailure = React.useCallback(() => dismissFailure(artifactId), [artifactId, dismissFailure]);
@@ -531,6 +535,17 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 && !settledFailure && !(failureOutcome && repeatsActionName(previewSummary)) ? (
                 <Text style={styles.previewText}>{previewSummary}</Text>
             ) : null}
+            {deliveryReceipt ? (
+                // The receipt is this settled card's news: where the result went, then why, under the title.
+                <View style={styles.deliveryReceipt}>
+                    <ToolOutcomeStatus testID="approval-prompt-delivery" label={deliveryReceipt.detail}
+                        glyph={deliveryReceipt.kind === 'held' ? 'clock' : deliveryReceipt.kind === 'not_sent' ? 'minus-circle' : 'warning-circle'}
+                        tone="quiet" />
+                    {deliveryReceipt.subtitle ? (
+                        <Text testID="approval-prompt-delivery-reason" style={styles.previewText}>{deliveryReceipt.subtitle}</Text>
+                    ) : null}
+                </View>
+            ) : null}
             {draftAnswer !== null ? (
                 <DiscussionDraftAnswer testID="approval-prompt-discussion-draft" answer={draftAnswer} />
             ) : null}
@@ -613,6 +628,11 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s4,
+    },
+    deliveryReceipt: {
+        alignItems: 'flex-start',
+        gap: theme.space.s2,
+        marginBottom: theme.space.s8,
     },
     failureGroup: {
         gap: theme.space.s2,

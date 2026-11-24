@@ -10,6 +10,7 @@ import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow
 import { presentSessionActivationFailure, presentSessionContinuationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
+import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -26,7 +27,9 @@ export type PendingMessageVisualStateKind =
     | 'queued'
     | 'delivering'
     | 'materializing'
-    | 'blocked';
+    | 'blocked'
+    /** The Session's Machine access was withdrawn: the message waits, editable, and cannot be sent. */
+    | 'held';
 
 export type PendingMessageVisualState = Readonly<{
     kind: PendingMessageVisualStateKind;
@@ -321,8 +324,10 @@ export function getPendingDeliveryBlockedReasonPresentation(
     const reason = message.pendingDeliveryBlockedReason ?? 'unknown';
     const continuation = reason === 'provider_rejected_before_acceptance' && session?.active === false
         ? presentSessionContinuationFailure(session.lastRuntimeIssue) : null;
-    const cause = reason === 'runtime_config_blocked' && machineAccessRemoved
-        ? t('machineRequester.accessRemoved', { machine: t('common.machine') }) : null;
+    // A claim the Machine check refused after the withdrawal: say the Session's own withdrawal words, as its banner
+    // and a held queued row do, instead of the generic block.
+    const cause = machineAccessRemoved && (reason === 'runtime_config_blocked' || reason === 'session_input_target_unavailable')
+        ? t('session.accessWithdrawn') : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
         ...(cause ? { message: cause } : {}),
@@ -482,6 +487,17 @@ export function getPendingMessageVisualState(
         };
     }
 
+    // A withdrawal the Session already carries holds its queued words: say so with the Session's own reason,
+    // before any later claim reaches the Machine check. The text stays the person's to edit.
+    if (options?.machineAccessRemoved) {
+        return {
+            kind: 'held',
+            showSpinner: false,
+            iconName: 'clock',
+            deliveryBlockedPresentation: { labelKey: 'session.accessWithdrawn', isUnknown: false },
+        };
+    }
+
     const queuedRequestedAction = message.pendingRequestedAction?.kind ?? 'enqueue';
     const queuedReason = derivePendingMessageQueuedReason(message, {
         hasEarlierRow: options?.hasEarlierRow ?? false,
@@ -549,14 +565,18 @@ export function isAcceptedLocalPendingProjection(message: PendingMessage): boole
     return message.deliveryStatus === 'accepted' && message.source !== 'server_pending';
 }
 
-/** Shared by row actions and the empty-composer shortcut; in-flight custody stays with its sender. */
+/**
+ * Shared by row actions and the empty-composer shortcut; in-flight custody stays with its sender. Nothing is
+ * sent while the Session carries the person's withdrawn Machine access.
+ */
 export function canUseDirectPendingDeliveryActions(
     message: PendingMessage,
     visualState = getPendingMessageVisualState(message),
-    session?: Pick<Session, 'active' | 'pendingActivationAuthorization'> | null,
+    session?: Pick<Session, 'active' | 'pendingActivationAuthorization' | 'metadata'> | null,
 ): boolean {
     const deliveryState = visualState.kind === 'materializing' ? getPendingMessageVisualState(message) : visualState;
     return !isManagedPendingInputAwaitingWake(message, session)
+        && !isSessionMachineAccessRemoved({ session })
         && !isLaunchOwnedPendingMessage(message)
         && message.source !== 'local_outbound'
         && !isAcceptedLocalPendingProjection(message)

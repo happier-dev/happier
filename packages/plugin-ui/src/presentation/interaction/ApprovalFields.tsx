@@ -32,6 +32,11 @@ export type HappierApprovalFieldRow<TSource = never> =
       label: string;
       value: string;
       source?: TSource;
+      /**
+       * `code`: an exact literal people compare character by character (an unknown key, an id with no name), drawn
+       * in the code face unless the host's `Resolve` names it.
+       */
+      format?: 'code';
     }>
   | Readonly<{
       kind: 'entries';
@@ -86,7 +91,8 @@ export type HappierApprovalFieldResolve<TSource> = ComponentType<
     label: string;
     value: string;
     children: (
-      resolved: Readonly<{ label: string; value: string }>,
+      /** `named`: the host replaced the value with a name, so a `code` literal reads as words again. */
+      resolved: Readonly<{ label: string; value: string; named?: boolean }>,
     ) => ReactNode;
   }>
 >;
@@ -180,6 +186,8 @@ const renderDefaultText: HappierApprovalFieldsTextRender = (input) => (
 
 type ApprovalFieldsStyleKey =
   | HappierApprovalFieldsTextRole
+  | 'codeValue'
+  | 'pageCodeValue'
   | 'pageEntryGroup'
   | 'pageEntryLabel'
   | 'pageEntryValue';
@@ -211,6 +219,8 @@ function useApprovalFieldsLook<TSource>(
     colors ? { color: colors[color] } : {};
   const value = { ...role('label', 'regular'), ...ink('text') };
   const description = happierPageTextMetrics('rowDescription');
+  // The host's code face at the value's own size (as a page's code value reads), else the platform's monospace.
+  const codeFace = { fontFamily: typography?.mono?.fontFamily ?? theme?.typography.code.fontFamily ?? 'monospace' };
   const styles: Readonly<Record<ApprovalFieldsStyleKey, HappierPortableStyle>> =
     {
       // The key reads in the value's own size and line, regular and quieter, so a table row is one line.
@@ -224,6 +234,8 @@ function useApprovalFieldsLook<TSource>(
         ...ink('secondaryText'),
       },
       entryValue: value,
+      codeValue: { ...value, ...codeFace },
+      pageCodeValue: { ...description, ...ink('secondaryText'), ...codeFace },
       question: { ...role('label', 'semiBold'), ...ink('text') },
       noticeTitle: { ...role('label', 'semiBold'), ...ink('danger') },
       noticeBody: { ...value, ...ink('secondaryText') },
@@ -256,7 +268,7 @@ function ResolvedText<TSource>(
     label: string;
     value: string;
     children: (
-      resolved: Readonly<{ label: string; value: string }>,
+      resolved: Readonly<{ label: string; value: string; named?: boolean }>,
     ) => ReactNode;
   }>,
 ) {
@@ -339,8 +351,11 @@ export function HappierApprovalFields<TSource = never>(
   const page = props.density === 'page';
   const keyText = (label: string) =>
     page ? text('tableLabel', label, styles.pageEntryLabel) : text('tableLabel', label);
-  const valueText = (value: string) =>
-    page ? text('value', value, styles.pageEntryValue) : text('value', value);
+  const valueText = (value: string, code = false) =>
+    page ? text('value', value, code ? styles.pageCodeValue : styles.pageEntryValue)
+      : text('value', value, code ? styles.codeValue : undefined);
+  const isCode = (row: HappierApprovalFieldRow<TSource>, resolved: Readonly<{ named?: boolean }>) =>
+    row.kind === 'value' && row.format === 'code' && resolved.named !== true;
   const look: HappierApprovalFieldsLook<TSource> = {
     Resolve: props.Resolve,
     colors: props.colors,
@@ -408,7 +423,7 @@ export function HappierApprovalFields<TSource = never>(
                   {(resolved) => (
                     <>
                       {text('label', resolved.label)}
-                      {text('value', resolved.value)}
+                      {text('value', resolved.value, isCode(row, resolved) ? styles.codeValue : undefined)}
                     </>
                   )}
                 </ResolvedText>
@@ -470,7 +485,7 @@ export function HappierApprovalFields<TSource = never>(
                   <>
                     <View style={labelColumn}>{keyText(resolved.label)}</View>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      {valueText(resolved.value)}
+                      {valueText(resolved.value, isCode(row, resolved))}
                     </View>
                   </>
                 )}

@@ -289,7 +289,7 @@ const renderApprovalFieldText: HappierApprovalFieldsTextRender = (input) => <Tex
 const ApprovalReferenceResolve: HappierApprovalFieldResolve<ApprovalValueSource> = (props) => {
     const reading = useApprovalReferenceReading(props.source.reference, props.value, props.source.serverId,
         props.source.exactRead ? EXACT_READ : undefined);
-    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference, reading.named), value: readableApprovalReferenceText(props.source.reference, reading, props.source.referenceText) })}</>;
+    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference, reading.named), value: readableApprovalReferenceText(props.source.reference, reading, props.source.referenceText), named: reading.named })}</>;
 };
 
 /** The existing reader owns naming; an unresolved identity stays in Technical details. */
@@ -334,6 +334,8 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
         : governance && isGovernancePrincipal(row.reference)
         ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
     return { kind: 'value', key: row.path, label, value,
+        // An exact literal with no name reads in the code face, as the page's value does.
+        ...(row.valueFormat === 'code' ? { format: 'code' as const } : {}),
         ...(row.reference ? { source: { reference: row.reference, serverId, exactRead, referenceText: row.referenceText } } : {}) };
 }
 

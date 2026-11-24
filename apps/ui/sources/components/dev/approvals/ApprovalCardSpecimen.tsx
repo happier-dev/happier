@@ -19,13 +19,14 @@ import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePre
 import { useActiveServerAccountScope, storage } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 
 const SESSION_ID = 'dev-approval-card';
 const NO_PERMISSIONS = Object.freeze([]);
 const NO_LOCATIONS = new Map<string, null>();
 const noop = () => {};
 
-export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures', 'names', 'choices', 'clear', 'technical', 'translated', 'projectCommand'] as const;
+export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures', 'names', 'choices', 'clear', 'technical', 'translated', 'projectCommand', 'delivery', 'code'] as const;
 export type ApprovalCardScene = (typeof APPROVAL_CARD_SCENES)[number];
 
 const SCRIPT_MACHINE = createMachineFixture({ id: '67cffe92-bd4e-4b28-8512-706b1cc4ab77',
@@ -34,7 +35,7 @@ const SCRIPT_MACHINE = createMachineFixture({ id: '67cffe92-bd4e-4b28-8512-706b1
 const PAGE = 'https://en.wikipedia.org/wiki/Price_point';
 
 /** The waiting and failed Browser open an Agent asks for, and a request with a longer list of facts. */
-function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, scope: ServerAccountScope): ApprovalRequest {
+function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures' | 'delivery'>, scope: ServerAccountScope): ApprovalRequest {
   // A current request, as an Agent's ask is stored today: it carries the origin it replays from.
   const origin = (actionId: string) => ({
     v: 1 as const,
@@ -75,6 +76,8 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, sco
       platform: 'web', focus: true, target: { targetId: 'pricing-page', kind: 'externalUrl', url: PAGE },
     } },
     translated: { actionId: 'artifact.public_link.create', actionArgs: { artifactId: 'pricing-page-copy-notes' } },
+    // A setting key no declaration names: the exact key, in the code face.
+    code: { actionId: 'settings.get', actionArgs: { anchor: 'experiments.transcriptDucking' } },
   } as const;
   if (scene in fieldScenes) {
     const fields = fieldScenes[scene as keyof typeof fieldScenes];
@@ -122,6 +125,39 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, sco
   } as ApprovalRequest;
 }
 
+/**
+ * An Agent's approved `machines.list` at its call, settled with each receipt the record can carry: the result held
+ * for a person-stopped Session, not sent to a deleted one, of unknown outcome, and delivered (quiet).
+ */
+function deliveryRequests(scope: ServerAccountScope): readonly OpenApprovalAttentionArtifactForSession[] {
+  const actionArgs = {};
+  const settled = (id: string, delivery: unknown): OpenApprovalAttentionArtifactForSession => {
+    const approval = {
+      v: 2, createdAtMs: 1, updatedAtMs: 4, requestedSurface: 'agent', createdBy: { surface: 'agent', sessionId: SESSION_ID },
+      origin: { kind: 'transcript_tool_call', sessionId: SESSION_ID, toolCallId: `dev-call-${id}` },
+      actionId: 'machines.list', actionArgs, summary: buildApprovalPreviewSummary(getActionSpec('machines.list'), actionArgs),
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+        caller: { kind: 'session', sessionId: SESSION_ID, starterDepth: 0, turnDepth: 0 },
+        accountId: scope.accountId, serverId: scope.serverId, sessionId: SESSION_ID,
+        actionId: 'machines.list', requestId: `dev-approval-card-delivery-${id}` },
+      status: 'executed', decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 3, ok: true, result: { machines: [] } },
+      delivery,
+    } as unknown as ApprovalRequest;
+    return { artifact: { ...createInboxApprovalArtifactFixture({ id: `dev-approval-card-delivery-${id}`,
+      serverId: scope.serverId, actionId: approval.actionId, title: approval.summary }),
+      header: buildApprovalRequestArtifactHeaderV1(approval), body: JSON.stringify(approval) }, approval };
+  };
+  return [
+    settled('held', { status: 'held', localId: 'approval-result:dev-held', code: 'session_input_target_unavailable',
+      failureCause: { phase: 'session.message.send', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } }),
+    settled('not-sent', { status: 'rejected', code: 'session_input_target_unavailable', effectAttempted: false,
+      failureCause: { phase: 'approval.result.delivery', errorClass: 'Error', errorCode: 'session_input_target_unavailable', httpStatus: null } }),
+    settled('unsure', { status: 'outcomeUnknown', localId: 'approval-result:dev-unsure', code: 'session_input_settlement_outcome_unknown' }),
+    settled('delivered', { status: 'accepted', localId: 'approval-result:dev-delivered' }),
+  ];
+}
+
 /** The tray's requests: one per scene, or for `earlierFailures` two settled failures above a waiting request. */
 function sceneRequests(scene: ApprovalCardScene, scope: ServerAccountScope): readonly OpenApprovalAttentionArtifactForSession[] {
   const entry = (id: string, approval: ApprovalRequest): OpenApprovalAttentionArtifactForSession => ({
@@ -130,6 +166,7 @@ function sceneRequests(scene: ApprovalCardScene, scope: ServerAccountScope): rea
       header: buildApprovalRequestArtifactHeaderV1(approval), body: JSON.stringify(approval) },
     approval,
   });
+  if (scene === 'delivery') return deliveryRequests(scope);
   if (scene !== 'earlierFailures') return [entry(scene, sceneApproval(scene, scope))];
   const notRun = {
     ...sceneApproval('facts', scope),
@@ -192,7 +229,15 @@ export function ApprovalCardSpecimen(
     <View style={styles.page} testID="dev-approval-card">
       <View style={styles.tray}>
         <SessionTranscriptSourceProvider source={source}>
-          <AgentInputPermissionRequests
+          {props.scene === 'delivery' ? (
+            // Settled requests live at their call in the transcript, not in the tray: the row's own inline card.
+            <View style={styles.transcriptCards}>
+              {requests.map((request) => (
+                <ApprovalPromptCard key={request.artifact.id} chrome="inline" artifact={request.artifact}
+                  approval={request.approval} sessionId={SESSION_ID} canApprovePermissions />
+              ))}
+            </View>
+          ) : <AgentInputPermissionRequests
             sessionId={SESSION_ID}
             permissionRequests={NO_PERMISSIONS}
             approvalRequests={requests}
@@ -206,7 +251,7 @@ export function ApprovalCardSpecimen(
             onContentSizeChange={noop}
             onLayout={noop}
             onScroll={noop}
-          />
+          />}
         </SessionTranscriptSourceProvider>
       </View>
     </View>
@@ -219,6 +264,9 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'flex-end',
     backgroundColor: theme.colors.background.canvas,
     padding: theme.space.s16,
+  },
+  transcriptCards: {
+    gap: theme.space.s16,
   },
   tray: {
     width: '100%',

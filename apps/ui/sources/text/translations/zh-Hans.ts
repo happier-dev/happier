@@ -8898,6 +8898,7 @@ export const zhHans: TranslationStructure = {
         updatesWaiting: ({ count }: { count: number }) => `${count} 条更新等待下一轮`,
         deliveryStatus: {
           blocked: '已阻止',
+          held: '暂缓',
           delivering: '正在递送',
           queuedInClaude: '已在 Claude 中排队 · 当前步骤完成后发送',
           notStarted: '未启动',

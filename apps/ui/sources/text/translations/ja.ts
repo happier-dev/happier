@@ -9520,6 +9520,7 @@ localTailscale: {
         updatesWaiting: ({ count }: { count: number }) => `次のターンを待つ更新 ${count} 件`,
         deliveryStatus: {
           blocked: 'ブロック済み',
+          held: '保留中',
           delivering: '配信中',
           queuedInClaude: 'Claude で待機中 · 現在のステップが終わると送信',
           notStarted: '開始されませんでした',

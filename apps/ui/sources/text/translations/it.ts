@@ -9438,6 +9438,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
           updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 aggiornamento in attesa del prossimo turno' : `${count} aggiornamenti in attesa del prossimo turno`,
           deliveryStatus: {
             blocked: 'Bloccato',
+            held: 'Trattenuto',
             delivering: 'Consegna in corso',
             queuedInClaude: 'In coda in Claude · invio dopo il passaggio in corso',
             notStarted: 'Non avviata',

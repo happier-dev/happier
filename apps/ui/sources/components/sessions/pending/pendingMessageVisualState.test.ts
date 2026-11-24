@@ -368,7 +368,7 @@ describe('getPendingMessageVisualState', () => {
         expect(getPendingMessageVisualState(message, { machineAccessRemoved: true })).toMatchObject({
             kind: 'blocked',
             deliveryBlockedPresentation: {
-                message: t('machineRequester.accessRemoved', { machine: t('common.machine') }),
+                message: t('session.accessWithdrawn'),
                 isUnknown: false,
             },
         });

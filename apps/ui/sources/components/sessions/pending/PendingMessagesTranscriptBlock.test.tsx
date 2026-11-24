@@ -562,6 +562,58 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
     });
 
+    describe('queued message after the person\'s Machine access was withdrawn', () => {
+        const queued = { id: 'pending-withdrawn', localId: 'withdrawn-local', text: 'Check the logs again', createdAt: 0, updatedAt: 0,
+            source: 'server_pending' as const, pendingDeliveryStatus: 'server_queued' as const, rawRecord: {} };
+        async function renderQueued() {
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1', pendingMessages: [queued], discardedMessages: [] }));
+            await hoverPendingMessageRow(screen, 'pending-withdrawn');
+            return screen;
+        }
+
+        it('says it is held and why, keeps Edit, and offers no way to send it', async () => {
+            sessionValue = { active: false, presence: 'offline', thinking: false, access: createSessionAccessFixture('edit'),
+                metadata: { path: '/repo', lifecycleStateReason: 'machine_access_withdrawn' } };
+            const screen = await renderQueued();
+            expect(screen.getTextContent()).toContain(t('session.pendingMessages.deliveryStatus.held'));
+            expect(screen.findByTestId('pendingMessages.blockedDeliveryReason:pending-withdrawn')).toBeTruthy();
+            expect(screen.getTextContent()).toContain(t('session.accessWithdrawn'));
+            expect(screen.getTextContent()).not.toContain(t('session.pendingMessages.badgeLabel', { count: 0 }));
+            expect(screen.findByTestId('pendingMessages.edit:pending-withdrawn')).toBeTruthy();
+            expect(screen.findByTestId('pendingMessages.sendNow:pending-withdrawn')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.deliverAndResume:pending-withdrawn')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.markDeliveryHandled:pending-withdrawn')).toBeNull();
+            await screen.unmount();
+        });
+
+        it('names the withdrawal on a row the Machine check already refused, and offers no way to send it', async () => {
+            sessionValue = { active: false, presence: 'offline', thinking: false, access: createSessionAccessFixture('edit'),
+                metadata: { path: '/repo', lifecycleStateReason: 'machine_access_withdrawn' } };
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1', discardedMessages: [], pendingMessages: [{ ...queued, pendingDeliveryStatus: 'blocked' as const,
+                    pendingDeliveryBlockedReason: 'session_input_target_unavailable' as const }] }));
+            await hoverPendingMessageRow(screen, 'pending-withdrawn');
+            expect(screen.getTextContent()).toContain(t('session.accessWithdrawn'));
+            expect(screen.getTextContent()).not.toContain(t('session.pendingMessages.deliveryBlockedReasons.targetUnavailable'));
+            expect(screen.findByTestId('pendingMessages.sendNow:pending-withdrawn')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.remove:pending-withdrawn')).toBeTruthy();
+            await screen.unmount();
+        });
+
+        it('reads as queued again once the Session no longer carries the withdrawal', async () => {
+            sessionValue = { active: false, presence: 'offline', thinking: false, access: createSessionAccessFixture('edit'),
+                metadata: { path: '/repo' } };
+            const screen = await renderQueued();
+            expect(screen.getTextContent()).not.toContain(t('session.pendingMessages.deliveryStatus.held'));
+            expect(screen.getTextContent()).not.toContain(t('session.accessWithdrawn'));
+            expect(screen.findByTestId('pendingMessages.sendNow:pending-withdrawn')).toBeTruthy();
+            await screen.unmount();
+        });
+    });
+
     it('keeps the interruption warning for send-now during an active turn', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(false);

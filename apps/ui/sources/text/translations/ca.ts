@@ -8568,6 +8568,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 actualització esperant el pròxim torn' : `${count} actualitzacions esperant el pròxim torn`,
                 deliveryStatus: {
                     blocked: 'Bloquejat',
+                    held: 'Retingut',
                     delivering: 'S’està entregant',
                     queuedInClaude: 'En cua a Claude · s’envia després del pas actual',
                     notStarted: 'No s’ha iniciat',

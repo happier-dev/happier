@@ -677,6 +677,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     ? 'session.pendingMessages.deliveryStatus.nextTurn' : 'session.pendingMessages.deliveryStatus.delivering'))
                 : visualState.kind === 'blocked'
                     ? t('session.pendingMessages.deliveryStatus.blocked')
+                : visualState.kind === 'held'
+                    ? t('session.pendingMessages.deliveryStatus.held')
                     : visualState.kind === 'send_failed'
                         ? t('session.pendingMessages.errors.sendFailed')
                     : visualState.kind === 'cancelling'

@@ -10728,6 +10728,7 @@ const enSession = {
     updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 update waiting for the next turn' : `${count} updates waiting for the next turn`,
     deliveryStatus: {
       blocked: 'Blocked',
+      held: 'Held',
       delivering: 'Delivering',
       queuedInClaude: 'Queued in Claude · sends after the current step',
       notStarted: 'Didn’t start',

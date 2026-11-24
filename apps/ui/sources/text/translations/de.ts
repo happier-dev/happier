@@ -9236,6 +9236,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
 	            updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 Update wartet auf den nächsten Zug' : `${count} Updates warten auf den nächsten Zug`,
 	            deliveryStatus: {
 	                blocked: 'Blockiert',
+	                held: 'Zurückgehalten',
 	                delivering: 'Wird zugestellt',
 	                queuedInClaude: 'In Claude eingereiht · wird nach dem aktuellen Schritt gesendet',
 	                notStarted: 'Nicht gestartet',

@@ -209,3 +209,40 @@ describe('HappierApprovalFields host resolution', () => {
     }
   });
 });
+
+describe('HappierApprovalFields code literals', () => {
+  it.each(['table', 'stack'] as const)(
+    'draws an unnamed code literal in the code face and a named one in the value face (%s)',
+    (anatomy) => {
+      const drawn = new Map<string, Readonly<Record<string, unknown>>>();
+      const Resolve: HappierApprovalFieldResolve<string> = (props) => (
+        <>{props.children({ label: props.label, value: props.source === 'known' ? 'Quiet hours' : props.value,
+          named: props.source === 'known' })}</>
+      );
+      const mounted = mount(
+        <HappierApprovalFields<string>
+          anatomy={anatomy}
+          Resolve={Resolve}
+          renderText={(input) => {
+            if (input.role === 'value') drawn.set(input.text, input.style as Readonly<Record<string, unknown>>);
+            return <span>{input.text}</span>;
+          }}
+          rows={[
+            { kind: 'value', key: 'unknown', label: 'Setting', value: 'notifications.quietHours', format: 'code', source: 'unknown' },
+            { kind: 'value', key: 'known', label: 'Setting', value: 'notifications.quietHours', format: 'code', source: 'known' },
+            { kind: 'value', key: 'plain', label: 'Mode', value: 'fast' },
+          ]}
+        />,
+      );
+      try {
+        const plainFamily = drawn.get('fast')?.fontFamily;
+        expect(drawn.get('notifications.quietHours')?.fontFamily).toBeDefined();
+        expect(drawn.get('notifications.quietHours')?.fontFamily).not.toBe(plainFamily);
+        expect(drawn.get('Quiet hours')?.fontFamily).toBe(plainFamily);
+        expect(drawn.get('Quiet hours')?.fontSize).toBe(drawn.get('notifications.quietHours')?.fontSize);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+});

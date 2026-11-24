@@ -8,6 +8,7 @@ import { presentsApprovalVisualTranscriptOccurrence } from '@/components/approva
 import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
 import { readDeclinedApprovalCheckRunId } from '@/components/approvals/ApprovalAutomaticChecks';
 import { presentsSettledBrowserToolApproval } from '@/components/sessions/transcript/references/browserActionPhrase';
+import { isApprovalResultUndelivered, readApprovalResultDelivery } from '@/components/approvals/approvalResultDelivery';
 
 export const presentsSettledPetImportApproval: ApprovalSettledPresentation =
     (approval) => readPetImportConfirmationV1(approval)?.outcome?.kind === 'added';
@@ -34,6 +35,8 @@ export const TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS: readonly ApprovalSettled
     // A declined request keeps its review at its originating call; failures retain their attention owner.
     (approval) => (approval.status === 'rejected' || approval.status === 'canceled')
         && approval.origin?.kind === 'transcript_tool_call',
+    // An app-approved call whose result did not reach its Session keeps its receipt at the call: held, not sent, or unsure.
+    (approval) => approval.origin?.kind === 'transcript_tool_call' && isApprovalResultUndelivered(readApprovalResultDelivery(approval)),
 ];
 
 /** Settled requests that remain actionable attention above the composer instead of moving rows. */

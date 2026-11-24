@@ -9049,6 +9049,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 aktualizacja czeka na następną turę' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `${count} aktualizacje czekają na następną turę` : `${count} aktualizacji czeka na następną turę`,
         deliveryStatus: {
           blocked: 'Zablokowano',
+          held: 'Wstrzymana',
           delivering: 'Dostarczanie',
           queuedInClaude: 'W kolejce Claude · wysłanie po bieżącym kroku',
           notStarted: 'Nie uruchomiono',

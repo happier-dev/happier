@@ -9212,6 +9212,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
           updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 actualización esperando el próximo turno' : `${count} actualizaciones esperando el próximo turno`,
           deliveryStatus: {
             blocked: 'Bloqueado',
+            held: 'Retenido',
             delivering: 'Entregando',
             queuedInClaude: 'En cola en Claude · se envía tras el paso actual',
             notStarted: 'No se inició',

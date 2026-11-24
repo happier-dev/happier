@@ -7674,6 +7674,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 updatesWaiting: ({ count }: { count: number }) => `${count} 則更新等待下一輪`,
                 deliveryStatus: {
                     blocked: '已封鎖',
+                    held: '暫緩',
                     delivering: '正在傳送',
                     queuedInClaude: '已在 Claude 中排隊 · 目前步驟完成後傳送',
                     notStarted: '未啟動',

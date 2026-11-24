@@ -29,6 +29,7 @@ import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/appro
 import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { t } from '@/text';
 import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -396,6 +397,71 @@ describe('ApprovalPromptCard', () => {
         expect(readApproval().status).toBe('open');
         expect(home.requestsFor('/v1/artifacts/approval-1').filter(request => request.input !== null)).toEqual([]);
         expect(daemonRpc).not.toHaveBeenCalled();
+    });
+
+    describe('the settled receipt of where an approved call\'s result went', () => {
+        /** The real executor creates, decides, executes and stores the delivery receipt; only storage and Session IO are boundaries. */
+        async function producerSettledApproval(status: 'held' | 'rejected' | 'outcomeUnknown' | 'accepted'): Promise<ApprovalRequestV2> {
+            const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+            const { materializeActionRequestAttributionV1 } = await import('@happier-dev/protocol/actions/actionRequestAttributionV1');
+            const { isApprovalExecutionOriginCurrentForAccountContext } = await import('@/sync/ops/actions/defaultActionExecutor');
+            let stored: ApprovalRequestV2 | null = null;
+            const executor = createActionExecutor({
+                approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'approval-1' }; },
+                approvalsGet: async () => stored,
+                approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+                isApprovalExecutionOriginCurrent: async ({ origin, reportStale }) => isApprovalExecutionOriginCurrentForAccountContext({
+                    origin, accountServerId: homeId, accountId: 'account-1', reportStale }),
+                sessionStateFieldSet: async () => ({ ok: true }),
+                sessionSendMessage: async ({ localId }) => status === 'held'
+                    ? { status, localId: localId!, code: 'session_input_target_unavailable', failureCause: {
+                        phase: 'session.input.admission', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } }
+                    : status === 'rejected' ? { status, code: 'session_input_target_unavailable', effectAttempted: false }
+                        : status === 'outcomeUnknown' ? { status, localId: localId!, code: 'session_input_settlement_outcome_unknown' }
+                            : { status, localId: localId! },
+            });
+            const context = { serverId: homeId, runtimeAccountId: 'account-1' };
+            expect(await executor.execute('session.title.set', { title: 'Review the API' }, {
+                ...context, surface: 'agent', authority: 'account_automation', actionRequestId: `card-delivery-${status}`,
+                defaultSessionId: 'session-1', defaultSessionMachineId: 'machine-exact',
+                actionCaller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+                actionRequestAttributionV1: materializeActionRequestAttributionV1({ requestRef: 'person-input',
+                    requester: { serverId: homeId, accountId: 'account-1' },
+                    persona: { serverId: homeId, sessionId: 'session-1' }, origin: null }),
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                    'session.title.set': { approvalRequiredSurfaces: ['agent'] } } }),
+            })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            expect(await executor.execute('approval.request.decide', { artifactId: 'approval-1', decision: 'approve' }, {
+                ...context, surface: 'ui', authority: 'present_user',
+            })).toMatchObject({ ok: true, result: { status: 'executed', delivery: { status } } });
+            // The asking call's position in its Session's transcript, as an Agent's tool call records it.
+            return ApprovalRequestV2Schema.parse({ ...stored!, origin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1' } });
+        }
+
+        it.each([
+            ['held', 'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+            ['rejected', 'session.askRecord.notSent', null],
+            ['outcomeUnknown', 'session.askRecord.unsure', 'session.askRecord.unsureHint'],
+        ] as const)('keeps a %s result\'s receipt on the card at its call, saying where it went', async (status, detail, reason) => {
+            const approval = await producerSettledApproval(status);
+            expect(TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS.some(presents => presents(approval))).toBe(true);
+            const screen = await renderCard(approval, { chrome: 'inline' });
+            const receipt = screen.findByTestId('approval-prompt-delivery');
+            expect(receipt?.props.accessibilityLabel).toBe(t(detail));
+            if (reason) expect(screen.getTextContent()).toContain(t(reason));
+            else expect(screen.findByTestId('approval-prompt-delivery-reason')).not.toBeNull();
+            expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
+            await screen.unmount();
+        });
+
+        it('stays quiet once the result reached its Session', async () => {
+            const approval = await producerSettledApproval('accepted');
+            expect(TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS.some(presents => presents(approval))).toBe(false);
+            const screen = await renderCard(approval, { chrome: 'inline' });
+            expect(screen.findByTestId('approval-prompt-delivery')).toBeNull();
+            expect(screen.findByTestId('approval-prompt-delivery-reason')).toBeNull();
+            await screen.unmount();
+        });
     });
 
     describe('an Agent visual at Ask', () => {
