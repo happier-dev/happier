@@ -15,12 +15,22 @@ import { createWorkspaceSyncEntryExport } from './workspaceSyncEntryTransfer';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { runNativeConfinedWorkspaceSyncApply } from './workspaceSyncNativeConfinedFileSystem';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { prepareExistingGitWorkspaceSyncTarget } from './workspaceSyncTargetBootstrap';
+import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 
 it('retains signed native target admission at the carrier while the guest owns its filesystem and release', async () => {
   await withTempDir('native-target-dispatch-', async fixture => {
     const root = join(fixture, 'guest'); await mkdir(root);
+    runScmExecutable(root, 'git', ['init', '-q']);
+    await writeFile(join(root, '.gitignore'), '.env\n');
+    await writeFile(join(root, '.env'), 'excluded fixture');
+    await writeFile(join(root, 'reviewed.txt'), 'conflict fixture');
     const controller = { machineId: 'carrier', installationId: 'carrier-installation' };
-    const input = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const input = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const contentPolicy = { ...input, policyDigest: computeWorkspaceSyncPolicyDigest(input) };
     const relationship = { v: 1 as const, relationshipId: 'signed-native', controllerMachineId: 'source-machine',
       alphaWorkspaceRefId: 'source', betaWorkspaceRefId: 'guest', mode: 'keep_both_in_sync' as const,
@@ -30,12 +40,19 @@ it('retains signed native target admission at the carrier while the guest owns i
     const snapshot: ActiveProjectAccountRowsSnapshot = { source: 'network', workspaceRefs: [target,
       { id: 'source', serverId: 'home', machineId: 'source-machine', rootPath: '/source/root', createdAtMs: 1 }],
       relationships: [relationship], rows: [], organizations: [], graphRevision: 1, loadedAtMs: 1, scopeKey: 'owner' };
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
+      qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration })]);
     let guestSnapshot: ActiveProjectAccountRowsSnapshot | null = snapshot;
     const guest = createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: 'carrier', localAccountId: 'owner',
       localManagedTarget: { managedId: target.managedId, controller }, getProjectSnapshot: () => guestSnapshot,
+      scmRegistry: registry,
       resolutionMaterialDirectory: join(fixture, 'guest-resolution'),
       callMachineRpc: async () => { throw new Error('No Machine RPC expected'); },
       bootstrap: { materializationDirectory: join(fixture, 'guest-materialization'),
+        prepareGitTarget: input => prepareExistingGitWorkspaceSyncTarget(input, {
+          inspectWorkspaceLocation: request => inspectWorkspaceLocationWithScmWorkspace({ ...request, registry }),
+        }),
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'guest-locks') }) } });
     let stoppedBeforeRootRelease = false;
     const carrier = createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: 'carrier', localAccountId: 'owner',
@@ -94,10 +111,31 @@ it('retains signed native target admission at the carrier while the guest owns i
         const afterAcknowledgement = once(client, 'data');
         client.write(bytes);
         expect((await afterAcknowledgement)[0]).toEqual(bytes);
-        expect(await carrier.releaseBootstrapHere({ v: 1, bootstrapOperationId: request.bootstrapOperationId,
-          targetWorkspaceRefId: target.id, reason: 'abort' }, undefined, releaseContext)).toEqual({ ok: true, released: true });
-        expect(stoppedBeforeRootRelease).toBe(true);
       } finally { client.destroy(); await ingress.close(); }
+      guestSnapshot = { ...snapshot, relationships: [{ ...relationship, enabled: true }] };
+      const inspectContext: RpcHandlerContext = {
+        signal: context.signal, callerAuthority: 'account_automation', machineAdmission: admission,
+        verifyMachineAdmissionCurrent: async () => true,
+        workspaceSyncSourceWriterTargetRouting: { ...sourceWriterRouting, target: { ...sourceTarget, phase: 'inspect' } },
+      };
+      const reviewed = { relationshipId: relationship.relationshipId, workspaceRefId: target.id, path: 'reviewed.txt' };
+      const excluded = { ...reviewed, path: '.env' };
+      for (const receiver of [guest, carrier]) {
+        await expect(receiver.readFileHere({ ...reviewed, maxBytes: 128 }, undefined, inspectContext))
+          .resolves.toMatchObject({ status: 'text', text: 'conflict fixture' });
+        await expect(receiver.observeEntryHere(reviewed, undefined, inspectContext)).resolves.toMatchObject({ kind: 'file' });
+      }
+      const results = await Promise.allSettled([guest, carrier].flatMap(receiver => [
+        receiver.readFileHere({ ...excluded, maxBytes: 128 }, undefined, inspectContext),
+        receiver.observeEntryHere(excluded, undefined, inspectContext),
+      ]));
+      expect(results).toEqual(Array.from({ length: 4 }, () =>
+        ({ status: 'rejected', reason: expect.objectContaining({ code: 'forbidden' }) })));
+
+      expect(stoppedBeforeRootRelease).toBe(true);
+      guestSnapshot = snapshot;
+      await expect(carrier.releaseBootstrapHere({ v: 1, bootstrapOperationId: request.bootstrapOperationId,
+        targetWorkspaceRefId: target.id, reason: 'abort' }, undefined, releaseContext)).resolves.toEqual({ ok: true, released: true });
       expect(carrier.hasRetainedRecoveryAdmission({ request: recovery, accountServerId: 'home', actorAccountId: 'owner', receivingMachine: controller })).toBe(false);
       await expect(guest.authorizeWorkspaceSyncMachineAgent({ operationId: relationship.relationshipId,
         sourceMachineId: 'source-machine', targetMachineId: 'carrier' })).rejects.toMatchObject({ code: 'peer_unavailable' });

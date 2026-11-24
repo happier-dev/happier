@@ -14,6 +14,9 @@ import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/action
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import type { ScmBackendRegistry } from '@/scm/registry';
+import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
+import { resolveWorkspaceSyncSeedTransfer } from './workspaceSyncSeedTransfer';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -229,8 +232,11 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   recoverConflictResolutionHere(request: WorkspaceSyncTargetConflictRecoverV1, signal?: AbortSignal,
     context?: WorkspaceSyncConflictRecoveryContext): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
   recoverConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictRecoverV1 & Readonly<{ signal?: AbortSignal }>): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
-  readFileHere(request: WorkspaceSyncTargetFileReadV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<ReadWorkspaceSyncFileResultV1>;
-  observeEntryHere(request: WorkspaceSyncTargetEntryObserveV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncEntryExpectationV1>;
+  /** The same-binary worker receives only the carrier's admitted Inspect mode. */
+  readFileHere(request: WorkspaceSyncTargetFileReadV1, signal?: AbortSignal, context?: RpcHandlerContext,
+    admittedWriterRead?: true): Promise<ReadWorkspaceSyncFileResultV1>;
+  observeEntryHere(request: WorkspaceSyncTargetEntryObserveV1, signal?: AbortSignal, context?: RpcHandlerContext,
+    admittedWriterRead?: true): Promise<WorkspaceSyncEntryExpectationV1>;
   stageConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictStageV1 & Readonly<{ signal?: AbortSignal }>): Promise<void>;
   applyStagedConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictApplyV1 & Readonly<{ signal?: AbortSignal }>): Promise<WorkspaceSyncTargetConflictApplyResultV1>;
   discardStagedConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictApplyV1 & Readonly<{ signal?: AbortSignal }>): Promise<void>;
@@ -304,6 +310,7 @@ export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
   localAccountId?: string;
   /** Captured native child owns this one admitted local endpoint. */
   localWorkspaceRefId?: string;
+  scmRegistry?: ScmBackendRegistry;
   getProjectSnapshot?: (operationId?: string) => ActiveProjectAccountRowsSnapshot | null;
   /** Passive preview reads current Home rows, never the daemon's retained row cache. */
   refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot>;
@@ -1757,7 +1764,7 @@ export function createWorkspaceSyncTargetAuthority(
       const authorityKey = retainedAuthorityKey({ ...request, operationId: request.relationshipId, endpointRole });
       const entry = retained.get(authorityKey);
       if (entry?.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
-        && entry.relationshipDefinition) return { authorityKey, entry };
+        && entry.relationshipDefinition) return { authorityKey, entry, relationship: entry.relationshipDefinition };
     }
     return null;
   };
@@ -2287,18 +2294,31 @@ export function createWorkspaceSyncTargetAuthority(
     stagedResolutions.delete(stagedKey);
   };
 
-  const resolveTargetRead = async (request: Pick<WorkspaceSyncTargetEntryObserveV1, 'relationshipId' | 'workspaceRefId'>,
-    context?: RpcHandlerContext) => {
+  // A writer-routed read serves only what the relationship's content policy syncs,
+  // decided by the same selection owner as the seed export.
+  const assertWriterReadSelection = async (root: string, path: string, policy: WorkspaceContentPolicyV1) => {
+    const selected = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({ sourcePath: root,
+      workspaceTransfer: resolveWorkspaceSyncSeedTransfer(policy), registry: dependencies.scmRegistry });
+    if (!selected.entries.some(entry => entry.relativePath === path)) {
+      throw authorityError('forbidden', 'Workspace Sync read is outside the target content policy');
+    }
+  };
+
+  const resolveTargetRead = async (request: WorkspaceSyncTargetEntryObserveV1,
+    context?: RpcHandlerContext, admittedWriterRead?: true) => {
     const routing = await readSourceWriterTargetRouting(context, 'inspect');
-    if (routing) {
+    if (routing || admittedWriterRead) {
       const match = findRetainedTarget({ relationshipId: request.relationshipId,
         targetMachineId: localMachineId, targetWorkspaceRefId: request.workspaceRefId });
-      if (!match || !isAdmittedBySourceWriter(match.entry, routing)) {
+      if (!match || (routing && !isAdmittedBySourceWriter(match.entry, routing))) {
         throw authorityError('forbidden', 'Workspace Sync read does not match retained target custody');
       }
-      if ('kind' in match.entry) return { native: match.entry.execution };
+      // The worker holds the corresponding retained loan and sees its own filesystem.
+      if ('kind' in match.entry) return { native: match.entry.execution, admittedWriterRead: true as const };
       if (!match.entry.readyPublished) throw authorityError('relationship_not_ready', 'Workspace Sync target is not ready');
-      return await readRetainedTargetRoot(match.authorityKey, match.entry);
+      const access = await readRetainedTargetRoot(match.authorityKey, match.entry);
+      await assertWriterReadSelection(access.canonicalRoot, request.path, match.relationship.contentPolicy);
+      return access;
     }
     const native = await nativeExecutionForEndpoint(request.workspaceRefId, request.relationshipId, request.relationshipId);
     if (native) return { native };
@@ -2312,11 +2332,12 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetFileReadV1,
     signal?: AbortSignal,
     context?: RpcHandlerContext,
+    admittedWriterRead?: true,
   ): Promise<ReadWorkspaceSyncFileResultV1> => {
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetFileReadV1Schema.parse(rawRequest);
-    const access = await resolveTargetRead(request, context);
-    if (access.native) return await access.native.readFileHere(request, signal);
+    const access = await resolveTargetRead(request, context, admittedWriterRead);
+    if (access.native) return await access.native.readFileHere(request, signal, undefined, access.admittedWriterRead);
     signal?.throwIfAborted();
     return ReadWorkspaceSyncFileResultV1Schema.parse(await readWorkspaceSyncFileAtRoot({
       rootPath: access.canonicalRoot,
@@ -2331,11 +2352,12 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetEntryObserveV1,
     signal?: AbortSignal,
     context?: RpcHandlerContext,
+    admittedWriterRead?: true,
   ): Promise<WorkspaceSyncEntryExpectationV1> => {
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetEntryObserveV1Schema.parse(rawRequest);
-    const access = await resolveTargetRead(request, context);
-    if (access.native) return await access.native.observeEntryHere(request, signal);
+    const access = await resolveTargetRead(request, context, admittedWriterRead);
+    if (access.native) return await access.native.observeEntryHere(request, signal, undefined, access.admittedWriterRead);
     signal?.throwIfAborted();
     return WorkspaceSyncEntryExpectationV1Schema.parse(await observeWorkspaceSyncEntryAtRoot({
       rootPath: access.canonicalRoot,

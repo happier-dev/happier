@@ -203,6 +203,7 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
   const authority = createWorkspaceSyncTargetAuthority({
     localServerId: configuration.serverId, localMachineId: configuration.machineId, localAccountId: configuration.accountId,
     localWorkspaceRefId: checkout.workspaceRefId,
+    scmRegistry: registry.registry,
     ...(configuration.localManagedTarget ? { localManagedTarget: configuration.localManagedTarget } : {}),
     ...(network.assertConflictResolutionAuthorized ? { assertConflictResolutionAuthorized: network.assertConflictResolutionAuthorized } : {}),
     ...(requestResolutionExport ? { requestResolutionExport } : {}),
@@ -427,8 +428,14 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
         if (entry.actionReceiptId === request.actionReceiptId) sourceSeeds.delete(operationId);
       }
     }),
-    readFileHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.readFileHere(request, signal); }),
-    observeEntryHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.observeEntryHere(request, signal); }),
+    readFileHere: (request, signal, _context, admittedWriterRead) => call(async () => {
+      assertBoundId(request.workspaceRefId);
+      return authority.readFileHere(request, signal, undefined, admittedWriterRead);
+    }),
+    observeEntryHere: (request, signal, _context, admittedWriterRead) => call(async () => {
+      assertBoundId(request.workspaceRefId);
+      return authority.observeEntryHere(request, signal, undefined, admittedWriterRead);
+    }),
     replaceSnapshot: next => call(async () => { replaceSnapshot(next); }),
     inspectCheckout: subdir => call(async () => {
       if (configuration.localManagedTarget) {
