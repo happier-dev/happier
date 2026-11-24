@@ -852,12 +852,15 @@ function describeHomeSettingsApprovalEntries(values: Record<string, unknown>): r
     // the base registry. Preserve clears so the viewing Account can name them.
     const homeSetting = !declaration || (declaration.editable === 'home' && declaration.sensitivity === 'plain')
       ? { key, cleared: setting === null } : undefined;
+    const label = humanizeApprovalKey(key);
+    // Here the registry key is an operand of the change, just like a reference ID.
+    if (homeSetting) entries.push({ label, value: key, depth: 0, technical: true });
     if (homeSetting?.cleared) {
       entries.push({ label: key, value: 'null', depth: 0, homeSetting });
       continue;
     }
     const index = entries.length;
-    appendApprovalStructuredEntries(key, humanizeApprovalKey(key), setting, 0, entries);
+    appendApprovalStructuredEntries(key, label, setting, 0, entries);
     const first = entries[index];
     if (homeSetting && first) entries[index] = { ...first, homeSetting };
   }

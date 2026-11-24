@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectApprovalReviewInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -15,6 +16,23 @@ installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
+const actionId = 'home.settings.set';
+
+function homeSettingsReview(key: string, value: unknown) {
+    const spec = getActionSpec(actionId);
+    const input = spec.inputSchema.parse({
+        expectedRevision: 83,
+        values: value === undefined ? {} : { [key]: value },
+    });
+    return { actionId, actionArgs: projectApprovalReviewInput(spec, input) };
+}
+
+async function expectRegistryKeyInTechnicalDetails(screen: Awaited<ReturnType<typeof renderScreen>>, key: string, changed: boolean) {
+    expect(screen.getTextContent()).not.toContain(key);
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
+    if (changed) expect(screen.getTextContent()).toContain(key);
+    else expect(screen.getTextContent()).not.toContain(key);
+}
 
 afterEach(async () => {
     await harness.reset();
@@ -34,16 +52,14 @@ it.each([
 ])('shows the registry label for %s with value %s', async (key, value) => {
     await preloadTranslations('fr');
     setPreferredLanguageFromSettings('fr');
-    const actionId = 'home.settings.set';
-    const actionArgs = getActionSpec(actionId).inputSchema.parse({ expectedRevision: 1,
-        values: value === undefined ? {} : { [key]: value } });
-    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
-        preview={null} serverId={null} testID="home-settings-review" />);
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={null}
+        preview={homeSettingsReview(key, value)} status="open" serverId={null} testID="home-settings-review" />);
     try {
         const setting = homeServerSettingTitle(key);
         const body = screen.getTextContent();
         if (value === undefined) expect(body).not.toContain(setting);
         else expect(body).toContain(`${setting} ${value === null ? t('homeSettings.row.notSet') : value}`);
+        await expectRegistryKeyInTechnicalDetails(screen, key, value !== undefined);
     } finally { await screen.unmount(); }
 });
 
@@ -63,15 +79,13 @@ it.each([false, null, undefined])('uses the loaded Home registry to name a dynam
     await refreshHomeSettings(scope);
     expect(getHomeSettingsSnapshot(scope)?.settings?.entries[0]?.key).toBe(key);
     await harness.requireUiApproval(serverId, 'home.settings.get');
-    const actionId = 'home.settings.set';
-    const actionArgs = getActionSpec(actionId).inputSchema.parse({ expectedRevision: 1, values: value === undefined ? {} : { [key]: value } });
-    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
-        preview={null} status="open" serverId={serverId} testID="home-settings-review" />);
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={null}
+        preview={homeSettingsReview(key, value)} status="open" serverId={serverId} testID="home-settings-review" />);
     try {
         if (value === undefined) expect(screen.getTextContent()).not.toContain(homeFeatureTitle('workflows'));
         else await vi.waitFor(() => expect(screen.getTextContent()).toContain(
             value === null ? `${homeFeatureTitle('workflows')} ${t('homeSettings.row.notSet')}` : homeFeatureTitle('workflows')));
-        expect(screen.getTextContent()).not.toContain(key);
+        await expectRegistryKeyInTechnicalDetails(screen, key, value !== undefined);
         expect(harness.requestsFor('/v1/home/settings/get')).toHaveLength(1);
     } finally { await screen.unmount(); }
 });
