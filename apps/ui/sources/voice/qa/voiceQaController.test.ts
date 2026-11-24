@@ -12,6 +12,7 @@ import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStart
   ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunTurnStreamCancelRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
@@ -23,6 +24,7 @@ import {
   registerLocalVoiceEngineHarnessHooks,
   warmLocalVoiceEngineHarnessGraph,
   localVoiceAgentRpc,
+  localVoicePendingEnqueue,
   sessionRpcWithServerScope,
   localVoiceHomeId,
   loadLocalVoiceEngineWithCompatState,
@@ -1048,32 +1050,23 @@ describe('voiceQaController', () => {
     } as any);
 
     // Action-bearing text is not a spoken answer; only the follow-up after the tool result is.
-    const sendLocalTurn = vi.fn(async () => ({
-      assistantText: '',
-      actions: [
-        attachVoiceAgentActionEffectId({
-          t: 'sendSessionMessage',
-          args: {
-            sessionId: 's1',
-            message: 'Ask me which color I prefer using a structured question with Red and Blue options.',
-          },
-        }, 'qa-send-message-effect'),
-      ],
-    })).mockResolvedValueOnce({
-      assistantText: '',
-      actions: [
-        attachVoiceAgentActionEffectId({
-          t: 'sendSessionMessage',
-          args: {
-            sessionId: 's1',
-            message: 'Ask me which color I prefer using a structured question with Red and Blue options.',
-          },
-        }, 'qa-send-message-effect'),
-      ],
-    }).mockResolvedValueOnce({
-      assistantText: 'The message was sent to the coding assistant. Waiting for it to respond with the structured question.',
-      actions: [],
-    });
+    const sendLocalTurn = vi.fn(async () => ({ assistantText: '', actions: [] as VoiceAssistantAction[] }))
+      .mockResolvedValueOnce({
+        assistantText: '',
+        actions: [
+          attachVoiceAgentActionEffectId({
+            t: 'sendSessionMessage',
+            args: {
+              sessionId: 's1',
+              message: 'Ask me which color I prefer using a structured question with Red and Blue options.',
+            },
+          }, 'qa-send-message-effect'),
+        ],
+      })
+      .mockResolvedValueOnce({
+        assistantText: 'The message was sent to the coding assistant. Waiting for it to respond with the structured question.',
+        actions: [],
+      });
     const ensureLocalBinding = vi.fn(async () => ({
       adapterId: 'local_conversation',
       controlSessionId: '__voice_agent__',
@@ -1113,8 +1106,15 @@ describe('voiceQaController', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(readLocalVoiceHttpRequests().some(request => request.method === 'POST'
-      && request.path === '/v2/sessions/s1/pending')).toBe(true);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 's1',
+      body: expect.objectContaining({
+        content: { t: 'plain', v: expect.objectContaining({
+          role: 'user',
+          content: { type: 'text', text: 'Ask me which color I prefer using a structured question with Red and Blue options.' },
+        }) },
+      }),
+    });
     expect(waitForInterruptedLocalAssistantTurn).toHaveBeenCalledWith({
       conversationSessionId: 'voice-hidden-s1',
       timeoutMs: 15_000,

@@ -17,6 +17,11 @@ import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voice
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { RawRecordSchema } from '@happier-dev/session-core/raw';
 import { ExecutionRunActionRequestSchema, ExecutionRunActionResponseSchema, ExecutionRunStartResponseSchema,
     ExecutionRunEnsureOrStartResponseSchema } from '@happier-dev/protocol/execution/runs/index';
 import { ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema,
@@ -522,6 +527,11 @@ export async function warmLocalVoiceEngineHarnessGraph() {
 
 export let localVoiceHomeId = '';
 export const localVoicePendingEnqueue = vi.fn<(request: Readonly<{ sessionId: string; body: Record<string, unknown> }>) => Promise<Response>>();
+function receiveLocalVoicePendingInput(request: Parameters<typeof localVoicePendingEnqueue>[0]) {
+    const response = localVoicePendingEnqueue(request);
+    publishLocalVoiceBoundaryEvent('pending-enqueue');
+    return response;
+}
 /** Publish a server message through the actual Socket SDK listeners and HTTP page, never a rendered store row. */
 export async function publishLocalVoiceAssistantMessage(input: Readonly<{
     sessionId: string; id: string; text: string;
@@ -726,6 +736,29 @@ async function createLocalVoiceAccountHarness() {
                 });
             const runGet = await createRunReadBoundary('execution.run.get');
             const runList = await createRunReadBoundary('execution.run.list');
+            const sessionSend = await createExternalActionAccountHttpBoundary({
+                serverUrl: 'https://local-voice-actions.example.test', serverIdentityId,
+                accountId: 'account-a', machineId: 'machine-1', actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1, tokenEpoch: 0,
+                async execute(input, { requestId }) {
+                    const send = SessionSendMessageInputSchema.parse(input);
+                    if (!('message' in send) || typeof send.sessionId !== 'string') throw new Error('Expected Voice text with an exact target');
+                    const localId = send.localId ?? `action-request:${requestId}`;
+                    // The external daemon receives the original Action and places its authored text in Home Pending.
+                    const response = await receiveLocalVoicePendingInput({ sessionId: send.sessionId, body: {
+                        localId, requestedAction: send.requestedAction ?? { v: 1, kind: 'steer_if_active' },
+                        content: StrictSessionStoredMessageContentEnvelopeSchema.parse({ t: 'plain', v: RawRecordSchema.parse({
+                            role: 'user', content: { type: 'text', text: send.message }, meta: send.messageMeta,
+                        }) }),
+                    } });
+                    if (!response.ok) {
+                        return SessionMessageSendResultV1Schema.parse({ status: 'rejected', code: 'session_input_invalid' });
+                    }
+                    const receipt: { pending?: { localId?: string } } = await response.json();
+                    return SessionMessageSendResultV1Schema.parse(receipt.pending?.localId === localId
+                        ? { status: 'accepted', localId }
+                        : { status: 'outcomeUnknown', localId, code: 'session_input_pending' });
+                },
+            });
             const spawn = await createExternalActionAccountHttpBoundary({
                 serverUrl: 'https://local-voice-actions.example.test', serverIdentityId,
                 accountId: 'account-a', machineId: 'machine-1', actionId: 'session.spawn_new', tokenEpoch: 0,
@@ -767,7 +800,7 @@ async function createLocalVoiceAccountHarness() {
                     if (path.startsWith('/v1/actions/')) {
                         const response = await runStart.handle(input, init) ?? await runEnsure.handle(input, init)
                             ?? await runGet.handle(input, init) ?? await runList.handle(input, init)
-                            ?? await spawn.handle(input, init);
+                            ?? await spawn.handle(input, init) ?? await sessionSend.handle(input, init);
                         if (response) return response;
                     }
                     if (path === '/v1/account/profile') return request.accountId
@@ -852,9 +885,7 @@ async function createLocalVoiceAccountHarness() {
                     }
                     const pending = /^\/v2\/sessions\/([^/]+)\/pending$/.exec(path);
                     if (pending && init?.method === 'POST') {
-                        const response = localVoicePendingEnqueue({ sessionId: decodeURIComponent(pending[1]), body: JSON.parse(String(init.body)) });
-                        publishLocalVoiceBoundaryEvent('pending-enqueue');
-                        return response;
+                        return receiveLocalVoicePendingInput({ sessionId: decodeURIComponent(pending[1]), body: JSON.parse(String(init.body)) });
                     }
                     if (pending) return Response.json({ pending: [], discarded: [], pendingVersion: 0 });
                     // Durable streamed turns settle or block their claimed input;
@@ -862,7 +893,6 @@ async function createLocalVoiceAccountHarness() {
                     if (/^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/delivery\/(handled|block)$/.test(path) && init?.method === 'POST') return Response.json({});
                     const transcriptWrite = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(path);
                     if (transcriptWrite && init?.method === 'POST') {
-                        const { RawRecordSchema } = await import('@happier-dev/session-core/raw');
                         const { UsageTimingBoundsV1Schema } = await import('@happier-dev/protocol/usage/usageTimingV1');
                         const { z } = await import('zod/mini');
                         const body = z.strictObject({ content: z.strictObject({ t: z.literal('plain'), v: RawRecordSchema }),

@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryMutationRequestV1Schema, type AuthoringMemoryReadResponseV1 } from '@happier-dev/protocol/account/authoringMemory';
-import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AUTHORING_MEMORY_ROUTE_V1, type AuthoringMemoryReadResponseV1 } from '@happier-dev/protocol/account/authoringMemory';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import type { PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -85,24 +84,13 @@ describe('qualified UI Voice prompt preparation', () => {
     });
 
     it.each(['destination', 'legacy'] as const)('admits a visible rowless built-in under %s authority and refuses hidden, unknown and disabled selections', async authority => {
-        let settingsVersion = 1;
-        let rawSettings: Record<string, unknown> = { favoriteProfiles: ['azure-openai'],
+        const rawSettings: Record<string, unknown> = { favoriteProfiles: ['azure-openai'],
             ...(authority === 'legacy' ? { profiles: [] } : {}) };
         let memoryRow: AuthoringMemoryReadResponseV1 = { status: 'present', revision: 1, content: { t: 'plain', v: null } };
         let unreadableInventory = false;
         const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
         fixture = await createPlainArtifactHomeFixture(`https://voice-rowless-${authority}.example`, { handleRequest: async (path, init) => {
-            if (path === '/v2/account/settings') {
-                if (init?.method === 'POST') {
-                    const request = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
-                    expect(request.expectedVersion).toBe(settingsVersion);
-                    expect(request.content?.t).toBe('plain');
-                    if (request.content?.t !== 'plain') throw new Error('Expected plain fixture settings');
-                    rawSettings = request.content.v;
-                    return response({ success: true, version: ++settingsVersion });
-                }
-                return response({ version: settingsVersion, content: { t: 'plain', v: rawSettings } });
-            }
+            if (path === '/v2/account/settings' && init?.method !== 'POST') return response({ version: 1, content: { t: 'plain', v: rawSettings } });
             if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return response({ status: 'listed', rows:
                 PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
                     content: key === 'voice' ? { t: 'plain', v: { key, value: { v: 1, scope: { kind: 'voice' },
@@ -114,17 +102,7 @@ describe('qualified UI Voice prompt preparation', () => {
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return response({ status: 'ready', revision: 'absent' });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return response((init?.method ?? 'GET') === 'GET'
                 ? { status: 'absent' } : { status: 'inventory-incomplete' });
-            if (path === `${AUTHORING_MEMORY_ROUTE_V1}/lastUsedProfile`) {
-                if (init?.method === 'POST') {
-                    const request = AuthoringMemoryMutationRequestV1Schema.parse(JSON.parse(String(init.body)));
-                    expect(memoryRow.status).toBe('absent');
-                    expect(request.expectedRevision).toBe('absent');
-                    if (!request.content) throw new Error('Expected an imported fixture value');
-                    memoryRow = { status: 'present', revision: 1, content: request.content };
-                    return response({ status: 'updated', revision: 1, cursor: 1 });
-                }
-                return response(memoryRow);
-            }
+            if (path === `${AUTHORING_MEMORY_ROUTE_V1}/lastUsedProfile` && init?.method !== 'POST') return response(memoryRow);
             return null;
         } });
         const context = await captureLazyActionAccountContext(fixture.home.id);
@@ -150,13 +128,13 @@ describe('qualified UI Voice prompt preparation', () => {
             expect(await resolveUiVoicePromptStackBlocks(input)).toEqual(['account', 'session']);
             memoryRow = { status: 'absent' };
             rawSettings.lastUsedProfile = 'azure-openai';
-            expect(await resolveUiVoicePromptStackBlocks(input)).toEqual(['account', 'session']);
-            expect(rawSettings).not.toHaveProperty('lastUsedProfile');
+            await expect(resolveUiVoicePromptStackBlocks(input)).rejects.toMatchObject({ status: 'preparation_pending', reason: 'unavailable' });
+            expect(memoryRow).toEqual({ status: 'absent' });
             memoryRow = { status: 'deleted', revision: 2 };
-            rawSettings.lastUsedProfile = 'azure-openai';
             await expect(resolveUiVoicePromptStackBlocks(input)).rejects.toMatchObject({ status: 'preparation_pending', reason: 'unavailable' });
             expect(memoryRow).toEqual({ status: 'deleted', revision: 2 });
-            expect(rawSettings).not.toHaveProperty('lastUsedProfile');
+            expect(fixture.requests.filter(({ method, path }) => method === 'POST'
+                && (path === '/v2/account/settings' || path === `${AUTHORING_MEMORY_ROUTE_V1}/lastUsedProfile`))).toEqual([]);
             memoryRow = { status: 'present', revision: 3, content: { t: 'plain', v: 'azure-openai' } };
             for (const id of ['gemini-vertex', 'unknown-profile']) {
                 select(id);

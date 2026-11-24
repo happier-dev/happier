@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getStorage, registerLocalVoiceEngineHarnessHooks, warmLocalVoiceEngineHarnessGraph,
-  localVoicePendingEnqueue, sessionRpcWithServerScope, readLocalVoiceHttpRequests,
+  localVoicePendingEnqueue, sessionRpcWithServerScope,
   localVoiceHomeId, acknowledgeLocalVoicePendingEnqueue, loadLocalVoiceEngineWithCompatState,
   setLocalVoiceHttpResponder,
   machineRpcWithServerScope,
@@ -52,9 +52,8 @@ function queueAction(effectId: string, action: VoiceAssistantAction, replayCount
 function queueSend(effectId: string, message: string, args: Record<string, unknown> = {}, replayCount = 1) {
   queueAction(effectId, { t: 'sendSessionMessage', args: { ...args, message } }, replayCount);
 }
-function targetPendingRequests() {
-  return readLocalVoiceHttpRequests().filter(request =>
-    request.method === 'POST' && request.path === '/v2/sessions/s1/pending');
+function targetPendingRequests(sessionId = 's1') {
+  return localVoicePendingEnqueue.mock.calls.map(([request]) => request).filter(request => request.sessionId === sessionId);
 }
 
 describe('runVoiceAgentTurnWithTools local effect custody', () => {
@@ -204,8 +203,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       currentToolSessionId: restored?.targetSessionAddress?.sessionId ?? null,
     });
     expect(followUp.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true });
-    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
-      && request.path === `/v2/sessions/${target.sessionId}/pending`)).toHaveLength(1);
+    expect(targetPendingRequests(target.sessionId)).toHaveLength(1);
     expect(creationCount).toBe(1);
   });
 
@@ -439,12 +437,20 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(rejected.toolResultBatches[0]?.[0]?.result).toMatchObject({
       ok: false, errorCode: 'voice_conversation_target_forbidden',
     });
-    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
-      && request.path === `/v2/sessions/${binding.conversationSessionId}/pending`)).toHaveLength(0);
+    expect(targetPendingRequests(binding.conversationSessionId)).toHaveLength(0);
 
-    queueSend('valid-working-target-send', 'Create another file', bound ? {} : { sessionId: 's1' });
+    const workingAddress = { serverId: localVoiceHomeId, sessionId: 's1' };
+    if (!bound) {
+      await voiceSessionBindingManager.syncTargetSession({
+        controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        targetSessionAddress: workingAddress,
+      });
+    }
+    queueSend('valid-working-target-send', 'Create another file');
     queueFinal();
-    const accepted = await run('ask the coding Session to create another file', options);
+    const accepted = await run('ask the coding Session to create another file', {
+      currentToolSessionAddress: workingAddress, currentToolSessionId: workingAddress.sessionId,
+    });
     expect(accepted.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true, status: 'accepted' });
     expect(targetPendingRequests()).toHaveLength(1);
   });
@@ -473,8 +479,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(result).toMatchObject(carrier
       ? { ok: false, errorCode: 'voice_conversation_target_forbidden' }
       : { ok: true, status: 'accepted' });
-    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
-      && request.path === `/v2/sessions/${binding.conversationSessionId}/pending`)).toHaveLength(0);
+    expect(targetPendingRequests(binding.conversationSessionId)).toHaveLength(0);
     expect(targetPendingRequests()).toHaveLength(carrier ? 0 : 1);
   });
 
@@ -513,7 +518,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const spoken: string[] = [];
     const result = await run('send it', { onAssistantTurn: async ({ assistantText }) => {
       // The non-streaming TTS consumer awaits this callback before continuing.
-      expect(parseVoiceToolResultsFollowUp(wireTurns.at(-1)?.message)).toMatchObject({
+      expect(parseVoiceToolResultsFollowUp(wireTurns.at(-1)?.displayMessage)).toMatchObject({
         toolResults: [expect.objectContaining({ t: 'sendSessionMessage', result: expect.objectContaining({ ok: false, errorCode: 'session_lookup_incomplete' }) })],
       });
       expect(targetPendingRequests()).toEqual([]);
