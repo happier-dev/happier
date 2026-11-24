@@ -17,8 +17,9 @@ export type ApprovalEndpointLabels = {
     pathLabel: string | null;
 };
 
-/** Presentation default from an already validated body, never execution authority. */
-export function readApprovalOriginMachineId(body: ParsedApprovalArtifactBodyV1 | null): string {
+/** A sessionless request names its origin; an asking Session's Machine comes from the Session reading. */
+export function readApprovalOriginMachineId(body: ParsedApprovalArtifactBodyV1 | null, requesterSessionId: string): string {
+    if (requesterSessionId) return '';
     if (body?.family === 'built_in') {
         return body.request.v === 2 ? body.request.executionOriginV1.machineId ?? '' : '';
     }

@@ -168,7 +168,7 @@ export const ApprovalInboxCard = React.memo(
     // The card names the Machine; it subscribes to that name, not to the record its presence heartbeats replace.
     const originMachineLabel = useServerScopedMachineLabel(
       serverId || null,
-      sessionId ? '' : readApprovalOriginMachineId(parsedApproval),
+      readApprovalOriginMachineId(parsedApproval, sessionId),
     );
 
     // The one title rule shared with the approval page and its tab.

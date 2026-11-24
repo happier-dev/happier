@@ -377,7 +377,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const machineId = readDisplayMachineIdForSession({
     sessionId: null,
     metadata: ownerMetadata,
-  }) || readApprovalOriginMachineId(matchedBody);
+  }) || readApprovalOriginMachineId(matchedBody, sessionId);
   // The machine is shown by name only; the name holds through a re-read instead of flashing empty.
   const machineLabel = useServerScopedMachineLabel(approvalServerId, approvalServerId ? machineId : '');
   const machineHomeDir = useServerScopedMachine(approvalServerId,
