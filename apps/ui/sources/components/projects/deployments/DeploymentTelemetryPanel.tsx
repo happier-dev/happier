@@ -45,9 +45,9 @@ import { getPreferredLanguage, t } from '@/text';
 import { createDeploymentActions } from './deploymentActions';
 import { showDeploymentTelemetrySheet } from './DeploymentTelemetrySheet';
 import {
-  TelemetryCaptureFailure,
   TelemetryCaptureInvokeContext,
   createTelemetryCaptureReads,
+  telemetryCaptureFailureCode,
   type TelemetryCaptureList,
   type TelemetryCaptureReads,
 } from './telemetryCaptureReads';
@@ -181,7 +181,7 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        const failure = error instanceof TelemetryCaptureFailure ? error.code : 'telemetry_unavailable';
+        const failure = telemetryCaptureFailureCode(error);
         setState(current => current.reads === reads && current.key === key
           ? { ...current, reading: false, failure }
           : current);
@@ -417,7 +417,7 @@ function TelemetryRequestDetail(props: Readonly<{
     reads.trace(traceId, controller.signal).then(
       trace => { if (!controller.signal.aborted) setRead({ kind: 'ready', trace }); },
       (error: unknown) => {
-        if (!controller.signal.aborted) setRead({ kind: 'unavailable', code: error instanceof TelemetryCaptureFailure ? error.code : 'telemetry_unavailable' });
+        if (!controller.signal.aborted) setRead({ kind: 'unavailable', code: telemetryCaptureFailureCode(error) });
       },
     );
     return () => controller.abort();

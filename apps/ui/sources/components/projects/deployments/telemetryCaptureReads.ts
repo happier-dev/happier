@@ -22,6 +22,7 @@ import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sd
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { HappyError } from '@/utils/errors/errors';
 
 /**
  * An Environment's collector reads (P6 F14d): the same `capture/*` Actions every capture reader uses, with the
@@ -70,23 +71,23 @@ const invokeThroughFrontDoor: TelemetryCaptureInvoke = (request) =>
 export const TelemetryCaptureInvokeContext =
   React.createContext<TelemetryCaptureInvoke>(invokeThroughFrontDoor);
 
-export class TelemetryCaptureFailure extends Error {
-  constructor(readonly code: string) {
-    super(code);
-  }
+export function telemetryCaptureFailureCode(error: unknown): string {
+  return (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
 }
 
 /** Collector reads answer typed failures in-band (`{ ok: false, code }`); a shape this build cannot read says so. */
 function settle<T extends { ok: boolean }>(
   parsed: { success: true; data: T } | { success: false },
 ): Extract<T, { ok: true }> {
-  if (!parsed.success)
-    throw new TelemetryCaptureFailure('telemetry_unreadable');
+  if (!parsed.success) {
+    const code = 'telemetry_unreadable';
+    throw new HappyError(code, false, { code });
+  }
   const data = parsed.data as T & { code?: unknown };
-  if (!data.ok)
-    throw new TelemetryCaptureFailure(
-      typeof data.code === 'string' ? data.code : 'telemetry_unavailable',
-    );
+  if (!data.ok) {
+    const code = typeof data.code === 'string' ? data.code : 'telemetry_unavailable';
+    throw new HappyError(code, false, { code });
+  }
   return data as Extract<T, { ok: true }>;
 }
 

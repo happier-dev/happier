@@ -12,6 +12,7 @@ import {
 } from '@/dev/testkit';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -330,6 +331,34 @@ describe('Environment Telemetry tabs', () => {
       } else {
         expect(screen.findByTestId(action)).toBeNull();
       }
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('shows the Action front door refusal in Details for the list and the selected trace', async () => {
+    const code = 'deployment_target_role_unavailable';
+    let first = true;
+    const { invoke } = collector((call) => {
+      if (first || call.actionId.endsWith('/capture/trace/get')) {
+        first = false;
+        requireActionSuccess({ ok: false, errorCode: code, error: 'Collector access is unavailable' });
+      }
+      return answers(call);
+    });
+    const screen = await mount(invoke);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.unavailable-details-toggle');
+      expect(screen.findByTestId('project-deployments.telemetry.unavailable-details-code')?.props.children).toBe(code);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.retry');
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.request.unavailable-details-toggle');
+      expect(screen.findByTestId('project-deployments.telemetry.request.unavailable-details-code')?.props.children).toBe(code);
     } finally {
       await screen.unmount();
     }
