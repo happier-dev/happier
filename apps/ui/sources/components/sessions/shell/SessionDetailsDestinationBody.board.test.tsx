@@ -4,7 +4,11 @@ import { act } from 'react-test-renderer';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createSessionSurfaceNoteDocumentV1, SessionBoardLayoutV1Schema, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -84,10 +88,32 @@ const records = [['layout', 'layout.v1', layout], ['note-1', 'item.v1', item], [
     }));
 const focusedRecords = records.map(record => record.address.kind === 'layout.v1'
     ? SessionSystemRecordStoredSchema.parse({ ...record, content: { t: 'plain', v: focusedLayout } }) : record);
+const coldDetails = createDeferred<void>();
+const warmDetails = createDeferred<void>();
+const launchDetailsReads = createSessionReadBatchHttpBoundary(async ({ path }) => {
+    const id = path.split('/').at(-1);
+    if (id !== 'cold-curtain-details' && id !== 'warm-curtain-details') return undefined;
+    await (id === 'cold-curtain-details' ? coldDetails.promise : warmDetails.promise);
+    return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id })));
+});
 const runtime = installSessionPaneRuntimeTestHarness({
     features: () => createRootLayoutFeaturesResponse({ features: { sessions: { board: { enabled: true } } } }),
-    request: async url => new URL(String(url)).pathname.endsWith('/system-records')
-        ? Response.json({ records: continuity.focusOtherView ? focusedRecords : records, nextCursor: null, hasNext: false }) : null,
+    request: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/system-records')) {
+            return Response.json({ records: continuity.focusOtherView ? focusedRecords : records, nextCursor: null, hasNext: false });
+        }
+        if (url.pathname.endsWith('-curtain-details')) {
+            return (await launchDetailsReads.handle({ home: url.origin, accountId: 'fixture', url, path: url.pathname,
+                method: init?.method ?? 'GET', headers: new Headers(init?.headers), body: undefined, signal: init?.signal })) ?? null;
+        }
+        // Only override the batch read for this route; the harness owns ordinary fixture reads.
+        if (url.pathname === '/v2/sessions/read-batch' && String(init?.body).includes('-curtain-details')) {
+            return (await launchDetailsReads.handle({ home: url.origin, accountId: 'fixture', url, path: url.pathname,
+                method: init?.method ?? 'POST', headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)), signal: init?.signal })) ?? null;
+        }
+        return null;
+    },
 });
 // Load the real composition after its transport boundaries are installed, outside the timed gesture.
 const { SessionDetailsDestinationBody } = await import('./SessionDetailsDestinationBody');
@@ -109,6 +135,40 @@ describe('Session Details destination Board composition', () => {
         await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
     });
     afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('hands the cold Details curtain to the hydrated body and keeps a later Details load in its shell', async () => {
+        const launch = startTestLaunchCurtain();
+        const tree = (id: string) => <runtime.Wrapper>
+            <DestinationInstanceHost key={id} tabId={id} ref={{ kind: 'sessionDetails', params: { id, serverId: runtime.serverId } }}
+                pathname={`/session/${id}/details`} focused visible
+                navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
+                <SessionDetailsDestinationBody />
+            </DestinationInstanceHost>
+            <CurtainProbe />
+        </runtime.Wrapper>;
+        const screen = await renderScreen(tree('cold-curtain-details'));
+        const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+        try {
+            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            launch.releaseShell();
+            await launch.paint();
+            expect(curtain()).toBe('up');
+            await act(async () => { coldDetails.resolve(); });
+            await vi.waitFor(() => expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(0));
+            await launch.paint();
+            expect(curtain()).toBe('leaving');
+            await act(async () => { launch.finish(); });
+            await screen.update(tree('warm-curtain-details'));
+            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            await launch.paint();
+            expect(curtain()).toBe('gone');
+        } finally {
+            coldDetails.resolve();
+            warmDetails.resolve();
+            await screen.unmount();
+            launch.dispose();
+        }
+    });
 
     it.each([
         { sessionRouteHandoff: false, mobileExperience: 'classic' as const, focusOtherView: false },

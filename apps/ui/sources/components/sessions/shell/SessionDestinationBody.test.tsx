@@ -2,9 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture, createSessionMessagesFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createSessionMessagesFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { Message } from '@happier-dev/session-core/messages';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
@@ -12,7 +12,9 @@ import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resetSessionSurfaceVisibilityForTests, getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { SessionDestinationBody } from './SessionDestinationBody';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionView } from './SessionView';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -59,7 +61,8 @@ vi.mock('expo-router', async () => {
 });
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock({ renderInitialNavigatorScreen: true }));
-vi.mock('react-native-safe-area-context', () => ({
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
     useSafeAreaFrame: () => ({ x: 0, y: 0, width: 1400, height: 900 }),
 }));
@@ -121,6 +124,62 @@ function WorkspaceSessionDestination(props: Readonly<{ id: string; serverId: str
 }
 
 describe('SessionDestinationBody workspace activation', () => {
+    it('keeps a cold Session curtain until the body draws, and leaves a later Session load in the shell', async () => {
+        const cold = createDeferred<void>();
+        const warm = createDeferred<void>();
+        let coldReadStarted = false;
+        const boundary = createSessionReadBatchHttpBoundary(async ({ path }) => {
+            const id = path.split('/').at(-1);
+            if (id !== 'cold-curtain-session' && id !== 'warm-curtain-session') return undefined;
+            if (id === 'cold-curtain-session') coldReadStarted = true;
+            await (id === 'cold-curtain-session' ? cold.promise : warm.promise);
+            return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id })));
+        });
+        await withSessionFixture(async serverId => {
+            const launch = startTestLaunchCurtain();
+            const tree = (id: string) => <InjectedAuthProvider credentials={credentials}><AppPaneProvider>
+                <DestinationInstanceHost key={id} tabId={id} ref={{ kind: 'session', params: { id, serverId } }}
+                    pathname={`/session/${id}`} focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+                    <SessionDestinationBody />
+                </DestinationInstanceHost>
+                <CurtainProbe />
+            </AppPaneProvider></InjectedAuthProvider>;
+            const screen = await renderScreen(tree('cold-curtain-session'));
+            const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+            try {
+                await vi.waitFor(() => expect(coldReadStarted).toBe(true));
+                expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                launch.releaseShell();
+                await launch.paint();
+                expect(curtain()).toBe('up');
+                await act(async () => { cold.resolve(); });
+                await vi.waitFor(() => expect(screen.findAllByType(SessionView)).toHaveLength(1));
+                await launch.paint();
+                expect(curtain()).toBe('leaving');
+                await act(async () => { launch.finish(); });
+                await screen.update(tree('warm-curtain-session'));
+                expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                await launch.paint();
+                expect(curtain()).toBe('gone');
+            } finally {
+                cold.resolve();
+                warm.resolve();
+                await screen.unmount();
+                launch.dispose();
+            }
+        }, async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname !== '/v2/sessions/read-batch' && !url.pathname.endsWith('-curtain-session')) {
+                return Response.json({ error: 'fixture_home_offline' }, { status: 503 });
+            }
+            return await boundary.handle({
+                home: 'shell-test', accountId: 'account-shell', url, path: url.pathname,
+                method: init?.method ?? 'GET', headers: new Headers(init?.headers),
+                body: init?.body ? JSON.parse(String(init.body)) : undefined, signal: init?.signal,
+            }) ?? Response.json({ error: 'fixture_home_offline' }, { status: 503 });
+        });
+    });
+
     it('keeps Home pictures hidden while cold Session data and Project membership are unknown', async () => {
         let release: (() => void) | undefined;
         let sessionReads = 0;

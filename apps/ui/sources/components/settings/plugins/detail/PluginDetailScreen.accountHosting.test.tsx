@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 
@@ -130,13 +132,43 @@ afterEach(() => {
 });
 
 describe('PluginDetailScreen Account hosting reachability', () => {
-    it('keeps a cold deep link in place until the selected machine truth settles', async () => {
+    it('keeps the cold Plugin page covered until its detail draws, then lets warm loading stay in-shell', async () => {
+        const launch = startTestLaunchCurtain();
+        const tree = (key: string) => <><PluginDetailScreen key={key} pluginId={PLUGIN_ID} /><CurtainProbe /></>;
         pluginSettingsState.pluginTruthSettled = false;
         pluginSettingsState.refreshing = true;
-        const screen = await renderScreen(<PluginDetailScreen pluginId={PLUGIN_ID} />);
+        const screen = await renderScreen(tree('cold'));
+        const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+        try {
+            expect(screen.findAllByType('Redirect')).toHaveLength(0);
+            expect(screen.findAllByType('PaneLoadingFallback')).toHaveLength(1);
+            launch.releaseShell();
+            await launch.paint();
+            expect(curtain()).toBe('up');
 
-        expect(screen.findAllByType('Redirect')).toHaveLength(0);
-        expect(screen.findAllByType('PaneLoadingFallback')).toHaveLength(1);
+            accountAvailabilityReader.readCurrentSettingsDeclaration.mockReturnValue({
+                kind: 'available', availabilityCursor: 7, declaration,
+            } as never);
+            pluginSettingsState.pluginTruthSettled = true;
+            await screen.update(tree('ready'));
+            expect(screen.findByTestId(`settings.plugins.detail.${PLUGIN_ID}.accountRelease`)).not.toBeNull();
+            expect(screen.findAllByType('PaneLoadingFallback')).toHaveLength(0);
+            await launch.paint();
+            expect(curtain()).toBe('leaving');
+
+            await act(async () => { launch.finish(); });
+            accountAvailabilityReader.readCurrentSettingsDeclaration.mockReturnValue({
+                kind: 'unavailable', code: 'account_availability_not_loaded',
+            });
+            pluginSettingsState.pluginTruthSettled = false;
+            await screen.update(tree('warm'));
+            expect(screen.findAllByType('PaneLoadingFallback')).toHaveLength(1);
+            await launch.paint();
+            expect(curtain()).toBe('gone');
+        } finally {
+            await screen.unmount();
+            launch.dispose();
+        }
     });
 
     it('does not claim an installation is missing when the settled machine read failed', async () => {

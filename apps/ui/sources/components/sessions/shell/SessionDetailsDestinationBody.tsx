@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { Href } from 'expo-router';
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { useDestinationParams, useDestinationRouter, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 
@@ -46,6 +47,11 @@ function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof Session
     return <SessionBoardControllerProvider sessionId={props.sessionId} serverId={props.routeServerId}>
         <SessionDetailsPanel {...props} />
     </SessionBoardControllerProvider>;
+}
+
+function SessionDetailsRouteLoading() {
+    useLaunchCurtainHold(useDestinationFocus());
+    return <PaneLoadingFallback />;
 }
 
 export function SessionDetailsDestinationBody() {
@@ -224,7 +230,7 @@ export function SessionDetailsDestinationBody() {
                         />
                 )
             ) : (
-                <PaneLoadingFallback />
+                <SessionDetailsRouteLoading />
             )}
         </SessionFullscreenPaneSafeAreaView>
     );

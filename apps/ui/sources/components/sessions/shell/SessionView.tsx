@@ -204,6 +204,7 @@ import { openRouteWithEstablishedHome } from "@/sync/domains/server/selection/op
 import { useSessionViewLatestTurnStatus, useSessionViewShellSession, useSessionViewShellSessionSeq } from "./sessionViewStableSession";
 import { ActivitySpinner } from "@/components/ui/feedback/ActivitySpinner";
 import { PaneLoadingFallback } from "@/components/ui/panels/PaneLoadingFallback";
+import { SessionViewRouteLoading } from "@/components/sessions/shell/SessionViewRouteLoading";
 import { SurfaceStateCard } from "@/components/ui/surfaces/SurfaceStateCard";
 import { Icon, ICON_SIZE } from "@/components/ui/icons/Icon";
 import { useSessionComposerController, SessionAuthRecoveryBanner } from "@/components/sessions/composer/useSessionComposerController";
@@ -927,7 +928,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             );
         }
         if (props.routeHydrationState?.kind === 'loading') {
-            return <PaneLoadingFallback />;
+            return <SessionViewRouteLoading />;
         }
         return <SessionInvalidLinkFallback sessionId={sessionId} homeChoice="unknown" />;
     }
@@ -1902,7 +1903,9 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                 accessibilitySemantics="status" />, 'loading');
         }
         if ((!isDataReady && !session) || routeHydrationLoading) {
-            return surface(<PaneLoadingFallback testID="session-route-loading" />, 'loading');
+            return surface(embedded
+                ? <PaneLoadingFallback testID="session-route-loading" />
+                : <SessionViewRouteLoading testID="session-route-loading" />, 'loading');
         }
         if (!session && (routeHydrationTerminalMissing || !routeHydrationState)) {
             // An embedded mount cannot tell a deleted Session from one it may not see, and must not

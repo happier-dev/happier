@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { Redirect } from '@/components/appShell/workspace/destinationRoute';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
@@ -275,6 +276,11 @@ function PluginDetailCurrentContent(props: Readonly<{
     );
 }
 
+function PluginDetailPageLoading() {
+    useLaunchCurtainHold(useIsFocused());
+    return <PaneLoadingFallback />;
+}
+
 /** A plugin's own page (`page`), or its detail beside the Plugins page (`pane`). */
 export type PluginDetailPresentation = 'page' | 'pane';
 
@@ -343,7 +349,9 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
                 />}
             </ItemList>
         );
-        if (!state.pluginTruthSettled) return <PaneLoadingFallback />;
+        if (!state.pluginTruthSettled) {
+            return props.presentation === 'page' ? <PluginDetailPageLoading /> : <PaneLoadingFallback />;
+        }
     }
 
     if (!installed && !projection && !accountRecoveryPluginId) {

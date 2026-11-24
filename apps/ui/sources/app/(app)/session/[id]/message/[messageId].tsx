@@ -1,7 +1,8 @@
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 import { DetailsStartSheetHost } from '@/components/appShell/panes/panePresentation';
 import * as React from 'react';
-import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { View } from 'react-native';
 import type { ViewStyle } from 'react-native';
 import { storage, useMessage, useTranscriptApprovalArtifactsForSession, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptLoaded } from "@/sync/domains/state/storage";
@@ -42,6 +43,11 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 const SessionDestinationBody = retryableLazy<NonNullable<React.ComponentProps<typeof import('@/components/sessions/shell/SessionDestinationBody')['SessionDestinationBody']>>>(
     () => import('@/components/sessions/shell/SessionDestinationBody').then(module => ({ default: module.SessionDestinationBody })),
 );
+
+function LinkedSessionRouteLoading() {
+    useLaunchCurtainHold(useIsFocused());
+    return <PaneLoadingFallback />;
+}
 
 type SessionMessageRouteTheme = Parameters<typeof createSessionMessageDetailsStyles>[0];
 
@@ -243,7 +249,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     // An ordinary committed-message link is a location in its Session, not an
     // isolated text preview. Keep tool details on their existing detail surface.
     if (messageTarget) {
-        return <React.Suspense fallback={<PaneLoadingFallback />}><SessionDestinationBody messageTarget={messageTarget} /></React.Suspense>;
+        return <React.Suspense fallback={<LinkedSessionRouteLoading />}><SessionDestinationBody messageTarget={messageTarget} /></React.Suspense>;
     }
     
     return (
