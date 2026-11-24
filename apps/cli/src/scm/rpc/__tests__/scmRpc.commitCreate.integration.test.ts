@@ -1,16 +1,56 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     SCM_OPERATION_ERROR_CODES,
+    ScmCommitCreateResponseSchema,
     type ScmCommitCreateRequest,
     type ScmCommitCreateResponse,
 } from '@happier-dev/protocol';
 import { createGitWorkspace, createTestGitRpcManager as createTestRpcManager, runGit as git } from './testRpcHarness';
 
 describe('git RPC handlers', () => {
+    it.each([
+        { name: 'missing config', diagnostic: /Author identity unknown/i },
+        { name: 'empty name', diagnostic: /empty ident name/i },
+    ])('returns a typed commit refusal for $name', async ({ name, diagnostic }) => {
+        const workspace = createGitWorkspace();
+        writeFileSync(join(workspace, 'a.txt'), 'pending\n');
+        git(workspace, ['config', 'user.useConfigOnly', 'true']);
+        if (name === 'missing config') {
+            git(workspace, ['config', '--unset', 'user.name']);
+            git(workspace, ['config', '--unset', 'user.email']);
+        } else {
+            git(workspace, ['config', 'user.name', '']);
+        }
+        vi.stubEnv('GIT_CONFIG_GLOBAL', join(workspace, 'missing.gitconfig'));
+        vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+        vi.stubEnv('GIT_AUTHOR_NAME', undefined);
+        vi.stubEnv('GIT_AUTHOR_EMAIL', undefined);
+        vi.stubEnv('GIT_COMMITTER_NAME', undefined);
+        vi.stubEnv('GIT_COMMITTER_EMAIL', undefined);
+        vi.stubEnv('LC_ALL', 'C');
+        try {
+            const { call } = createTestRpcManager({ workingDirectory: workspace });
+            const response = ScmCommitCreateResponseSchema.parse(await call<unknown, ScmCommitCreateRequest>(
+                RPC_METHODS.SCM_COMMIT_CREATE,
+                { cwd: '.', message: 'pending', scope: { kind: 'paths', include: ['a.txt'] }, outcomeVersion: 1 },
+            ));
+            expect(response).toMatchObject({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED,
+                outcome: { kind: 'failed', errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED },
+                publication: { state: 'not_published' },
+            });
+            expect(response.error).toMatch(diagnostic);
+            expect(response.outcome?.message).toBeUndefined();
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it('includes unstaged, pre-staged, and untracked changes in all-pending atomic commits', async () => {
         const workspace = createGitWorkspace();
         writeFileSync(join(workspace, 'a.txt'), 'base-a\n');

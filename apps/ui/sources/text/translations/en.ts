@@ -8864,6 +8864,7 @@ const enErrors = {
   failedToRejectRequest: 'Failed to reject friend request',
   failedToRemoveFriend: 'Failed to remove friend',
   searchFailed: 'Search failed. Please try again.',
+  scmCommitIdentityRequired: 'Git doesn’t know who you are on this Machine. Set user.name and user.email for this repository or on this Machine, then commit again.',
   scmOutcomeUnknown: 'Happier couldn’t confirm whether this finished. Refresh and check before trying again.',
   scmMessageOutcomeUnknown: 'Happier couldn’t confirm your message was sent. Your draft is kept. Check the conversation before sending it again.',
   scmPullRequestNotFound: 'No pull request with that number in this repository. Check the number and read it again.',

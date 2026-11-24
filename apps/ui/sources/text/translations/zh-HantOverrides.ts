@@ -6554,6 +6554,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         failedToRejectRequest: '拒絕好友請求失敗',
         failedToRemoveFriend: '刪除好友失敗',
         searchFailed: '搜尋失敗。請重試。',
+        scmCommitIdentityRequired: 'Git 無法辨識你在這台機器上的身分。請為此儲存庫或在這台機器上設定 user.name 和 user.email，然後重新提交。',
         scmOutcomeUnknown: 'Happier 無法確認此操作是否已完成。請先重新整理並檢查，再決定是否重試。',
         scmMessageOutcomeUnknown: 'Happier 無法確認你的訊息是否已傳送。草稿已保留。請先檢查對話，再決定是否重新傳送。',
         scmPullRequestNotFound: '此儲存庫中沒有該編號的提取要求。請檢查編號後重新讀取。',

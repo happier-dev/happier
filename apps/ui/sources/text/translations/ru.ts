@@ -7479,6 +7479,7 @@ export const ru: TranslationStructure = {
     failedToRejectRequest: "Не удалось отклонить запрос в друзья",
     failedToRemoveFriend: "Не удалось удалить друга",
     searchFailed: "Поиск не удался. Пожалуйста, попробуйте снова.",
+    scmCommitIdentityRequired: 'Git не знает, кто вы на этой машине. Укажите user.name и user.email для этого репозитория или на этой машине и повторите коммит.',
     scmOutcomeUnknown: 'Happier не смог подтвердить, что операция завершилась. Обновите и проверьте, прежде чем повторять.',
     scmMessageOutcomeUnknown: 'Happier не смог подтвердить, что сообщение отправлено. Черновик сохранён. Проверьте разговор, прежде чем отправлять сообщение снова.',
     scmPullRequestNotFound: 'В этом репозитории нет pull request с таким номером. Проверьте номер и прочитайте снова.',

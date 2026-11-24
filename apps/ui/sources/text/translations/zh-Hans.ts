@@ -7451,6 +7451,7 @@ export const zhHans: TranslationStructure = {
     failedToRejectRequest: "拒绝好友请求失败",
     failedToRemoveFriend: "删除好友失败",
     searchFailed: "搜索失败。请重试。",
+    scmCommitIdentityRequired: 'Git 无法识别你在这台机器上的身份。请为此仓库或在这台机器上设置 user.name 和 user.email，然后重新提交。',
     scmOutcomeUnknown: 'Happier 无法确认此操作是否已完成。请先刷新并检查，再决定是否重试。',
     scmMessageOutcomeUnknown: 'Happier 无法确认你的消息是否已发送。草稿已保留。请先检查对话，再决定是否重新发送。',
     scmPullRequestNotFound: '此仓库中没有该编号的拉取请求。请检查编号后重新读取。',

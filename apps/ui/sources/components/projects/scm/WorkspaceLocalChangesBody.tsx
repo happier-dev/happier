@@ -25,6 +25,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 
 import { useWorkspaceScmCommitControls } from './useWorkspaceScmCommitControls';
+import { WorkspaceScmOutcomeLine } from './WorkspaceScmOutcomeLine';
 import { applyWorkspaceFileStageAction, WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
 import { applyWorkspaceFileDiscardAction } from './applyWorkspaceFileDiscardAction';
 
@@ -190,6 +191,13 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
                     suggestionContextKey={controls.suggestionContextKey}
                 />
             ) : null}
+            <WorkspaceScmOutcomeLine
+                scope={props.scope}
+                snapshot={snapshot}
+                selectedCount={selectionCount}
+                writeEnabled={writeEnabled}
+                onRefresh={controls.refresh}
+            />
         </View>
     );
 });

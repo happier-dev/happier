@@ -8040,6 +8040,7 @@ localTailscale: {
     failedToRejectRequest: "友達リクエストの拒否に失敗しました",
     failedToRemoveFriend: "友達の削除に失敗しました",
     searchFailed: "検索に失敗しました。再試行してください。",
+    scmCommitIdentityRequired: 'このマシンで Git のユーザー情報を確認できません。このリポジトリまたはマシンの user.name と user.email を設定してから、もう一度コミットしてください。',
     scmOutcomeUnknown: 'Happier は完了したかどうかを確認できませんでした。再試行する前に更新して確認してください。',
     scmMessageOutcomeUnknown: 'Happier はメッセージが送信されたことを確認できませんでした。下書きは保存されています。再送する前に会話を確認してください。',
     scmPullRequestNotFound: 'このリポジトリにその番号のプルリクエストはありません。番号を確認して、もう一度読み取ってください。',

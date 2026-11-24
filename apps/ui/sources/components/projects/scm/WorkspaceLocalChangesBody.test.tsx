@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createDeferred, standardCleanup } from '@/dev/testkit';
 import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
@@ -20,6 +21,48 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefin
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('WorkspaceLocalChangesBody', () => {
+    it('shows commit identity guidance and keeps the draft and selected paths', async () => {
+        const diagnostic = 'Author identity unknown';
+        const errorCode = 'COMMIT_IDENTITY_REQUIRED';
+        const currentFixture = await createSessionFilesViewFixture({
+            rootPath: '/repo',
+            settings: { scmCommitStrategy: 'atomic' },
+            rpc: request => {
+                if (request.method === 'scm.status.snapshot') return createDeferred<unknown>().promise;
+                if (request.method === RPC_METHODS.SCM_COMMIT_CREATE) return {
+                    success: false, errorCode, error: diagnostic,
+                    outcome: { v: 1, kind: 'failed', errorCode, message: diagnostic, nextActions: [] },
+                };
+                return undefined;
+            },
+        });
+        fixture = currentFixture;
+        const { scope, storage } = currentFixture;
+        const path = 'a.ts';
+        storage.getState().updateWorkspaceScmSnapshot(scope, fileViewSnapshot({
+            rootPath: '/repo',
+            capabilities: { writeCommit: true },
+            entries: [{
+                path, previousPath: null, kind: 'modified', includeStatus: '', pendingStatus: 'M',
+                hasIncludedDelta: false, hasPendingDelta: true,
+                stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false },
+            }],
+        }));
+        storage.getState().markWorkspaceScmCommitSelectionPaths(scope, [path]);
+        const screen = await currentFixture.render(<WorkspaceLocalChangesBody scope={scope} />);
+        const draft = 'Keep this commit message';
+        await act(async () => screen.changeTextByTestId('scm-commit-message', draft));
+        await screen.pressByTestIdAsync('scm-commit-submit');
+
+        await vi.waitFor(() => expect(storage.getState().getWorkspaceScmOperationLog(scope)[0]?.outcome)
+            .toMatchObject({ kind: 'failed', errorCode }));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(
+            'Set user.name and user.email for this repository or on this Machine',
+        ));
+        expect(screen.getTextContent()).not.toContain(diagnostic);
+        expect(screen.findByTestId('scm-commit-message')?.props.value).toBe(draft);
+        expect(storage.getState().getWorkspaceScmCommitSelectionPaths(scope)).toEqual([path]);
+    });
     it('keeps manual managed commits usable without offering a controller-only message suggestion', async () => {
         const currentFixture = await createSessionFilesViewFixture({ rootPath: '/repo', settings: { scmCommitMessageGeneratorEnabled: true } });
         fixture = currentFixture;

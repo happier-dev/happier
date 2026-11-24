@@ -11,6 +11,7 @@ import { hapticsError, hapticsSuccess } from '@/components/ui/theme/haptics';
 import type { ScmWriteOperation, ScmWriteTerminalOperation } from '@/scm/operations/selectScmWriteOperation';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { t } from '@/text';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
@@ -316,7 +317,9 @@ function AttentionNotice(props: Readonly<{
         action = action ?? (recovery.retry && RETRYABLE.has(operation.action) ? { label: t('sessionGitPane.flow.recover.tryAgain'), onPress: () => recovery.retry?.(operation.action) } : null);
     } else {
         title = failedTitle(operation.action);
-        description = operation.message;
+        description = errorCode === 'COMMIT_IDENTITY_REQUIRED'
+            ? getScmUserFacingError({ errorCode, fallback: operation.message })
+            : operation.message;
     }
     return (
         <View>

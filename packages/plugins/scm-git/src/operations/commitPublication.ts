@@ -21,7 +21,8 @@ function failure(errorCode: ScmOperationErrorCode, error: string): ScmCommitCrea
     const needsInput = errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED || errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_STAGING_CONFLICT || errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_CONTENT_CHANGED || errorCode === SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED;
     return { success: false, errorCode, error, outcome: needsInput
         ? { v: 1, kind: 'needs_input', errorCode, message: error, nextActions: [{ kind: 'refresh' }] }
-        : { v: 1, kind: 'failed', errorCode, message: error, nextActions: [{ kind: 'refresh' }] } };
+        : { v: 1, kind: 'failed', errorCode, nextActions: [{ kind: 'refresh' }],
+            ...(errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED ? {} : { message: error }) } };
 }
 
 export async function captureGitCommitTarget(context: ScmBackendContext, request: ScmCommitCreateRequest): Promise<

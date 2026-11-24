@@ -41,6 +41,8 @@ export function getScmUserFacingError(input: {
                 return 'Another source control operation is in progress (working copy lock). Wait for it to finish and try again.';
             }
             return 'Diff changed, refresh and reselect your lines.';
+        case SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED:
+            return t('errors.scmCommitIdentityRequired');
         case SCM_OPERATION_ERROR_CODES.COMMIT_REQUIRED:
             return 'Commit included changes before continuing.';
         case SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE:
