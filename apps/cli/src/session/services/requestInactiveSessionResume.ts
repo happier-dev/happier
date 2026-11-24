@@ -69,6 +69,9 @@ function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick
   const spawnErrorCode = SpawnSessionErrorCodeSchema.safeParse(code);
   const runtimeFailureReason = PendingActivationRuntimeFailureReasonV1Schema.safeParse(Reflect.get(response, 'runtimeFailureReason'));
   let errorDetail = normalizeSpawnSessionErrorDetail(Reflect.get(response, 'errorDetail'));
+  if (!errorDetail && code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
+    errorDetail = { kind: 'launch_error', code, message: 'The Session folder is missing.' };
+  }
   if (!errorDetail && code === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) {
     const failure = projectSessionSpawnFailure({ errorCode: code,
       errorMessage: Reflect.get(response, 'errorMessage'), agentId: Reflect.get(response, 'agentId'), requestId });

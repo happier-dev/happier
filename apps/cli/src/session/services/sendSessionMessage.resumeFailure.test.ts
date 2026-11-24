@@ -723,11 +723,13 @@ it.each([
 });
 
 it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('settles the carried input when Machine resume is refused with %s', async (errorCode) => {
+  const errorDetail = errorCode === 'SESSION_DIRECTORY_MISSING'
+    ? { kind: 'launch_error', code: errorCode } : undefined;
   let pendingCount = 0;
   http.post.mockImplementation(async (url: string, body: unknown) => {
     if (url.endsWith('/pending')) { pendingCount += 1; return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } }; }
     if (url.endsWith('/pending/resume-refusal-input/discard')) {
-      expect(body).toEqual({ reason: 'resume_failed' });
+      expect(body).toEqual({ reason: 'resume_failed', ...(errorDetail ? { errorDetail } : {}) });
       pendingCount -= 1;
       return { status: 200, data: { ok: true, pendingCount } };
     }
@@ -741,7 +743,8 @@ it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('settles the carried inpu
   })).resolves.toMatchObject({
     ok: false, code: 'resume_failed', message: 'Machine could not resume',
     admissionResult: { status: 'accepted', localId: 'resume-refusal-input' },
-    settlementResult: { status: 'failed', code: 'resume_failed', localId: 'resume-refusal-input' },
+    settlementResult: { status: 'failed', code: 'resume_failed', localId: 'resume-refusal-input',
+      ...(errorDetail ? { errorDetail } : {}) },
   });
   expect(machineResumeTransport).toHaveBeenCalledOnce();
   expect(pendingCount).toBe(0);

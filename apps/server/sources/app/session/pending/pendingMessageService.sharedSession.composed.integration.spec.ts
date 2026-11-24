@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Server as SocketIOServer } from "socket.io";
 import axios from "axios";
 import tweetnacl from 'tweetnacl';
@@ -98,7 +101,10 @@ import { MessageQueue2 } from '../../../../../cli/src/agent/runtime/modeMessageQ
 import { registerPermissionModeMessageQueueBinding } from '../../../../../cli/src/agent/runtime/permissions/bindModeQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '../../../../../cli/src/agent/runtime/permissions/queuedPrompt';
 import { createSessionProviderInputOutcomeBinding } from '../../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
-import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import { sendSessionMessage, waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import { createManagedSessionDirectories } from '../../../../../cli/src/session/creation/managedSessionDirectories';
+import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { createWorkflowSessionStepExecutor } from '../../../../../cli/src/daemon/workflows/sessionStepExecutor';
 import { installAxiosFastifyAdapter } from '../../../../../cli/src/testkit/http/axiosAdapter';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
@@ -322,6 +328,105 @@ describe("pendingMessageService (shared sessions)", () => {
             select,
         });
     };
+
+    it('retains the missing-directory wake cause on the accepted Send receipt and restorable Home row', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' } });
+        const session = await createSession(owner.id);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            installationId: 'resume-refused-installation', metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'fixture-access' } });
+        const root = await mkdtemp(join(tmpdir(), 'pending-missing-directory-'));
+        try {
+            const directories = createManagedSessionDirectories({ activeServerDir: root });
+            const creationTag = 'stopped-session';
+            const allocation = await directories.materializeForFreshSpawn({ sessionCreationTag: creationTag });
+            await directories.bind({ allocationId: allocation.allocationId, sessionId: session.id });
+            const stop = buildSessionStopHoldV1({ rawSession: session, stopIntent: 'explicit_stop',
+                executionAuthority: 'present_user', requestId: 'explicit-stop', requestedAtMs: 1 });
+            if (stop.kind !== 'hold') throw new Error('Expected person Stop to hold the Session');
+            await db.session.update({ where: { id: session.id }, data: { encryptionMode: 'plain',
+                runtimeMachineTarget: { homeId: await getOrCreateServerIdentityId(), accountId: owner.id, sessionId: session.id,
+                    machineId: machine.id, installationId: machine.installationId },
+                metadata: JSON.stringify({ machineId: machine.id, path: allocation.directory, claudeSessionId: 'native-session',
+                    runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} }, sessionDirectoryV1: { v: 1, kind: 'managed' },
+                    sessionExplicitStopV1: stop.stop }) } });
+
+            await withAuthenticatedTestApp(app => {
+                registerSessionListingRoutes(app);
+                registerAccountEncryptionRoutes(app);
+                sessionPendingRoutes(app);
+            }, async app => {
+                const origin = 'https://missing-session-directory.test';
+                const uninstall = installAxiosFastifyAdapter({ app, origin });
+                const headers = { 'x-test-user-id': owner.id };
+                const interceptor = axios.interceptors.request.use(config => {
+                    config.headers.set(headers);
+                    return config;
+                });
+                try {
+                    const send = (localId: string) => runWithServerHttpBaseUrl(origin, () => sendSessionMessage({
+                        credentials: { token: 'fixture-token', encryption: null },
+                        idOrPrefix: session.id, localId, message: 'Continue', wait: false, timeoutMs: 1000,
+                        explicitMessageSend: true, executionAuthority: 'present_user',
+                        serverFeaturesSnapshot: FeaturesResponseSchema.parse({ features: {}, capabilities: {
+                            encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
+                            session: { pendingInput: { protocolVersion: 5 } },
+                        } }),
+                        // Machine RPC crosses a process boundary. Use the real directory owner before the launch stub.
+                        machineResumeTransport: async (_method, request) => {
+                            expect(request).toMatchObject({ sessionId: session.id, directory: allocation.directory });
+                            const row = await db.sessionPendingMessage.findUniqueOrThrow({
+                                where: { sessionId_localId: { sessionId: session.id, localId } },
+                            });
+                            expect(row.status).toBe('queued');
+                            const prepared = await directories.prepareForSpawn({
+                                directory: allocation.directory, existingSessionId: session.id, sessionCreationTag: creationTag,
+                            });
+                            return prepared.ok ? { type: 'success', sessionId: session.id } : {
+                                type: 'error', errorCode: prepared.errorCode, errorMessage: 'The private Session directory is missing.',
+                            };
+                        },
+                    }));
+
+                    const control = await send('working-directory-control');
+                    if (!control.ok) {
+                        const admissionCode = control.admissionResult?.status === 'rejected' ? control.admissionResult.code : undefined;
+                        throw new Error(`The working-directory control failed (${control.code}, ${admissionCode ?? 'no admission refusal'})`);
+                    }
+                    expect(control.admissionResult).toMatchObject({ status: 'accepted', localId: 'working-directory-control' });
+                    expect(await deletePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId: 'working-directory-control' }))
+                        .toMatchObject({ ok: true, pendingCount: 0 });
+                    await rm(allocation.directory, { recursive: true });
+                    const localId = 'accepted-then-wake-refused';
+                    const result = await send(localId);
+                    const rowKey = { sessionId: session.id, localId };
+                    const row = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: rowKey } });
+                    expect(row).toMatchObject({ status: 'discarded', discardedReason: 'resume_failed' });
+                    expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingCount: 0 });
+                    const errorDetail = { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING };
+                    expect.soft(result).toMatchObject({ ok: false, settlementResult: {
+                        status: 'failed', code: 'resume_failed', localId, admissionResult: { status: 'accepted', localId }, errorDetail,
+                    } });
+                    expect.soft(row.deliveryFailure).toMatchObject({ code: 'resume_failed', errorDetail });
+
+                    const restore = await app.inject({ method: 'POST', headers,
+                        url: `/v2/sessions/${session.id}/pending/${localId}/restore` });
+                    expect(restore.statusCode).toBe(200);
+                    expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: rowKey } }))
+                        .toMatchObject({ status: 'queued', deliveryFailure: null });
+                } finally {
+                    axios.interceptors.request.eject(interceptor);
+                    uninstall();
+                }
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
 
     const createManagedPendingFixture = async () => {
         const owner = await createAccount("managed-input-owner");

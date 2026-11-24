@@ -1,4 +1,5 @@
 import { ok } from '@happier-dev/cli-common/output';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { readActionCliPresentationEnvelopeKind } from '@/cli/actions/commandPresentationMetadata';
 
 import type {
@@ -82,10 +83,16 @@ export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
     const code = readString(result.code)
       ?? (status === 'outcomeUnknown' ? 'session_input_outcome_unknown' : `session_input_${status}`);
     const localId = readString(result.localId);
+    const detail = readRecord(result.errorDetail);
+    const missingDirectory = status === 'failed' && code === 'resume_failed'
+      && detail.kind === 'launch_error' && detail.code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING;
     return {
       errorCode: code,
-      errorMessage: `${UNDELIVERED_SEND_MESSAGES[status]} (${code}).`,
+      errorMessage: missingDirectory
+        ? `Message accepted. The Session folder is missing (${detail.code}). Use Re-queue to restore the retained message from Not sent.`
+        : `${UNDELIVERED_SEND_MESSAGES[status]} (${code}).`,
       details: { status, ...(localId ? { localId } : {}),
+        ...(result.admissionResult !== undefined ? { admissionResult: result.admissionResult } : {}),
         ...(result.errorDetail !== undefined ? { errorDetail: result.errorDetail } : {}) },
     };
   },

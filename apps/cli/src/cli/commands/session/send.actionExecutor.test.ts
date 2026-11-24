@@ -555,6 +555,33 @@ describe('happier session send truthfulness over the canonical admission status'
     } finally { output.restore(); }
   });
 
+  it('shows the missing folder and Re-queue recovery for a refused wake', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const errorDetail = { kind: 'launch_error', code: 'SESSION_DIRECTORY_MISSING', message: 'The Session folder is missing.' };
+    const admissionResult = { status: 'accepted', localId: 'local-9' };
+    const result = { status: 'failed', localId: 'local-9', code: 'resume_failed', admissionResult, errorDetail };
+    execute.mockResolvedValueOnce({ ok: true, result });
+    const text = captureConsoleText();
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello', '--local-id', 'local-9'], credentials);
+    } finally {
+      text.restore();
+    }
+    expect(text.text()).toContain(errorDetail.code);
+    expect(text.text()).toContain('Re-queue');
+
+    execute.mockResolvedValueOnce({ ok: true, result });
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello', '--local-id', 'local-9', '--json'], credentials);
+      expect(output.json()).toMatchObject({ ok: false, error: {
+        code: 'resume_failed', message: expect.stringContaining('Re-queue'), details: { admissionResult, errorDetail },
+      } });
+    } finally {
+      output.restore();
+    }
+  });
+
   it.each([
     {
       status: 'rejected',
