@@ -1,8 +1,10 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { collectRenderedTestIds, flushHookEffects, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -10,6 +12,8 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let directoryWidth = 390;
+let browserLocks: ReturnType<typeof installWebLockManagerMock>;
+const sdkRedirect = vi.hoisted(() => vi.fn());
 
 // Native recycling is the boundary; keep the app's list normalization and adapters real.
 vi.mock('@legendapp/list/react-native', async () => {
@@ -20,6 +24,7 @@ vi.mock('@legendapp/list/react-native', async () => {
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
+        Redirect: ({ href }: { href: string }) => { sdkRedirect(href); return null; },
         useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
@@ -64,6 +69,8 @@ async function memberHome(teamCount: number) {
 }
 
 beforeEach(async () => {
+    browserLocks = installWebLockManagerMock();
+    sdkRedirect.mockClear();
     const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
     const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
     const { resetHomeGovernanceEligibilitySnapshotsForTests } = await import(
@@ -82,9 +89,38 @@ beforeEach(async () => {
     directoryWidth = 390;
 });
 
-afterEach(() => standardCleanup());
+afterEach(async () => {
+    await standardCleanup();
+    browserLocks.restore();
+});
 
 describe('TeamsDirectoryScreen craft', () => {
+    it('keeps the cold launch covered until the selected Team can take over the directory', async () => {
+        const { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } = await import('@/boot/launchCurtain');
+        document.documentElement.classList.add('launch-planet');
+        const releaseBoot = holdLaunchCurtain();
+        directoryWidth = 1440;
+        const home = await memberHome(1);
+        const screen = await renderDirectory();
+        function CurtainProbe() {
+            return React.createElement('CurtainProbe', { state: useLaunchCurtainState() });
+        }
+        const probe = await renderScreen(<CurtainProbe />);
+        const curtain = () => probe.root.findByType('CurtainProbe').props.state;
+        try {
+            await vi.waitFor(() => expect(sdkRedirect).toHaveBeenCalledWith(`/settings/teams/${home}/team-0`));
+            releaseBoot();
+            await flushHookEffects({ cycles: 1, frames: 3 });
+            expect(curtain()).toBe('up');
+            await screen.unmount();
+            await flushHookEffects({ cycles: 1, frames: 3 });
+            expect(curtain()).toBe('leaving');
+        } finally {
+            releaseBoot();
+            finishLaunchCurtain();
+        }
+    });
+
     it('offers no search over an empty Teams list', async () => {
         await memberHome(0);
         const screen = await renderDirectory();

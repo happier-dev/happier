@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -156,7 +157,12 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
     const collection = useTeamsCollection({ sourceHint: props.sourceHint, query: '' });
     const { active } = collection;
     const waiting = !props.sourceHint && active.kind === 'loading' && active.rows.length === 0;
-    useLaunchCurtainHold(waiting);
+    const landing = props.sourceHint || waiting
+        ? null
+        : resolveTeamsCollectionLanding(active.rows, readLastVisitedTeamsCollectionTeam());
+    const presented = useLayoutPresentationActive();
+    // The renderless index redirect still owns the pane until the selected Team takes over.
+    useLaunchCurtainHold(presented && (waiting || landing !== null));
 
     if (props.sourceHint) {
         // Sharing a credential: the rail beside this page is the choice.
@@ -180,7 +186,6 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
             </ItemList>
         );
     }
-    const landing = resolveTeamsCollectionLanding(active.rows, readLastVisitedTeamsCollectionTeam());
     if (landing) return <Redirect href={teamDetailPath(landing) as never} />;
 
     // A Home that failed to answer has not said it has no Teams: name the failure, never "No Teams yet" beside it.
