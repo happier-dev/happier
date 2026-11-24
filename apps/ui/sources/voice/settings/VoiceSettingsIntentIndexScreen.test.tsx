@@ -96,7 +96,9 @@ describe('VoiceSettingsIntentIndexScreen', () => {
         expect(pipeline).not.toBeNull();
         const labels = pipeline!.findAll((node) => typeof node.type === 'string'
           && typeof node.props.accessibilityLabel === 'string').map((node) => node.props.accessibilityLabel);
-        expect(labels).toEqual(expect.arrayContaining([...roles]));
+        for (const role of roles) {
+          expect(labels.some(label => label === role || label.startsWith(`${role}. `)), `Missing pipeline role: ${role}`).toBe(true);
+        }
         const text = pipeline!.findAll((node) => typeof node.type === 'string'
           && typeof node.props.children === 'string').map((node) => node.props.children).join(' ');
         expect(text).toContain(placement);

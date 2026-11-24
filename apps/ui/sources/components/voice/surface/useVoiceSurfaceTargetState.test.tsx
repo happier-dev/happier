@@ -327,17 +327,18 @@ describe('useVoiceSurfaceTargetState', () => {
         await hook.unmount();
     });
 
-    it('fails global start closed when a configured provider is not registered', async () => {
-        const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(value => value.pluginId === 'happier.voice.elevenlabs');
-        if (!entry) throw new Error('Realtime provider contribution unavailable');
+    it('fails global start closed when the configured provider has no admitted declaration', async () => {
+        const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: 'acme.unavailable-voice', localId: 'conversation',
+        }));
         const { useVoiceSurfaceTargetState } = await import('./useVoiceSurfaceTargetState');
 
         const hook = await renderHook(() => useVoiceSurfaceTargetState({
             pathname: '/',
-            providerId: entry.providerId,
+            providerId,
             sessionId: null,
             variant: 'sidebar',
-            voice: { ...writeVoiceProviderSettingsConfig(voiceSettingsParse({}), entry.providerId, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS), providerId: entry.providerId },
+            voice: voiceSettingsParse({ providerId }),
         }));
 
         expect(hook.getCurrent().allowsGlobalStart).toBe(false);
