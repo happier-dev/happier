@@ -186,7 +186,10 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
       }
       if (nativeFailure) {
         const failure = await sender.pushChunk(new Uint8Array(640)).then(() => null, (error: unknown) => error);
-        expect(failure).toMatchObject({ code: 'cancelled', cause: { ok: false, errorCode: 'cancelled', diagnostic: { code: 'cancelled' } } });
+        expect(failure).toMatchObject({ code: 'cancelled', cause: {
+          ok: false, errorCode: 'cancelled', diagnostic: { operation: 'appendPcm16', code: null },
+          failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
+        } });
         await Promise.all(operations);
         return;
       }

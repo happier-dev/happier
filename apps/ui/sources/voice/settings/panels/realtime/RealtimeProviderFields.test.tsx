@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createDeferred } from '@/dev/testkit';
+import { layoutHitArea, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 import { parseRealtimeSettingsDescriptor } from './descriptor';
@@ -271,17 +273,17 @@ describe('RealtimeProviderFields', () => {
     }));
     const dropdown = screen.tree.findByProps({ testID: 'voice-realtime-field-voice' });
     const preview = dropdown.props.items[0].icon;
-    const painted = await renderScreen(preview);
-    const button = painted.tree.findAll(node => typeof node.type === 'string'
+    const painted = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+      {preview}
+    </HappierUiPlatformProvider>);
+    const readButton = () => painted.tree.findAll(node => typeof node.type === 'string'
       && (node.props.accessibilityRole ?? node.props.role) === 'button')[0];
+    const button = readButton();
     expect(button).toBeDefined();
     expect(button!.props.accessibilityLabel).toContain('Voice A');
-    const { StyleSheet } = await import('react-native');
-    // Native Pressable resolves this callback at the platform boundary.
-    const style = StyleSheet.flatten(typeof button!.props.style === 'function'
-      ? button!.props.style({ pressed: false }) : button!.props.style);
-    expect(style.width).toBeGreaterThanOrEqual(44);
-    expect(style.height).toBeGreaterThanOrEqual(44);
+    const hitArea = await layoutHitArea(readButton, readHitArea(button!).drawn);
+    expect(hitArea.width).toBeGreaterThanOrEqual(44);
+    expect(hitArea.height).toBeGreaterThanOrEqual(44);
   });
 
   it('does not start a stale catalog preview after the selected provider changes', async () => {
