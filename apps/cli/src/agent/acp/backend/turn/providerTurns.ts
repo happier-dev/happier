@@ -10,6 +10,8 @@ export type AcpProviderTurnSourceHost = Readonly<{
   sessionId: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Version advertised by this ACP peer during initialize. */
+  agentVersion?: string;
   signal: AbortSignal;
   registerContinuation(input: Readonly<{ id: string; parentToolCallId: string; keepToolCallOpen?: boolean }>): boolean;
   beginContinuation(input: Readonly<{ id?: string; turnId: string }>): AcpProviderTurnSink | null;

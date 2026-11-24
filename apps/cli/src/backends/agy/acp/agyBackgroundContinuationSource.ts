@@ -1,3 +1,5 @@
+import { compareVersions, normalizeSemverBase } from '@happier-dev/cli-common/update';
+
 import type { AcpTurnOutcome } from '@/agent/acp/backend/turn/_types';
 import type { AcpProviderTurnSink, AcpProviderTurnSourceFactory } from '@/agent/acp/backend/turn/providerTurns';
 import { asRecord, extractToolInput } from '@/agent/acp/updates/content';
@@ -17,7 +19,7 @@ const GENERATION_PROGRESS_UPDATES = new Set([
 
 type ToolCallState = Readonly<{
   status: SessionUpdate['status'];
-  isDaemon: boolean;
+  canDetach: boolean;
 }>;
 type ToolCalls = Map<string, ToolCallState>;
 
@@ -44,20 +46,22 @@ function toolCallIdOf(update: SessionUpdate): string | null {
   return typeof update.toolCallId === 'string' && update.toolCallId.trim() ? update.toolCallId : null;
 }
 
-function recordToolCall(toolCalls: ToolCalls, toolCallId: string, update: SessionUpdate): void {
+function recordToolCall(toolCalls: ToolCalls, toolCallId: string, update: SessionUpdate, canDetachAfterWait: boolean): void {
   const previous = toolCalls.get(toolCallId);
   if (isAcpToolCallTerminalStatus(previous?.status)) return;
 
-  // ACP approval updates can carry just the status. A pending approval blocks even for a known daemon.
-  const isDaemon = previous?.isDaemon === true
-    || (update.kind === 'execute' && asRecord(extractToolInput(update))?.IsDaemon === true);
-  toolCalls.set(toolCallId, { status: update.status ?? previous?.status, isDaemon });
+  const input = update.kind === 'execute' ? asRecord(extractToolInput(update)) : null;
+  const waitMs = input?.WaitMsBeforeAsync;
+  // Approval updates can carry just the status. Keep the launch behavior recorded on the call.
+  const canDetach = previous?.canDetach === true || input?.IsDaemon === true
+    || (canDetachAfterWait && typeof waitMs === 'number' && Number.isFinite(waitMs) && waitMs >= 0);
+  toolCalls.set(toolCallId, { status: update.status ?? previous?.status, canDetach });
 }
 
 function hasBlockingToolCall(toolCalls: ToolCalls): boolean {
-  for (const { status, isDaemon } of toolCalls.values()) {
+  for (const { status, canDetach } of toolCalls.values()) {
     if (isAcpToolCallTerminalStatus(status)) continue;
-    if (status !== 'in_progress' || !isDaemon) return true;
+    if (status !== 'in_progress' || !canDetach) return true;
   }
   return false;
 }
@@ -80,6 +84,10 @@ export function createAgyBackgroundContinuationSource(
   const generationSettleMs = timing.generationSettleMs ?? GENERATION_SETTLE_MS;
   const stallMs = timing.stallMs ?? CONTINUATION_STALL_MS;
   return async (host) => {
+    // Agy 1.5.15 started awaiting non-daemon commands. Older ACP peers can resume generation
+    // after WaitMsBeforeAsync while the command is still live. Unknown peers keep waiting.
+    const version = host.agentVersion ? normalizeSemverBase(host.agentVersion) : null;
+    const canDetachAfterWait = version !== null && compareVersions(version, '1.5.15') < 0;
     const foregroundToolCalls: ToolCalls = new Map();
     const backgroundTasks = new Set<string>();
     // Live activity waiting for the ACP host to admit it.
@@ -185,7 +193,7 @@ export function createAgyBackgroundContinuationSource(
       if (toolCallId && backgroundTasks.has(toolCallId)) {
         if (isAcpToolCallTerminalStatus(update.status)) backgroundTasks.delete(toolCallId);
       } else if (toolCallId) {
-        recordToolCall(open.toolCalls, toolCallId, update);
+        recordToolCall(open.toolCalls, toolCallId, update, canDetachAfterWait);
       }
       observeProgress(open, update, toolCallId);
       enqueue(() => open.sink.update(update));
@@ -212,7 +220,7 @@ export function createAgyBackgroundContinuationSource(
     const trackForegroundToolCall = (update: SessionUpdate) => {
       const toolCallId = toolCallIdOf(update);
       if (!toolCallId) return;
-      if (!backgroundTasks.has(toolCallId)) recordToolCall(foregroundToolCalls, toolCallId, update);
+      if (!backgroundTasks.has(toolCallId)) recordToolCall(foregroundToolCalls, toolCallId, update, canDetachAfterWait);
       else if (isAcpToolCallTerminalStatus(update.status)) backgroundTasks.delete(toolCallId);
     };
 

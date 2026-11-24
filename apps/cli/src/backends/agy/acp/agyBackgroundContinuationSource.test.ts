@@ -21,7 +21,7 @@ const IDLE_AFTER_TURN = { type: 'status', status: 'idle', turnFinished: true } a
 const COMPLETED_TURN = { kind: 'completed', stopReason: 'end_turn' } as const;
 
 /** Replays the update order `agy acp` produced for a backgrounded `run_command` in a captured session. */
-function agyAgent(directory: string): string {
+function agyAgent(directory: string, version?: string): string {
   return writeAcpTestAgentScript({
     dir: directory, fileName: 'agy-background.mjs',
     source: `
@@ -87,6 +87,7 @@ function agyAgent(directory: string): string {
           }
           if (message.method === 'initialize') ok(message.id, {
             protocolVersion: 1, authMethods: [],
+            agentInfo: ${JSON.stringify(version ? { name: 'Antigravity ACP Server', version } : null)} ?? undefined,
             agentCapabilities: { loadSession: true, sessionCapabilities: { close: {} } },
           });
           else if (message.method === 'session/new') ok(message.id, { sessionId: '${SESSION_ID}' });
@@ -117,7 +118,7 @@ function agyAgent(directory: string): string {
               }, endTurn);
             }
           } else if (message.method === 'test/finish-build') {
-            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission, statusOnly } = message.params;
+            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission, statusOnly, keepRunning } = message.params;
             const followUp = chain ? 'call_tests' : 'call_verify';
             const reportPlan = () => notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
             settle('call_build', 'build ok');
@@ -126,7 +127,7 @@ function agyAgent(directory: string): string {
             const runFollowUp = () => {
               if (usageWhileWaitingForPermission) say('Checking the build.');
               runCommand(followUp, () => {
-                if (followUp === 'call_verify') settle('call_verify', 'verified');
+                if (followUp === 'call_verify' && !keepRunning) settle('call_verify', 'verified');
                 say(followUp === 'call_verify' ? 'The build is verified.' : 'Tests are running.');
                 if (plan === 'last') reportPlan();
                 usage();
@@ -136,6 +137,11 @@ function agyAgent(directory: string): string {
             };
             if (pauseAfterUsage) setTimeout(runFollowUp, ${TEST_TIMING.generationSettleMs * 3});
             else runFollowUp();
+          } else if (message.method === 'test/finish-verification') {
+            settle('call_verify', 'verified');
+            say('Verification is complete.');
+            usage();
+            ok(message.id, {});
           } else if (message.method === 'test/finish-tests') {
             settle('call_tests', 'tests passed');
             usage();
@@ -170,13 +176,13 @@ async function fixture(run: (input: {
   events: AgentMessage[];
   permissionSession: FakePermissionSession;
   agentPid: number;
-}) => Promise<void>, getPermissionMode: () => 'default' | 'yolo' = () => 'default'): Promise<void> {
+}) => Promise<void>, getPermissionMode: () => 'default' | 'yolo' = () => 'default', version?: string): Promise<void> {
   await withTempDir('agy-background-continuation-', async (directory) => {
     const permissionSession = new FakePermissionSession();
     const permissionHandler = new ProviderEnforcedPermissionHandler(permissionSession.asApiSessionClient(), { logPrefix: '[fixture]' });
     const events: AgentMessage[] = [];
     const backend = createAcpBackend({
-      agentName: 'agy-fixture', cwd: directory, command: process.execPath, args: [agyAgent(directory)],
+      agentName: 'agy-fixture', cwd: directory, command: process.execPath, args: [agyAgent(directory, version)],
       permissionHandler, getPermissionMode,
       providerTurnSource: createAgyBackgroundContinuationSource(TEST_TIMING),
     });
@@ -214,6 +220,34 @@ function finishedTurns(events: AgentMessage[]): AgentMessage[] {
 }
 
 describe('createAgyBackgroundContinuationSource', () => {
+  it.each([
+    { version: '1.5.14', detaches: true },
+    { version: '1.5.15', detaches: false },
+    { version: undefined, detaches: false },
+  ])('honors the negotiated foreground command behavior of Agy $version', async ({ version, detaches }) => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      events.length = 0;
+
+      const resumed = backend.requestExtension('test/finish-build', { keepRunning: true, statusOnly: true });
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+
+      if (detaches) {
+        await expect.poll(() => finishedTurns(events)).toEqual([IDLE_AFTER_TURN]);
+      } else {
+        await delay(TEST_TIMING.generationSettleMs * 3);
+        expect(finishedTurns(events)).toEqual([]);
+      }
+      expect(await backend.requestExtension('test/status', {})).toMatchObject({ running: ['call_verify'] });
+      await backend.requestExtension('test/finish-verification', {});
+      await expect.poll(() => finishedTurns(events)).toHaveLength(detaches ? 2 : 1);
+      expect(events.filter((event) => event.type === 'tool-result' && event.callId === 'call_verify')).toEqual([
+        expect.objectContaining({ result: expect.objectContaining({ output: 'verified' }) }),
+      ]);
+    }, undefined, version);
+  });
+
   it('keeps the continuation open when usage arrives before the first follow-up tool', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);

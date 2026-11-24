@@ -943,6 +943,7 @@ export class AcpBackend implements AgentBackend {
   private acpSessionId: string | null = null;
   private negotiatedSessionCapabilities: NegotiatedAcpSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
   private negotiatedSessionLoadSupport: boolean | null = null;
+  private negotiatedAgentVersion: string | undefined;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private replayCapture: AcpReplayCapture | null = null;
@@ -1183,6 +1184,7 @@ export class AcpBackend implements AgentBackend {
       && this.providerSourceLifetime === lifetime && this.acpSessionId === sessionId;
     const source = await this.spawnedProviderTurnSource({
       sessionId, cwd: this.options.cwd, env: { ...this.spawnedProcessEnv }, signal: lifetime.signal,
+      agentVersion: this.negotiatedAgentVersion,
       registerContinuation: ({ id, parentToolCallId, keepToolCallOpen }) => {
         const context = this.providerToolContexts.get(parentToolCallId);
         if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
@@ -1416,6 +1418,7 @@ export class AcpBackend implements AgentBackend {
     this.acpSessionId = null;
     this.negotiatedSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
     this.negotiatedSessionLoadSupport = null;
+    this.negotiatedAgentVersion = undefined;
 
     connection?.close();
 
@@ -2160,6 +2163,8 @@ export class AcpBackend implements AgentBackend {
 
     logger.debug(`[AcpBackend] Initialize completed`);
     const initResponseRecord = asRecord(initResponse);
+    const agentInfo = asRecord(initResponseRecord?.agentInfo);
+    this.negotiatedAgentVersion = agentInfo ? getString(agentInfo, 'version') ?? undefined : undefined;
     const agentCapabilities = asRecord(initResponseRecord?.agentCapabilities);
     const negotiatedSessionLoadSupport = agentCapabilities?.loadSession === true;
     const negotiatedSessionCapabilities = readAcpNegotiatedSessionCapabilities(agentCapabilities);
