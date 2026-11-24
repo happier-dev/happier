@@ -268,6 +268,51 @@ it.each(['projects.execution.output.read', 'projects.execution.output.copy'] as 
   } finally { await f.close(); }
 });
 
+it.each(['projects.execution.output.read', 'projects.execution.output.copy'] as const)('uses the Session requester Account for shared-Machine %s', async actionId => {
+  const f = await fixture();
+  const machineId = 'shared-worker';
+  const operationId = '44adc451-ec3d-4ce7-b24a-7aecbf517eb9';
+  const input = { serverId, machineId, operationId, byteOffset: 7 };
+  const operation = { version: 1, operationId, revision: 1, actionId: 'projects.script.run', state: 'succeeded',
+    scope: { accountId: storage.account.id, machineId }, title: 'Build', createdAt: 1, startedAt: 1,
+    settledAt: 2, cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script',
+      serverId, machineId, workspaceRefId: 'workspace', cwd: '/project', terminalId: 'retained-terminal' },
+  } satisfies ActionOperationSnapshotV1;
+  const terminalId = operation.domainRef.terminalId;
+  const output = { ok: true as const, terminalId, frames: [{ t: 'bytes', terminalId, seq: 0, byteOffset: 7,
+    byteLength: 5, encoding: 'base64', data: Buffer.from('hello').toString('base64') }],
+    nextByteOffset: 12, availableByteOffset: 12, droppedBeforeByteOffset: 7, done: true };
+  const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+  let operationVisible = true;
+  let byteReads = 0;
+  // The remote Machine transport is the I/O boundary. The Session executor,
+  // Action policy, operation lookup and attachment-to-byte routing stay real.
+  vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+    expect(request).toMatchObject({ machineId, credentials: f.credentials, authorityCeiling: 'account_automation' });
+    expect(request.externalAction).toBeUndefined();
+    if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+      expect(request.request).toEqual({ operationId });
+      return operationVisible ? { kind: 'found', operation } : { kind: 'not_found' };
+    }
+    expect(request.method).toBe(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES);
+    expect(request.request).toEqual({ terminalId, byteOffset: 7 });
+    byteReads++;
+    return output;
+  });
+  try {
+    const refusal = projectExternalActionHttpError('target_unavailable', f.operation(actionId, input).requestId);
+    f.failAuthorization(409, undefined, refusal.payload);
+    const execute = () => f.execute({ ...f.operation(actionId, input), surface: 'mcp' }, { sessionId, isCurrent: async () => true });
+    const result = actionId === 'projects.execution.output.read' ? output : { kind: 'bytes', output };
+    const execution = await execute();
+    expect(execution, execution.ok ? undefined : execution.errorCode).toMatchObject({ ok: true, result });
+    operationVisible = false;
+    expect(await execute()).toMatchObject({ ok: false, errorCode: 'operation_not_found' });
+    expect(byteReads).toBe(1);
+    expect(f.observations.filter(row => row.path === bindExternalActionExecutionAuthorizationHttpPathV1(actionId))).toEqual([]);
+  } finally { await f.close(); }
+});
+
 function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<typeof admittedClientActionFixture>>, 'runtime'>) {
   const list = createCommittedContributedActionDefinitionLister({
     tryAcquireRuntimeRegistryLease: () => clientAction.runtime.lease,

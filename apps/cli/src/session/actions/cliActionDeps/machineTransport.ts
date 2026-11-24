@@ -1,4 +1,4 @@
-import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readProjectExecutionOutputMachineAdmissionMethodV1, readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { CliActionDepsParams } from './types';
@@ -238,9 +238,13 @@ export function createCliMachineActionTransport(
       if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
       return execution.result;
     }
-    const direct = params.machineActionDirectTargetTransport;
     const externalRequest = input.context?.externalActionCredential !== undefined
       || input.context?.externalActionExecutionAuthorization !== undefined;
+    // A remote operation can attach output on the local Machine. Retain
+    // requester Account admission for the attachment's read as well.
+    const requesterOutputRead = !externalRequest && input.context?.actionCaller?.kind === 'session'
+      && input.effectActionId && readProjectExecutionOutputMachineAdmissionMethodV1(input.effectActionId);
+    const direct = requesterOutputRead ? undefined : params.machineActionDirectTargetTransport;
     if (externalRequest && (!params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
       || !input.effectActionId || !input.context?.externalActionExecutionAuthorization || !input.context.externalActionTarget)) {
       throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });

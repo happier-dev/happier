@@ -7,6 +7,7 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import { readProjectExecutionOutputMachineAdmissionMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -311,11 +312,18 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // channel. Wrapping them in an external root loses native Session authority
     // (notably the question owner's narrow manager-answer admission).
     const sessionOriginRpc = isSessionActionRpcMethodV1(getActionSpec(operation.actionId).bindings?.rpcMethod ?? operation.actionId);
+    const outputMachineId = readProjectExecutionOutputMachineAdmissionMethodV1(operation.actionId)
+      ? readRecord(operation.input).machineId : undefined;
+    // Remote retained output uses the same requester Account custody as the
+    // exact operation lookup and terminal read it delegates to.
+    const requesterOutputRead = params.credentials !== undefined && params.machineId !== undefined
+      && typeof outputMachineId === 'string' && outputMachineId !== params.machineId;
     const requiresMachineAuthorization = executionPlacement !== 'account'
       && executionPlacement !== 'client'
       && !requesterAppReview
       && !proposesPluginInstallApproval
-      && !sessionOriginRpc;
+      && !sessionOriginRpc
+      && !requesterOutputRead;
     if (params.credentials && (operation.actionId === 'discussion.post' || operation.actionId === 'discussion.reply')) {
       context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
       const bound = await bindDiscussionDraftReply({ actionId: operation.actionId, input: operation.input, context,
@@ -389,7 +397,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         })), authority.signal) : undefined;
       if (needsCallerWorkspace && !workflowTarget) return refuse('external_authorization_preparation_failed');
       const prepare = params.prepareExternalActionAuthorization;
-      external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc
+      external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc && !requesterOutputRead
         // The admitted owner uses the CLI's captured Account data provider.
         // Machine-purpose proofs are not credentials for private Task KV/resources.
         && !(executionPlacement === 'account' && (
