@@ -156,7 +156,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireExecutableAuthoritativePluginRuntimeRegistryLease;
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
-    const approvalContext = { ...context };
+    const { mountedSelectedActionInput, ...approvalContext } = context;
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
     // Default-only markers select native confirmation policy; only a bound
     // digest carries Account relay consent for this exact invocation.
@@ -286,6 +286,10 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           invocationSurface: surface,
           ...(readHostReviewedChildRootV1(approvalContext, formatQualifiedPluginActionId(action), actionInput)
             ? { admittedPluginActionSurface: 'plugin' as const } : {}),
+          ...(mountedSelectedActionInput ? {
+            selectedActionInputCarrier: mountedSelectedActionInput.carrier,
+            isMountedCallerCurrent: mountedSelectedActionInput.isMountedCallerCurrent,
+          } : {}),
           initiatingActionCaller: context.actionCaller ?? { kind: 'host' },
           ...(input.inheritedInvocation?.caller ? { caller: input.inheritedInvocation.caller } : {}),
           ...(externalActionContext ? { externalActionContext } : {}),

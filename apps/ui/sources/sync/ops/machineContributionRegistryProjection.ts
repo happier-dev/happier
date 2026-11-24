@@ -57,6 +57,8 @@ import type { DaemonProjectionSectionStore } from './machineProjectionSectionSto
 import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { randomUUID } from '@/platform/randomUUID';
 // The projection revision/listener registry lives in its own dependency-light
@@ -992,11 +994,20 @@ export async function machinePluginStructuredMessageActionExecute(
             }
             issued = true;
         };
-        if (!payload.invocation) {
-            // Host repair controls have no plugin mount. Their raw Machine
-            // authority belongs to action.invoke, including its Manage policy.
-            const action = parseQualifiedPluginContributionKey(payload.qualifiedActionId);
-            if (!action || payload.requiredReadOnly) return {
+        const action = parseQualifiedPluginContributionKey(payload.qualifiedActionId);
+        const actionInput = action ? { action,
+            ...(payload.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: payload.expectedContributorOccurrenceId }),
+            ...(payload.input === undefined ? {} : { input: payload.input }),
+            ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}),
+        } : undefined;
+        const selectedRead = payload.selectedActionInputCarrier && actionInput
+            ? projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput) : undefined;
+        const mounted = payload.invocation?.kind === 'mountedPluginSurface' || payload.invocation?.kind === 'clientPluginAction'
+            ? payload.invocation : undefined;
+        if (!payload.invocation || selectedRead) {
+            // A mounted deployment read requires the same Home admission as
+            // an ordinary signed Action. A refused selection cannot fall through to Machine RPC.
+            if (!actionInput || (selectedRead ? !mounted || !('databaseTarget' in selectedRead) || selectedRead.access !== 'read' : payload.requiredReadOnly)) return {
                 supported: true, result: { ok: false, code: 'plugin_action_unavailable' },
             };
             const serverId = resolveMachineRpcTargetServerId(opts.accountLifetime?.scope.serverId ?? opts.serverId);
@@ -1007,27 +1018,40 @@ export async function machinePluginStructuredMessageActionExecute(
                     return { supported: false, reason: 'error' };
                 }
                 const requestId = payload.requestId ?? randomUUID();
-                const actionInput = { action, ...(payload.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: payload.expectedContributorOccurrenceId }), ...(payload.input === undefined ? {} : { input: payload.input }),
-                    ...(payload.sessionId === undefined ? {} : { sessionId: payload.sessionId }),
-                    ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}) };
+                // Retain the established host repair wrapper. Mounted selection
+                // uses only the contributed Action's allowed wrapper fields.
+                const input = !mounted && payload.sessionId !== undefined ? { ...actionInput, sessionId: payload.sessionId } : actionInput;
                 const target = { kind: 'machine' as const, machineId };
-                const context = { surface: payload.executionSurface, authority: 'present_user' as const,
-                    actionCaller: { kind: 'host' as const }, actionRequestId: requestId,
+                const authority = mounted ? 'account_automation' as const : 'present_user' as const;
+                const callerBinding = mounted?.kind === 'mountedPluginSurface' ? mounted.mountedBinding : mounted?.clientActionBinding;
+                const context = { surface: payload.executionSurface, authority,
+                    actionCaller: callerBinding ? { kind: 'plugin' as const, pluginId: callerBinding.pluginId,
+                        contributionLocalId: callerBinding.contributionLocalId, occurrenceId: callerBinding.occurrenceId,
+                        ...(callerBinding.sourceCustody ? { sourceCustody: callerBinding.sourceCustody } : {}),
+                    } : { kind: 'host' as const }, actionRequestId: requestId,
                     runtimeAccountId: account.accountId, serverId: account.serverId,
                     ...(payload.sessionId === undefined ? {} : { defaultSessionId: payload.sessionId }),
                     ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
                     externalActionTarget: target };
                 const invocation = projectExternalActionRequesterInvocationV1({ actionId: ACTION_INVOKE_ACTION_ID_V1,
                     context: payload.presentUserIntent === 'confirmed'
-                        ? bindPresentUserActionConfirmation(ACTION_INVOKE_ACTION_ID_V1, actionInput, context) : context,
+                        ? bindPresentUserActionConfirmation(ACTION_INVOKE_ACTION_ID_V1, input, context) : context,
                     account, target });
+                if (mounted && !invocation) return {
+                    supported: true, result: { ok: false, code: 'plugin_selected_action_input_unavailable' },
+                };
                 let result = await executeOriginalAccountMachineAction({ account, actionId: ACTION_INVOKE_ACTION_ID_V1,
-                    requestId, machineId, authority: 'present_user', input: actionInput,
-                    ...(invocation ? { invocation } : {}),
+                    requestId, machineId, authority, input,
+                    ...(mounted ? { pluginInvocation: mounted } : {}),
+                    ...(invocation ? { invocation: { ...invocation,
+                        ...(mounted && payload.selectedActionInputCarrier ? { selectedActionInput: {
+                            carrier: payload.selectedActionInputCarrier, input: projectNativeJsonValueForTransport(input),
+                        } } : {}),
+                    } } : {}),
                     ...(opts.signal ? { signal: opts.signal } : {}),
                     ...(opts.timeoutMs == null ? {} : { timeoutMs: opts.timeoutMs }), onTransportIssued: onIssued });
                 if (opts.onApprovalPending) {
-                    result = await resumeActionExecutionResult({ result, actionId: 'action.invoke', actionInput,
+                    result = await resumeActionExecutionResult({ result, actionId: 'action.invoke', actionInput: input,
                         requestId, scope: account.accountLifetime.scope, signal: opts.signal,
                         onApprovalPending: opts.onApprovalPending });
                 } else if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {

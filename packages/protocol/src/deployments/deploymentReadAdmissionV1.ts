@@ -102,6 +102,13 @@ export function projectDeploymentTelemetryReadAdmissionV1(actionId: string, inpu
   return read && 'telemetryCollector' in read ? read : undefined;
 }
 
+/** Home sees the ordinary database target for a protected mounted read. */
+export function projectPrivateMountedDatabaseReadInputV1(input: unknown) {
+  const admission = projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, input);
+  return admission && 'databaseTarget' in admission && admission.access === 'read'
+    ? { action: admission.action, input: { target: admission.databaseTarget } } : undefined;
+}
+
 export function projectDeploymentReadAdmissionV1(actionId: string, input: unknown): DeploymentReadAdmissionV1 | undefined {
   if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
     const invoked = ActionInvokeInputSchema.safeParse(input);

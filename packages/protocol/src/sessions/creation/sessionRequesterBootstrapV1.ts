@@ -26,6 +26,7 @@ import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machi
 import type { AccessibleMachineAccessV1 } from '../../machines/machineAccessV1.js';
 import { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 import { ExternalActionRequesterInvocationBaseV1Schema } from './externalActionRequesterInvocationBaseV1.js';
+import { PrivateMountedSelectedActionInputV1Schema } from '../../plugins/ui/selectedActionInput.js';
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
 import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -120,6 +121,8 @@ const RequesterAccountContextPurposeV1Schema = lazyZodSchema(() => z.union([
 ]));
 /** Host-stamped facts inside the existing private box, never a public Action field. */
 export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.extend(ExternalActionRequesterInvocationBaseV1Schema, {
+  /** Transient mounted selection. The receiver verifies its signed commitment before use. */
+  selectedActionInput: z.optional(PrivateMountedSelectedActionInputV1Schema),
   presentUserSessionSend: z.optional(z.string().check(z.trim(), z.minLength(1))),
   sessionListAccess: z.optional(z.enum(['current_session', 'led_subtree', 'unavailable'])),
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),

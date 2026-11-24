@@ -129,7 +129,7 @@ import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/inst
 import { PluginContextServiceError } from '@/plugins/runtime/context/errors';
 import type { DeclaredDaemonPluginSecretAdministrationPort } from '@/plugins/runtime/context/secrets';
 import { createPluginInvocationLifetime } from '@/plugins/runtime/invocation/lifetime';
-import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
+import { admitMountedSelectedActionInput, deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import {
     assertLocalSettingsDeclarationsAccessible,
     flattenLocalSettingsFields,
@@ -3151,39 +3151,13 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }
             const selectedActionInputCarrier = request.data.selectedActionInputCarrier;
             if (selectedActionInputCarrier !== undefined) {
-                const mountedPluginId = mountedCaller.status === 'available'
-                    ? mountedCaller.caller.pluginId
-                    : undefined;
-                const currentMountedSourceCustody = mountedPluginId === undefined
-                    ? undefined
-                    : lease.registry.readPluginSourceCustody?.(mountedPluginId) ?? undefined;
-                if (
-                    mountedCaller.status !== 'available'
-                    || selectedActionInputCarrier.result.selection.target.pluginId !== mountedPluginId
-                    || currentMountedSourceCustody === undefined
-                    || !pluginSourceCustodyEqual(
-                        selectedActionInputCarrier.result.selection.target.sourceCustody,
-                        currentMountedSourceCustody,
-                    )
-                ) {
-                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-                        ok: false,
-                        code: 'plugin_selected_action_input_unavailable',
-                    });
-                }
-                // The relay is only for a target-owned management Action.
-                // The carrier cannot be attached to another plugin's outer
-                // Action and rely on a later nested check after that Action
-                // has already observed/effected the request.
-                const outerAction = lease.registry.contributes.actionsById?.get(
-                    request.data.qualifiedActionId,
-                );
-                if (!outerAction || outerAction.pluginId !== mountedPluginId) {
-                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-                        ok: false,
-                        code: 'plugin_selected_action_input_unavailable',
-                    });
-                }
+                if (mountedCaller.status !== 'available') return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                    ok: false, code: 'plugin_selected_action_input_unavailable',
+                });
+                const outerAction = lease.registry.contributes.actionsById?.get(request.data.qualifiedActionId);
+                const refusal = admitMountedSelectedActionInput(selectedActionInputCarrier, mountedCaller,
+                    outerAction?.pluginId, lease.registry);
+                if (refusal) return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: false, code: refusal });
                 let mountedCallerCurrent = false;
                 try {
                     mountedCallerCurrent = await mountedCaller.isMountedCallerCurrent();

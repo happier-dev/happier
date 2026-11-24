@@ -761,6 +761,11 @@ export type ActionExecutorContext = Readonly<{
   requiredContributedActionDangerLevel?: 'safe';
   /** Host-only current occurrence from contributed Action transport admission. */
   expectedContributedActionOccurrenceId?: string;
+  /** Verified private mounted selection for this one contributed invocation. */
+  mountedSelectedActionInput?: Readonly<{
+    carrier: import('../../plugins/ui/selectedActionInput.js').PluginUiSelectedActionInputCarrierV1;
+    isMountedCallerCurrent(): boolean | Promise<boolean>;
+  }>;
   /** Host-only observation/preconditions for the SDK's ordinary ref invocation; never Action input or authority. */
   contributedActionExecutionOrigin?: Readonly<{
     expectedExecutionOrigin?: import('../../machines/administration/pluginMachineExecutionOriginV1.js').PluginMachineExecutionOriginV1;

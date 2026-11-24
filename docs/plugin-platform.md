@@ -9288,6 +9288,15 @@ complete set can establish withdrawal. Coverage is descriptive, not an
 additional permission decision or RPC/SDK field, and installed external plugins
 use the same path.
 
+A signed mounted Database read can retain one exact targeted Action selection.
+Home receives the ordinary DatabaseTarget projection. The selected source,
+occurrence, and private operands travel in the installation-sealed requester
+context. The signed request binds a commitment to that context. The daemon checks
+the commitment, exact DatabaseTarget and current mounted and contributor
+occurrences before handing the selection to the target Action. The admitted
+targeted-operation owner still validates the selection against its own handle
+before provider execution. The public encrypted V2 envelope is unchanged.
+
 Home layout and setup dismissals use one Account Artifact; shared Session instances use Board records and revisions; direct Companion instances remain viewer/device-local presentation preferences. The widget instance Action family delegates mutations to those owners. Personal Companion changes do not edit Board content. Viewer bindings consume only the viewer's own existing Connected Account purpose selection; there is no per-instance viewer override, Action or local selection setting. A widget declaration without correlation to an admitted existing purpose consumer fails closed; it does not guess another consumer or change a global binding. Pinned Connected Account references are allowed on personal surfaces only.
 
 In 0.3 development, Home's Sections switch stores a widget or group's visibility in the layout's existing `hidden` list. Hiding retains the item, bindings, size and position; the row remains available to show the same copy again. Hidden sections do not mount widget data subscriptions and do not contribute to Add's “N on Home” count. Explicit Remove remains a separate item mutation. Agents use the same `visibility` intent through `home.hub.layout.update`.

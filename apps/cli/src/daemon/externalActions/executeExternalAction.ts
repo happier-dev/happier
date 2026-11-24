@@ -18,6 +18,7 @@ import { projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionAppro
   projectRegistryAppUpdateAdmissionV1, projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentReadAdmissionV1, projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
@@ -42,7 +43,10 @@ import { admitExternalActionRequesterInvocationAttributionV1, isManagedControlle
   type ExternalActionRequesterAccountContextPurposeV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActionAdapter';
-import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
+import { computePluginUiSelectedActionInputDigestV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { admitMountedSelectedActionInput, deriveMountedPluginInvocationCaller, refuseUnavailableMountedSelectedOperation, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody,
@@ -458,6 +462,7 @@ async function executeExternalActionRequest(input: Readonly<{
   let decodedInput: unknown;
   let decodedWorkflowPreparation: ActionExecutorContext['workflowPreparation'];
   let registryThemeContent: ActionExecutorContext['registryThemeContent'];
+  let selectedActionInputDigest: string | undefined;
   let decodedTokenContentAccess: NonNullable<ReturnType<typeof openExternalActionRequestV2>>['apiTokenContentAccess'];
   let hasProtectedLogsOperands = false;
   let logsOperands: Pick<NonNullable<ReturnType<typeof openExternalActionRequestV2>>, 'resourceContinuation' | 'machineServiceLogsGeneration'> = {};
@@ -523,6 +528,7 @@ async function executeExternalActionRequest(input: Readonly<{
     decodedInput = opened.input;
     decodedWorkflowPreparation = opened.workflowPreparation;
     registryThemeContent = opened.registryThemeContent;
+    selectedActionInputDigest = opened.selectedActionInputDigest;
     // Whole-Action transport encryption does not imply Account content custody.
     decodedTokenContentAccess = doesExternalActionConsumeRequesterAccountContentV1({ actionId: actionId.data,
       input: opened.input, target: binding.target })
@@ -544,6 +550,7 @@ async function executeExternalActionRequest(input: Readonly<{
     decodedInput = envelope.data.input;
     decodedWorkflowPreparation = envelope.data.workflowPreparation;
     registryThemeContent = envelope.data.registryThemeContent;
+    selectedActionInputDigest = envelope.data.selectedActionInputDigest;
     logsOperands = envelope.data;
     hasProtectedLogsOperands = envelope.data.resourceContinuation !== undefined || envelope.data.machineServiceLogsGeneration !== undefined;
   }
@@ -559,6 +566,26 @@ async function executeExternalActionRequest(input: Readonly<{
   let effectMayHaveStarted = false;
   const prepareResponse = prepare;
   prepare = response => prepareResponse(effectMayHaveStarted ? response : beforeEffectResponse(response));
+
+  const selection = requesterContext?.invocation?.selectedActionInput;
+  const selectedCarrier = selection?.carrier;
+  if (selectedActionInputDigest !== undefined || selection !== undefined) {
+    const projection = selection && projectPrivateMountedDatabaseReadInputV1(selection.input);
+    const outerOperands = readRecord(readRecord(selection?.input).input);
+    const selectedOperands = readRecord(selection?.carrier.result.input);
+    if (!executionAuthorization?.success || !envelope.data.pluginInvocation || actionId.data !== ACTION_INVOKE_ACTION_ID_V1
+      || !selection || !projection || computePluginUiSelectedActionInputDigestV1(selection) !== selectedActionInputDigest
+      || !sameStrictJsonValue(projection, decodedInput)
+      || !sameStrictJsonValue(selectedOperands.target, projection.input.target)
+      || !sameStrictJsonValue(selectedOperands.recordKey, outerOperands.recordKey)
+      || (outerOperands.sourceSelection !== undefined
+        && !sameStrictJsonValue(outerOperands.sourceSelection, selection.carrier.result.selection))
+      || (outerOperands.role !== undefined && outerOperands.role !== selection.carrier.operation.role)) {
+      return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+        execution: { ok: false, errorCode: 'plugin_selected_action_input_invalid', error: 'plugin_selected_action_input_invalid' } });
+    }
+    decodedInput = selection.input;
+  }
 
   // Signed outer admission facts and private opened input must describe the
   // same invocation before approval, native submission or Session birth.
@@ -875,6 +902,17 @@ async function executeExternalActionRequest(input: Readonly<{
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
       execution: { ok: false, errorCode: 'plugin_mounted_caller_unavailable', error: 'plugin_mounted_caller_unavailable' } });
   }
+  if (selectedCarrier && pluginRuntimeLease && mountedCaller.status === 'available') {
+    const outer = ActionInvokeInputSchema.safeParse(decodedInput);
+    const registry = pluginRuntimeLease.registry;
+    const outerAction = outer.success
+      ? readResolvedActionContribution(registry.contributes, outer.data.action) : undefined;
+    const refusal = admitMountedSelectedActionInput(selectedCarrier, mountedCaller,
+      outerAction?.definition.readOnly === true ? outerAction.pluginId : undefined, registry)
+      ?? refuseUnavailableMountedSelectedOperation(selectedCarrier, mountedCaller.caller.pluginId, registry);
+    if (refusal) return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+      execution: { ok: false, errorCode: refusal, error: refusal } });
+  }
   const pluginCaller = mountedCaller.status === 'available' ? resolvePluginActionCaller({
     plugin: { id: mountedCaller.caller.pluginId }, contribution: mountedCaller.caller.contribution,
     occurrenceId: mountedCaller.caller.occurrenceId, sourceCustody: mountedCaller.caller.sourceCustody,
@@ -1020,6 +1058,9 @@ async function executeExternalActionRequest(input: Readonly<{
         ? resolveExternalActionRootInvocationAuthority(admittedAuthorization)
         : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
+    ...(selectedCarrier && mountedCaller.status === 'available' ? { mountedSelectedActionInput: {
+      carrier: selectedCarrier, isMountedCallerCurrent: mountedCaller.isMountedCallerCurrent,
+    } } : {}),
     ...(pressedSend && actionId.data === SESSION_MESSAGE_SEND_ACTION_ID_V1 && accountPrincipal?.authentication.kind === 'account'
       && !sessionActionOrigin && !workflowActionOrigin && pressedSend === readRecord(decodedInput).sessionId
       ? { presentUserSessionSend: pressedSend } : {}),

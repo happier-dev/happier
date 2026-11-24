@@ -1,5 +1,9 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectDeploymentReadAdmissionV1, projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { DatabaseInsightSourceContributionProtocolV1 as insightSource, DatabaseInsightSourceOperationSchemasV1 as insightSchemas,
+  DATABASE_INSIGHT_SOURCES_POINT_REF_V1 } from '@happier-dev/database-protocol/v1';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,13 +14,15 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import tweetnacl from 'tweetnacl';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { executeExternalAction } from './executeExternalAction';
+import { executeExternalAction, type ExternalActionExecutor } from './executeExternalAction';
 import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, PluginInstallationManifestPublisherHeaderV1Schema, createPluginInstallationManifestPublisherSigningInputV1, stringifyPluginInstallationManifestCanonicalJsonV1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { AutomationConversationActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import * as installationStore from '@/daemon/identity/store';
 import axios from 'axios';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { PluginUiSelectedActionInputCarrierV1Schema, computePluginUiSelectedActionInputDigestV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { DaemonPluginMountedInvocationV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createAutomationConversationActionExecutor } from '@/plugins/runtime/automations/automationConversationActionExecutor';
@@ -144,6 +150,142 @@ describe('external Action mounted plugin admission', () => {
     if (placement === 'machine') fixture.registry.fencePluginConsumers?.(['happier.inspector']);
     else enabled = false;
     expect(await run()).toMatchObject({ ok: false, errorCode: 'plugin_mounted_caller_unavailable' });
+  });
+
+  it('admits only the exact private signed selection before the target-owned Action', async () => {
+    const mountedPluginId = 'happier.database';
+    const sourcePluginId = 'acme.insight-source';
+    const point = { pointId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pointId,
+      protocol: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.protocol };
+    const sourcePlugin = definePlugin({
+      id: sourcePluginId, version: '0.0.0', entrypoints: { daemon: './daemon.mjs' },
+      actions: {
+        list: { title: 'List findings', surfaces: insightSource.operations.list.declaration.surfaces,
+          inputSchema: insightSchemas.listInput, resultSchema: insightSchemas.listResult,
+          run: async () => ({ ok: true, findings: [] }) },
+        detail: { title: 'Read finding', surfaces: insightSource.operations.detail.declaration.surfaces,
+          inputSchema: insightSchemas.detailInput, resultSchema: insightSchemas.detailResult,
+          run: async () => ({ ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' }) },
+      },
+      resources: { changes: { kind: 'asset', path: 'changes.json', contentType: 'application/json' } },
+      contributesTo: { [mountedPluginId]: { [point.pointId]: { source: insightSource.contribute({
+        descriptor: { displayName: 'Fixture source', targetKinds: ['managed_deployment'], engineIds: ['postgresql'],
+          evidenceSchema: { type: 'object' }, changeResourceRef: { pluginId: sourcePluginId, localId: 'changes' } },
+        operations: { list: insightSource.operations.list.bind('list'), detail: insightSource.operations.detail.bind('detail') },
+      }) } } },
+    });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{ manifest: sourcePlugin.manifest, files: { 'daemon.mjs': 'export function activate() {}', 'changes.json': '{}' } }],
+      runtimeOptions: { pluginIds: [mountedPluginId, sourcePluginId], resolveCurrentMachineId: () => 'machine-1' },
+    });
+    disposers.push(fixture.dispose);
+    const mountedOccurrence = fixture.registry.readPluginOccurrenceId?.(mountedPluginId);
+    const mountedCustody = fixture.registry.readPluginSourceCustody?.(mountedPluginId);
+    const sourceOccurrence = fixture.registry.readPluginOccurrenceId?.(sourcePluginId);
+    const sourceCustody = fixture.registry.readPluginSourceCustody?.(sourcePluginId);
+    if (!mountedOccurrence || !mountedCustody || !sourceOccurrence || !sourceCustody) throw new Error('Missing installed fixtures');
+    const databaseTarget = { kind: 'managed_deployment' as const,
+      environment: { serverId: 'srv_home-1', projectSourceId: 'source', environmentId: 'environment' },
+      targetLinkId: 'selected-link', contribution: { pluginId: 'happier.neon', contributionId: 'database' },
+      platformProjectId: 'project', branchId: 'branch', database: 'selected' };
+    const contributor = { pluginId: sourcePluginId, contributionId: 'source', sourceCustody };
+    const action = { pluginId: sourcePluginId, localId: 'detail' };
+    const carrier = PluginUiSelectedActionInputCarrierV1Schema.parse({
+      operation: { point, contributor: { ...contributor, occurrenceId: sourceOccurrence }, role: 'detail', action },
+      result: { kind: 'submitted', action, input: { target: databaseTarget, recordKey: 'retained-record' },
+        selection: { target: { pluginId: mountedPluginId, sourceCustody: mountedCustody }, point, contributor },
+        connectedAccount: { kind: 'none' }, presentation: { connectedAccountLabel: null, machineDisplayName: null } },
+    });
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const caller = { kind: 'plugin' as const, pluginId: mountedPluginId, contributionLocalId: 'database-workbench',
+      occurrenceId: mountedOccurrence, sourceCustody: mountedCustody };
+    const outerAction = { pluginId: mountedPluginId, localId: 'insights/brief/build' };
+    const outerInput = { action: outerAction, input: { target: databaseTarget, recordKey: 'retained-record' } };
+    const selection = { carrier, input: outerInput };
+    const publicInput = projectPrivateMountedDatabaseReadInputV1(outerInput)!;
+    const envelope = { v: 1 as const, requestId: 'mounted-selection', target,
+      input: publicInput,
+      pluginInvocation: { kind: 'mountedPluginSurface' as const, mountedBinding: {
+        pluginId: mountedPluginId, contributionLocalId: caller.contributionLocalId,
+        occurrenceId: mountedOccurrence, sourceCustody: mountedCustody,
+        materializationRef: fixture.registry.resolveCurrentPluginMaterializationRef?.(mountedPluginId) ?? undefined,
+      } },
+      selectedActionInputDigest: computePluginUiSelectedActionInputDigestV1(selection),
+    };
+    const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(43));
+    const authentication = { kind: 'account' as const, tokenEpoch: 0 };
+    const executor = { execute: vi.fn<ExternalActionExecutor['execute']>(async (_action, _input, context) => ({
+      ok: true as const, result: context?.mountedSelectedActionInput?.carrier.result.input ?? null,
+    })) };
+    const run = (received = carrier, request = envelope, signedRequest = envelope) => {
+      const mountedBinding = signedRequest.pluginInvocation.mountedBinding;
+      const executionAuthorization = sealExternalActionRequesterAccountContextV1({
+        authorization: { v: 1, token: 'fixture', binding: { authentication, accountEncryptionMode: 'plain',
+          accountId: 'account-1', custodianAccountId: 'account-1', serverIdentityId: 'srv_home-1',
+          machineId: target.machineId, installationId: 'installation-1', target, actionId: 'action.invoke',
+          requestId: envelope.requestId, admittedMachineRole: 'manage',
+          deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', publicInput),
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(signedRequest) } },
+        credentials: { token: 'fixture' }, purpose: { kind: 'external_action' },
+        invocation: { caller: { ...caller, occurrenceId: mountedBinding.occurrenceId, sourceCustody: mountedBinding.sourceCustody },
+          surface: 'ui', authority: 'account_automation', selectedActionInput: { ...selection, carrier: received } },
+        installationPublicKey: key.publicKey, randomBytes: tweetnacl.randomBytes,
+      });
+      return executeExternalAction({ actionId: 'action.invoke', envelope: request, executionAuthorization,
+        principal: { authority: 'account_automation', accountId: 'account-1', authentication },
+        currentMachineId: target.machineId, currentAccountId: 'account-1', currentServerId: 'srv_home-1',
+        currentInstallationId: 'installation-1', externalActionMachineRequestPrivateKey: key.secretKey,
+        verifyExecutionAuthorization: async () => true, resolveTarget: async () => target, executor,
+        prepareRequesterAccountContext: async ({ authorization }) => {
+          const opened = openExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
+            machineId: target.machineId, installationId: 'installation-1', serverIdentityId: 'srv_home-1',
+            installationPrivateKey: key.secretKey, includeInvocation: true });
+          return opened ? { authorization, invocation: opened.invocation, executor,
+            resolveEncryption: async () => null, dispose: async () => {} } : null;
+        },
+        acquirePluginRuntimeRegistryLease: async () => {
+          const lease = fixture.controller.tryAcquireRuntimeRegistry();
+          if (!lease) throw new Error('Runtime unavailable');
+          return lease;
+        },
+        resolvePluginExecutionOriginContext: () => ({ serverIdentityId: 'srv_home-1', machineId: target.machineId }),
+      });
+    };
+    const result = await run();
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response',
+      response: { execution: { ok: true, result: { recordKey: 'retained-record' } } } });
+    expect(executor.execute.mock.calls[0]?.[1]).toEqual(outerInput);
+    expect(JSON.stringify(envelope)).not.toContain('retained-record');
+    await expect(run({ ...carrier, result: { ...carrier.result, input: { target: databaseTarget, recordKey: 'substituted-record' } } }))
+      .resolves.toMatchObject({ kind: 'response', response: { execution: { ok: false, errorCode: 'plugin_selected_action_input_invalid' } } });
+    await expect(run(carrier, { ...envelope, selectedActionInputDigest: 'b'.repeat(43) }))
+      .resolves.toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+    const replaceRuntime = async (pluginIds: string[]) => {
+      const next = await createAdmittedPluginRuntimeFixture({ happyHomeDir: fixture.happyHomeDir,
+        controller: fixture.controller, runtimeOptions: { pluginIds, resolveCurrentMachineId: () => 'machine-1',
+          preparedActivationGraphsByPluginId: fixture.preparedActivationGraphsByPluginId } });
+      disposers.push(next.dispose);
+      return next.registry;
+    };
+    const disabled = await replaceRuntime([mountedPluginId]);
+    expect(disabled.readPluginOccurrenceId?.(sourcePluginId)).toBeNull();
+    const enabled = await replaceRuntime([mountedPluginId, sourcePluginId]);
+    expect(enabled.readPluginSourceCustody?.(sourcePluginId)).toEqual(sourceCustody);
+    const currentSourceOccurrence = enabled.readPluginOccurrenceId?.(sourcePluginId);
+    expect(currentSourceOccurrence).toEqual(expect.any(String));
+    expect(currentSourceOccurrence).not.toBe(sourceOccurrence);
+    // Refresh the current mount and sign that request, retaining the stale source selection.
+    const currentMountedOccurrence = enabled.readPluginOccurrenceId?.(mountedPluginId);
+    const currentMountedCustody = enabled.readPluginSourceCustody?.(mountedPluginId);
+    if (!currentMountedOccurrence || !currentMountedCustody) throw new Error('Missing current mount');
+    expect(currentMountedCustody).toEqual(mountedCustody);
+    const replay = { ...envelope, pluginInvocation: { ...envelope.pluginInvocation,
+      mountedBinding: { ...envelope.pluginInvocation.mountedBinding, occurrenceId: currentMountedOccurrence,
+        sourceCustody: currentMountedCustody,
+        materializationRef: enabled.resolveCurrentPluginMaterializationRef?.(mountedPluginId) ?? undefined } } };
+    await expect(run(carrier, replay, replay)).resolves.toMatchObject({ kind: 'response',
+      response: { execution: { ok: false, errorCode: 'plugin_action_generation_retired' } } });
+    expect(executor.execute).toHaveBeenCalledOnce();
   });
 
   it('does not admit a plugin-only root Action without a mounted claim', async () => {

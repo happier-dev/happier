@@ -15,6 +15,7 @@ import {
   isDeploymentPreparationActionIdV1,
   ExternalActionExecutionAuthorizationBindingV1Schema,
   ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionRequestEnvelopeV2Schema,
   createDeploymentCandidatePublicationV1,
   createDeploymentLinkContentArtifactIdV1,
   projectDeploymentNativeAdmissionV1,
@@ -909,6 +910,18 @@ describe('whole external Action encryption', () => {
     expect(request.pluginInvocation).toEqual(pluginInvocation);
     expect(JSON.stringify(request)).not.toContain(input.privateInput);
     expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toEqual({ input });
+  });
+  it('binds a mounted selection commitment without widening the public V2 envelope', () => {
+    const selectedActionInputDigest = 'a'.repeat(43);
+    const input = { query: 'read' };
+    const params = { projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
+      randomBytes, input, selectedActionInputDigest };
+    const request = sealExternalActionRequestV2(params);
+    expect(ExternalActionRequestEnvelopeV2Schema.safeParse({ ...request, selectedActionInputDigest }).success).toBe(false);
+    expect(JSON.stringify(request)).not.toContain(selectedActionInputDigest);
+    expect(openExternalActionRequestV2({ ...params, envelope: request })).toEqual({ input, selectedActionInputDigest });
+    expect(ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target,
+      input, selectedActionInputDigest }).selectedActionInputDigest).toBe(selectedActionInputDigest);
   });
   it('binds fresh reset preparatory facts to the encrypted input without exposing initial content', () => {
     const reset = { source: { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'connected' } },

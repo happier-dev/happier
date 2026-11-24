@@ -107,6 +107,7 @@ const requestShape = () => ({
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
   registryThemeContent: ExternalActionRequestEnvelopeV1Schema.shape.registryThemeContent,
+  selectedActionInputDigest: ExternalActionRequestEnvelopeV1Schema.shape.selectedActionInputDigest,
 });
 const RequestSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ApiTokenBindingSchema, { ...requestShape(), apiTokenContentAccess: z.optional(ApiTokenContentAccessSchema) })), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountBindingSchema, requestShape())),
@@ -165,13 +166,15 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
+  selectedActionInputDigest?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['selectedActionInputDigest'];
   /** Sender knows the target Machine is another Account's: only then can a terminal session root exist. */
   terminalSession?: true;
 }>): ExternalActionRequestEnvelopeV2 {
   const operands = { ...(params.workflowPreparation ? { workflowPreparation: params.workflowPreparation } : {}),
     ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
     ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
-    ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}) };
+    ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}),
+    ...(params.selectedActionInputDigest ? { selectedActionInputDigest: params.selectedActionInputDigest } : {}) };
   const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input, ...operands,
     ...(params.apiTokenContentAccess ? { apiTokenContentAccess: params.apiTokenContentAccess } : {}) });
   if (params.material.type !== 'dataKey' || params.material.machineKey.length !== 32) throw new TypeError('Invalid external Action material');
@@ -251,6 +254,7 @@ export function openExternalActionRequestV2(params: Readonly<{
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
   registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
+  selectedActionInputDigest?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['selectedActionInputDigest'];
   apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2 }> | null {
   let phase: Parameters<NonNullable<typeof params.onFailure>>[0]['phase'] = 'envelope_parse';
   const refused = (error?: unknown): null => {
@@ -339,7 +343,8 @@ export function openExternalActionRequestV2(params: Readonly<{
     const operands = { ...(decoded.data.workflowPreparation ? { workflowPreparation: decoded.data.workflowPreparation } : {}),
       ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),
       ...(decoded.data.machineServiceLogsGeneration ? { machineServiceLogsGeneration: decoded.data.machineServiceLogsGeneration } : {}),
-      ...(decoded.data.registryThemeContent ? { registryThemeContent: decoded.data.registryThemeContent } : {}) };
+      ...(decoded.data.registryThemeContent ? { registryThemeContent: decoded.data.registryThemeContent } : {}),
+      ...(decoded.data.selectedActionInputDigest ? { selectedActionInputDigest: decoded.data.selectedActionInputDigest } : {}) };
     return isExternalActionRequestWithinLimit({ v: 1, requestId: decoded.data.requestId,
       target: decoded.data.target, input: decoded.data.input, ...operands }) ? { input: decoded.data.input, ...operands,
         ...('apiTokenContentAccess' in decoded.data && decoded.data.apiTokenContentAccess

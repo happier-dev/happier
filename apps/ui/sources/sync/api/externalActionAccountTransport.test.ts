@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { PluginUiSelectedActionInputCarrierV1Schema } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -89,6 +91,63 @@ it('routes a Team Environment capture read to Home admission without a Machine g
     expect(homes.requestsFor(admissionPath)).toHaveLength(1);
     expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
     expect(homes.requestsFor('/v1/machines/collector')).toHaveLength(0);
+});
+
+it('seals the mounted selection and operands while Home admits only the database read', async () => {
+    if (!account) throw new Error('Expected captured Account');
+    const action = parseQualifiedPluginActionId(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1)!;
+    const target = { kind: 'managed_deployment' as const, environment: { serverId: binding.serverIdentityId,
+        projectSourceId: 'source', environmentId: 'environment' }, targetLinkId: 'link',
+        contribution: { pluginId: 'happier.neon', contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'branch', database: 'selected' };
+    const sourceCustody = { kind: 'development' as const, registeredRootId: 'workbench-root' };
+    const source = { pluginId: 'acme.insight-source', contributionId: 'source',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' } };
+    const point = { pointId: 'insight-sources', protocol: { id: 'insights-source', version: 1 } };
+    const detail = { pluginId: source.pluginId, localId: 'detail' };
+    const sourceSelection = { target: { pluginId: action.pluginId, sourceCustody }, point, contributor: source };
+    const carrier = PluginUiSelectedActionInputCarrierV1Schema.parse({
+        operation: { point, contributor: { ...source, occurrenceId: 'private-source-occurrence' },
+            role: 'detail', action: detail },
+        result: { kind: 'submitted', action: detail, input: { target, recordKey: 'private-record' },
+            selection: sourceSelection, connectedAccount: { kind: 'none' },
+            presentation: { connectedAccountLabel: null, machineDisplayName: null } },
+    });
+    const input = { action, input: { target, recordKey: 'private-record', sourceSelection } };
+    const route = { ...binding, actionId: 'action.invoke' as const, requestId: 'protected-read' };
+    const actionPath = '/v1/actions/action.invoke';
+    const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+    const mountedBinding = { pluginId: action.pluginId, contributionLocalId: 'database-workbench',
+        occurrenceId: 'mounted-occurrence', sourceCustody };
+    const selection = { carrier, input };
+    homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+        const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { body: { v: 1, token: 'signed-home-read', binding: { ...route, machineId: 'machine-1',
+            installationId: 'installation-1', custodianAccountId: route.accountId, accountEncryptionMode: 'plain',
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(route.actionId, { action, input: { target } }),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } } };
+    } });
+    let forwarded: unknown;
+    homes.answer(serverId, actionPath, { select: body => {
+        forwarded = body;
+        return { body: { v: 1, actionId: route.actionId, requestId: route.requestId,
+            execution: { ok: true, result: 'accepted' } } };
+    } });
+    expect(await executeOriginalAccountActionTransport({ account, binding: route, input, authority: 'account_automation',
+        pluginInvocation: { kind: 'mountedPluginSurface', mountedBinding },
+        invocation: { caller: { kind: 'plugin', ...mountedBinding }, surface: 'ui',
+            authority: 'account_automation', selectedActionInput: selection },
+        machineCustody: { accountMode: 'plain', installationId: 'installation-1',
+            installationPublicKey: installation.publicKey, custodian: { accountId: route.accountId } } }))
+        .toEqual({ ok: true, result: 'accepted' });
+    const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(forwarded);
+    expect(request.envelope).toMatchObject({ input: { action, input: { target } } });
+    expect(JSON.stringify(request.envelope)).not.toMatch(/private-record|private-source-occurrence/u);
+    expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+        purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation-1',
+        serverIdentityId: binding.serverIdentityId, installationPrivateKey: installation.secretKey, includeInvocation: true }))
+        .toMatchObject({ invocation: { selectedActionInput: selection } });
 });
 
 async function execute() {

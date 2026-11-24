@@ -1,4 +1,4 @@
-import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -15,6 +15,8 @@ import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSch
 import { isExternalActionAuthorizationBoundToEnvelope, encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, ExternalActionRequesterInvocationV1Schema,
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { computePluginUiSelectedActionInputDigestV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import { projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2,
     type ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -251,7 +253,16 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     let input: ReturnType<typeof projectNativeJsonValueForTransport>;
     try { input = projectNativeJsonValueForTransport(params.input); }
     catch { return failure('invalid_parameters'); }
+    const selection = params.invocation?.selectedActionInput;
+    if (selection) {
+        const projected = projectPrivateMountedDatabaseReadInputV1(input);
+        if (!projected || !custody || !params.pluginInvocation || binding.actionId !== ACTION_INVOKE_ACTION_ID_V1) {
+            return failure('plugin_selected_action_input_unavailable');
+        }
+        input = projected;
+    }
     const operands = {
+        ...(selection ? { selectedActionInputDigest: computePluginUiSelectedActionInputDigestV1(selection) } : {}),
         ...(params.workflowPlacement ? { workflowPreparation: params.workflowPlacement.workflowPreparation } : {}),
         ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}),
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
@@ -463,6 +474,8 @@ type OriginalAccountMachineActionParams = DeploymentReviewTransport & Readonly<{
     authority?: ActionRequiredAuthority;
     handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
     actionCaller?: ActionExecutorContext['actionCaller'];
+    /** The current mounted host retained this binding on the contributed dispatch. */
+    pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
     signal?: AbortSignal;
     timeoutMs?: number;
     invocation?: ExternalActionRequesterInvocationV1;
@@ -499,7 +512,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const { account } = params;
     const invocation = resolveOriginalAccountPluginInvocation(params.actionCaller);
     if (!invocation.ok) return invocation;
-    const { pluginInvocation } = invocation;
+    const pluginInvocation = params.pluginInvocation ?? invocation.pluginInvocation;
     account.assertCurrent();
     params.signal?.throwIfAborted();
     if (params.machineTarget && params.machineTarget.machineId !== params.machineId) return failure('target_not_local');

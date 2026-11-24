@@ -928,6 +928,8 @@ export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.stric
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
   /** Private requester read operand; ordinary registry Action input remains metadata-only. */
   registryThemeContent: z.optional(z.literal(true)),
+  /** Commitment only. The selected input opens from the installation-sealed requester context. */
+  selectedActionInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
   managedAdmission: z.optional(ExternalActionManagedAdmissionV1Schema),
   managedCreationCodec: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),

@@ -1,5 +1,8 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 import { pluginJsonValuesEqual } from '../contributions/jsonSchemaValues.js';
 import type { PluginUiJsonValueV1 } from '../contributions/ui/json.js';
@@ -42,6 +45,20 @@ export const PluginUiSelectedActionInputCarrierV1Schema = lazyZodSchema(() => z.
 export type PluginUiSelectedActionInputCarrierV1 = z.infer<
   typeof PluginUiSelectedActionInputCarrierV1Schema
 >;
+
+/** The mounted selection and outer operands share the installation-sealed payload. */
+export const PrivateMountedSelectedActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  carrier: PluginUiSelectedActionInputCarrierV1Schema,
+  input: StrictJsonValueSchema,
+}));
+export type PrivateMountedSelectedActionInputV1 = z.infer<typeof PrivateMountedSelectedActionInputV1Schema>;
+
+/** Bind the exact private mounted selection to the existing signed request. */
+export function computePluginUiSelectedActionInputDigestV1(selection: PrivateMountedSelectedActionInputV1): string {
+  return computeCanonicalDomainSeparatedDigest('happier.mounted-selected-action-input.v1', [
+    createCanonicalJsonSigningInput(selection),
+  ]);
+}
 
 /** The selection-free shape accepted by the one input reconstruction owner. */
 export type PluginUiSelectedActionInputForReconstructionV1<
