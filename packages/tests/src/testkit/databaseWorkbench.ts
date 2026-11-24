@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
+import { resolveInstalledRuntimePackage } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
@@ -17,16 +18,40 @@ import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 import { repoRootDir } from './paths';
 import { startSessionMcpAgent } from './sessionMcpAgent';
 
-/** Install and trust the current source through the daemon's ordinary plugin
- * change flow. A fresh development installation is enabled by that owner. */
+/** Register authored source owned by this run. The daemon watches the registered
+ * root, so another lane editing the checkout must not reload this fixture. */
 export async function installDatabaseWorkbenchPluginFixture(params: Readonly<{
+  testDir: string;
   daemonPort: number;
   controlToken?: string | null;
 }>) {
+  const sourceRoot = join(repoRootDir(), 'packages/plugins/database-workbench');
+  const packageJsonPath = join(sourceRoot, 'package.json');
+  const packageJson = await readFile(packageJsonPath, 'utf8');
+  const { dependencies, devDependencies } = JSON.parse(packageJson) as {
+    dependencies: Record<string, string>;
+    devDependencies: Record<string, string>;
+  };
+  const pluginRoot = join(await realpath(params.testDir), 'database-workbench-plugin');
+  await mkdir(pluginRoot);
+  await Promise.all([
+    cp(join(sourceRoot, 'src'), join(pluginRoot, 'src'), { recursive: true, dereference: true }),
+    writeFile(join(pluginRoot, 'package.json'), packageJson),
+    ...Object.keys({ ...dependencies, ...devDependencies }).map(async (packageName) => {
+      const { packageJsonPath: installedManifest } = resolveInstalledRuntimePackage({
+        packageName, resolveFromPackageJsonPath: packageJsonPath,
+      });
+      const link = join(pluginRoot, 'node_modules', packageName);
+      await mkdir(dirname(link), { recursive: true });
+      await symlink(dirname(await realpath(installedManifest)), link, 'junction');
+    }),
+  ]);
   const { applyTrustedLocalPluginFixture } = await import('./externalSessionLiveLifecycleFixture');
-  return applyTrustedLocalPluginFixture({ ...params,
-    pluginRoot: join(repoRootDir(), 'packages/plugins/database-workbench'),
-    pluginId: DATABASE_PLUGIN_ID_V1, interactionId: 'database-workbench-fixture-install' });
+  const installation = await applyTrustedLocalPluginFixture({
+    daemonPort: params.daemonPort, controlToken: params.controlToken, pluginRoot,
+    pluginId: DATABASE_PLUGIN_ID_V1, interactionId: 'database-workbench-fixture-install',
+  });
+  return { sourceRoot: pluginRoot, installation };
 }
 
 /** Exercise the internal Session relay using the vendor boundary shim. The
@@ -101,8 +126,8 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     const managedJavaScriptRuntime = await ensureManagedJavaScriptRuntimeCommand({ ...process.env, ...daemonEnv });
     if (!managedJavaScriptRuntime) throw new Error('DBW fixture managed JavaScript runtime unavailable');
     const machine = await fixture.enrollDaemon(owner, { env: daemonEnv });
-    const pluginInstallation = await installDatabaseWorkbenchPluginFixture({ daemonPort: machine.daemon.state.httpPort,
-      controlToken: machine.daemon.state.controlToken });
+    const pluginFixture = await installDatabaseWorkbenchPluginFixture({ testDir: params.testDir,
+      daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken });
     const envPath = '.env.local';
     const envBindings = {
       DATABASE_URL: fixture.postgres.selectedDatabaseUrl,
@@ -183,10 +208,10 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
         server: fixture.server.proc.child.spawnargs.filter(argument => /\.(?:mjs|cjs|tsx?)$/u.test(argument)),
         daemon: machine.daemon.proc.child.spawnargs.filter(argument => /\.(?:mjs|cjs|tsx?)$/u.test(argument)),
       },
-      plugin: { id: DATABASE_PLUGIN_ID_V1, sourceRoot: join(repoRootDir(), 'packages/plugins/database-workbench'),
-        installationKind: pluginInstallation.kind,
-        ...(typeof pluginInstallation.appliedGeneration === 'string'
-          ? { appliedGeneration: pluginInstallation.appliedGeneration } : {}),
+      plugin: { id: DATABASE_PLUGIN_ID_V1, sourceRoot: pluginFixture.sourceRoot,
+        installationKind: pluginFixture.installation.kind,
+        ...(typeof pluginFixture.installation.appliedGeneration === 'string'
+          ? { appliedGeneration: pluginFixture.installation.appliedGeneration } : {}),
       },
     };
     // A stable evidence pointer identifies the running processes without DSNs,
