@@ -135,6 +135,27 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await coordinator.stopRefreshLoopIfIdle();
     });
 
+    it("keeps its claim when an older server hands the mapping to another socket", async () => {
+        const method = "machine-1:stop-session";
+        const ownedMethods = new Set([method]);
+        const coordinator = createCoordinator("socket-a", ownedMethods);
+        await coordinator.registerMethod(method);
+        coordinator.startRefreshLoopIfNeeded();
+        const key = `rpc:${userId}:${method}`;
+        // An older server registers its socket with a plain HSET, which leaves our registeredAt.
+        await getRedisClient().hset(key, "socketId", "socket-legacy", "instanceId", "instance-legacy", "updatedAt", "1");
+
+        await runRefreshTick();
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-legacy");
+
+        await getRedisClient().del(key);
+        await runRefreshTick();
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-a");
+
+        ownedMethods.clear();
+        await coordinator.stopRefreshLoopIfIdle();
+    });
+
     it("reports a refresh that Redis rejects", async () => {
         const method = "machine-1:spawn-happy-session";
         const ownedMethods = new Set([method]);
