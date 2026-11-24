@@ -112,7 +112,10 @@ export function getMachineSentenceName(machine: MachineNameInput | null | undefi
     if (!machine || (!machine.absence && (isMachineLocked(machine) || isMachineDisplayHydrating(machine)))) {
         return t('machine.thisMachineInSentence');
     }
-    return keepHyphenatedNameTogether(displayName ?? getMachineDisplayName(machine));
+    if (displayName) return keepHyphenatedNameTogether(displayName);
+    // A sentence carries the suffix that tells a same-named Machine apart in brackets, not after a list separator.
+    const parts = getMachineDisplayNameParts(machine);
+    return keepHyphenatedNameTogether(parts.hint ? `${parts.name} (${parts.hint})` : parts.name);
 }
 
 /**

@@ -10,6 +10,7 @@ import {
     getPendingMessageVisualState,
     canUseDirectPendingDeliveryActions,
     getSessionInputFailureLabelKey,
+    offersPendingDeliverAndResume,
     pendingMessageStatesBlockedReason,
     resolvePendingMessagesPresentation,
     resolveSessionDeliveryFailure,
@@ -18,6 +19,8 @@ import {
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
 import { buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isHostAuthoredInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
     return {
@@ -371,10 +374,14 @@ describe('getPendingMessageVisualState', () => {
             deliveryBlockedPresentation: {
                 message: t('session.accessWithdrawn'),
                 isUnknown: false,
+                // DESIGN-ACCEPT-152 fix 29 (#44): one cause, one word: the withdrawal holds it, as a held row says.
+                heldByWithdrawal: true,
             },
         });
         expect(getPendingMessageVisualState(message, { machineAccessRemoved: false }).deliveryBlockedPresentation)
             .not.toHaveProperty('message');
+        expect(getPendingMessageVisualState(message, { machineAccessRemoved: false }).deliveryBlockedPresentation)
+            .not.toHaveProperty('heldByWithdrawal');
         expect(getPendingMessageVisualState({ ...message, pendingDeliveryBlockedReason: 'terminal_composer_draft' }, {
             machineAccessRemoved: true,
         }).deliveryBlockedPresentation).toEqual({
@@ -560,5 +567,25 @@ describe('a new Bot\'s first-run seed while it is pending', () => {
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
         // Still the person's own message; its account block is said once by the Session line (JOURNEY-UX-1107 B).
         expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, statesBlockedReason: false });
+    });
+});
+
+describe('offersPendingDeliverAndResume', () => {
+    // DESIGN-ACCEPT-152 fix 1 / PF1: while a held message can be delivered by Resume, that row's
+    // "Deliver and resume" is the one next step; the start-failure banner's Retry runs the same Resume without it.
+    const stopped = (access = createSessionAccessFixture('owner')) => ({ active: false, access,
+        metadata: writeSessionExplicitStopV1ToMetadata({ path: '/repo' },
+            { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 1 }) }) as never;
+    const held = pendingMessage({ id: 'held', localId: 'held-original', pendingDeliveryStatus: 'server_queued' });
+
+    it('is true for a queued original on a person-stopped Session the viewer can send to', () => {
+        expect(offersPendingDeliverAndResume([held], stopped())).toBe(true);
+    });
+
+    it('is false without a held message, without send access, or while the Session runs', () => {
+        expect(offersPendingDeliverAndResume([], stopped())).toBe(false);
+        expect(offersPendingDeliverAndResume([held], stopped(createSessionAccessFixture('view')))).toBe(false);
+        expect(offersPendingDeliverAndResume([held], { ...(stopped() as object), active: true } as never)).toBe(false);
+        expect(offersPendingDeliverAndResume([held], null)).toBe(false);
     });
 });

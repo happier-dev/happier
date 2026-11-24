@@ -132,6 +132,21 @@ export async function pressTestInstanceAsync(target: ReactTestInstance | null | 
     await invokePressAsync(resolveRequiredInstance(target, label), label);
 }
 
+/**
+ * Opens the shared Details disclosure found under one testID, whichever density it took from its container:
+ * a section's expandable row (`onExpandedChange`) or the inline toggle inside a card or row (its press).
+ */
+export async function expandDisclosureAsync(nodes: readonly ReactTestInstance[], label = 'disclosure'): Promise<void> {
+    const row = nodes.find((node) => typeof node.props?.onExpandedChange === 'function');
+    if (row) {
+        await act(async () => { row.props.onExpandedChange(true); });
+        return;
+    }
+    const toggle = nodes.find((node) => typeof node.props?.onPress === 'function');
+    if (!toggle) throw new Error(`Disclosure "${label}" was not found`);
+    if (toggle.props.expanded !== true && toggle.props.accessibilityState?.expanded !== true) await invokePressAsync(toggle, label);
+}
+
 export function invokeTestInstanceHandler(
     target: ReactTestInstance | null | undefined,
     handlerName: string,

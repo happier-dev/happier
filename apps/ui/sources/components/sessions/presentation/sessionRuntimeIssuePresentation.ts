@@ -405,6 +405,8 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     unexplained: boolean;
     cause: string | null;
     details: string | null;
+    /** The same raw cause as labelled lines for the one Technical details disclosure. */
+    technicalLines: readonly Readonly<{ key: string; label: string; value: string }>[];
     reset: string | null;
     recovery: string | null;
     providerFailure?: Readonly<{ sourceLabel: string; recovery: ProviderConnectionReviewRecovery }>;
@@ -443,6 +445,16 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
         details: issue ? [raw !== summary ? raw : null, issue.code, issue.failureCause?.code, issue.failureCause?.providerErrorCode,
             carrierFailure ? `${carrierFailure.closingSide}: ${carrierFailure.closingStage}` : null,
             requestId ? t('session.startFailure.requestId', { id: requestId }) : null].filter(value => value != null).join('\n') : null,
+        technicalLines: issue ? [
+            raw && raw !== summary ? { key: 'output', label: t('toolView.output'), value: raw } : null,
+            { key: 'code', label: t('common.error'), value: issue.code },
+            issue.failureCause?.code ? { key: 'cause-code', label: t('approvals.failureTechnicalLabels.causeCode'), value: issue.failureCause.code } : null,
+            issue.failureCause?.providerErrorCode ? { key: 'provider-code', label: t('approvals.failureTechnicalLabels.providerCode'),
+                value: issue.failureCause.providerErrorCode } : null,
+            carrierFailure ? { key: 'connection', label: t('approvals.failureTechnicalLabels.connection'),
+                value: `${carrierFailure.closingSide}: ${carrierFailure.closingStage}` } : null,
+            requestId ? { key: 'request-id', label: t('approvals.failureTechnicalLabels.requestId'), value: requestId } : null,
+        ].filter(line => line !== null) : [],
         message: message && requestId ? `${message}\n${t('session.startFailure.requestId', { id: requestId })}` : message,
         recovery: issue?.usageLimit?.connectedService ? t('session.usageLimitRecovery.actions.switchAccountNow') : null,
         reset: resetDate !== null && Number.isFinite(resetDate.getTime())

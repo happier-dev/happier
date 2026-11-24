@@ -30,6 +30,7 @@ import { ServiceOutputDisclosure } from '@/components/sessions/localServices/Ser
 import { presentActionFailureOutcome, presentApprovalFailureOutcome, resolveApprovalActionTitle } from './approvalFailureOutcome';
 import { useFailedApprovalDismissal } from './failedApprovalDismissal';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import { DiscussionDraftAnswer, readDiscussionDraftApproval } from '@/components/approvals/discussionDraftApproval';
 import { PromptDocApprovalDiff } from '@/components/approvals/PromptDocApprovalDiff';
 import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
@@ -231,11 +232,14 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
                     <Text style={styles.previewText}>{failure.reason}</Text>
                 </View>
             ) : null}
-            {failure && failure.technicalDetails.length > 0 ? <ApprovalTechnicalDetails lines={failure.technicalDetails} /> : null}
-            {actionFields.rows.length > 0 ? (
-                <ActionApprovalFieldsCard presentation={actionFields} serverId={approvalHome.serverId}
-                    collapsed={(props.chrome ?? 'card') === 'inline' && props.approval.status === 'open'} />
-            ) : null}
+            {/* A card is not a page section, wherever it sits: its disclosures stay the inline toggle. */}
+            <ItemGroupRowPositionBoundary>
+                {failure && failure.technicalDetails.length > 0 ? <ApprovalTechnicalDetails lines={failure.technicalDetails} /> : null}
+                {actionFields.rows.length > 0 ? (
+                    <ActionApprovalFieldsCard presentation={actionFields} serverId={approvalHome.serverId}
+                        collapsed={(props.chrome ?? 'card') === 'inline' && props.approval.status === 'open'} />
+                ) : null}
+            </ItemGroupRowPositionBoundary>
             {approvalRouteUnavailable ? (
                 <Text style={styles.previewText}>{t('actionConfirmations.homeUnavailable')}</Text>
             ) : null}
@@ -593,11 +597,14 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             // A Computer ask's card already says what and where; only a failure or output adds to it (as on the approval page).
             ) : computerAction && !failureOutcome && !toolOutput ? null
             : actionFields && (actionFields.rows.length > 0 || failureOutcome || toolOutput) ? (
-                <ActionApprovalFieldsCard presentation={actionFields} request={props.approval} serverId={approvalHome.serverId}
-                    failureTechnicalDetails={failureOutcome?.technicalDetails}
-                    outputText={toolOutput}
-                    // Only a prompt waiting on a decision keeps its arguments behind Details so the decision stays in view.
-                    collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && phone && props.approval.status === 'open')} />
+                // A card is not a page section, wherever it sits: its disclosures stay the inline toggle.
+                <ItemGroupRowPositionBoundary>
+                    <ActionApprovalFieldsCard presentation={actionFields} request={props.approval} serverId={approvalHome.serverId}
+                        failureTechnicalDetails={failureOutcome?.technicalDetails}
+                        outputText={toolOutput}
+                        // Only a prompt waiting on a decision keeps its arguments behind Details so the decision stays in view.
+                        collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && phone && props.approval.status === 'open')} />
+                </ItemGroupRowPositionBoundary>
             ) : null}
             {/* A specialized body keeps the same failure facts when it replaces the generic fields card. */}
             {failureOutcome?.code && (proposal || projectCommand || promptDocUpdate || docEditProposal || petImport) ? (

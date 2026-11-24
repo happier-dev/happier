@@ -159,6 +159,7 @@ import { createSessionCompanionPanePresentation } from "@/components/sessions/co
 import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn/usePaneMainColumn";
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
+import { offersPendingDeliverAndResume } from "@/components/sessions/pending/pendingMessageVisualState";
 import { createSessionAgentSignInRoute } from "@/components/sessions/presentation/sessionAgentAuthRequiredPresentation";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -2477,8 +2478,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                   </ComposerAuxiliaryFrame>
               ) : null;
       // Retry is the Resume owner and is offered only while it can run, as the status line's own Resume is.
+      // A held message's "Deliver and resume" is that same Resume carrying the message: it is then the one step (PF1).
       const startFailureRetry = inactiveUi.shouldShowInput && inactiveUi.noticeKind === 'none'
-          && !sessionMachineAccessRemoved && hasWriteAccess
+          && !sessionMachineAccessRemoved && hasWriteAccess && !offersPendingDeliverAndResume(pendingMessages, session)
           ? {
               busy: sessionStatusState === 'resuming',
               run: () => fireAndForget(handleResumeSession(), { tag: 'SessionView.startFailure.retry' }),

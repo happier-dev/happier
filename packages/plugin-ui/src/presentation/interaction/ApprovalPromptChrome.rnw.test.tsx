@@ -60,6 +60,23 @@ describe('HappierApprovalPromptChrome', () => {
     } finally { view.unmount(); }
   });
 
+  it('inline: the decision starts on the facts column under the title, not outdented to the card edge', () => {
+    // DESIGN-ACCEPT-152 fix 18 (#1): Approve sat 23 px left of the card's text column in the composer tray.
+    const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" chrome="inline"
+      footer={<View testID="decision" />}>
+      <View testID="facts" />
+    </HappierApprovalPromptChrome>);
+    try {
+      const card = view.container.querySelector<HTMLElement>('[data-testid="card"]')!;
+      const edge = (testID: string) => {
+        let node = view.container.querySelector(`[data-testid="${testID}"]`)!.parentElement!;
+        while (getComputedStyle(node).paddingLeft === '0px' && node !== card) node = node.parentElement!;
+        return getComputedStyle(node).paddingLeft;
+      };
+      expect(edge('decision')).toBe(edge('facts'));
+    } finally { view.unmount(); }
+  });
+
   it('keeps the decision outside the scrolling facts when the card is bounded', () => {
     const mounted = mount(240);
     try {

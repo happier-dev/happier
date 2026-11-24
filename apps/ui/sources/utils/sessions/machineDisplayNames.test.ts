@@ -266,6 +266,19 @@ describe('getMachineSentenceName', () => {
         expect(name).toBe('NLDW3-\u20605-\u206036-\u206033');
         expect(getMachineSentenceName(m('a-2', 'Studio Mac'))).toBe('Studio Mac');
     });
+
+    it('puts the telling suffix in brackets inside a sentence, never a list separator', async () => {
+        // DESIGN-ACCEPT-152 fix 29 (#46): "your access to NLDW4-5-40-40 · ru2-kit6-owner was withdrawn".
+        const { registerMachineNameInventory } = await import('./machineDisplayNames');
+        const left = { id: 'aaaa1111', metadata: { displayName: 'Build', host: 'build.local' }, access: { custodian: { displayName: 'Alice' } } };
+        const right = { id: 'bbbb2222', metadata: { displayName: 'Build', host: 'build.local' }, access: { custodian: { displayName: 'Bob' } } };
+        registerMachineNameInventory(() => ({ 'home-a': [left, right] }));
+        try {
+            expect(getMachineSentenceName(left)).toBe('Build (Alice)');
+        } finally {
+            registerMachineNameInventory(null);
+        }
+    });
 });
 
 describe('getSessionMachineLabel', () => {

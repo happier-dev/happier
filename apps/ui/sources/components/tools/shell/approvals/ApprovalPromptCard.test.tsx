@@ -1,4 +1,4 @@
-import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource, createActionExecutorBoundaryFixture } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource, createActionExecutorBoundaryFixture, expandDisclosureAsync } from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -709,8 +709,7 @@ describe('ApprovalPromptCard', () => {
         const output = '{"status":"failed","code":"approval_rejected"}';
         const screen = await renderCard(declinedSignIn('rejected'), { chrome: 'inline', toolOutput: output });
         expect(screen.getTextContent()).not.toContain('approval_rejected');
-        const node = screen.findAllByTestId('approvals.technical-details').find(candidate => typeof candidate.props.onExpandedChange === 'function');
-        await act(async () => { node?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain('approval_rejected');
         // An open request has no declined output to keep.
         const open = await renderCard({ ...declinedSignIn('rejected'), status: 'open', decision: undefined } as ApprovalRequest, { chrome: 'inline', toolOutput: output });
@@ -750,10 +749,7 @@ describe('ApprovalPromptCard', () => {
         // The executor's own words and its code wait in Details, collapsed.
         expect(text).not.toContain('EISDIR');
         expect(text).not.toContain('filesystem_operation_failed');
-        const expand = async (testID: string) => {
-            const node = screen.findAllByTestId(testID).find(candidate => typeof candidate.props.onExpandedChange === 'function');
-            await act(async () => { node?.props.onExpandedChange(true); });
-        };
+        const expand = async (testID: string) => expandDisclosureAsync(screen.findAllByTestId(testID), testID);
         await expand('approvals.details-disclosure');
         await expand('approvals.technical-details');
         expect(screen.getTextContent()).toContain('EISDIR: illegal operation on a directory');
@@ -1026,9 +1022,7 @@ describe('ApprovalPromptCard', () => {
         // The specialized body is shown in place of the generic fields card.
         expect(screen.findByTestId('approval-prompt-prompt-doc-diff')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('prompt_doc_unavailable');
-        const disclosure = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-        expect(disclosure).toBeTruthy();
-        await act(async () => { disclosure?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain('prompt_doc_unavailable');
     });
 

@@ -192,8 +192,9 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
             inline || compact ? null : toneSurface?.backgroundColor ?? props.colors.surface) : null}
         </View>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
-      {/* The decisions span the card from its edge (lab mb B): a phone's stacked choices are full width. */}
-      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: inset, paddingRight: inset, paddingBottom: compact ? step : inset,
+      {/* A card's decisions span it from its edge (lab mb B): a phone's stacked choices are full width. An inline
+          prompt's decisions start on its facts' column under the title, so the two read as one column. */}
+      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: inline ? factsStart : inset, paddingRight: inset, paddingBottom: compact ? step : inset,
         ...(factsRuled ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
         <View onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
       </View> : null}

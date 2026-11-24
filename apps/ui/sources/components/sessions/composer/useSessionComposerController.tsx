@@ -62,7 +62,7 @@ import {
     alertComposerRunnerRestartFailure,
     alertComposerRuntimeStatusUnavailable,
 } from "./alertComposerFailure";
-import { readRpcErrorCode } from "@happier-dev/protocol/rpcErrors";
+import { readRpcErrorCode, RPC_ERROR_CODES } from "@happier-dev/protocol/rpcErrors";
 import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSignal } from "@/components/sessions/agentInput/hooks/sessionIntentionalRestartSignal";
 import { useSessionIntentionalRestartSourceEvents } from "@/components/sessions/transcript/source/appSessionTranscriptSource";
 import { SESSION_COMPOSER_SUGGESTION_KINDS, type ComposerReferenceSearchHost } from "@/components/autocomplete/composerSuggestionKinds";
@@ -4495,7 +4495,9 @@ export function useSessionComposerController({
 
         const maybeAlert = (message: string, code: string | null = null) => {
             if (silent) return;
-            alertActionFailure({ reason: message, code, context: { phase: 'session.open', targetHome } });
+            // An unconfirmed Resume says it is the Resume that is unconfirmed, not a generic outcome.
+            alertActionFailure({ reason: message, code, context: { phase: 'session.open', targetHome },
+                ...(code === RPC_ERROR_CODES.OUTCOME_UNKNOWN ? { title: t('session.resumeOutcomeUnknown') } : {}) });
         };
 
         if (sessionMachineAccessRemoved) return false;
@@ -5594,6 +5596,8 @@ export function useSessionComposerController({
             active: surfaceFocusSignal,
             warningKey: hasWriteAccess && guardMachineId && guardComposerState?.kind === 'warning'
                 ? JSON.stringify([sessionAccountScopeKey, sessionId, guardMachineId, guardComposerState.countdownTo]) : null });
+        // The approval cards' own source: an open ask there is said by its card, never as "Ready".
+        const approvalAskWaiting = approvalRequests.some(request => request.approval.status === 'open');
         const connectionStatus = React.useMemo(() => resolveSessionViewConnectionStatus({
             // The composer's status line is the one place a signed-out Account is said in the composer.
             accountSignedOut: authSurfaceState ? {
@@ -5635,6 +5639,7 @@ export function useSessionComposerController({
                 text: t('session.permissionUnreachable.status'),
                 detail: t('session.permissionUnreachable.detail'),
             },
+            approvalAskWaiting,
             // The same owner SessionView renders its "Couldn't start" notice from.
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
             launchOutcomeShown,
@@ -5644,6 +5649,7 @@ export function useSessionComposerController({
             session.lastRuntimeIssue,
             visibleUsageLimitRecoveryPresentation,
             pendingPermissionRequests.length,
+            approvalAskWaiting,
             providerBindingLine,
             pendingQueueLine,
             mainPendingCount,

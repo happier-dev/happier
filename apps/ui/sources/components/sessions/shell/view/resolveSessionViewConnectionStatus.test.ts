@@ -508,4 +508,16 @@ describe('resolveSessionViewConnectionStatus', () => {
         expect(resolveSessionViewConnectionStatus({ ...starting, pendingQueue: { line: null, countText: '1 queued' } }))
             .toEqual({ text: '1 queued', color: 'status-color', dotColor: 'dot-color', isPulsing: false });
     });
+
+    it('does not say Ready while an approval ask waits in its card, and keeps the queue count', () => {
+        // DESIGN-ACCEPT-152 fix 17 (#1, #14, #21, #31): "Ready" read beside a waiting Take-a-screenshot ask.
+        const waiting = { ...baseInput, sessionStatusText: 'Ready', approvalAskWaiting: true };
+        expect(resolveSessionViewConnectionStatus(waiting)).toBeNull();
+        expect(resolveSessionViewConnectionStatus({ ...waiting, pendingQueue: { line: null, countText: '1 queued' } }))
+            .toEqual({ text: '1 queued', color: 'status-color', dotColor: 'dot-color', isPulsing: false });
+        // A working, failed or stopped Session still says so; only the all-clear word stands down.
+        expect(resolveSessionViewConnectionStatus({ ...waiting, sessionStatusState: 'thinking', sessionStatusText: 'Thinking' })?.text)
+            .toBe('Thinking');
+        expect(resolveSessionViewConnectionStatus({ ...baseInput, sessionStatusText: 'Ready' })?.text).toBe('Ready');
+    });
 });

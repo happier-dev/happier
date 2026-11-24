@@ -113,6 +113,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     usageLimitRecoveryCardShown?: boolean;
     /** Whether a permission request waits (`resolvePermissionRequestWait`); its card or this line says it, once. */
     permissionRequest?: PermissionRequestWait;
+    /** An Action approval ask is open in the composer's approval cards (their own source); its card says it. */
+    approvalAskWaiting?: boolean;
     /** The line when a request waits on a machine that is offline: what it is and why it can't be answered here. */
     permissionUnreachableLine?: Readonly<{ text: string; detail: string }>;
     /** The Session's "Couldn't start" notice is on screen with its cause and its Retry. */
@@ -200,10 +202,12 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
             color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false };
     }
     // The recovery card above the composer is the one place the usage limit is said while it shows,
-    // and the approval card the one place a permission request is; with no request waiting, none is said.
+    // and the approval card the one place a permission request or Action ask is; with no request waiting, none is said.
     if (((input.sessionStatusState === 'usage_limited' && input.usageLimitRecoveryCardShown === true)
         || (input.sessionStatusState === 'permission_required'
-            && (input.permissionRequest === 'card' || input.permissionRequest === 'none')))
+            && (input.permissionRequest === 'card' || input.permissionRequest === 'none'))
+        // "Ready" would read as nothing waiting while an approval card asks the person.
+        || (input.sessionStatusState === 'ready' && input.approvalAskWaiting === true))
         && !restartActive && !input.sessionStatusResuming) {
         return queueCountText
             ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }

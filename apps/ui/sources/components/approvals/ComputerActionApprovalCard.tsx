@@ -94,9 +94,10 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
             ) : null}
             {props.onChooseTarget && (presentation.requiresTargetSelection || presentation.act === 'share') ? (
                 <View style={styles.choose}>
+                    {/* The card's one filled button is its decision (Approve); choosing the window is a step before it. */}
                     <RoundButton
                         size="small"
-                        display={presentation.requiresTargetSelection ? undefined : 'secondary'}
+                        display="secondary"
                         title={presentation.requiresTargetSelection ? t('computerUse.request.choose') : t('computerUse.request.change')}
                         onPress={props.onChooseTarget}
                         testID={`${testID}-choose`}

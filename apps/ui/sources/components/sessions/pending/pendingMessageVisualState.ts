@@ -12,6 +12,7 @@ import { resolveSessionStartFailureNotice } from '@/components/sessions/startFai
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 import { readApprovalResultArtifactId } from '@/components/sessions/transcript/references/approvalResultInput';
+import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -73,6 +74,8 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
      * recovery (`resolveSessionDeliveryFailure`), and the row does not repeat the reason.
      */
     recovery?: 'choose_account' | 'new_session';
+    /** The cause is the Session's withdrawn Machine access: the row says "Held", as a row held before any claim does. */
+    heldByWithdrawal?: true;
 }>;
 
 /**
@@ -334,7 +337,7 @@ export function getPendingDeliveryBlockedReasonPresentation(
         ? t('session.accessWithdrawn') : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
-        ...(cause ? { message: cause } : {}),
+        ...(cause ? { message: cause, heldByWithdrawal: true as const } : {}),
         ...(continuation ? { recovery: 'new_session' as const }
             : reason === 'runtime_config_blocked' && !machineAccessRemoved ? { recovery: 'choose_account' as const } : {}),
         isUnknown:
@@ -590,4 +593,31 @@ export function canUseDirectPendingDeliveryActions(
         && deliveryState.kind !== 'cancelling'
         && deliveryState.kind !== 'cancel_failed'
         && deliveryState.deliveryMutationPolicy !== 'effect_possible';
+}
+
+type HeldDeliverySession = Pick<Session, 'active' | 'access' | 'archivedAt' | 'metadata' | 'metadataLayoutVersion'
+    | 'ownerMetadataView' | 'pendingActivationAuthorization'>;
+
+/**
+ * On a Session a person stopped, a held original is delivered by resuming the Session for it (the composer's
+ * Resume owner takes the exact original), so "Send now" is not a second way to do the same thing.
+ */
+export function sessionDeliversHeldInputByResume(session: HeldDeliverySession | null | undefined): boolean {
+    return session != null && session.active !== true && isSessionHeldByPersonStop(session);
+}
+
+/** Anyone who may send to the Session may wake it for a held original (owner ruling 2026-11-23); nobody else. */
+export function canDeliverHeldInputByResume(session: HeldDeliverySession | null | undefined): boolean {
+    return sessionDeliversHeldInputByResume(session) && session?.access?.capabilities.submitAgentInput === true;
+}
+
+/**
+ * A queued row offers "Deliver and resume": the one next step on that stopped Session (PF1). The start-failure
+ * banner's Retry runs the same Resume without the message, so it stands down while this holds.
+ */
+export function offersPendingDeliverAndResume(
+    messages: readonly PendingMessage[],
+    session: HeldDeliverySession | null | undefined,
+): boolean {
+    return canDeliverHeldInputByResume(session) && messages.some(message => canUseDirectPendingDeliveryActions(message, undefined, session));
 }

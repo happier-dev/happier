@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { expandDisclosureAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
@@ -44,9 +44,7 @@ it.each([
     const request = { actionId, actionArgs, preview };
     const screen = await renderScreen(<ActionApprovalFieldsCard request={request} presentation={describeApprovalActionFields(request)} anatomy="page" />);
     expect(screen.getTextContent()).not.toContain('signed_root_projection');
-    const disclosure = screen.findAllByTestId('approvals.technical-details')
-        .find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { disclosure?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain('project_requester_authority_unavailable');
     expect(screen.getTextContent()).toContain('signed_root_projection');
 });
@@ -101,8 +99,7 @@ it('renders settled failure facts and recovery in the shared disclosure in both 
         const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy}
             presentation={{ ...describeApprovalActionFields(request), rows: [] }} failureTechnicalDetails={outcome.technicalDetails} />);
         expect(screen.getTextContent()).not.toContain('currentEnvironmentRevision');
-        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-        await act(async () => { details?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         const text = screen.getTextContent();
         for (const value of ['deployment_conflict', 'false', 'currentEnvironmentRevision', '9', 'Review the latest environment and try again.']) {
             expect(text).toContain(value);
@@ -179,9 +176,7 @@ it('renders another Account’s shared Discussion reply destination in both appr
             expect(text).toContain(value);
         }
         for (const id of [discussionId, messageId]) expect(text).not.toContain(id);
-        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-        expect(details).toBeTruthy();
-        await act(async () => { details?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain(discussionId);
         await screen.unmount();
     }
@@ -220,8 +215,7 @@ it('names a readable document reference and retains its exact id only in Technic
         presentation={describeApprovalActionFields({ actionId: spec.id, actionArgs: spec.inputSchema.parse({ artifactId }) })} />);
     expect(screen.getTextContent()).toContain('Release notes');
     expect(screen.getTextContent()).not.toContain(artifactId);
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain(artifactId);
 });
 
@@ -234,8 +228,7 @@ it('reads a Browser view command by its target, keeping its ids and a failure co
     expect(text).toContain('http://127.0.0.1:4000');
     for (const plumbing of ['cmd-1', 'view-1', 'target-1', 'openView']) expect(text).not.toContain(plumbing);
     expect(text.split(t('approvals.technicalDetails'))).toHaveLength(2);
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     for (const exact of ['cmd-1', 'browser-session-1', 'view-1', 'target-1', 'openView', 'sandbox_unavailable']) expect(screen.getTextContent()).toContain(exact);
 });
 
@@ -258,8 +251,7 @@ it('renders the shared failure projection in the existing technical disclosure',
     const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" failureTechnicalDetails={failureTechnicalDetails}
         presentation={describeApprovalActionFields({ actionId: 'session.title.set', actionArgs: { sessionId: 'session-1', title: 'Release notes' } })} />);
     expect(screen.getTextContent()).not.toContain('verified_root_requester');
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     for (const value of ['agent_isolation_unavailable', 'requester_authority_unavailable', 'verified_root_requester', 'retry_original_request']) {
         expect(screen.getTextContent()).toContain(value);
     }
@@ -270,8 +262,7 @@ it('keeps the exact identity of a Home this device cannot name in Technical deta
     const identity = 'srv_elsewhere_9f3 · stack_qa_main__id_default';
     const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={presentation} homeIdentity={identity} />);
     expect(screen.getTextContent()).not.toContain(identity);
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain(identity);
 });
 
@@ -341,9 +332,7 @@ it.each(['open', 'executed'] as const)('names the MCP catalog title in %s approv
             for (const value of ['MCP server', 'Filesystem', 'Everywhere', 'Turn on']) expect(text).toContain(value);
             expect(text).not.toContain('filesystem');
             expect(text).not.toContain(serverId);
-            const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-            expect(details).toBeTruthy();
-            await act(async () => { details?.props.onExpandedChange(true); });
+            await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
             expect(screen.getTextContent()).toContain(serverId);
         }
     } finally {
@@ -374,8 +363,7 @@ it('names reviewed skills and the exact Home machine, keeping their ids in Techn
     const text = screen.getTextContent();
     for (const value of ['Skill', 'Release notes', 'Where', 'Studio', 'Change', 'Turn on']) expect(text).toContain(value);
     for (const value of [skillId, machineId, 'Rules change', 'Kind Write', 'State on']) expect(text).not.toContain(value);
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain(skillId);
     expect(screen.getTextContent()).toContain(machineId);
 });
@@ -407,8 +395,7 @@ it('reads a workspace-sync request by its machine and the two folders it links, 
     const text = screen.getTextContent();
     for (const value of ['Controller machine', 'Studio', 'Linked folders', 'payments · Studio', 'payments-copy · Laptop']) expect(text).toContain(value);
     for (const id of ['machine-studio', 'relationship_9f2c', '/home/me']) expect(text).not.toContain(id);
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain('machine-studio');
     expect(screen.getTextContent()).toContain('relationship_9f2c');
 });
@@ -428,8 +415,7 @@ it('says a workspace-sync link no longer exists instead of showing its id, keepi
     const text = screen.getTextContent();
     expect(text).toContain(t('approvals.linkRemoved'));
     expect(text).not.toContain('relationship_gone42');
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain('relationship_gone42');
 });
 
@@ -509,8 +495,7 @@ it('presents a plugin install approval as the simple install consent, keeping ra
             t('settingsPlugins.installReviewSections.evidence'), 'cooperativeDisclosure']) {
             expect(text).not.toContain(gone);
         }
-        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-        await act(async () => { details?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain('cooperativeDisclosure');
 
         // An update that asks for more lists only what is new, against the installed version.
@@ -542,8 +527,7 @@ it('keeps an installed plugin update\'s source selector behind Technical details
     expect(text).toContain('0.9.0 → 1.0.0');
     // The consent names the plugin; its selector is routing, not something the person decides on.
     expect(text).not.toContain('acme.example');
-    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-    await act(async () => { details?.props.onExpandedChange(true); });
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
     expect(screen.getTextContent()).toContain('acme.example');
 });
 
@@ -611,8 +595,7 @@ it('keeps widget placement internals behind the canonical Details disclosure', a
         expect(screen.getTextContent()).toContain('Release checks');
         expect(screen.getTextContent()).toContain('Pull requests');
         for (const value of ['opaque-group', 'opaque-child', 'happier.triage', 'latest']) expect(screen.getTextContent()).not.toContain(value);
-        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
-        await act(async () => { details?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         for (const value of ['opaque-group', 'opaque-child', 'happier.triage', 'latest']) expect(screen.getTextContent()).toContain(value);
     }
 });
@@ -626,9 +609,7 @@ it('reads the declared setting name and exact new value in both approval anatomi
         expect(text).toContain(t(builtInSettingUiDeclaration(anchor).titleKey));
         expect(text).toContain('3');
         expect(text).not.toContain(anchor);
-        const details = screen.findAllByTestId('approvals.technical-details')
-            .find(node => typeof node.props.onExpandedChange === 'function');
-        await act(async () => { details?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain(anchor);
     }
 });
@@ -756,10 +737,7 @@ it('reads references by name, keeps exact ids in Technical details, and drops me
         expect(text).not.toContain('Server id');
         expect(text).not.toContain('Account id');
         expect(text).toContain('Account');
-        const technical = screen.findAllByTestId('approvals.technical-details')
-            .find((node) => typeof node.props.onExpandedChange === 'function');
-        expect(technical).toBeTruthy();
-        await act(async () => { technical?.props.onExpandedChange(true); });
+        await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         const opened = screen.getTextContent();
         expect(opened).toContain(accountId);
         expect(opened).toContain(profile.id);

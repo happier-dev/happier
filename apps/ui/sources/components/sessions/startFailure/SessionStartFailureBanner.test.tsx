@@ -52,8 +52,13 @@ describe('SessionStartFailureBanner', () => {
             failureCause: { phase: 'client_start', failureReason: 'unknown', requestId: 'req-7' } });
         const screen = await renderScreen(<SessionStartFailureBanner
             notice={resolveSessionStartFailureNotice({ issue, sessionActive: false })!} retry={null} />);
-        await pressTestInstanceAsync(screen.findByTestId('transcript-event-runtime-issue-details-toggle'));
+        // Fix 16: codes and ids are "Technical details", in the one disclosure's labelled lines.
+        const toggle = screen.findByTestId('transcript-event-runtime-issue-details-toggle');
+        expect(toggle.props.accessibilityLabel).toBe(t('approvals.technicalDetails'));
+        await pressTestInstanceAsync(toggle);
         expect(screen.getTextContent()).toContain('agent_startup_model_reconciliation_failed');
+        expect(screen.getTextContent()).toContain(t('approvals.failureTechnicalLabels.requestId'));
+        expect(screen.getTextContent()).toContain('req-7');
     });
 
     it('opens the existing model picker for a model-required refusal, offering no action without a writable composer', async () => {

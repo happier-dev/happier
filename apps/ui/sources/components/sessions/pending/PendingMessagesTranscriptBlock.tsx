@@ -14,7 +14,6 @@ import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 import { sync } from '@/sync/sync';
 import { canSteerUserMessageNow, supportsInFlightSteerUserMessage } from '@/sync/domains/session/control/submitMode';
-import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { derivePendingMessagesRuntimePresentation, getPendingMaterializingKey, getPendingMessageSendPresentation, sendPendingMessageWithIntent } from './pendingMessageSendActions';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -41,11 +40,13 @@ import {
     isAcceptedLocalPendingProjection,
     isLaunchOwnedPendingMessage,
     canUseDirectPendingDeliveryActions,
+    canDeliverHeldInputByResume,
     isNextTurnHostInput,
     isPendingMessageProviderDeliveryInFlight,
     paintsPendingMessageActionRow,
     resolvePendingMessagesPresentation,
     resolvePendingMessageContentPresentation,
+    sessionDeliversHeldInputByResume,
     type PendingMessagesPresentationByRecipient,
 } from './pendingMessageVisualState';
 import {
@@ -316,11 +317,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             : settingsDefaults.sessionPendingQueueDeliveryTiming;
     const pendingQueueRuntimeReachable = session ? isSessionRuntimeRunning(session) : false;
     const { sendNowActionLabel } = getPendingMessageSendPresentation(session);
-    // On a Session a person stopped, a held original is delivered by resuming the Session for it: the composer's
-    // Resume owner takes the exact original, so "Send now" is not a second way to do the same thing here.
-    // Anyone who may send to the Session may wake it (owner ruling 2026-11-23); nobody else is offered it.
-    const deliversByResume = session != null && session.active !== true && isSessionHeldByPersonStop(session);
-    const canDeliverByResume = deliversByResume && session?.access?.capabilities.submitAgentInput === true;
+    const deliversByResume = sessionDeliversHeldInputByResume(session);
+    const canDeliverByResume = canDeliverHeldInputByResume(session);
     const pendingQueueForegroundState = runtimeWorking
         ? (canSteerNow ? 'active_steerable' : 'active_unsteerable')
         : 'ready';
@@ -675,10 +673,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 : visualState.kind === 'delivering'
                 ? t(providerDeliveryLabelKey ?? (isNextTurnHostInput(message)
                     ? 'session.pendingMessages.deliveryStatus.nextTurn' : 'session.pendingMessages.deliveryStatus.delivering'))
+                : visualState.kind === 'held' || visualState.deliveryBlockedPresentation?.heldByWithdrawal
+                    ? t('session.pendingMessages.deliveryStatus.held')
                 : visualState.kind === 'blocked'
                     ? t('session.pendingMessages.deliveryStatus.blocked')
-                : visualState.kind === 'held'
-                    ? t('session.pendingMessages.deliveryStatus.held')
                     : visualState.kind === 'send_failed'
                         ? t('session.pendingMessages.errors.sendFailed')
                     : visualState.kind === 'cancelling'
