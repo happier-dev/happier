@@ -50,8 +50,17 @@ const gc = new PerformanceObserver(list => {
 gc.observe({ entryTypes: ['gc'] });
 const database = new Pool({ connectionString: process.env.DATABASE_URL });
 const work = { requests: 0, queries: 0 };
+let continueCapture;
 const server = createServer(async (request, response) => {
     if (request.url === '/health') { response.end('ready'); return; }
+    if (request.url === '/f7/continue' && request.method === 'POST') {
+        const resume = continueCapture;
+        continueCapture = undefined;
+        response.statusCode = resume ? 204 : 409;
+        response.end();
+        resume?.();
+        return;
+    }
     if (request.url === '/measurement') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ cpu: process.cpuUsage(), heapUsed: process.memoryUsage().heapUsed, sdkVersions, ...work }));
@@ -117,6 +126,8 @@ const server = createServer(async (request, response) => {
     const started = performance.now();
     const checkout = request.url.startsWith('/checkout');
     const route = checkout ? '/checkout' : '/orders';
+    const pacedCapture = request.url === '/orders?paceCapture=1';
+    const pendingCaptureSpans = [];
     const dimensions = { 'http.request.method': 'GET', 'http.route': route };
     activeRequests.add(1, dimensions);
     await tracer.startActiveSpan(`GET ${route}`, {
@@ -128,14 +139,26 @@ const server = createServer(async (request, response) => {
             if (request.url.endsWith('?fail=1')) throw new Error('controlled F15 application failure');
             if (checkout) await database.query('SELECT 1');
             for (const id of checkout ? [] : [1, 2, 3]) {
+                // Let the F7 control witness each committed wire query before releasing the next one.
+                const captureStep = pacedCapture ? new Promise(resolve => { continueCapture = resolve; }) : null;
                 await tracer.startActiveSpan('SELECT order', {
                     kind: SpanKind.CLIENT,
                     attributes: { 'db.system': 'postgresql', 'db.query.text': 'SELECT $1::integer AS id',
                         'db.query.parameter.1': 'must-be-masked' },
                 }, async query => {
-                    try { await database.query('SELECT $1::integer AS id', [id]); work.queries += 1; }
-                    finally { query.end(); }
+                    if (pacedCapture) pendingCaptureSpans.push(query);
+                    const executionId = randomUUID();
+                    const { traceId, spanId, traceFlags } = query.spanContext();
+                    const traceparent = `00-${traceId}-${spanId}-${traceFlags.toString(16).padStart(2, '0')}`;
+                    query.setAttribute('happier.db.execution_id', executionId);
+                    try {
+                        // SQLCommenter gives the independent wire recorder the SDK's exact execution identity.
+                        await database.query(`SELECT $1::integer AS id /*traceparent='${traceparent}',happier.db.execution_id='${executionId}'*/`, [id]);
+                        work.queries += 1;
+                    }
+                    finally { if (!pacedCapture) query.end(); }
                 });
+                if (captureStep) await captureStep;
             }
             response.setHeader('Content-Type', 'application/json');
             response.end(JSON.stringify({ ok: true }));
@@ -145,6 +168,8 @@ const server = createServer(async (request, response) => {
             response.statusCode = 500;
             response.end('database unavailable');
         } finally {
+            // F7 releases the complete SDK trace only after the three independent wire writes committed.
+            for (const query of pendingCaptureSpans) query.end();
             span.setAttribute('http.response.status_code', response.statusCode);
             span.end();
             activeRequests.add(-1, dimensions);
@@ -152,7 +177,7 @@ const server = createServer(async (request, response) => {
         }
     });
 });
-server.listen(3000, '0.0.0.0');
+server.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
 async function stop() {
     server.close();
     gc.disconnect();
