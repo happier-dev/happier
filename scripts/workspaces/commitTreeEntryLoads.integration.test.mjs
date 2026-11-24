@@ -211,6 +211,49 @@ test('entry graph generation and workspace resolution stay inside the judged tre
   assert.deepEqual(result.results.map(row => row.status), ['passed'], JSON.stringify(result));
 });
 
+test('overlaps the daemon and CLI probes only when admission covers both', async t => {
+  const harness = 'apps/stack/scripts/perf/entry-load.mjs';
+  const graphIds = ['daemon', 'cli', 'voice-inference-worker'];
+  const { repo, tree: base, write } = miniatureRevision(t, {
+    'apps/cli/package.json': '{"name":"@fixture/cli"}',
+    'apps/stack/bin/hstack-exec': '#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n',
+    'apps/stack/scripts/build/source_revision.mjs': 'export async function deriveRevisionGeneratedInputs() {}',
+    'packages/cli-common/registerSourceRuntime.mjs': '',
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = ${JSON.stringify(
+      graphIds.map(id => ({ id, entry: 'apps/cli/src/index.mjs' })))};
+    `,
+    [harness]: `
+      import { setImmediate } from 'node:timers/promises';
+      export { ENTRY_GRAPHS } from './entry-graphs.mjs';
+      let active = new Set();
+      let observed;
+      export async function loadEntryGraph({ id, entry }, { env = process.env } = {}) {
+        active.add(id);
+        await setImmediate();
+        observed ??= active.size === 2 && active.has('daemon') && active.has('cli');
+        const overlap = observed;
+        const expected = id !== 'voice-inference-worker' && process.env.EXPECT_CORE_GRAPH_OVERLAP === '1';
+        active.delete(id);
+        if (active.size === 0) observed = undefined;
+        const pass = overlap === expected && (!expected || env.GOMAXPROCS === '1');
+        return { graph: id, entry, status: pass ? 'passed' : 'failed', elapsedMs: 1,
+          loadError: { message: 'Expected overlap ' + expected + ', saw ' + overlap } };
+      }
+    `,
+  });
+  fs.chmodSync(path.join(repo, 'apps/stack/bin/hstack-exec'), 0o755);
+  write('apps/cli/src/index.mjs', 'export {};');
+  execFileSync('git', ['add', 'apps/cli/src/index.mjs'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'CLI change'], { cwd: repo });
+  for (const [workers, floor, expected] of [[2, 3145728, 1], [1, 3145728, 0], [2, 1572864, 0]]) {
+    const env = { ...process.env, HAPPIER_ADMISSION_WORKERS: String(workers),
+      HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: String(floor), EXPECT_CORE_GRAPH_OVERLAP: String(expected) };
+    const result = await commitTreeEntryLoads({ repo, base, tree: 'HEAD', graphIds, env, root: path.join(repo, '.git') });
+    assert.deepEqual(result.results.map(({ graph, status }) => [graph, status]),
+      graphIds.map(id => [id, 'passed']), JSON.stringify(result));
+  }
+});
+
 test('the synchronous scope ignores a UI-only packet for CLI and daemon and keeps both for a CLI input', async t => {
   const registry = [
     { id: 'cli', entry: 'apps/cli/src/index.ts' },

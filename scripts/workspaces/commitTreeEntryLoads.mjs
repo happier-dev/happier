@@ -586,9 +586,28 @@ await deriveRevisionGeneratedInputs({ captureDir: process.cwd(), sourceDir: proc
 }
 
 async function runTreeHarness({ dir, selected, env, signal }) {
+  // Only overlap the measured independent probes when the broker grants two
+  // cores and the full entry-load memory floor. Other graphs remain serial.
+  const coreGraphs = [DAEMON_GRAPH, CLI_GRAPH];
+  let overlapCore = false;
+  if (coreGraphs.every(id => selected.includes(id)) && Number(env.HAPPIER_ADMISSION_WORKERS) >= coreGraphs.length) {
+    const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import(new URL('apps/stack/scripts/utils/dev_targets/command_resources.mjs', tooling).href);
+    overlapCore = Number(env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB) >= HEAVYWEIGHT_COMMAND_RESOURCES[ENTRY_LOAD_ADMISSION_CLASS].memoryKiB;
+  }
   const code = `const { ENTRY_GRAPHS, loadEntryGraph } = await import(${JSON.stringify(pathToFileURL(join(dir, ENTRY_LOAD_PATH)).href)});
 const ids = ${JSON.stringify(selected)};
-for (const graph of ENTRY_GRAPHS.filter(graph => ids.includes(graph.id))) console.log('ENTRY_RESULT ' + JSON.stringify(await loadEntryGraph(graph)));`;
+const graphs = ENTRY_GRAPHS.filter(graph => ids.includes(graph.id));
+const results = new Map();
+if (${overlapCore}) {
+  const core = graphs.filter(graph => ${JSON.stringify(coreGraphs)}.includes(graph.id));
+  const env = { ...process.env, GOMAXPROCS: '1', UV_THREADPOOL_SIZE: '1', HAPPIER_ADMISSION_WORKERS: '1' };
+  const settled = await Promise.allSettled(core.map(graph => loadEntryGraph(graph, { env })));
+  for (const [i, result] of settled.entries()) {
+    if (result.status === 'rejected') throw result.reason;
+    results.set(core[i].id, result.value);
+  }
+}
+for (const graph of graphs) console.log('ENTRY_RESULT ' + JSON.stringify(results.get(graph.id) ?? await loadEntryGraph(graph)));`;
   // The tree is the commit: its packages load as they are, never through the checkout's HEAD pin.
   const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: dir, env: treeEnvironment(dir, env), signal, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = ''; let stderr = '';
