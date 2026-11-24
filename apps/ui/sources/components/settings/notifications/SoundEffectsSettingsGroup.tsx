@@ -12,7 +12,11 @@ import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-type SoundSettingKey = 'soundEffectsErrorSound' | 'soundEffectsAttentionSound' | 'soundEffectsSuccessSound';
+type SoundSettingKey =
+    | 'soundEffectsErrorSound'
+    | 'soundEffectsAttentionSound'
+    | 'soundEffectsSuccessSound'
+    | 'soundEffectsResumeSound';
 
 // Each sound is listed by its file name without the extension.
 const SOUND_MENU_ITEMS: ReadonlyArray<DropdownMenuItem> = SOUND_EFFECT_IDS.map((id) => ({ id, title: id }));
@@ -58,7 +62,7 @@ const SoundEffectPicker = React.memo(function SoundEffectPicker(props: Readonly<
     );
 });
 
-/** Device-only sound effects for the red, yellow and green session states. */
+/** Device-only sound effects for the red, yellow and green session states and usage-limit resumes. */
 export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSettingsGroup() {
     const { theme } = useUnistyles();
     const [enabled, setEnabled] = useLocalSettingMutable('soundEffectsEnabled');
@@ -98,6 +102,14 @@ export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSetting
                 subtitle={t('settingsNotifications.soundEffects.successSubtitle')}
                 iconName="check-circle"
                 iconColor={theme.colors.status.connected}
+                disabled={!enabled}
+            />
+            <SoundEffectPicker
+                settingKey="soundEffectsResumeSound"
+                title={t('settingsNotifications.soundEffects.resumeTitle')}
+                subtitle={t('settingsNotifications.soundEffects.resumeSubtitle')}
+                iconName="arrows-clockwise"
+                iconColor={theme.colors.status.connecting}
                 disabled={!enabled}
             />
         </ItemGroup>

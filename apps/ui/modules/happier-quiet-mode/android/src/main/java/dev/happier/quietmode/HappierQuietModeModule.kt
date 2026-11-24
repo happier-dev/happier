@@ -21,13 +21,12 @@ class HappierQuietModeModule : Module() {
     }
   }
 
+  /** Only "all interruptions" with a normal ringer may play; anything unreadable counts as quiet. */
   private fun isQuietModeActive(context: Context): Boolean {
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    val filter = notificationManager?.currentInterruptionFilter ?: NotificationManager.INTERRUPTION_FILTER_UNKNOWN
-    if (filter != NotificationManager.INTERRUPTION_FILTER_ALL && filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN) {
-      return true
-    }
-    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+      ?: return true
+    if (notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) return true
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return true
     return audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL
   }
 }

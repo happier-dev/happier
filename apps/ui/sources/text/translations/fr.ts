@@ -3488,7 +3488,7 @@ export const fr: TranslationStructure = {
         },
         soundEffects: {
             title: "Effets sonores",
-            footer: "Sur cet appareil uniquement. Silencieux lorsque Ne pas déranger ou le mode silencieux est activé.",
+            footer: "Sur cet appareil uniquement. Sur Android, silencieux lorsque Ne pas déranger est activé ou que la sonnerie est en mode silencieux ou vibreur. Sur iOS, le bouton Sonnerie/Silencieux le coupe.",
             enabledTitle: "Sons",
             enabledSubtitle: "Jouer un son quand une session change d'état",
             errorSubtitle: "Quand une session échoue",
@@ -3496,6 +3496,8 @@ export const fr: TranslationStructure = {
             attentionSubtitle: "Quand une session attend une approbation ou une réponse",
             successTitle: "Succès",
             successSubtitle: "Quand un tour se termine",
+            resumeTitle: "Reprise automatique",
+            resumeSubtitle: "Quand une session reprend d'elle-même après une limite d'utilisation",
         },
         desktop: {
             title: 'Notifications desktop',

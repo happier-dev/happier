@@ -3763,7 +3763,7 @@ export const es: TranslationStructure = {
     },
     soundEffects: {
       title: "Efectos de sonido",
-      footer: "Solo en este dispositivo. En silencio con No molestar o el modo silencio activado.",
+      footer: "Solo en este dispositivo. En Android, en silencio con No molestar activado o con el timbre en silencio o vibración. En iOS, lo silencia el interruptor de sonido/silencio.",
       enabledTitle: "Sonidos",
       enabledSubtitle: "Reproducir un sonido cuando una sesión cambia de estado",
       errorSubtitle: "Cuando una sesión falla",
@@ -3771,6 +3771,8 @@ export const es: TranslationStructure = {
       attentionSubtitle: "Cuando una sesión necesita aprobación o una respuesta",
       successTitle: "Éxito",
       successSubtitle: "Cuando termina un turno",
+      resumeTitle: "Reanudación automática",
+      resumeSubtitle: "Cuando una sesión continúa sola tras un límite de uso",
     },
     desktop: {
       title: 'Notificaciones de escritorio',

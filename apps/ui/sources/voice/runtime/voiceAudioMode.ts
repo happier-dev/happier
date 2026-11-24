@@ -11,15 +11,17 @@ type VoiceAudioMode = Readonly<{
 // This module is the one owner of the app-wide audio session mode. Voice needs a session that
 // records and plays through the Ring/Silent switch; sound effects need one that the switch mutes.
 let voiceConfiguredAudioSession = false;
-let soundEffectAudioSessionApplied = false;
+let soundEffectAudioSessionPreparation: Promise<boolean> | null = null;
 
-async function safeSetAudioMode(mode: Partial<VoiceAudioMode>): Promise<void> {
+async function safeSetAudioMode(mode: Partial<VoiceAudioMode>): Promise<boolean> {
   try {
     await AudioModule.setAudioModeAsync(mode as any);
+    return true;
   } catch (error) {
     if (__DEV__) {
       console.warn('[voiceAudioMode] Failed to set audio mode', { mode, error });
     }
+    return false;
   }
 }
 
@@ -48,24 +50,36 @@ export async function disableVoiceBackgroundCallAudioMode(): Promise<void> {
 }
 
 /**
- * Prepares the session for a short sound effect and says whether one may play.
- *
- * iOS has no public API to read Focus / Do Not Disturb or the Ring/Silent switch, so sound effects
- * use the ambient category, which mixes with other apps' audio and is muted by the switch. Once
+ * Whether a sound effect may start now. iOS has no public API to read Focus / Do Not Disturb or the
+ * Ring/Silent switch, so sound effects rely on the ambient category, which the switch mutes. Once
  * voice has set the session to play in silent mode, a sound effect could no longer honour the
- * switch, so it is skipped for the rest of the app run. Other platforms need no session change.
+ * switch, so sound effects stay off for the rest of the app run. Check this immediately before
+ * playback: voice can claim the session while a sound is being prepared.
+ */
+export function canPlaySoundEffectNow(): boolean {
+  return Platform.OS !== 'ios' || !voiceConfiguredAudioSession;
+}
+
+/**
+ * Prepares the audio session for a short sound effect and says whether one may play. On iOS this
+ * applies the ambient category, which mixes with other apps' audio. Concurrent callers share one
+ * attempt; a failed attempt is reported and retried on the next sound rather than cached.
+ * Other platforms need no session change.
  */
 export async function prepareSoundEffectAudioSession(): Promise<boolean> {
   if (Platform.OS !== 'ios') return true;
-  if (voiceConfiguredAudioSession) return false;
-  if (!soundEffectAudioSessionApplied) {
-    soundEffectAudioSessionApplied = true;
-    await safeSetAudioMode({
-      allowsRecording: false,
-      playsInSilentMode: false,
-      shouldPlayInBackground: false,
-      interruptionMode: 'mixWithOthers',
-    });
-  }
-  return true;
+  if (!canPlaySoundEffectNow()) return false;
+  soundEffectAudioSessionPreparation ??= safeSetAudioMode({
+    allowsRecording: false,
+    playsInSilentMode: false,
+    shouldPlayInBackground: false,
+    interruptionMode: 'mixWithOthers',
+  }).then((applied) => {
+    if (!applied) {
+      soundEffectAudioSessionPreparation = null;
+      console.warn('[voiceAudioMode] Could not apply the ambient audio session; skipping the sound effect');
+    }
+    return applied;
+  });
+  return (await soundEffectAudioSessionPreparation) && canPlaySoundEffectNow();
 }

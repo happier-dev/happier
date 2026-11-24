@@ -3478,7 +3478,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         soundEffects: {
             title: "音效",
-            footer: "僅在此裝置上播放。開啟勿擾模式或靜音模式時不會發聲。",
+            footer: "僅在此裝置上播放。在 Android 上，開啟勿擾模式或鈴聲設為靜音或震動時不會發聲。在 iOS 上，響鈴/靜音開關可將其靜音。",
             enabledTitle: "聲音",
             enabledSubtitle: "工作階段狀態變更時播放聲音",
             errorSubtitle: "工作階段失敗時",
@@ -3486,6 +3486,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             attentionSubtitle: "工作階段需要核准或輸入時",
             successTitle: "成功",
             successSubtitle: "回合完成時",
+            resumeTitle: "自動恢復",
+            resumeSubtitle: "工作階段在達到用量上限後自動繼續時",
         },
         desktop: {
             title: '桌面通知',

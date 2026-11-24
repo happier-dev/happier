@@ -3488,7 +3488,7 @@ export const de: TranslationStructure = {
         },
         soundEffects: {
             title: "Soundeffekte",
-            footer: "Nur auf diesem Gerät. Stumm, solange „Nicht stören“ oder der Lautlosmodus aktiv ist.",
+            footer: "Nur auf diesem Gerät. Unter Android stumm, solange „Nicht stören“ aktiv ist oder der Klingelton auf lautlos oder Vibration steht. Unter iOS schaltet der Klingel-/Lautlos-Schalter ihn stumm.",
             enabledTitle: "Töne",
             enabledSubtitle: "Einen Ton abspielen, wenn sich der Status einer Sitzung ändert",
             errorSubtitle: "Wenn eine Sitzung fehlschlägt",
@@ -3496,6 +3496,8 @@ export const de: TranslationStructure = {
             attentionSubtitle: "Wenn eine Sitzung eine Freigabe oder Eingabe braucht",
             successTitle: "Erfolg",
             successSubtitle: "Wenn ein Durchgang abgeschlossen ist",
+            resumeTitle: "Automatisch fortgesetzt",
+            resumeSubtitle: "Wenn eine Sitzung nach einem Nutzungslimit von selbst weiterläuft",
         },
         desktop: {
             title: 'Desktop-Benachrichtigungen',

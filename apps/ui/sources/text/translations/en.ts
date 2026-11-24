@@ -3489,7 +3489,7 @@ export const en = {
         },
         soundEffects: {
             title: "Sound effects",
-            footer: "Plays on this device only. Stays silent while Do Not Disturb or silent mode is on.",
+            footer: "Plays on this device only. On Android, stays silent while Do Not Disturb is on or the ringer is set to silent or vibrate. On iOS, the Ring/Silent switch mutes it.",
             enabledTitle: "Sounds",
             enabledSubtitle: "Play a sound when a session changes status",
             errorSubtitle: "When a session fails",
@@ -3497,6 +3497,8 @@ export const en = {
             attentionSubtitle: "When a session needs approval or input",
             successTitle: "Success",
             successSubtitle: "When a turn finishes",
+            resumeTitle: "Auto-resume",
+            resumeSubtitle: "When a session continues on its own after a usage limit",
         },
         desktop: {
             title: 'Desktop notifications',

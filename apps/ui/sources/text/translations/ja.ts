@@ -4065,7 +4065,7 @@ localTailscale: {
     },
     soundEffects: {
       title: "効果音",
-      footer: "このデバイスのみ。おやすみモードやサイレントモード中は鳴りません。",
+      footer: "このデバイスのみ。Android ではおやすみモード中、または着信音がサイレントかバイブのときは鳴りません。iOS では着信/サイレントスイッチで消音されます。",
       enabledTitle: "サウンド",
       enabledSubtitle: "セッションの状態が変わったときに音を鳴らす",
       errorSubtitle: "セッションが失敗したとき",
@@ -4073,6 +4073,8 @@ localTailscale: {
       attentionSubtitle: "セッションが承認や入力を求めたとき",
       successTitle: "成功",
       successSubtitle: "ターンが完了したとき",
+      resumeTitle: "自動再開",
+      resumeSubtitle: "使用量の上限後にセッションが自動で再開したとき",
     },
     desktop: {
       title: "デスクトップ通知",

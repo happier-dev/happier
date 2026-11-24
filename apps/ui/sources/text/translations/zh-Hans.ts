@@ -3666,7 +3666,7 @@ export const zhHans: TranslationStructure = {
     },
     soundEffects: {
       title: "音效",
-      footer: "仅在此设备上播放。开启勿扰模式或静音模式时不会发声。",
+      footer: "仅在此设备上播放。在 Android 上，开启勿扰模式或铃声设为静音或振动时不会发声。在 iOS 上，响铃/静音开关可将其静音。",
       enabledTitle: "声音",
       enabledSubtitle: "会话状态变化时播放声音",
       errorSubtitle: "会话失败时",
@@ -3674,6 +3674,8 @@ export const zhHans: TranslationStructure = {
       attentionSubtitle: "会话需要批准或输入时",
       successTitle: "成功",
       successSubtitle: "回合完成时",
+      resumeTitle: "自动恢复",
+      resumeSubtitle: "会话在达到用量上限后自动继续时",
     },
     desktop: {
       title: "桌面通知",

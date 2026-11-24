@@ -3794,7 +3794,7 @@ export const pl: TranslationStructure = {
     },
     soundEffects: {
       title: "Efekty dźwiękowe",
-      footer: "Tylko na tym urządzeniu. Wyciszone, gdy włączony jest tryb Nie przeszkadzać lub tryb cichy.",
+      footer: "Tylko na tym urządzeniu. Na Androidzie wyciszone, gdy włączony jest tryb Nie przeszkadzać lub dzwonek jest wyciszony albo ustawiony na wibracje. Na iOS wycisza go przełącznik dzwonka.",
       enabledTitle: "Dźwięki",
       enabledSubtitle: "Odtwarzaj dźwięk, gdy zmienia się stan sesji",
       errorSubtitle: "Gdy sesja zakończy się błędem",
@@ -3802,6 +3802,8 @@ export const pl: TranslationStructure = {
       attentionSubtitle: "Gdy sesja potrzebuje zatwierdzenia lub odpowiedzi",
       successTitle: "Sukces",
       successSubtitle: "Gdy tura się zakończy",
+      resumeTitle: "Automatyczne wznowienie",
+      resumeSubtitle: "Gdy sesja sama wznawia pracę po limicie użycia",
     },
     desktop: {
       title: 'Powiadomienia desktopowe',

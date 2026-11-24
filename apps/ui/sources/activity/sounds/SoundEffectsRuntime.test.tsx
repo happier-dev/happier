@@ -149,6 +149,8 @@ describe('SoundEffectsRuntime', () => {
                 lastRuntimeIssue: { ...failure, occurredAt: 6_000 },
             }));
         });
+        // The ready event can trail the failure by more than the success settle window.
+        await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
         await act(async () => { notifyActivityReady('session-2', [], 4); });
         await flushPlayback();
 
@@ -177,6 +179,31 @@ describe('SoundEffectsRuntime', () => {
         });
         await flushPlayback();
         expect(audio.played).toEqual([SOUND_EFFECT_SOURCES.sound_electro_158]);
+        await act(async () => { screen.tree.unmount(); });
+    });
+
+    it('plays the resume sound when a session continues after a usage limit', async () => {
+        const usageLimit: SessionRuntimeIssueV1 = { ...failure, code: 'usage_limit', source: 'usage_limit' };
+        // Limits are often hours long, so the app may only learn of the block on startup.
+        putSession(createSessionFixture({ id: 'limited', latestTurnStatus: 'failed', lastRuntimeIssue: usageLimit }));
+        putSession(createSessionFixture({ id: 'crashed', latestTurnStatus: 'failed', lastRuntimeIssue: failure }));
+        const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
+        const screen = await renderScreen(<SoundEffectsRuntime />);
+
+        await act(async () => {
+            putSession(createSessionFixture({ id: 'crashed', latestTurnStatus: 'failed', lastRuntimeIssue: failure, thinking: true }));
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([]);
+
+        await act(async () => {
+            putSession(createSessionFixture({ id: 'limited', latestTurnStatus: 'failed', lastRuntimeIssue: usageLimit, thinking: true }));
+        });
+        await act(async () => {
+            putSession(createSessionFixture({ id: 'limited', latestTurnStatus: 'in_progress', lastRuntimeIssue: usageLimit, thinking: true }));
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([SOUND_EFFECT_SOURCES.sound_electro_pop1]);
         await act(async () => { screen.tree.unmount(); });
     });
 

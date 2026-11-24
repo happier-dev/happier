@@ -20,13 +20,17 @@ export const SOUND_EFFECT_IDS = [
 
 export type SoundEffectId = (typeof SOUND_EFFECT_IDS)[number];
 
-/** The session outcomes that can play a sound: the red, yellow and green status colours. */
-export type SoundEffectEvent = 'error' | 'attention' | 'success';
+/**
+ * The session changes that can play a sound: the red, yellow and green status colours, plus a
+ * session continuing on its own after a usage limit.
+ */
+export type SoundEffectEvent = 'error' | 'attention' | 'success' | 'resume';
 
 export const DEFAULT_SOUND_EFFECT_IDS: Readonly<Record<SoundEffectEvent, SoundEffectId>> = Object.freeze({
     error: 'sound_electro_158',
     attention: 'sound_electro_swell-taps',
     success: 'sound_electro_windows-ish1',
+    resume: 'sound_electro_pop1',
 });
 
 /** A stored choice for a sound that is no longer bundled falls back to that event's default. */

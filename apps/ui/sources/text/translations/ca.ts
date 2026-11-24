@@ -3574,7 +3574,7 @@ export const ca: TranslationStructure = {
         },
         soundEffects: {
             title: "Efectes de so",
-            footer: "Només en aquest dispositiu. Silenciat amb No molestis o el mode silenciós activat.",
+            footer: "Només en aquest dispositiu. A Android, silenciat amb No molestis activat o amb el timbre en silenci o vibració. A iOS, l'interruptor de so/silenci el silencia.",
             enabledTitle: "Sons",
             enabledSubtitle: "Reprodueix un so quan una sessió canvia d'estat",
             errorSubtitle: "Quan una sessió falla",
@@ -3582,6 +3582,8 @@ export const ca: TranslationStructure = {
             attentionSubtitle: "Quan una sessió necessita aprovació o una resposta",
             successTitle: "Èxit",
             successSubtitle: "Quan acaba un torn",
+            resumeTitle: "Represa automàtica",
+            resumeSubtitle: "Quan una sessió continua sola després d'un límit d'ús",
         },
         desktop: {
             title: 'Notificacions d’escriptori',

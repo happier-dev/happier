@@ -437,6 +437,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Sound played on this device when a turn finishes',
         storageScope: 'local',
     },
+    soundEffectsResumeSound: {
+        schema: soundEffectIdSchema('resume'),
+        default: DEFAULT_SOUND_EFFECT_IDS.resume,
+        description: 'Sound played on this device when a session continues on its own after a usage limit',
+        storageScope: 'local',
+    },
     petsEnabledOverride: {
         schema: PetEnabledOverrideSchema,
         default: 'inherit',

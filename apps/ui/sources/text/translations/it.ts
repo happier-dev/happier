@@ -4117,7 +4117,7 @@ export const it: TranslationStructure = {
     },
     soundEffects: {
       title: "Effetti sonori",
-      footer: "Solo su questo dispositivo. Silenziosi con Non disturbare o la modalità silenziosa attivi.",
+      footer: "Solo su questo dispositivo. Su Android è silenzioso con Non disturbare attivo o con la suoneria in silenzioso o vibrazione. Su iOS lo silenzia l'interruttore suoneria/silenzioso.",
       enabledTitle: "Suoni",
       enabledSubtitle: "Riproduci un suono quando una sessione cambia stato",
       errorSubtitle: "Quando una sessione non riesce",
@@ -4125,6 +4125,8 @@ export const it: TranslationStructure = {
       attentionSubtitle: "Quando una sessione richiede un'approvazione o una risposta",
       successTitle: "Completato",
       successSubtitle: "Quando un turno termina",
+      resumeTitle: "Ripresa automatica",
+      resumeSubtitle: "Quando una sessione riprende da sola dopo un limite di utilizzo",
     },
     desktop: {
       title: "Notifiche desktop",
