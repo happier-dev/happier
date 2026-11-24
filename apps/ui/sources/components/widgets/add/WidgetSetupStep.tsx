@@ -251,15 +251,6 @@ export function WidgetSetupStep(props: Readonly<{
             } }] : []),
     ], { unbound: 'local' });
 
-    // The values the draft is bound to, as their rows name them, for the line that says what Add does.
-    const boundValues = setup.describeOutcome ? setup.fields.flatMap((entry, index) => {
-        const request = requests[index]!;
-        const row = describeWidgetSetupRow({ entry, draft, resolution, pickedOptions: pickedOptions[entry.field.path], options: options.state(request.field, request).options.map((option): WidgetSetupValue => ({
-            value: option.value as JsonValue, label: option.label })) });
-        const label = row.kind === 'pinned' ? row.value?.label ?? row.label : row.kind === 'follows' ? row.valueLabel ?? row.label : null;
-        return label ? [label] : [];
-    }) : [];
-
     // The inputs share one choices read: a failure is said once, above them, with the one Retry.
     const optionsFailed = fields.some(({ index }) => {
         const request = requests[index]!;
@@ -400,9 +391,11 @@ export function WidgetSetupStep(props: Readonly<{
         )
     ) : null;
     // What Add will do, until an outcome takes the line (lab wsplit A1).
-    const consequence = pane && finishable && setup.describeOutcome ? setup.describeOutcome({ draft, values: boundValues })
-        : pane && finishable && draft.size ? t('widgetAdd.addsAtSize', { size: t(`widgetAdd.sizes.${draft.size}`) })
-        : pane && finishable && draft.width ? t('widgetFrame.addsAtWidth', { width: t(draft.width === 'half' ? 'widgetFrame.widthHalf' : 'widgetFrame.widthFull') }) : null;
+    const { describeOutcome } = setup;
+    const outcome = React.useMemo(() => pane && finishable ? describeOutcome?.(draft) : undefined,
+        [pane, finishable, describeOutcome, draft]);
+    const consequence = outcome ?? (pane && finishable && draft.size ? t('widgetAdd.addsAtSize', { size: t(`widgetAdd.sizes.${draft.size}`) })
+        : pane && finishable && draft.width ? t('widgetFrame.addsAtWidth', { width: t(draft.width === 'half' ? 'widgetFrame.widthHalf' : 'widgetFrame.widthFull') }) : null);
 
     const panel = {
         testID: props.testID,

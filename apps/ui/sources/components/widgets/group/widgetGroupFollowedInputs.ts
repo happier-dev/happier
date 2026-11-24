@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { readInputPath, type InputFieldHint } from '@happier-dev/protocol/inputs';
+import { readInputPath } from '@happier-dev/protocol/inputs';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
     composeWidgetGroupContextV1,
@@ -11,13 +11,12 @@ import {
     type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
-import { WIDGET_SESSION_CONTEXT_SLOT, widgetProvidedContext, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
-import { describeWidgetBindingPinValue, describeWidgetPageBindingValue, type WidgetBindingLabelField, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
+import { readWidgetSurfaceSlotLabel, widgetProvidedContext, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
+import { describeWidgetBindingPinValue, describeWidgetPageBindingValue, readWidgetBindingFieldTitle, summarizeWidgetBindingReadings, type WidgetBindingLabelField, type WidgetBindingReading, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
 import type { WidgetGroupHeaderReading } from './widgetGroupInputs';
 
 export type WidgetGroupInputReadings = Readonly<{
     fields: readonly WidgetBindingLabelField[];
-    declared?: readonly InputFieldHint[];
     byChild: ReadonlyMap<string, readonly WidgetBindingLabelField[]>;
     labels: WidgetBindingValueLabels;
 }>;
@@ -46,7 +45,7 @@ export function createWidgetGroupFollowedInputReader(input: Readonly<{
     });
     return (instance: WidgetInstanceV1, descriptor: WidgetInputDescriptorV1) => {
         const resolved = resolveConfiguredWidgetInputs({ instance, descriptor, providedContext: composed, viewerValues: {} });
-        return ({ field, slot }: WidgetBindingLabelField) => {
+        return ({ field, slot }: WidgetBindingLabelField): WidgetBindingReading | null => {
             const value = resolved.status === 'ready' ? readInputPath(resolved.input, field.path) as JsonValue | undefined : undefined;
             if (value === undefined) return null;
             const binding = bindings[slot];
@@ -55,19 +54,13 @@ export function createWidgetGroupFollowedInputReader(input: Readonly<{
                 if (labelled?.kind === 'value' && sameStrictJsonValue(labelled.value, value)) {
                     return { value, label: labels?.[slot] ?? null };
                 }
-                let label: string | null | undefined;
-                for (const declared of fields) {
-                    if (declared.slot !== slot) continue;
-                    const next = describeWidgetBindingPinValue(declared.field, value, declared.sessionTarget, true) ?? null;
-                    if (label !== undefined && label !== next) return { value, label: null };
-                    label = next;
-                }
-                return { value, label: label ?? null };
+                const summary = summarizeWidgetBindingReadings(fields.filter(declared => declared.slot === slot).map(declared => ({
+                    value, label: describeWidgetBindingPinValue(declared.field, value, declared.sessionTarget, true),
+                })));
+                return { value, label: summary?.kind === 'single' ? summary.label : null };
             }
             const pageSlot = binding?.kind === 'context' ? binding.slot : slot;
-            const slotLabel = pageSlot === WIDGET_SESSION_CONTEXT_SLOT && context.session
-                ? context.session.label : context.slots?.[pageSlot]?.value?.label;
-            return { value, label: describeWidgetPageBindingValue(field, value, slotLabel) };
+            return { value, label: describeWidgetPageBindingValue(field, value, readWidgetSurfaceSlotLabel(context, pageSlot)) };
         };
     };
 }
@@ -86,12 +79,15 @@ export function useWidgetGroupCardSource(
         if (!bindings || !descriptor || !readings) return null;
         const followed = readings.byChild.get(instance.id)?.find(({ slot }) => Object.hasOwn(bindings, slot));
         if (!followed) return null;
-        const { field, slot } = followed;
+        const { slot } = followed;
         if (header?.binding?.slot === slot) return { value: header.binding.value, namedInHeader: true };
         // A named group's alias leaves the card's ordinary source in place when the header has no reading for it.
         if (header && bindings[slot]?.kind === 'context') return null;
         const readChild = createWidgetGroupFollowedInputReader({ context, surfaceOwner, bindings, labelledBindings: bindings,
             labels: readings.labels, fields: readings.fields });
-        return { value: readChild(instance, descriptor)(followed)?.label ?? field.title, namedInHeader: false };
+        const summary = summarizeWidgetBindingReadings([readChild(instance, descriptor)(followed)]);
+        const value = summary?.kind === 'single' ? summary.label
+            : readWidgetBindingFieldTitle(slot, readings.fields.filter(declaration => declaration.slot === slot));
+        return { value, namedInHeader: false };
     }, [instance, descriptor, context, surfaceOwner, bindings, readings, header]);
 }

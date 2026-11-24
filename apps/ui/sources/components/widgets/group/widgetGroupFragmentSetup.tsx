@@ -41,6 +41,8 @@ import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetGroupWidthChoices, WIDGET_GROUP_ICON } from './widgetGroupMenu';
 import { buildWidgetGroupInputsCandidate } from './widgetGroupInputs';
+import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers } from './widgetGroupFollowedInputs';
+import { readWidgetBindingFieldTitle, summarizeWidgetBindingReadings } from '../surface/widgetBindingValueLabel';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { PublicProfileWidgetPreviewBoundary } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
 import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
@@ -140,6 +142,16 @@ export function buildWidgetGroupFragmentEntry(
     // The destination already fills these child slots. Validate the effective inputs without saving new group overrides.
     const inheritedBindings = Object.fromEntries(fields.flatMap(({ field, follow }) =>
       follow && childSlots.has(follow.slot) ? [[field.path, { kind: 'context' as const, slot: follow.slot }]] : []));
+    const candidates = fragment.group.children.map(child => input.candidates.find(candidate =>
+      isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), child.instance.definition)));
+    const followers = publicArea ? [] : fragment.group.children.flatMap((child, index) => {
+      const descriptor = candidates[index];
+      if (!descriptor) return [];
+      const instance = { ...child.instance, id: String(index) };
+      const fields = readWidgetGroupInputFollowers(instance, descriptor);
+      return fields.length ? [{ instance, descriptor, fields }] : [];
+    });
+    const declarations = followers.flatMap(child => child.fields);
     const definition = fragment.group.children[0]!.instance.definition;
     const widths = resolveWidgetGroupWidthChoices(
       fragment.group.children.map((child, index) => ({
@@ -171,8 +183,6 @@ export function buildWidgetGroupFragmentEntry(
         }),
       optionsContext: (() => {
         if (publicArea) return () => ({ draftInput: {} });
-        const candidates = fragment.group.children.map(child => input.candidates.find(candidate =>
-          isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), child.instance.definition)));
         const candidate = buildWidgetGroupInputsCandidate({ title: fragment.name, candidates });
         // A removed child's declaration cannot become an unscoped source read. Keep a concrete
         // consumer so canonical descriptor admission refuses unavailable or undeclared fields.
@@ -188,11 +198,27 @@ export function buildWidgetGroupFragmentEntry(
       renderPreview: ({ draft }) => publicArea && !publicAvailable ? null : input.renderGroupPreview(prepared, draft),
       // The group is its own frame: until its inputs are chosen, the same frame with each widget waiting.
       renderWaitingPreview: ({ draft, waiting }) => publicArea && !publicAvailable ? null : input.renderGroupPreview(prepared, draft, waiting),
-      // One answer the widgets follow is worth naming ("following happier"); several are already on
-      // screen above the line, and naming only the first would read as the group's one value.
-      describeOutcome: ({ values }) => t('widgetFrame.groupAddsFollowing', {
-        name: fragment.name, count: fragment.childCount, value: values.length === 1 ? values[0]! : null,
-      }),
+      // Name just one explicit group setting, using the same reading as the child widgets.
+      describeOutcome: ({ bindings }) => {
+        const selected = fields.filter(({ field }) => {
+          const kind = bindings[field.path]?.kind;
+          return kind === 'value' || kind === 'context';
+        });
+        let name: string | null = null;
+        if (selected.length === 1) {
+          const { path } = selected[0]!.field;
+          const readChild = createWidgetGroupFollowedInputReader({ context: input.context, surfaceOwner: input.scope?.owner,
+            bindings, fields: declarations, labelledBindings: undefined, labels: undefined });
+          const readings = followers.flatMap(({ instance, descriptor, fields }) => {
+            const matches = fields.filter(({ slot }) => slot === path);
+            return matches.length ? matches.map(readChild(instance, descriptor)) : [];
+          });
+          const reading = summarizeWidgetBindingReadings(readings);
+          name = reading?.kind === 'single' ? reading.label
+            : readWidgetBindingFieldTitle(path, declarations.filter(declaration => declaration.slot === path));
+        }
+        return t('widgetFrame.groupAddsFollowing', { name: fragment.name, count: fragment.childCount, value: name });
+      },
       submit: (draft) => input.add(publicArea && publicAvailable ? prepared : fragment, draft),
     };
   };

@@ -21,12 +21,12 @@ export function useWidgetInstanceBindingLabel(
     const sessionPath = target.kind === 'session' ? target.path : undefined;
     const sessionBinding = sessionPath ? instance.bindings[sessionPath] : undefined;
     const labels = useWidgetBindingValueLabels(instance.bindings, candidate);
-    if (sessionBinding?.kind === 'context') return t('widgetAdd.thisSession');
+    if (sessionBinding?.kind === 'context' && !context?.slots?.[sessionBinding.slot]?.groupAlias) return t('widgetAdd.thisSession');
     if (sessionPath && sessionBinding?.kind === 'value') return labels[sessionPath] ?? null;
     for (const field of candidate?.inputs?.fields ?? []) {
         const binding = instance.bindings[field.path];
         const slot = binding?.kind === 'context' && context?.slots && Object.hasOwn(context.slots, binding.slot) ? context.slots[binding.slot] : undefined;
-        if (slot) return slot.label;
+        if (slot && !slot.groupAlias) return slot.label;
     }
     for (const field of candidate?.inputs?.fields ?? []) {
         const binding = instance.bindings[field.path];
@@ -48,5 +48,5 @@ export function isWidgetFollowingSurfaceSlot(
 ): boolean {
     const slots = context?.slots;
     if (!slots) return false;
-    return Object.values(instance.bindings).some(binding => binding.kind === 'context' && Object.hasOwn(slots, binding.slot));
+    return Object.values(instance.bindings).some(binding => binding.kind === 'context' && Object.hasOwn(slots, binding.slot) && !slots[binding.slot]?.groupAlias);
 }

@@ -7,9 +7,8 @@ import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccounti
 import { usageWidgetSurfaceContext, readUsageWidgetPageContext, readUsageWidgetPageScope } from '@/components/settings/usage/usageWidgetPageContext';
 import { describeWidgetSetupRow, proposeWidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
 import { t } from '@/text';
-import { buildWidgetCandidateSetup, runAcknowledgedWidgetSetupCommand, widgetProvidedContext, widgetSetupFieldsForCandidate } from './widgetSurfaceSetup';
+import { widgetGroupSurfaceContext, buildWidgetCandidateSetup, runAcknowledgedWidgetSetupCommand, widgetProvidedContext, widgetSetupFieldsForCandidate } from './widgetSurfaceSetup';
 import type { WidgetCandidate } from '../widgetCatalog';
-import { widgetGroupSurfaceContext } from '../group/widgetGroupInputs';
 
 describe('public-profile snapshot setup', () => {
     it('translates a copied Usage choice to public presentation only, without asking for a private query', () => {
@@ -94,6 +93,23 @@ it('uses the typed value and declared field labels in a grouped widget’s Edit 
     const row = describeWidgetSetupRow({ entry: alias.fields[1]!, draft: alias.initial,
         resolution: alias.resolve(alias.initial), options: [] });
     expect(row).toMatchObject({ kind: 'follows', valueLabel: 'Calendar' });
+});
+
+it.each([true, false])('offers the runtime group alias with or without a same-named page slot (%s)', (includePageSlot) => {
+    const field = { path: 'period', title: 'Period', widget: 'text' } as const;
+    const candidate: WidgetCandidate = { key: 'alias', title: 'Alias', pluginName: 'Usage', sharedPluginName: false,
+        icon: 'squares-four', homeDefault: 'available', target: 'app', inputs: { fields: [field] } };
+    const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition: { kind: 'builtin', id: 'usage_period_summary' },
+        bindings: { period: { kind: 'context', slot: 'first' } } };
+    const group = { first: { kind: 'context', slot: 'second' } } as const;
+    const context = widgetGroupSurfaceContext({ slots: {
+        ...(includePageSlot ? { first: { label: 'Old slot', value: { value: 'old', label: 'Old value' } } } : {}),
+        second: { label: 'Current slot', value: { value: 'current', label: 'Current value' } },
+    } }, group, { fields: [{ field, slot: 'first', sessionTarget: false }], byChild: new Map(), labels: {} });
+    const setup = buildWidgetCandidateSetup({ candidate, context, audience: 'personal',
+        mode: { kind: 'edit', instance }, submit: async () => ({ ok: true }) });
+    expect(setup.resolve(setup.initial)).toEqual({ status: 'ready', input: { period: 'current' } });
+    expect(setup.fields[0]?.follow).toMatchObject({ slot: 'first', values: [{ value: 'current', label: 'Current value' }] });
 });
 
 describe('Widget setup schema defaults', () => {

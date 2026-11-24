@@ -16,7 +16,7 @@ import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolve
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
-import { describeWidgetBindingPinValue, type WidgetBindingLabelField, type WidgetBindingValueLabel, type WidgetBindingValueLabels } from './widgetBindingValueLabel';
+import { describeWidgetBindingPinValue, summarizeWidgetBindingReadings, type WidgetBindingLabelField, type WidgetBindingReading, type WidgetBindingValueLabel, type WidgetBindingValueLabels } from './widgetBindingValueLabel';
 
 const sessionName = (source: SessionDisplayNameSource | null) => source ? getSessionName(source, source.serverId) : null;
 
@@ -71,6 +71,7 @@ export function useWidgetBindingValueLabels(
     return React.useMemo(() => {
         let sessionIndex = 0;
         const labels: Record<string, WidgetBindingValueLabel> = Object.create(null);
+        const bySlot = new Map<string, WidgetBindingReading[]>();
         entries.forEach((entry, index) => {
             const { field, value } = entry;
             let label: WidgetBindingValueLabel;
@@ -78,8 +79,18 @@ export function useWidgetBindingValueLabels(
             else if (entry.workspace) label = workspaceNames[index] ?? null;
             else if (entry.machine) label = machineNames[index] ?? null;
             else if (value !== undefined) label = describeWidgetBindingPinValue(field, value, entry.sessionTarget, groupFields !== undefined);
-            labels[entry.slot] = Object.hasOwn(labels, entry.slot) && labels[entry.slot] !== label ? null : label;
+            if (!groupFields || value === undefined) labels[entry.slot] = label;
+            else {
+                const reading = { value, label };
+                const readings = bySlot.get(entry.slot);
+                if (readings) readings.push(reading);
+                else bySlot.set(entry.slot, [reading]);
+            }
         });
+        for (const [slot, readings] of bySlot) {
+            const summary = summarizeWidgetBindingReadings(readings);
+            labels[slot] = summary?.kind === 'single' ? summary.label : null;
+        }
         return labels;
     }, [entries, sessionNames, workspaceNames, machineNames, isSessionVisible, groupFields]);
 }

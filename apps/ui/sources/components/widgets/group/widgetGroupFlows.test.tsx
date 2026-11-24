@@ -6,6 +6,7 @@ import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { WidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { WidgetSetupStep } from '../add/WidgetSetupStep';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -115,6 +116,33 @@ describe('Save group', () => {
 });
 
 describe('a saved group in Add', () => {
+  it('names the declared Location in the Gallery footer while letting the editor show its saved value', async () => {
+    const definition = { kind: 'builtin', id: 'usage_period_summary' } as const;
+    const field = { path: 'location', title: 'Location', widget: 'text' } as const;
+    const project = { path: 'project', title: 'Project', widget: 'text', required: true } as const;
+    const inputs = { fields: [field, project] };
+    const candidate: WidgetCandidate = { key: 'location', title: 'Location viewer', pluginName: 'Usage',
+      sharedPluginName: false, icon: 'squares-four', homeDefault: 'available', target: 'app', definition, inputs };
+    const path = '/private/saved-group-location';
+    const fragment: WidgetLayoutFragmentSummaryV1 = { artifactId: 'location', name: 'Saved group', childCount: 1,
+      inputs, inputSchema: { type: 'object' },
+      group: { width: 'full', frameStyle: 'card', dividers: 'hairline', context: { location: { kind: 'value', value: path } },
+        children: [{ kind: 'widget', instance: { v: 1, definition, bindings: {
+          location: { kind: 'context', slot: 'location' }, project: { kind: 'context', slot: 'project' },
+        } } }] } };
+    const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], scope: { ...account, owner: { kind: 'home' } },
+      context: { slots: { project: { label: 'Page project', value: { value: 'project-id', label: 'Project name' } } } },
+      submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
+    const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} presentation="pane" testID="gallery" onDone={() => {}} />);
+    expect(screen.findByTestId('gallery.field.location.input')?.props.value).toBe(path);
+    expect(screen.getTextContent()).toContain('value=Location');
+    expect(screen.getTextContent()).not.toContain(path);
+    const named = setup.describeOutcome?.({ bindings: { location: { kind: 'value', value: 'Release notes' } } });
+    expect(named).toContain('value=Release notes');
+    const several = setup.describeOutcome?.({ bindings: { ...setup.initial.bindings, project: { kind: 'context', slot: 'project' } } });
+    expect(several).toContain('value=null');
+  });
+
   it('places a saved Usage group with sparse overrides when the destination already supplies its child scope', async () => {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_daily' })!;
     const candidate: WidgetCandidate = { ...descriptor, pluginName: 'Happier', sharedPluginName: false };
@@ -253,7 +281,7 @@ describe('a saved group in Add', () => {
       context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => 'group frame' }).setup!();
     expect(setup.fields.map(entry => entry.neededHint !== undefined)).toEqual([false, true, false]);
   });
-  it('says where the group came from, asks once, keeps its own frame while waiting and names what Add does', () => {
+  it('says where the group came from, asks once and keeps its own frame while waiting', () => {
     const field = { path: 'project', title: 'Project', widget: 'select' as const, optionsSourceId: 'projects', required: true };
     const fragment: WidgetLayoutFragmentSummaryV1 = { artifactId: 'release', name: 'Release check', childCount: 2,
       inputs: { fields: [field] }, inputSchema: { type: 'object' }, origin: { kind: 'home' }, createdAt: Date.UTC(2026, 9, 8, 12),
@@ -272,15 +300,6 @@ describe('a saved group in Add', () => {
     // While the answer is missing the step still draws the group's own frame, each widget waiting.
     expect(setup.renderWaitingPreview?.({ draft: { bindings: {}, width: 'half' }, waiting: 'Choose the project' })).toBe('group frame');
     expect(renderGroupPreview).toHaveBeenLastCalledWith(fragment, { bindings: {}, width: 'half' }, 'Choose the project');
-    // The footer names the outcome with the value the group will follow.
-    const outcome = setup.describeOutcome?.({ draft: { bindings: {}, width: 'half' }, values: ['happier'] });
-    expect(outcome).toContain('widgetFrame.groupAddsFollowing');
-    expect(outcome).toContain('happier');
-    expect(outcome).toContain('Release check');
-    // Several answers are already on screen above the line: it names the group, not the first of them.
-    const several = setup.describeOutcome?.({ draft: { bindings: {}, width: 'half' }, values: ['All time', '1 selected', 'Best available cost'] });
-    expect(several).toContain('Release check');
-    expect(several).not.toContain('All time');
   });
 });
 

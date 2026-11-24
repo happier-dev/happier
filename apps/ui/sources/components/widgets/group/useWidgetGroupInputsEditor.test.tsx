@@ -279,7 +279,7 @@ describe('group inherited readings', () => {
     ['agrees when two children use the same slot', [{ period: follow('calendar') }, { period: follow('calendar') }], inherited('Yesterday')],
     ['ignores a pinned child while showing what the following child reads', [{ period: pin('Monday') }, { period: follow('calendar') }], inherited('Yesterday')],
     ['names competing child contexts without identifying a value', [{ period: follow('period') }, { period: follow('calendar') }], inherited('widgetAdd.severalValues')],
-    ['makes no claim when a child is unresolved even if other children disagree', [{ period: follow('period') }, { period: follow('missing') }, { period: follow('calendar') }], inherited('Period')],
+    ['reports several resolved values even when another child is unresolved', [{ period: follow('period') }, { period: follow('missing') }, { period: follow('calendar') }], inherited('widgetAdd.severalValues')],
     ['leaves an incomplete inherited reading empty', [{ period: follow('period') }, { period: follow('missing') }], inherited('Period')],
     ['makes no claim when the followed slot has nothing to inherit', [{ period: follow('missing') }], inherited('Period')],
   ] as const)('%s', async (_name, children, expected) => {

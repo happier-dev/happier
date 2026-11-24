@@ -113,8 +113,8 @@ export type WidgetSetup = Readonly<{
      * `waiting` in each body ("Choose the project to see it here").
      */
     renderWaitingPreview?: (preview: Readonly<{ draft: WidgetSetupDraft; waiting: string }>) => React.ReactNode;
-    /** What the button will do once nothing is needed, with the values the draft is bound to. */
-    describeOutcome?: (outcome: Readonly<{ draft: WidgetSetupDraft; values: readonly string[] }>) => string;
+    /** What the button will do once nothing is needed, as named by the setup owner. */
+    describeOutcome?: (draft: WidgetSetupDraft) => string;
     /** Which widget on which surface consumes the options, so option reads are admitted for exactly it. */
     optionsContext?: (draft: WidgetSetupDraft, field?: InputFieldHint) => Readonly<{
         draftInput: Readonly<Record<string, JsonValue>>;

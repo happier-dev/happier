@@ -1,5 +1,5 @@
 import { isSameInputOptionValue, type InputFieldHint } from '@happier-dev/protocol/inputs';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { describeHostInputTypePickerValue } from '@/components/sessions/actions/hostInputTypePickerForm';
 
@@ -7,6 +7,35 @@ import { describeHostInputTypePickerValue } from '@/components/sessions/actions/
 export type WidgetBindingValueLabel = string | null | undefined;
 export type WidgetBindingValueLabels = Readonly<Record<string, WidgetBindingValueLabel>>;
 export type WidgetBindingLabelField = Readonly<{ slot: string; field: InputFieldHint; sessionTarget: boolean }>;
+export type WidgetBindingReading = Readonly<{ value: JsonValue; label: WidgetBindingValueLabel }>;
+
+/** Prefer a shared declared title, then the common slot, then the editor's field name. */
+export function readWidgetBindingFieldTitle(fallback: string, declarations: readonly WidgetBindingLabelField[]): string {
+    const titles = new Set(declarations.map(({ field }) => field.title));
+    if (titles.size === 1) return titles.values().next().value!;
+    const slots = new Set(declarations.map(({ slot }) => slot));
+    return slots.size === 1 ? slots.values().next().value! : fallback;
+}
+
+/** Summarize the whole set. Multiple resolved operands take precedence over an incomplete name. */
+export function summarizeWidgetBindingReadings(readings: readonly (WidgetBindingReading | null)[]):
+    Readonly<{ kind: 'several' }> | Readonly<{ kind: 'single'; label: string }> | null {
+    const labels = new Set<string>();
+    let first: WidgetBindingReading | null = null;
+    let several = false;
+    let incomplete = false;
+    for (const reading of readings) {
+        if (reading) {
+            first ??= reading;
+            if (!sameStrictJsonValue(first.value, reading.value)) several = true;
+        }
+        if (reading?.label) labels.add(reading.label);
+        else incomplete = true;
+    }
+    if (several) return { kind: 'several' };
+    if (!first || incomplete || labels.size !== 1) return null;
+    return { kind: 'single', label: labels.values().next().value! };
+}
 
 /** A filesystem location is never used as the name of a binding. */
 const TYPED_LOCATION = /^(?:[\\/~]|[A-Za-z]:[\\/])/;

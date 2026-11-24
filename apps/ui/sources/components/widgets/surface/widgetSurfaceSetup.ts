@@ -1,7 +1,7 @@
 import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputPath } from '@happier-dev/protocol/inputs';
-import { isWidgetTargetHostableV1, proposeWidgetInputDefaultBindingsV1, projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, readWidgetInputTargetV1, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { composeWidgetGroupContextV1, type WidgetInputBindingsV1, isWidgetTargetHostableV1, proposeWidgetInputDefaultBindingsV1, projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, readWidgetInputTargetV1, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardCommandOutcome } from '@/components/sessions/board/useSessionBoardController';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -19,7 +19,8 @@ import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@ha
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1, translateWidgetPublicProfileCopyV1, resolveWidgetPublicProfileInputsV1 } from '@happier-dev/protocol/widgets';
 import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
-import type { WidgetBindingValueLabel } from './widgetBindingValueLabel';
+import type { WidgetGroupInputReadings } from '../group/widgetGroupFollowedInputs';
+import { describeWidgetPageBindingValue, type WidgetBindingValueLabel } from './widgetBindingValueLabel';
 
 /**
  * One named slot a page or area fills (lab `dashboards` PG, P1): "This page" (a plugin page's
@@ -32,6 +33,8 @@ export type WidgetSurfaceContextSlot = Readonly<{
     value: Readonly<{ value: JsonValue; label: WidgetBindingValueLabel; description?: string }> | null;
     /** A runtime scope value can remain admitted without being offered as an editor input. */
     offered?: false;
+    /** A saved group alias takes precedence over the intrinsic Session offer. */
+    groupAlias?: true;
 }>;
 
 /**
@@ -60,6 +63,38 @@ export function widgetProvidedContext(context: WidgetSurfaceContext): Readonly<R
     for (const [slot, entry] of Object.entries(context.slots ?? {})) if (entry.value) provided[slot] = [entry.value.value];
     if (context.session) provided[WIDGET_SESSION_CONTEXT_SLOT] = [context.session.ref];
     return provided;
+}
+
+export function readWidgetSurfaceSlotLabel(context: WidgetSurfaceContext, slot: string): WidgetBindingValueLabel {
+    return slot === WIDGET_SESSION_CONTEXT_SLOT && context.session ? context.session.label : context.slots?.[slot]?.value?.label;
+}
+
+/** The group's slots for a child's own Edit inputs: following the group is one of its choices. */
+export function widgetGroupSurfaceContext(
+    base: WidgetSurfaceContext,
+    context: WidgetInputBindingsV1 | undefined,
+    readings?: WidgetGroupInputReadings,
+    surfaceOwner?: WidgetSurfaceRefV1['owner'],
+): WidgetSurfaceContext {
+    if (!context) return base;
+    const provided = composeWidgetGroupContextV1({ providedContext: widgetProvidedContext(base), surfaceOwner, groupBindings: context });
+    const slots: Record<string, WidgetSurfaceContextSlot> = { ...base.slots };
+    for (const [slot, binding] of Object.entries(context)) {
+        if (binding.kind === 'viewer') continue;
+        const value = provided[slot]?.[0];
+        const alias = binding.kind === 'context';
+        const label = alias ? readWidgetSurfaceSlotLabel(base, binding.slot) : readings?.labels[slot] ?? null;
+        slots[slot] = {
+            label: t('widgetFrame.followingGroup'),
+            ...(alias ? { groupAlias: true } : {}),
+            value: value === undefined ? null : { value, label },
+        };
+    }
+    if (context[WIDGET_SESSION_CONTEXT_SLOT]?.kind === 'context') {
+        const { session: _session, ...surface } = base;
+        return { ...surface, slots };
+    }
+    return { ...base, slots };
 }
 
 /** Whether a candidate declares inputs: input-bound copies are counted independently in Add. */
@@ -170,7 +205,10 @@ export function widgetSetupFieldsForCandidate(
 ): readonly WidgetSetupField[] {
     const target = readWidgetInputTargetV1(candidate);
     return (candidate.inputs?.fields ?? []).map((field): WidgetSetupField => {
-        if (field.contextMode !== 'own' && target.kind === 'session' && field.path === target.path && context.session) {
+        const binding = bindings?.[field.path];
+        const name = binding?.kind === 'context' ? binding.slot : field.path;
+        const slot = context.slots && Object.hasOwn(context.slots, name) ? context.slots[name] : undefined;
+        if (field.contextMode !== 'own' && target.kind === 'session' && field.path === target.path && context.session && !slot?.groupAlias) {
             const session = context.session;
             return {
                 field,
@@ -181,12 +219,10 @@ export function widgetSetupFieldsForCandidate(
                 },
             };
         }
-        const binding = bindings?.[field.path];
-        const name = binding?.kind === 'context' ? binding.slot : field.path;
-        const slot = context.slots && Object.hasOwn(context.slots, name) ? context.slots[name] : undefined;
-        if (field.contextMode !== 'own' && slot?.value) return { field, follow: {
-            slot: name, label: slot.label, values: [{ ...slot.value, label: slot.value.label ?? field.title }],
-        } };
+        if (field.contextMode !== 'own' && slot?.value) {
+            const label = slot.groupAlias ? describeWidgetPageBindingValue(field, slot.value.value, slot.value.label) : slot.value.label;
+            return { field, follow: { slot: name, label: slot.label, values: [{ ...slot.value, label: label ?? field.title }] } };
+        }
         // On a shared surface a connection is each viewer's own; it is never stored in shared content.
         const purpose = candidate.connectedAccountPurposeBindings?.find(binding => binding.path === field.path)?.purpose;
         if (audience === 'shared' && field.connectedAccountOptions === true && purpose) return { field, viewer: { purpose } };

@@ -1,26 +1,24 @@
 import { useMemo } from 'react';
 import type { InputFieldHint } from '@happier-dev/protocol/inputs/inputFields';
-import type {
-  WidgetInputBindingsV1,
-} from '@happier-dev/protocol/widgets';
+import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import type { HappierWidgetFrameSourceDescriptor } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import type { WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
+import { readWidgetBindingFieldTitle } from '../surface/widgetBindingValueLabel';
 
 /** The displayed pin and the slot it belongs to. A missing name has no replacement value. */
 export function readWidgetGroupHeaderBinding(
   context: WidgetInputBindingsV1 | undefined,
-  readings: Pick<WidgetGroupInputReadings, 'fields' | 'declared' | 'labels'>,
+  readings: Pick<WidgetGroupInputReadings, 'fields' | 'labels'>,
 ): Readonly<{ slot: string; title: string; value: string | null }> | null {
   let first: ReturnType<typeof readWidgetGroupHeaderBinding> = null;
   for (const [slot, binding] of Object.entries(context ?? {})) {
     if (binding.kind !== 'value') continue;
-    const field = readings.fields.find(entry => entry.slot === slot)?.field;
-    const title = field?.title ?? readings.declared?.find(entry => entry.path === slot)?.title ?? slot;
-    const pin = { slot, title, value: field ? readings.labels[slot] ?? null : null };
+    const fields = readings.fields.filter(entry => entry.slot === slot);
+    const title = readWidgetBindingFieldTitle(slot, fields);
+    const pin = { slot, title, value: fields.length > 0 ? readings.labels[slot] ?? null : null };
     if (pin.value) return pin;
     first ??= pin;
   }
@@ -113,30 +111,6 @@ export function buildWidgetGroupInputsCandidate(
       ? { inputSchema: { type: 'object', properties } }
       : {}),
   };
-}
-
-/** The group's slots for a child's own Edit inputs: following the group is one of its choices. */
-export function widgetGroupSurfaceContext(
-  base: WidgetSurfaceContext,
-  context: WidgetInputBindingsV1 | undefined,
-  readings?: WidgetGroupInputReadings,
-): WidgetSurfaceContext {
-  if (!context) return base;
-  const slots: Record<
-    string,
-    NonNullable<WidgetSurfaceContext['slots']>[string]
-  > = { ...base.slots };
-  for (const [slot, binding] of Object.entries(context)) {
-    if (binding.kind !== 'value') continue;
-    slots[slot] = {
-      label: t('widgetFrame.followingGroup'),
-      value: {
-        value: binding.value,
-        label: readings?.labels[slot] ?? null,
-      },
-    };
-  }
-  return { ...base, slots };
 }
 
 /** A group header's source: the group's own chosen value, with the pin it is set by. */

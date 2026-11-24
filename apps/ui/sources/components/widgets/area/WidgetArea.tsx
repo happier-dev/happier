@@ -16,7 +16,7 @@ import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { useWidgetGroupHeaderReading, widgetGroupFollowSource, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupHeaderReading, widgetGroupFollowSource, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
 import { useWidgetGroupCardSource, type WidgetGroupInputReadings } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
@@ -69,7 +69,7 @@ import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInp
 import { isWidgetFollowingSurfaceSlot, useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
-import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { runAcknowledgedWidgetSetupCommand, widgetGroupSurfaceContext, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, widgetDefinitionNamesItsSource, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { t } from '@/text';
@@ -789,7 +789,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const parent = props.parent;
     const groupContext = parent?.group.context;
     const groupLabels = parent?.labels;
-    const itemContext = React.useMemo(() => widgetGroupSurfaceContext(context, groupContext, groupLabels), [context, groupContext, groupLabels]);
+    const itemContext = React.useMemo(() => widgetGroupSurfaceContext(context, groupContext, groupLabels, surface.owner), [context, groupContext, groupLabels, surface.owner]);
     const followedLabel = useWidgetInstanceBindingLabel(instance, candidate, itemContext);
     // A Project page's header chip and a core page's filter bar (Usage) already name what their widgets
     // follow: "This checkout" or "This page" on each frame would repeat it on every card (lab p-overview

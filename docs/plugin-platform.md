@@ -9383,7 +9383,7 @@ child-owned and credential fields are not group inputs. The editor and saved-gro
 Add pane send that child's definition to the ordinary options admission owner. In the
 group editor, the configured-input resolver checks each following child against
 the current draft and the opening page context. An unset field shows their
-agreed value or “Several values” if all resolve and disagree. An agreed value
+agreed value or “Several values” if more than one distinct value resolves. An agreed value
 uses the binding label owner's answer for the child's declared field and
 bound slot. A saved name comes from the owner, or an admitted name from the
 bound page slot. A fresh draft can use the label owner's synchronous answer.
@@ -9409,8 +9409,11 @@ same labels as the group editor. If the label owner withholds the value or
 there is no usable label, the badge names the field. A named group replaces a
 card's source only when its header names the literal pin that card follows.
 A page alias in a named group keeps the card's own source. The per-widget
-Edit inputs menu uses the offered value's safe label or the declared field
-name when the label is withheld or unavailable.
+Edit inputs uses the Protocol group context for alias offers. Its Follow caption
+uses the label owner's answer or the declared field name. The header and its
+Inputs menu use a title shared by every consuming child, with the slot's name
+when no title is shared. The Gallery Add footer also uses the group reading,
+while the editable control continues to show its saved value.
 `widgetGroupMenu` builds the group ⋯ and each widget's group
 entries (Move to group, Remove from group, Ungroup, Group with…) through the
 frame menu's order, and every width choice shows unavailable widths with the

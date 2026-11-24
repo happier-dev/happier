@@ -29,7 +29,7 @@ import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameR
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetInstanceNetworkEditor } from '@/components/widgets/surface/useWidgetInstanceNetworkEditor';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
-import { runWidgetSetupCommand, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { runWidgetSetupCommand, widgetGroupSurfaceContext, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetLayoutGroupV1, type WidgetLayoutItemV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { WidgetGroupFrame } from '@/components/widgets/group/WidgetGroupFrame';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
@@ -37,13 +37,12 @@ import { WidgetGroupMenuButton } from '@/components/widgets/group/WidgetGroupMen
 import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { useWidgetGroupHeaderReading, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupHeaderReading, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
 import { useWidgetGroupCardSource, type WidgetGroupInputReadings } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
 import { HomeWidgetAddPopoverEntry } from '@/components/widgets/add/HomeWidgetAddPopoverEntry';
-import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
 import { WidgetGroupDropFeedback } from '@/components/widgets/group/WidgetGroupDropFeedback';
 import { WidgetGroupMembershipArrivalView, useWidgetGroupMembershipArrivals } from '@/components/widgets/group/widgetGroupMembershipArrival';

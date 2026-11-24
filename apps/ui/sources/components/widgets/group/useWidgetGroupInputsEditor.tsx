@@ -5,7 +5,6 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
   WidgetInputBindingsV1,
   WidgetLayoutGroupV1,
@@ -26,6 +25,7 @@ import {
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useWidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
+import { readWidgetBindingFieldTitle, summarizeWidgetBindingReadings, type WidgetBindingReading } from '@/components/widgets/surface/widgetBindingValueLabel';
 import { t } from '@/text';
 
 import {
@@ -56,11 +56,13 @@ function createGroupInheritedReader(
   });
 
   const declaredSlots = children.flatMap(({ followers }) => followers);
+  const fieldTitles = new Map(fields.map(({ path }) => [path,
+    readWidgetBindingFieldTitle(path, declaredSlots.filter(({ field }) => field.path === path))]));
   return bindings => {
     const readChild = createWidgetGroupFollowedInputReader({
       context, surfaceOwner, bindings, labelledBindings, labels: readings.labels, fields: declaredSlots,
     });
-    const values = new Map<string, { value: JsonValue; label: string } | 'several' | null>();
+    const values = new Map<string, (WidgetBindingReading | null)[]>();
     for (const { instance, descriptor, followers } of children) {
       const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
@@ -68,22 +70,19 @@ function createGroupInheritedReader(
       for (const follower of unset) {
         const { path } = follower.field;
         const reading = read(follower);
-        const previous = values.get(path);
-        if (previous === null) continue;
-        if (!reading?.label) values.set(path, null);
-        else if (!previous) values.set(path, { value: reading.value, label: reading.label });
-        else if (previous !== 'several') {
-          if (!sameStrictJsonValue(previous.value, reading.value)) values.set(path, 'several');
-          else if (previous.label !== reading.label) values.set(path, null);
-        }
+        const matching = values.get(path);
+        if (matching) matching.push(reading);
+        else values.set(path, [reading]);
       }
     }
 
     const inherited = new Map<string, WidgetSetupInheritedReading>();
     for (const field of fields) {
-      const result = values.get(field.path);
-      if (result !== undefined) inherited.set(field.path, result === 'several' ? { kind: 'several' }
-        : { kind: 'single', valueLabel: result?.label ?? field.title });
+      const matching = values.get(field.path);
+      if (!matching) continue;
+      const result = summarizeWidgetBindingReadings(matching);
+      inherited.set(field.path, result?.kind === 'several' ? result
+        : { kind: 'single', valueLabel: result?.label ?? fieldTitles.get(field.path)! });
     }
     return inherited;
   };
@@ -143,8 +142,7 @@ export function useWidgetGroupInputsEditor(
     const fields = descriptor.inputs.fields.map(({ required: _required, requiredWhen: _requiredWhen, ...field }) => field);
     return { ...descriptor, inputs: { ...descriptor.inputs, fields } };
   }, [input.title, input.candidates]);
-  const declared = candidate?.inputs?.fields ?? NO_FIELDS;
-  const readings = React.useMemo(() => ({ fields, byChild, labels, declared }), [fields, byChild, labels, declared]);
+  const readings = React.useMemo(() => ({ fields, byChild, labels }), [fields, byChild, labels]);
   const editable = candidate !== null && scope !== null && setInputs !== undefined;
   const commands = useCurrentUiContextLocalCommands(editable ? [
     { key: 'open', title: t('widgetFrame.groupInputsTitle', { group: input.title }), description: `${testID}.groupInputs.open`,

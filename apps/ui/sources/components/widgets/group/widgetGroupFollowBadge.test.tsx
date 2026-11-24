@@ -17,10 +17,10 @@ import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
 import { WidgetSetupPopover } from '../add/WidgetSetupPopover';
 import { WidgetSetupStep } from '../add/WidgetSetupStep';
 import { useWidgetInstanceBindingLabel } from '../surface/useWidgetInstanceBindingLabel';
-import { widgetSetupFieldsForCandidate, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
+import { widgetGroupSurfaceContext, widgetSetupFieldsForCandidate, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
 import type { WidgetCandidate } from '../widgetCatalog';
 import { readWidgetGroupInputFollowers, useWidgetGroupCardSource, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
-import { describeWidgetGroupInputsBinding, useWidgetGroupHeaderReading, widgetGroupFollowSource, widgetGroupSurfaceContext } from './widgetGroupInputs';
+import { describeWidgetGroupInputsBinding, useWidgetGroupHeaderReading, widgetGroupFollowSource } from './widgetGroupInputs';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -161,7 +161,7 @@ it('prints only label-owner answers across the five mounted group input surfaces
                     const menu = describeWidgetGroupInputsBinding(group, readings);
                     const context = widgetGroupSurfaceContext({}, group, readings);
                     const setupFields = widgetSetupFieldsForCandidate(descriptor, context, 'personal', instance.bindings);
-                    const setupLabel = setupFields[0]?.follow?.values[0]?.label ?? context.slots?.[slot]?.value?.label;
+                    const setupLabel = setupFields[0]?.follow?.values[0]?.label;
                     return <>
                         <HappierWidgetFrame frameStyle="plain" placement="home" title="Group" testID="header" source={header?.source} />
                         <Text testID="menu" accessibilityLabel={menu ?? undefined}>{menu}</Text>
@@ -202,6 +202,28 @@ it('prints only label-owner answers across the five mounted group input surfaces
     const draft = { operand: { kind: 'value', value: { label: 'Safe note', path: '/private/' + marker } } } as const;
     expect.soft(popover.props.readInherited?.(draft).get('followed')).toEqual({ kind: 'single', valueLabel: 'Safe note' });
     await hook.unmount();
+
+    const calendar: WidgetCandidate = { ...candidate, inputs: { fields: [{ path: 'calendar', title: 'Calendar', widget: 'text' }] } };
+    const page = { slots: {
+        a: { label: 'Page', value: { value: 'Today', label: 'A' } },
+        b: { label: 'Page', value: { value: 'Today', label: 'B' } },
+        c: { label: 'Page', value: { value: 'Yesterday', label: 'C' } },
+    } } as const;
+    for (const order of ['abc', 'acb', 'bac', 'bca', 'cab', 'cba']) {
+        const children = Array.from(order, slot => ({ kind: 'widget' as const, instance: {
+            ...instance, id: slot, bindings: { calendar: follow(slot) },
+        } }));
+        const editor = await renderHook(() => useWidgetGroupInputsEditor({
+            group: { kind: 'group', id: 'ordered', width: 'full', frameStyle: 'plain', dividers: 'hairline', children },
+            candidates: children.map(() => calendar), title: 'Group', scope, context: page, testID: 'ordered',
+            setInputs: async () => ({ ok: true }),
+        }));
+        await act(async () => editor.getCurrent().editInputs!.onPress());
+        const form = editor.getCurrent().popover;
+        if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(form)) throw Error('No group editor');
+        expect.soft(form.props.readInherited?.({}).get('calendar'), order).toEqual({ kind: 'several' });
+        await editor.unmount();
+    }
 
     for (const following of [0, 3]) {
         const period: WidgetCandidate = { ...candidate, inputs: { fields: [{ path: 'period', title: 'Period', widget: 'text' }] } };
@@ -324,5 +346,41 @@ it('withdraws a previously visible Session name in an already open group editor'
     } finally {
         setScreenSharingPrivacyActive(false);
         storage.setState(previous, true);
+    }
+});
+
+it('uses the slot name in the header, Inputs menu and badge when consuming titles disagree', async () => {
+    const group = { operand: { kind: 'value', value: '/private/unnamed-operand' } } as const;
+    const declarations = ['Directory', 'Target', 'Directory'].map(title => ({
+        slot: 'operand', sessionTarget: false, field: { path: 'targetPath', title, widget: 'text' as const },
+    }));
+    const instance: WidgetInstanceV1 = { v: 1, id: 'child', definition, bindings: { targetPath: follow('operand') } };
+    const descriptor: WidgetCandidate = { ...candidate, inputs: { fields: [declarations[0]!.field] } };
+    for (const order of ['012', '021', '102', '120', '201', '210']) {
+        const fields = Array.from(order, digit => declarations[Number(digit)]!);
+        const readings = groupReading(instance, fields, { operand: null });
+        const output = await renderHook(() => ({
+            header: useWidgetGroupHeaderReading(true, group, readings)?.source?.text,
+            menu: describeWidgetGroupInputsBinding(group, readings),
+            badge: useWidgetGroupCardSource(instance, descriptor, {}, { kind: 'home' }, group, readings)?.value,
+            editor: useWidgetGroupInputsEditor({
+                group: { kind: 'group', id: 'order', width: 'full', frameStyle: 'plain', dividers: 'hairline', context: group,
+                    children: fields.map((_, index) => ({ kind: 'widget', instance: { ...instance, id: `child-${index}` } })) },
+                candidates: fields.map(({ field }) => ({ ...candidate, inputs: { fields: [field] } })),
+                title: 'Group', scope: { serverId: 'home', accountId: 'actor', owner: { kind: 'home' } }, context: {},
+                setInputs: async () => ({ ok: true }), testID: 'order',
+            }),
+        }));
+        const { editor, ...captions } = output.getCurrent();
+        expect.soft(captions, order).toEqual({ header: 'operand', menu: 'operand', badge: 'operand' });
+        await act(async () => editor.editInputs!.onPress());
+        const popover = output.getCurrent().editor.popover;
+        if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
+        expect.soft(popover.props.readInherited?.(group).get('targetPath'), order).toEqual({ kind: 'single', valueLabel: 'operand' });
+        await output.unmount();
+    }
+    for (const fields of [[], [declarations[0]!, declarations[2]!]]) {
+        const readings = groupReading(instance, fields, { operand: null });
+        expect(describeWidgetGroupInputsBinding(group, readings)).toBe(fields.length ? 'Directory' : 'operand');
     }
 });
