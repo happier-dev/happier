@@ -108,6 +108,36 @@ describe('evaluatePluginUiCommonJsBundle', () => {
             for (const bridge of bridges) bridge.dispose();
         }
     });
+    it('projects authored Action failures through the compiled plugin host ABI', async () => {
+        const repoRoot = resolve(import.meta.dirname, '../../../../../..');
+        const packages = await readWorkspacePackages(repoRoot);
+        const specifier = '@happier-dev/plugin-sdk/actions';
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-action-failure-'));
+        try {
+            const entryPath = join(root, 'entry.ts');
+            const requestedExport = 'readFailure';
+            await writeFile(entryPath, [
+                `import { readPluginActionFailureAuthorPayload } from ${JSON.stringify(specifier)};`,
+                'export function readFailure() { return readPluginActionFailureAuthorPayload({ details: { source: "Sentry" }, effectAttempted: false }); }',
+            ].join('\n'));
+            const result = await compileUniversalPluginUiCommonJs({
+                projectRoot: root, entryPath, artifactId: 'triage-action-failure', requestedExports: [requestedExport],
+            });
+            const source = resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] });
+            const bridge = await loadVitestModuleForNodeRequire(
+                pathToFileURL(createRequire(import.meta.url).resolve(specifier)),
+                () => import(pathToFileURL(source).href));
+            try {
+                const read = evaluatePluginUiCommonJsBundle({ bytes: result.bytes, identity, requestedExport });
+                expect(read()).toEqual({ details: { source: 'Sentry' }, effectAttempted: false });
+            } finally {
+                bridge.dispose();
+            }
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('evaluates compiled schemas using the same host Zod and Protocol identities', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-host-ui-schemas-'));
         try {

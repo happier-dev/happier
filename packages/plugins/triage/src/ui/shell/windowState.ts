@@ -465,7 +465,9 @@ export function readTriageListFailureLine(
     : readUnpacedListFailureLine({ ...failure, sources: otherSources }, text, locale);
   return Object.freeze({
     label: otherLine === null ? pacedLabel : `${pacedLabel}\n${otherLine.label}`,
-    recovery: otherLine?.recovery ?? 'retry',
+    recovery: otherLine?.recovery ?? (paced.some(source => evaluateRefreshEligibility({
+      nowMs, retryNotBeforeMs: source.retryNotBeforeMs ?? null,
+    }).kind === 'eligible') ? 'retry' : null),
   });
 }
 

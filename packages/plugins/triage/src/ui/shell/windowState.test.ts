@@ -301,16 +301,30 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
     expect(state.failure.sources[0]?.needsConnectionChange).toBe(false);
   });
-  it('carries a paced source reset from list health to the list line', () => {
-    const retryNotBeforeMs = Date.now() + 60_000;
-    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
-      sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
-      health: { kind: 'failed', failure: { class: 'rateLimit', code: 'http_429', retryNotBeforeMs } },
-    }] }) }));
-    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected named source health');
-    const paced = readTriageListFailureLine(state.failure);
-    expect(paced.label).toContain('asked us to wait · next read');
-    expect(paced.label).not.toContain('could not be read');
+  it('keeps the source reset and retained rows without offering early Retry on the pacing line', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const retryNotBeforeMs = Date.now() + 60_000;
+      const current = snapshot({ window: window({
+        rows: [{ entryRef: testkitEntryRef({ source: SOURCE }), content: null, lane: '1-open', sortAtMs: 1,
+          presence: { kind: 'present', observedAtMs: 1 }, attention: null,
+          selected: { kind: 'selected', sourceInstanceId: INSTANCE, reason: 'onlyPresent' },
+          observations: [testkitObservation({ sourceInstanceId: INSTANCE })] }],
+        lanes: [{ sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
+          health: { kind: 'failed', failure: { class: 'rateLimit', code: 'sentry-rate-limited', retryNotBeforeMs } } }],
+      }) });
+      const state = resolveTriageListShellState(current);
+      if (state.kind !== 'window' || state.failure === null) throw new Error('Expected named source health');
+      expect(state.failure.retainedRows).toBe(true);
+      expect(resolveTriageListRefreshV1(current, Date.now()).kind).toBe('available');
+      expect(readTriageListFailureLine(state.failure)).toMatchObject({
+        label: expect.stringContaining('asked us to wait · next read'), recovery: null,
+      });
+      vi.setSystemTime(retryNotBeforeMs);
+      expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says a paced source as one sentence with its subject and reset, beside rows or not (N12)', () => {
