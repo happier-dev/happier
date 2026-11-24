@@ -46,6 +46,7 @@ import { resolveSessionStartBackendTarget, resolveSessionStartModelSelection } f
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
+import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { createForegroundAdmissionError, DirectProviderLaunchError } from './foregroundAdmissionFailure';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import {
@@ -579,8 +580,13 @@ Provider CLI Options:
                 throw foregroundHandoffComplete;
               }
               const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
-              if (result.type !== 'success') throw Object.assign(new Error(result.type === 'error' ? result.code : 'session_spawn_pending'),
-                { code: result.type === 'error' ? result.code : 'outcome_unknown' });
+              if (result.type === 'error') {
+                if ('providerError' in result && result.providerError) throw createForegroundAdmissionError(result.providerError);
+                if ('launchError' in result && result.launchError) throw createForegroundAdmissionError(result.launchError);
+                const message = result.code === 'agent_cli_missing' ? AGENT_CLI_MISSING_PREVIEW : result.code;
+                throw Object.assign(new Error(message), { code: result.code });
+              }
+              if (result.type === 'pending') throw Object.assign(new Error('session_spawn_pending'), { code: 'outcome_unknown' });
               await handleAttachCommand([result.sessionId], { terminalRuntime: params.context.terminalRuntime });
               throw foregroundHandoffComplete;
             }

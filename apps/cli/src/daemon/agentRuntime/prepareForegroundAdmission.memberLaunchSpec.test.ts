@@ -6,12 +6,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { configuration } from '@/configuration';
 import { ApiClient } from '@/api/api';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createSessionAgentIsolationMemberPreparation } from '@/daemon/agentIsolation/sessionPreparation';
 import { runMemberAgentEffect } from '@/daemon/agentIsolation/runMemberNativeOperation';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import * as processIdentity from '@/daemon/processIdentity';
 
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { createForegroundPurposeOwnerFixture } from './prepareForegroundAdmission.connectedServices.testkit';
+import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdmissionContract';
 
 // The privileged member process is the OS boundary. Keep admission and claim real.
 vi.mock('@/daemon/agentIsolation/runMemberNativeOperation', async importOriginal => ({
@@ -20,6 +23,49 @@ vi.mock('@/daemon/agentIsolation/runMemberNativeOperation', async importOriginal
 }));
 
 describe('foreground Agent CLI launch admission', () => {
+  it.skipIf(process.platform !== 'linux')('hands a fresh owner Codex terminal to the admitted isolated Session launch', async () => {
+    await withRealForegroundAdmissionFixture({}, async fixture => {
+      const machineId = 'machine-1';
+      const accountId = 'fixture-owner';
+      const serverIdentityId = 'fixture-home';
+      const agentIsolation: HostAgentIsolationLaunchContext = {
+        read: () => ({
+          enabled: true, memberProvisioning: 'linuxUsersV1',
+          status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [],
+        }),
+        prepareMember: async ({ requesterIdentity }) => ({
+          identity: {
+            ...deriveAgentIsolationMemberIdentity(requesterIdentity),
+            home: join(fixture.home, 'owner-agent'),
+            agentUid: 994,
+            agentGid: 994,
+          },
+          daemonObservation: { daemonIdentity: 'nonRoot', daemonUid: 1000, daemonUsername: 'happier' },
+        }),
+      };
+      const prepareAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
+        machineId, custodianAccountId: accountId, agentIsolation,
+      })(null, new AbortController().signal, {
+        kind: 'freshAccount',
+        origin: { machineId, serverIdentityId },
+        hostAccountAgent: { accountId, custodianAccountId: accountId, machineId, installationId: 'guest-installation' },
+      });
+
+      // Plain `happier codex` in the owner's person terminal has Happier sign-in
+      // and no daemon-spawned runtime descriptor or Connected Account choice.
+      const result = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await fixture.prepare({}, {
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+        agentIsolation,
+        prepareAgentIsolationMember,
+      }));
+      expect(result).toMatchObject({
+        ok: false,
+        error: { failureCause: { phase: 'foreground.member_runtime_descriptor' } },
+        sessionSpawnRequired: { machineId },
+      });
+    });
+  });
+
   it.skipIf(process.platform !== 'linux')('claims the executable already admitted for the separated member', async () => {
     await withRealForegroundAdmissionFixture({
       runtimeOptions: { pluginIds: ['happier.agent.claude'] },

@@ -3051,6 +3051,11 @@ binding qualification used by launch. A missing native user returns the typed
 an unchanged policy does not establish member readiness. The UI presents that
 unavailable status as the repair result.
 
+When a new Session is started from a person terminal and Agent isolation selects
+a separate member user, the CLI hands the start to the daemon and attaches after
+creation. The daemon uses the member user's Agent runtime. If that runtime is
+missing, install the Agent for the member on that Machine and try again.
+
 Before the requester has a retained member binding, the read-only
 `machines.agentIsolation.status` reports `setup_pending` with
 `member_not_prepared`. The first Agent installation or Session launch prepares

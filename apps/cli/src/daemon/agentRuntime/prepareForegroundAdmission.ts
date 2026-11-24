@@ -825,7 +825,12 @@ export async function prepareForegroundAgentRuntimeAdmission(
     });
     const foregroundMemberIdentity = foregroundPreparedIdentity?.kind === 'member' ? foregroundPreparedIdentity.identity : undefined;
     if (foregroundMemberIdentity && !request.runtimeDescriptorV1) {
-      return refusal(unsupportedForegroundRuntime('foreground.member_runtime_descriptor', { machineId: request.machineId }));
+      const error = unsupportedForegroundRuntime('foreground.member_runtime_descriptor', { machineId: request.machineId });
+      if (!request.existingSessionId && !request.vendorResumeId && !request.nativeFork) {
+        // The Session spawn owner can admit and launch the child under the selected member identity.
+        return { ok: false, error, sessionSpawnRequired: { machineId: request.machineId } };
+      }
+      return refusal(error);
     }
     const foregroundNativeIdentity = foregroundPreparedIdentity?.identity;
     const agentLaunchTarget = foregroundNativeIdentity ? {

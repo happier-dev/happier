@@ -57,7 +57,7 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
-  policyHandoff?: boolean | 'approval' | 'attach';
+  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli';
   nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
@@ -70,6 +70,7 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: true },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'attach' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'approval' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'missing-cli' },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -180,6 +181,9 @@ describe('foreground CLI runner authority scope', () => {
             type: 'success', disposition: 'created', sessionId: 'cforegroundpolicysession01',
             executionTarget: { serverId: 'foreground-fixture', machineId: 'policy-machine' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+          } });
+          if (policyHandoff === 'missing-cli') return respond(200, { ok: true, result: {
+            type: 'error', code: 'agent_cli_missing', agentId: 'codex', retryable: false,
           } });
           return respond(200, { ok: false, errorCode: 'target_unavailable', error: 'policy-fixture-refusal' });
         }
@@ -358,6 +362,9 @@ describe('foreground CLI runner authority scope', () => {
         expect(authorizations).toHaveLength(0);
         if (policyHandoff === 'attach') {
           expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01'))).toBe(true);
+        }
+        if (policyHandoff === 'missing-cli') {
+          expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain(AGENT_CLI_MISSING_PREVIEW);
         }
         if (policyHandoff === 'approval') {
           expect(presentation.mock.calls.flat().join(' ')).toContain('foreground-spawn-approval');
