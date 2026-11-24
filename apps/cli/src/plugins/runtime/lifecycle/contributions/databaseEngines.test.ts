@@ -18,7 +18,7 @@ import { createDatabaseEnginesService } from './databaseEngines';
 
 describe('contributed database engine catalogue compatibility', () => {
     const postgresBinaries = process.env.HAPPIER_TEST_POSTGRES_BIN ?? '/usr/lib/postgresql/16/bin';
-    it.skipIf(!existsSync(join(postgresBinaries, 'initdb')))('opens builtin PostgreSQL through the same SDK engine service and settles one transaction', async () => {
+    it.skipIf(!existsSync(join(postgresBinaries, 'initdb')))('opens managed PostgreSQL through the native driver without an engine contribution', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'dbw-engine-pg-'));
         const run = promisify(execFile);
         let started = false;
@@ -32,13 +32,15 @@ describe('contributed database engine catalogue compatibility', () => {
             const sql = (statement: string) => run(join(postgresBinaries, 'psql'), ['-X', '-At', '-h', directory, '-U', 'fixture', '-d', 'postgres', '-c', statement]);
             expect((await sql('SELECT 1')).stdout.trim()).toBe('1');
             await sql("CREATE TABLE selected(id bigint PRIMARY KEY, value text, mutations integer NOT NULL DEFAULT 0); INSERT INTO selected(id,value) VALUES(1,'before')");
-            const engines = createDatabaseEnginesService({ targets: [], registry });
+            const engines = createDatabaseEnginesService({ targets: contributes.activationTargets, registry });
+            expect(engines.list()).toEqual([]);
             const connection = await engines.open('postgresql', {
                 connectionString: `postgresql://fixture@localhost/postgres?host=${encodeURIComponent(directory)}`, access: 'write' });
             const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
                 targetLinkId: 'selected', contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
                 platformProjectId: 'project', branchId: 'branch', database: 'postgres' };
             try {
+                expect(connection.engine).toBe('postgresql');
                 expect(await connection.execute({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction', statements: [{
                     sql: 'UPDATE selected SET value=$1, mutations=mutations+1 RETURNING value AS duplicate, 9007199254740993::bigint AS duplicate',
                     parameters: [{ type: 'text', value: 'committed' }],
@@ -54,6 +56,21 @@ describe('contributed database engine catalogue compatibility', () => {
         } finally {
             await registry.dispose();
             if (started) await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it('keeps using the native MySQL driver when no plugin declares it', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'dbw-engine-mysql-'));
+        const contributes = createResolvedContributionRegistry({});
+        const registry = await activatePluginRuntimeRegistry({ contributes, generation: 1 });
+        try {
+            const engines = createDatabaseEnginesService({ targets: contributes.activationTargets, registry });
+            const socketPath = encodeURIComponent(join(directory, 'absent.sock'));
+            await expect(engines.open('mysql', {
+                connectionString: `mysql://fixture@localhost/fixture?socketPath=${socketPath}`, access: 'write',
+            })).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+            await registry.dispose();
             await rm(directory, { recursive: true, force: true });
         }
     });
