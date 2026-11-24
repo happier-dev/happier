@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createMcpServerActionExecuteV1, projectMcpServerActionFailureV1,
     MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { McpServerCatalogSnapshotV1Schema } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
@@ -164,8 +165,16 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                 },
                 machine: async ({ actionId, input, machineId }) => {
                     assertCurrent();
-                    let response: unknown;
-                    try {
+                    // On another person's Machine only this Account's Home-signed Action carries its
+                    // own MCP catalog and secrets; that transport decides custody and returns null for an own Machine.
+                    const { executeOriginalAccountMachineAction } = await import('@/sync/api/externalActionAccountTransport');
+                    const foreign = await executeOriginalAccountMachineAction({ account, actionId, input, machineId,
+                        requestId: context.actionRequestId ?? randomUUID(), authority: context.authority,
+                        actionCaller: context.actionCaller, signal: cancellation.signal, foreignTargetOnly: true });
+                    assertCurrent();
+                    if (foreign && !foreign.ok) throw createActionExecuteFailureError(foreign);
+                    let response: unknown = foreign?.result;
+                    if (!foreign) try {
                         response = await machineRpcWithServerScope({ machineId, serverId: account.serverId,
                             accountId: account.accountId, preferScoped: true, requestId: context.actionRequestId ?? undefined,
                             method: actionId === 'mcp.servers.test' ? RPC_METHODS.DAEMON_MCP_SERVERS_TEST : RPC_METHODS.DAEMON_MCP_SERVERS_DETECT,

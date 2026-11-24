@@ -1,7 +1,8 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure, type ActionExecuteResult } from '../../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, parseActionExecuteFailure, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure, type ActionExecuteResult } from '../../actions/actionExecutionResult.js';
 import { readRpcErrorCode } from '../../rpc/errors.js';
+import { readActionErrorCodeV1 } from '../../actions/actionErrorClassV1.js';
 import { SavedSecretOperationAdmissionFailureReasonV1Schema } from '../../account/settings/savedSecretReferenceV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
 import type { PluginAgentToolsCapabilityV2 } from '../../plugins/contributions/v2.js';
@@ -87,6 +88,11 @@ const catalogFailureCodes = new Set<string>([
 
 /** Domain/transport causes can contain literal credentials; expose only owned refusal codes. */
 export function projectMcpServerActionFailureV1(cause: unknown, signInStage?: McpSignInFailureStageV1): ActionExecuteFailure {
+  const refusal = parseActionExecuteFailure(cause);
+  // An owner's typed refusal (e.g. a Machine Action's admission) passes through with its
+  // code, phase and effect fact; its prose stays behind like every other cause.
+  if (refusal?.failureCause && !signInStage && readActionErrorCodeV1({ code: refusal.errorCode }) === refusal.errorCode) return { ok: false, errorCode: refusal.errorCode, error: refusal.errorCode,
+    failureCause: refusal.failureCause, ...(refusal.effectAttempted === undefined ? {} : { effectAttempted: refusal.effectAttempted }) };
   const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
   const rpcFailure = ClientActionRpcFailureCodeV1Schema.safeParse(readRpcErrorCode(cause) ?? code);
   const aborted = cause && typeof cause === 'object' && 'name' in cause && cause.name === 'AbortError';

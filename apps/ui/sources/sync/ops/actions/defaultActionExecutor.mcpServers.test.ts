@@ -14,7 +14,10 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { encodeBase64 } from '@/encryption/base64';
 import { McpServerCatalogRowMutationV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import nacl from 'tweetnacl';
 import { PluginProjectionV2Schema, buildDeferredDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -89,12 +92,13 @@ async function prepareToolFactsHome(includeMachine = true, installedAgentIds = O
     onCatalogRead?: () => void, maintenanceReady?: Promise<void>, catalogState?: Readonly<{
         revision?: () => number; catalog?: () => McpServerCatalogV1; mode?: () => 'plain' | 'e2ee';
         row?: () => unknown; settings?: () => Readonly<Record<string, unknown>>;
+        respond?: (target: URL, init?: RequestInit) => Promise<Response | undefined>;
     }>) {
     const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
         homeServerIdentityId: 'srv_mcp_tool_facts', canonicalServerUrl: 'https://mcp-tool-facts.test', revision: 1,
         endpoints: [{ kind: 'https', url: 'https://mcp-tool-facts.test' }] } });
     await setActiveServerId(home.id);
-    const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'tool-owner' })), 'base64url')}.signature`;
+    const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'tool-owner', tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
     const write = await TokenStorage.setCredentialsForServerUrlWithRollback(home.serverUrl, { serverId: home.id }, { token });
     if (!write) throw new Error('Test Home credentials unavailable');
     credentialWrites.push(write);
@@ -106,10 +110,12 @@ async function prepareToolFactsHome(includeMachine = true, installedAgentIds = O
     getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
     if (includeMachine) expect(resolveUiAccountActionFallbackMachineId({ serverId: home.id, accountId: 'tool-owner' })).toBe('facts-machine');
-    setRuntimeFetch(async url => {
+    setRuntimeFetch(async (url, init) => {
         const target = new URL(String(url));
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
         expect(target.origin).toBe(home.serverUrl);
+        const extra = await catalogState?.respond?.(target, init);
+        if (extra) return extra;
         if (target.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
         if (target.pathname === '/v1/account/encryption') return Response.json({ mode: catalogState?.mode?.() ?? 'plain', updatedAt: 0 });
         if (target.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
@@ -287,10 +293,16 @@ describe('UI MCP per-Agent tool facts', () => {
     });
 
     it.each([false, true])('keeps sign-in on the MCP target used by Test (explicit=%s)', async explicit => {
+        const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const home = await prepareToolFactsHome(true, [], undefined, undefined, { catalog: () => ({ v: 1, bindings: [],
             servers: [{ id: 'server', name: 'server', transport: 'http', remote: { url: 'https://mcp.fixture.test/mcp',
-                headers: {}, auth: { kind: 'oauth' } }, env: {}, createdAt: 1, updatedAt: 1 }] }) });
-        const selected = createMachineFixture({ id: 'mcp-machine', active: true, activeAt: explicit ? 1 : Date.now() });
+                headers: {}, auth: { kind: 'oauth' } }, env: {}, createdAt: 1, updatedAt: 1 }] }),
+            // Home answers this Account's own Machine rows; own Machines keep the direct Machine RPC.
+            respond: async (target, init) => target.pathname === '/v1/machines/read-batch'
+                ? createMachineReadBatchResponseFixture(init?.body, id => createPlainMachineRowFixture({ id, accountId: 'tool-owner' }))
+                : undefined });
+        const selected = createMachineFixture({ id: 'mcp-machine', active: true, activeAt: explicit ? 1 : Date.now(),
+            access: { custodian: { accountId: 'tool-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
         const state = getStorage().getState();
         const machines = [...Object.values(state.machines), selected];
         getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
@@ -317,6 +329,55 @@ describe('UI MCP per-Agent tool facts', () => {
             expect(await execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server' }, context }))
                 .toMatchObject({ ok: false, errorCode: 'mcp_sign_in_not_supported' });
             expect(projectionRpc.mock.calls.map(([request]) => request.machineId)).toEqual([selected.id, selected.id]);
+        } finally { account.dispose(); }
+    });
+
+    it.each(['admitted', 'refused'] as const)('tests a guest\'s own server on another person\'s Machine through Home custody (%s)', async outcome => {
+        const guestMachineId = 'owner-machine';
+        const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const row = { ...createPlainMachineRowFixture({ id: guestMachineId, accountId: 'machine-owner',
+            machine: createMachineFixture({ id: guestMachineId, activeAt: Date.now(), access: {
+                custodian: { accountId: 'machine-owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }) }),
+            installationPublicKey: encodeBase64(nacl.sign.keyPair().publicKey, 'base64') };
+        const homeActions: string[] = [];
+        const testResult = { ok: true, toolCount: 1, toolNamesSample: ['guest_marker'], durationMs: 1 };
+        const refusal = { ok: false, errorCode: 'agent_isolation_unavailable', error: 'agent_isolation_unavailable', effectAttempted: false,
+            failureCause: { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null } };
+        const home = await prepareToolFactsHome(true, [], undefined, undefined, { respond: async (target, init) => {
+            if (target.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+                id => id === guestMachineId ? row : null);
+            if (target.pathname === '/v1/actions/mcp.servers.test/execution-authorization') {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                homeActions.push('mint');
+                return Response.json({ v: 1, token: 'home-mcp-test-proof', binding: {
+                    serverIdentityId: home.serverIdentityId, accountId: 'tool-owner', authentication: { kind: 'account', tokenEpoch: 0 },
+                    actionId: 'mcp.servers.test', requestId: request.envelope.requestId, target: { kind: 'machine', machineId: guestMachineId },
+                    machineId: guestMachineId, installationId: row.installationId, custodianAccountId: 'machine-owner',
+                    accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } });
+            }
+            if (target.pathname === '/v1/actions/mcp.servers.test') {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                homeActions.push('execute');
+                return Response.json({ v: 1, actionId: 'mcp.servers.test', requestId: request.envelope.requestId,
+                    execution: outcome === 'admitted' ? { ok: true, result: testResult } : refusal });
+            }
+            return undefined;
+        } });
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { createUiMcpServerActionExecuteV1 } = await import('./mcpServerActionDeps');
+        const account = await captureLazyActionAccountContext(home.id);
+        // The raw daemon RPC carries no requester Account material; a foreign Machine must never receive it.
+        projectionRpc.mockImplementation(async () => { throw Object.assign(new Error('Forbidden'), { rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN }); });
+        try {
+            const result = await createUiMcpServerActionExecuteV1(account)({ actionId: 'mcp.servers.test',
+                input: { t: 'byId', serverId: 'server', machineId: guestMachineId, directory: '/' },
+                context: { serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                    actionRequestId: 'guest-mcp-test' } });
+            expect(result).toEqual(outcome === 'admitted' ? { ok: true, result: testResult }
+                : { ok: false, errorCode: 'agent_isolation_unavailable', error: 'agent_isolation_unavailable',
+                    effectAttempted: false, failureCause: refusal.failureCause });
+            expect(homeActions).toEqual(['mint', 'execute']);
+            expect(projectionRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MCP_SERVERS_TEST)).toEqual([]);
         } finally { account.dispose(); }
     });
 
