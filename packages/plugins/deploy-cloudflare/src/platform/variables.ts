@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
@@ -8,7 +9,7 @@ import type { DeploymentTargetVariablesSyncInputV1, DeploymentTargetVariablesSyn
   from '@happier-dev/plugin-sdk/deployment-targets';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
-import { request } from './deploymentHttp.js';
+import { request, requestTeardownResource, type DeploymentContext } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 import { createDeploymentTargetVariableSyncV1, projectDeploymentTargetVariablesV1,
   type DeploymentTargetObservedVariableV1 } from '@happier-dev/deployment-protocol/v1';
@@ -96,6 +97,12 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
   // https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json
   // /workers/workers/{worker_id}/previews/{preview_id}/deployments/latest
   if (product === 'workers' && input.providerEnvironment.selection.kind !== 'script') refuse('unsupported_action');
+  const destination = input.telemetryDestination;
+  if (destination && product !== 'workers') refuse('unsupported_action');
+  if (destination?.decision === 'activate') {
+    return { v: 1, owned: input.owned, variables: [], failures: [],
+      telemetryDestination: await syncWorkerTelemetryDestination(input, destination, context) };
+  }
   const observed = await snapshot(product, input, context);
   // Worker Builds uses a separate trigger-scoped API. Runtime settings cannot
   // satisfy any build row, even when a same-name runtime row follows it.
@@ -162,7 +169,133 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
   for (const { key } of planned.remove) {
     if (await write(key, null)) planned.acknowledgeRemove(key);
   }
-  return planned.result();
+  const result = planned.result();
+  return destination ? { ...result, telemetryDestination: await syncWorkerTelemetryDestination(input, destination, context) } : result;
+}
+
+type DestinationSync = NonNullable<SyncResult['telemetryDestination']>;
+type Destination = DestinationSync['owned'][number];
+type DestinationFailure = DestinationSync['failures'][number]['code'];
+type DestinationIntent = NonNullable<Sync['telemetryDestination']>;
+const destinationPath = '/workers/observability/destinations';
+const destinationPathForSlug = (slug: string) => `${destinationPath}/${encodeURIComponent(slug)}`;
+const destinationNamePrefix = (targetLinkId: string, type: Destination['type']) => `happier-${targetLinkId}-${type}-`;
+const destinationNameSuffix = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+
+/** Stored Link handles are claims. Check the provider's name before a write.
+ * The v4 API exposes a paginated list and no read by slug. Discard headers.
+ * https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/destinations/methods/list/
+ */
+async function readOwnedDestinationName(io: DeploymentContext, accountId: string,
+  targetLinkId: string, destination: Destination): Promise<string | null> {
+  const perPage = 50; // Cloudflare's documented maximum.
+  for (let page = 1; ; page++) {
+    const reply = await request(io, accountId, `${destinationPath}?page=${page}&perPage=${perPage}`, 'observe');
+    if ('code' in reply) throw new PluginError({ code: reply.code });
+    if (!Array.isArray(reply.value) || reply.value.length > perPage) refuse('provider_response_invalid');
+    for (const row of reply.value) {
+      if (!isObject(row) || typeof row.slug !== 'string' || typeof row.name !== 'string') refuse('provider_response_invalid');
+      if (row.slug !== destination.slug) continue;
+      const prefix = destinationNamePrefix(targetLinkId, destination.type);
+      if (!row.name.startsWith(prefix) || !destinationNameSuffix.test(row.name.slice(prefix.length))) {
+        refuse('deployment_access_denied');
+      }
+      return row.name;
+    }
+    if (reply.value.length < perPage) return null;
+  }
+}
+
+function destinationFailure(error: unknown): DestinationFailure {
+  if (!isPluginError(error)) return 'outcome_unknown';
+  const httpStatus = error.data.failureCause?.httpStatus;
+  if (httpStatus === 409) return 'deployment_conflict';
+  switch (error.code) {
+    case 'deployment_access_denied':
+    case 'secret_use_client_required':
+    case 'secret_missing':
+    case 'plugin_secret_custody_unavailable':
+    case 'provider_request_failed':
+    case 'provider_response_invalid':
+      return error.code;
+    default:
+      return httpStatus === 404 ? 'provider_request_failed' : 'outcome_unknown';
+  }
+}
+
+/** Both the reviewed off path and Worker teardown release these exact account
+ * resources. Absent is success. A failed deletion retains its ownership. */
+export async function removeWorkerTelemetryDestinations(io: DeploymentContext, accountId: string,
+  targetLinkId: string, destinations: readonly Destination[]): Promise<DestinationSync> {
+  const owned: Destination[] = [];
+  const failures: DestinationSync['failures'] = [];
+  for (const destination of destinations) {
+    try {
+      if (await readOwnedDestinationName(io, accountId, targetLinkId, destination) === null) continue;
+      await requestTeardownResource(io, accountId, destinationPathForSlug(destination.slug), ['write', 'DELETE']);
+    } catch (error) {
+      owned.push(destination);
+      failures.push({ type: destination.type, code: destinationFailure(error) });
+    }
+  }
+  return { owned, configured: [], failures };
+}
+
+/** Cloudflare's v4 account-level API takes one dataset per destination. Only
+ * acknowledged identifiers cross back out of this boundary. (2026-11-24.)
+ * https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/destinations/
+ */
+async function syncWorkerTelemetryDestination(input: Sync, intent: DestinationIntent,
+  context: PluginAccountActionContext): Promise<DestinationSync> {
+  const io = pagesIo(context);
+  const { providerAccountId } = input.providerIdentity;
+  if (intent.decision === 'remove') return removeWorkerTelemetryDestinations(io, providerAccountId, input.targetLinkId, intent.owned);
+
+  const types = ['traces', 'logs'] as const;
+  const owned = [...intent.owned];
+  const configured: DestinationSync['configured'] = [];
+  const failures: DestinationSync['failures'] = [];
+  if (intent.decision === 'activate' && owned.length === 0) return { owned, configured, failures };
+
+  let bearer: Promise<string> | undefined;
+  for (const type of types) {
+    const handle = owned.find(row => row.type === type);
+    const dataset = 'opentelemetry-' + type;
+    const configuration = { type: 'logpush', url: new URL('/v1/' + type, intent.collectorUrl).href };
+    try {
+      if (intent.decision === 'allocate') {
+        if (handle) continue;
+        const name = destinationNamePrefix(input.targetLinkId, type) + randomUUID();
+        const reply = await request(io, providerAccountId, destinationPath, 'send', ['write', 'POST'], {
+          name, enabled: false, configuration: { ...configuration, logpushDataset: dataset, headers: {} },
+        });
+        if ('code' in reply) throw new PluginError({ code: reply.code });
+        const value = reply.value;
+        if (!isObject(value) || typeof value.slug !== 'string' || !value.slug || value.name !== name
+          || value.enabled !== false || !isObject(value.configuration) || value.configuration.logpushDataset !== dataset)
+          refuse('provider_response_invalid');
+        owned.push({ type, slug: value.slug });
+      } else if (handle) {
+        const name = await readOwnedDestinationName(io, providerAccountId, input.targetLinkId, handle);
+        if (name === null) refuse('provider_request_failed');
+        if (!context.services.secrets) refuse('secret_use_client_required');
+        bearer ??= context.services.secrets.readSavedSecret(intent.bearer.ref,
+          { resourceRevision: intent.bearer.resourceRevision, signal: context.signal });
+        const reply = await request(io, providerAccountId, destinationPathForSlug(handle.slug), 'send', ['write', 'PATCH'], {
+          enabled: true, configuration: { ...configuration, headers: { Authorization: 'Bearer ' + await bearer }, replaceHeaders: true },
+        });
+        if ('code' in reply) throw new PluginError({ code: reply.code });
+        const value = reply.value;
+        if (!isObject(value) || value.slug !== handle.slug || value.name !== name
+          || value.enabled !== true || !isObject(value.configuration) || value.configuration.logpushDataset !== dataset)
+          refuse('provider_response_invalid');
+        configured.push({ ...handle, name: value.name });
+      }
+    } catch (error) {
+      failures.push({ type, code: destinationFailure(error) });
+    }
+  }
+  return { owned, configured, failures };
 }
 
 function action(product: Product, operation: 'read' | 'sync') {

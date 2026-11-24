@@ -534,7 +534,8 @@ export const DeploymentBindingsSetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, preparedArtifact: z.optional(DeploymentArtifactContentReferenceV1Schema),
     providerVariables: z.optional(z.strictObject({ v: z.literal(1),
         variables: DeploymentTargetVariablesReadResultV1Schema.shape.variables,
-        failures: DeploymentTargetVariablesSyncResultV1Schema.shape.failures, persisted: z.boolean() })) }),
+        failures: DeploymentTargetVariablesSyncResultV1Schema.shape.failures,
+        telemetryDestination: DeploymentTargetVariablesSyncResultV1Schema.shape.telemetryDestination, persisted: z.boolean() })) }),
   DeploymentActionFailureV1Schema,
 ]));
 export type DeploymentBindingsSetResultV1 = z.infer<typeof DeploymentBindingsSetResultV1Schema>;

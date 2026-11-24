@@ -26,7 +26,12 @@ beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix
     initEncrypt: true, initAuth: true, env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '' } }); }, 180_000);
 afterAll(async () => { if (harness) await harness.close(); });
 
-it.each(['plain', 'e2ee'] as const)('commits %s platform bindings and exact same-Link provenance with one Environment CAS', async mode => {
+it.each([
+    { mode: 'plain', targetKind: 'vercel', pluginId: 'happier.deploy.vercel' },
+    { mode: 'e2ee', targetKind: 'vercel', pluginId: 'happier.deploy.vercel' },
+    { mode: 'plain', targetKind: 'cloudflare-workers', pluginId: 'happier.deploy.cloudflare' },
+    { mode: 'e2ee', targetKind: 'cloudflare-workers', pluginId: 'happier.deploy.cloudflare' },
+] as const)('commits $mode $targetKind bindings and exact same-Link provenance with one Environment CAS', async ({ mode, targetKind, pluginId }) => {
     const keys = nacl.box.keyPair();
     const owner = await db.account.create({ data: { encryptionMode: mode,
         ...(mode === 'e2ee' ? createSignedAccountContentBinding(keys.publicKey) : {}) } });
@@ -64,15 +69,15 @@ it.each(['plain', 'e2ee'] as const)('commits %s platform bindings and exact same
         ...environmentArtifact }));
     if (!created.ok) throw new Error(created.error);
     const linkContent = { credentialPrincipal: { kind: 'account', accountId: owner.id, purpose: {
-        consumer: { pluginId: 'happier.deploy.vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+        consumer: { pluginId, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'selected' } } },
         providerIdentity: { providerAccountId: 'team_selected', providerResourceId: 'prj_selected', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
     const linkArtifact = await artifact('deployment-target-link.v1', linkContent);
     const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, {
         serverId, environmentId: created.environmentId, expectedRevision: 1, requestKey: crypto.randomUUID(),
-        role: 'runtime', targetId: 'happier.deploy.vercel:runtime', targetKind: 'vercel',
-        source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.vercel', localId: 'runtime' } }, machines: [],
+        role: 'runtime', targetId: `${pluginId}:runtime`, targetKind,
+        source: { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } }, machines: [],
         ...linkArtifact }));
     if (!linked.ok) throw new Error(linked.error);
     const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: linked.targetLinkId } });
@@ -112,8 +117,12 @@ it.each(['plain', 'e2ee'] as const)('commits %s platform bindings and exact same
     await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: created.environmentId, grants: [registryGrant] }));
     const content = await artifact('deployment-environment.v1', { ...initialMixed, bindings: [registry,
         { purpose: 'variable', phase: 'build', name: 'MODE', source: { kind: 'value', value: 'release' } } ] });
-    const linkCandidate = await artifact('deployment-target-link.v1', { ...linkContent,
-        ownedVariables: [{ key: 'MODE', providerId: 'env_mode', desiredRevision: linked.revision + 1 }] });
+    const nextLink = { ...linkContent,
+        ownedVariables: [{ key: 'MODE', providerId: 'env_mode', desiredRevision: linked.revision + 1 }],
+        ...(targetKind === 'cloudflare-workers' ? { ownedTelemetryDestinations: [
+            { type: 'traces', slug: 'owned-traces' }, { type: 'logs', slug: 'owned-logs' },
+        ] } : {}) };
+    const linkCandidate = await artifact('deployment-target-link.v1', nextLink);
     const input = { serverId, environmentId: created.environmentId, expectedRevision: linked.revision,
         ...content, referencedSavedSecretRevisions: captures, grants: [],
         targetLinkContent: { targetLinkId: link.id, expectedTargetLinkRevision: link.revision, ...linkCandidate } };
@@ -139,6 +148,12 @@ it.each(['plain', 'e2ee'] as const)('commits %s platform bindings and exact same
         const stale = await save({ ...input, targetLinkContent: { ...input.targetLinkContent, expectedTargetLinkRevision: link.revision + 1 } });
         expect(stale.statusCode, stale.body).toBe(409);
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).toMatchObject({ revision: linked.revision });
+        if (mode === 'plain' && targetKind === 'cloudflare-workers') {
+            const unrelated = await artifact('deployment-target-link.v1', { ...nextLink,
+                providerIdentity: { ...nextLink.providerIdentity, providerResourceId: 'other-worker' } });
+            const refused = await save({ ...input, targetLinkContent: { ...input.targetLinkContent, ...unrelated } });
+            expect(refused.statusCode, refused.body).toBe(409);
+        }
         const saved = await save(input);
         expect(saved.statusCode, saved.body).toBe(200);
         expect(saved.json()).toMatchObject({ ok: true, revision: linked.revision + 1 });

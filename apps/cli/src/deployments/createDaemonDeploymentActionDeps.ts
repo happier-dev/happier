@@ -1708,9 +1708,18 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepareHostReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0]) {
-            if (request.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) return { children: [
-                { action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 },
-            ] };
+            if (request.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
+                try {
+                    const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
+                    const platform = await platformVariables.prepareSyncChildren({ environmentId: input.environmentId, context: request.context });
+                    // The bindings child retains this reviewed sibling plan. Admit its
+                    // provider effect before the root creates or rotates any secret.
+                    return { children: [
+                        { action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 },
+                        ...platform?.children ?? [],
+                    ] };
+                } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
             if (request.actionId === 'deployments.bindings.set' || request.actionId === 'deployments.observation.get') {
                 try {
                     if (request.actionId === 'deployments.bindings.set') {

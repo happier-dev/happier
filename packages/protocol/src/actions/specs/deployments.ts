@@ -54,7 +54,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
       { path: 'collector', title: 'Collector, or null to turn off', widget: 'json' },
-      { path: 'publicCollectorDomain', title: 'Public HTTPS Domain on the collector App (Vercel)', widget: 'json' },
+      { path: 'publicCollectorDomain', title: 'Public HTTPS Domain on the collector App (Vercel or Cloudflare Workers)', widget: 'json' },
       { path: 'rotate', title: 'Rotate the ingest token', widget: 'boolean' },
       { path: 'confirmDelete', title: 'Delete telemetry on the previous collector', widget: 'boolean' },
     ] } as const : deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) ? { description: 'Create or inspect the DNS records already required by the retained Domain. Select a DNS Action, connected account, hosted zone and TTL. A configured match does not establish public propagation, route readiness or application health.', fields: [

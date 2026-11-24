@@ -1,7 +1,7 @@
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema as preparation, DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetRoleResultV1ProtocolSchema as output, PluginError, type DeploymentTargetPreparationBaseV1,
-  type DeploymentTargetDeployInputV1, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1,
+  type DeploymentTargetDeployInputV1, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetTeardownInputV1, type DeploymentTargetCancelInputV1,
   type DeploymentTargetRoleResultV1, type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { ScmHostingRepositoryIdentityV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
@@ -177,7 +177,7 @@ export const workerActions = {
   'workers-teardown': { ...common, title: 'Delete the linked Cloudflare Worker or Preview', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Delete this Cloudflare Worker or Preview and its associated resources?' },
     inputSchema: cloudflareRoleSchema(inputs.teardown.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
-    run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>, io(context)) },
+    run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as CloudflareRoleInput<DeploymentTargetTeardownInputV1, WorkerSelection>, io(context)) },
   'workers-cancel': { ...workersAddressCommon, title: 'Cancel the selected Cloudflare Worker build', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Cloudflare Worker build?' }, inputSchema: cloudflareRoleSchema(inputs.cancel.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {

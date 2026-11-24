@@ -698,9 +698,10 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (!previous.ok) return previous;
         if (candidate.content) {
             if (!previous.content) return deploymentFailure('deployment_content_unavailable');
-            const { ownedVariables: _old, ...oldIdentity } = previous.content;
-            const { ownedVariables: _new, ...newIdentity } = candidate.content;
-            if (!isDeepStrictEqual(oldIdentity, newIdentity)) return deploymentFailure('deployment_conflict');
+            const { ownedVariables: _old, ownedTelemetryDestinations: previousDestinations, ...oldIdentity } = previous.content;
+            const { ownedVariables: _new, ownedTelemetryDestinations: candidateDestinations, ...newIdentity } = candidate.content;
+            if (!isDeepStrictEqual(oldIdentity, newIdentity) || link.targetKind !== 'cloudflare-workers'
+                && !isDeepStrictEqual(previousDestinations, candidateDestinations)) return deploymentFailure('deployment_conflict');
         }
     }
     const buildMachineId = placement?.buildMachineId ?? loaded.row.buildMachineId;

@@ -129,3 +129,61 @@ it('reports unknown removal with the native cause when a confirming read is deni
     expect(requests.map(request => request.method)).toEqual(['DELETE', 'GET']);
   } finally { await kit.dispose(); }
 });
+
+it('releases only the selected Link’s owned destinations during Worker deletion', async () => {
+  const destinations = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/observability/destinations`;
+  const { kit, requests } = await fixture(async request => {
+    if (request.method === 'GET' && new URL(request.url).pathname === new URL(destinations).pathname) {
+      return response(200, { success: true, result: [{ slug: 'log-owned',
+        name: 'happier-link-logs-10000000-0000-4000-8000-000000000001', enabled: true, scripts: [],
+        configuration: { type: 'logpush', logpushDataset: 'opentelemetry-logs', headers: {} } }] });
+    }
+    if (request.url === destinations + '/log-owned') return response(200, { success: true, errors: [], messages: [] });
+    if (request.url === root && request.method === 'DELETE') return response(200, { success: true, errors: [], messages: [] });
+    if (request.url === root && request.method === 'GET') return response(404);
+    throw new Error('Unexpected provider request');
+  });
+  try {
+    await expect(kit.invokeAction('workers-teardown', { ...input(), ownedTelemetryDestinations: [
+      { type: 'traces', slug: 'trace-owned' }, { type: 'logs', slug: 'log-owned' },
+    ] })).resolves.toMatchObject({ state: 'succeeded', providerResourceAbsent: true });
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([
+      ['GET', destinations + '?page=1&perPage=50'], ['GET', destinations + '?page=1&perPage=50'],
+      ['DELETE', destinations + '/log-owned'],
+      ['DELETE', root], ['GET', root],
+    ]);
+  } finally { await kit.dispose(); }
+});
+
+it('surfaces a typed destination delete refusal before attempting to remove the Worker', async () => {
+  const destinations = root.split('/workers/workers/')[0] + '/workers/observability/destinations';
+  const destination = destinations + '/trace-owned';
+  const list = destinations + '?page=1&perPage=50';
+  const { kit, requests } = await fixture(async request => request.url === list
+    ? response(200, { success: true, result: [{ slug: 'trace-owned',
+      name: 'happier-link-traces-10000000-0000-4000-8000-000000000001', enabled: true, scripts: [],
+      configuration: { type: 'logpush', logpushDataset: 'opentelemetry-traces', headers: {} } }] })
+    : response(403, { success: false, errors: [{ code: 10000, message: 'Authentication error' }] }));
+  try {
+    await expect(kit.invokeAction('workers-teardown', { ...input(),
+      ownedTelemetryDestinations: [{ type: 'traces', slug: 'trace-owned' }] }))
+      .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', list], ['DELETE', destination]]);
+  } finally { await kit.dispose(); }
+});
+
+it('does not remove a destination named for another Link or proceed to Worker deletion', async () => {
+  const destinations = root.split('/workers/workers/')[0] + '/workers/observability/destinations';
+  const list = destinations + '?page=1&perPage=50';
+  const { kit, requests } = await fixture(async request => request.url === list
+    ? response(200, { success: true, result: [{ slug: 'trace-owned', enabled: true, scripts: [],
+      name: 'happier-another-link-traces-10000000-0000-4000-8000-000000000001',
+      configuration: { type: 'logpush', logpushDataset: 'opentelemetry-traces', headers: {} } }] })
+    : response(200, { success: true, errors: [], messages: [] }));
+  try {
+    await expect(kit.invokeAction('workers-teardown', { ...input(),
+      ownedTelemetryDestinations: [{ type: 'traces', slug: 'trace-owned' }] }))
+      .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', list]]);
+  } finally { await kit.dispose(); }
+});

@@ -55,6 +55,8 @@ export type DeploymentReceiptDispatchV1 = { [TAction in ReceiptAction]: Readonly
 export type PreparedDeploymentBindingStorageV1 = Omit<DeploymentBindingsSetStorageInputV1, 'grants'> & Readonly<{
   grants: readonly MachineSecretGrantV1[];
   providerVariables?: Extract<import('@happier-dev/protocol').DeploymentBindingsSetResultV1, { ok: true }>['providerVariables'];
+  /** Daemon-only effects that require the acknowledged Link CAS. Never transported to Home. */
+  completeProviderVariables?: () => Promise<NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>>;
 }>;
 export type DeploymentBindingPreparationRequestV1 = Readonly<{
   input: DeploymentBindingsSetInputV1; context: ActionExecutorContext;
@@ -218,8 +220,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
     let preparedUpdateArtifact: typeof preparedBindingArtifact;
     let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
+    let completeProviderVariables: PreparedDeploymentBindingStorageV1['completeProviderVariables'];
+    let bindingsPersisted = false;
     const withProviderEffect = (result: ActionExecuteFailure): ActionExecuteFailure => providerVariables
-      ? { ...result, effectAttempted: true, details: { providerVariables: normalizeProviderVariables(providerVariables, false) } } : result;
+      ? { ...result, effectAttempted: true, details: { providerVariables: normalizeProviderVariables(providerVariables, bindingsPersisted) } } : result;
     let preparedUpdateBindings: Pick<PreparedDeploymentBindingStorageV1, 'grants' | 'referencedSavedSecretRevisions'> | undefined;
     try {
       const denied = await params.admitAccount(input.serverId, context);
@@ -365,8 +369,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if ('errorCode' in prepared) return prepared;
         preparedBindingArtifact = { contentArtifactId: prepared.contentArtifactId,
           contentHeaderVersion: prepared.contentHeaderVersion, contentBodyVersion: prepared.contentBodyVersion };
-        const { providerVariables: observed, ...storage } = prepared;
+        const { providerVariables: observed, completeProviderVariables: complete, ...storage } = prepared;
         providerVariables = observed;
+        completeProviderVariables = complete;
         body = homeId ? { ...storage, serverId: homeId } : storage;
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return withProviderEffect(changed);
@@ -405,9 +410,19 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         return withProviderEffect(failure(parsed.data.error));
       if (actionId === 'deployments.environments.update' && 'ok' in parsed.data && parsed.data.ok && preparedUpdateArtifact)
         return { ...parsed.data, preparedArtifact: preparedUpdateArtifact };
-      return actionId === 'deployments.bindings.set' && 'ok' in parsed.data && parsed.data.ok && preparedBindingArtifact
-        ? { ...parsed.data, preparedArtifact: preparedBindingArtifact,
-          ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) } : parsed.data;
+      if (actionId !== 'deployments.bindings.set' || !('ok' in parsed.data) || !parsed.data.ok
+        || !preparedBindingArtifact) return parsed.data;
+      bindingsPersisted = true;
+      if (completeProviderVariables) {
+        try {
+          context.signal?.throwIfAborted();
+          providerVariables = await completeProviderVariables();
+        } catch (error) {
+          return withProviderEffect(normalizeActionExecutorThrownError(error, 'deployment.provider.variables.sync'));
+        }
+      }
+      return { ...parsed.data, preparedArtifact: preparedBindingArtifact,
+        ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) };
     } catch (caught) {
       const error = caught instanceof HomeTransportFailure ? caught.transport : caught;
       if (error instanceof SignedHomeAuthorizationHttpError) return withProviderEffect(error.failure);

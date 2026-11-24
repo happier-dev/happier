@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { DeploymentConfiguredTelemetryDestinationsV1Schema } from '../plugins/contributions/deploymentTargetVariablesV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 
@@ -30,10 +31,14 @@ export const DeploymentEnvironmentTelemetrySetInputV1Schema = lazyZodSchema(() =
     confirmDelete: z.optional(z.literal(true)),
 }));
 export type DeploymentEnvironmentTelemetrySetInputV1 = z.infer<typeof DeploymentEnvironmentTelemetrySetInputV1Schema>;
-export const DeploymentEnvironmentTelemetrySetSuccessV1Schema = lazyZodSchema(() => z.strictObject({
-    ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema,
-    revision: DeploymentRevisionV1Schema, state: z.literal('redeploy_required'),
-}));
+const telemetrySetSuccess = {
+    ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema,
+};
+export const DeploymentEnvironmentTelemetrySetSuccessV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
+    z.strictObject({ ...telemetrySetSuccess, state: z.literal('redeploy_required') }),
+    z.strictObject({ ...telemetrySetSuccess, state: z.literal('wrangler_required'),
+        destinations: DeploymentConfiguredTelemetryDestinationsV1Schema }),
+]));
 export type DeploymentEnvironmentTelemetrySetSuccessV1 = z.infer<typeof DeploymentEnvironmentTelemetrySetSuccessV1Schema>;
 /** Typed refusals the host Action raises before any bindings write; presenters recover from each in place. */
 export const DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1 = ['telemetry_deletion_confirmation_required', 'collector_required',

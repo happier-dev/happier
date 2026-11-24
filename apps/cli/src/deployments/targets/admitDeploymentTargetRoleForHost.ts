@@ -2,7 +2,8 @@ import { sameStrictJsonValue as isDeepStrictEqual } from '@happier-dev/protocol/
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1,
     readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { isDeploymentTargetLinkActionIdV1, deploymentOperationForRootActionV1, deploymentTargetDomainRoleForActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
+    DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, deploymentOperationForRootActionV1, deploymentTargetDomainRoleForActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { WorkflowDataCreationResult } from './workflowDataCreationResult';
 import { z } from 'zod/mini';
@@ -203,8 +204,10 @@ export async function admitDeploymentTargetRoleForHost<Detail extends Deployment
     }
     const variablesRole = matched.every(entry => entry.binding.role === 'variables.sync') ? 'variables.sync'
         : matched.every(entry => entry.binding.role === 'variables.read') ? 'variables.read' : null;
-    const variablesParent = variablesRole === 'variables.sync' ? 'deployments.bindings.set' : 'deployments.observation.get';
-    if (!preparation && variablesRole && parent?.actionId === variablesParent && 'owned' in input
+    const variablesParent = variablesRole === 'variables.sync'
+        ? parent?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || parent?.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
+        : parent?.actionId === DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1;
+    if (!preparation && variablesRole && parent && variablesParent && 'owned' in input
         && parent.input.serverId === input.serverId && parent.input.environmentId === input.environmentId
         && (variablesRole === 'variables.sync' ? parent.input.expectedRevision === input.expectedRevision
             : parent.input.targetLinkId === input.targetLinkId && parent.input.variables === true)
@@ -278,6 +281,11 @@ export async function admitDeploymentTargetRoleForHost<Detail extends Deployment
         if (variablesRole && (!('owned' in input) || !isDeepStrictEqual(content.ownedVariables ?? [], input.owned)))
             return refuse('deployment_access_denied', 'deployment.target.admission.owned_variables');
         if (variablesRole === 'variables.sync' && environment.runtimeTargetLinkId !== link.id) return refuse('target_mismatch');
+        const telemetryDestinations = 'telemetryDestination' in input ? input.telemetryDestination?.owned
+            : 'ownedTelemetryDestinations' in input ? input.ownedTelemetryDestinations : undefined;
+        if ((telemetryDestinations !== undefined || !preparation && candidates.some(({ binding }) => binding.role === 'teardown'))
+            && !isDeepStrictEqual(content.ownedTelemetryDestinations ?? [], telemetryDestinations ?? []))
+            return refuse('deployment_access_denied', 'deployment.target.admission.owned_telemetry_destinations');
         if (request.executionTarget === 'daemon' && !candidates.some(candidate => candidate.binding.role.includes('.') || candidate.binding.role === 'uploadDeploy')) {
             if (!link.machineId || !link.installationId) return refuse('machine_unavailable');
             if (preparation ? environment.controllerMachineId !== host.machineId

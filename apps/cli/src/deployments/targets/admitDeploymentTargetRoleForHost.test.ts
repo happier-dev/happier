@@ -200,6 +200,21 @@ describe('deployment role host admission', () => {
             .rejects.toMatchObject({ code: 'deployment_access_denied' });
     });
 
+    it('rejects a destination slug outside the selected protected Link during variable preparation', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const role = 'variables.sync' as const;
+        const owned = [{ type: 'logs' as const, slug: 'logs-owned' }];
+        fixture.state.environment.targetLinks[0]!.content!.ownedTelemetryDestinations = owned;
+        const input = { ...fixture.input, owned: [], desiredRevision: 2, set: [], remove: [], useOurs: [], keepTheirs: [],
+            telemetryDestination: { decision: 'remove', owned } };
+        const request = { ...fixture.request, phase: 'preparation' as const, role, input,
+            bindings: [{ ...fixture.request.bindings[0]!, role }] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ role });
+        await expect(admitDeploymentTargetRoleForHost({ ...request, input: { ...input,
+            telemetryDestination: { decision: 'remove', owned: [{ type: 'logs', slug: 'foreign' }] } } }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+
     it('requires the bindings producer reviewed child for variable writes, and spends that admission once', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
         const role = 'variables.sync' as const;

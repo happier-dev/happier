@@ -31,19 +31,22 @@ function run(
     metadataKey?: Uint8Array;
   }>,
   extraBindings: readonly ReturnType<typeof createDeploymentVariableBindingV1>[] = [],
-  vercel?: {
+  platform?: {
+    targetKind?: 'cloudflare-workers'; move?: true; off?: true; confirm?: true;
     selected?: true;
     publiclyServed?: true;
     rotateOn?: Pick<Parameters<typeof createEnvironmentTelemetrySetForHost>[0], 'credentials' | 'serverHttpBaseUrl' | 'savedSecretOperationContext'>;
   },
+  destination?: unknown,
 ) {
+  const selectedMachineId = platform?.move ? 'replacement-collector' : 'collector';
   const detail = createDeploymentEnvironmentDetailV1();
   detail.environment.telemetryMachineId = 'collector';
-  if (vercel) {
-    detail.environment.runtimeTargetLinkId = 'vercel-link';
-    detail.targetLinks = [{ targetLink: createDeploymentTargetLinkHeaderV1({ id: 'vercel-link',
-      environmentId: detail.environment.id, targetKind: 'vercel', machines: [], members: [],
-      source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.vercel', localId: 'runtime' } } }) }];
+  if (platform) {
+    detail.environment.runtimeTargetLinkId = 'platform-link';
+    detail.targetLinks = [{ targetLink: createDeploymentTargetLinkHeaderV1({ id: 'platform-link',
+      environmentId: detail.environment.id, targetKind: platform.targetKind ?? 'vercel', machines: [], members: [],
+      source: { kind: 'plugin', contribution: { pluginId: platform.targetKind ? 'happier.deploy.cloudflare' : 'happier.deploy.vercel', localId: platform.targetKind ? 'workers' : 'runtime' } } }) }];
   }
   detail.content = DeploymentEnvironmentContentV1Schema.parse({
     ...detail.content,
@@ -74,7 +77,7 @@ function run(
     } as never,
     serverId: 'home',
     serverHttpBaseUrl: 'https://home.test',
-    ...vercel?.rotateOn,
+    ...platform?.rotateOn,
     readEnvironment: async () => ({
       environment: detail.environment,
       content: detail.content,
@@ -83,7 +86,7 @@ function run(
     readProject: async () => ({ name: 'Project' }),
     readMachine: async () => ({
       encryptionMode: machine.encryptionMode,
-      ...(vercel ? { deploymentApp: collectorApp } : {}),
+      ...(platform ? { deploymentApp: collectorApp } : {}),
       installationPublicKey: Buffer.from(rowKey).toString('base64'),
       metadata: {
         rolesV1: { active: ['happier.telemetry/telemetry'] },
@@ -96,12 +99,13 @@ function run(
           : {}),
       },
     }),
-    ...(vercel ? { publicCollectorDomain: {
+    ...(platform ? { publicCollectorDomain: {
       async get({ domainId, environmentId }: Pick<typeof selectedDomain, 'domainId' | 'environmentId'>) {
         domainReads.push(domainId);
         expect({ domainId, environmentId }).toEqual({ domainId: selectedDomain.domainId, environmentId: selectedDomain.environmentId });
-        const placements = vercel.publiclyServed
-          ? [origin, { ...origin, listener: 'public', placement: { ...origin.placement, nativeServer: 'https' } }] : [origin];
+        const privateOrigin = { ...origin, telemetryCollector: { ...origin.telemetryCollector, machineId: selectedMachineId } };
+        const placements = platform.publiclyServed
+          ? [privateOrigin, { ...privateOrigin, listener: 'public', placement: { ...origin.placement, nativeServer: 'https' } }] : [privateOrigin];
         const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: domainId, environmentId, targetLinkId: selectedDomain.targetLinkId,
           state: 'active', revision: 1, ...documentRef, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1, placements });
         return { ok: true as const, environmentId, domain, revision: domain.revision };
@@ -109,7 +113,7 @@ function run(
       async open(artifactId: string) {
         expect(artifactId).toBe(documentRef.contentArtifactId);
         return { artifactId, header: { kind: 'deployment-domain.v1' as const, title: 'Collector' },
-          body: JSON.stringify({ hostname: 'collector.example.test', target: { kind: 'telemetry' } }),
+          body: JSON.stringify({ hostname: platform.move ? 'replacement.example.test' : 'collector.example.test', target: { kind: 'telemetry' } }),
           revision: { headerVersion: 1, bodyVersion: 1 } };
       },
     } } : {}),
@@ -124,6 +128,9 @@ function run(
             ok: true,
             environmentId: detail.environment.id,
             revision: detail.environment.revision + 1,
+            ...(destination === undefined ? {} : { providerVariables: {
+              v: 1, persisted: true, variables: [], failures: [], telemetryDestination: destination,
+            } }),
           },
         };
       },
@@ -134,8 +141,9 @@ function run(
       serverId: 'home',
       environmentId: detail.environment.id,
       expectedRevision: detail.environment.revision,
-      ...(vercel?.rotateOn ? { rotate: true as const } : { collector: { machineId: 'collector' } }),
-      ...(vercel?.selected ? { publicCollectorDomain: selectedDomain } : {}),
+      ...(platform?.rotateOn ? { rotate: true as const } : { collector: platform?.off ? null : { machineId: selectedMachineId } }),
+      ...(platform?.confirm ? { confirmDelete: true as const } : {}),
+      ...(platform?.selected ? { publicCollectorDomain: selectedDomain } : {}),
     },
     context,
   );
@@ -239,5 +247,48 @@ describe('Vercel collector exporter', () => {
     await expect(privateOnly.result).resolves.toMatchObject({ ok: false, errorCode: 'collector_route_unavailable',
       details: { state: 'private_only' } });
     expect(privateOnly.invoked).toEqual([]);
+  });
+});
+
+describe('Cloudflare collector exporter', () => {
+  it('hands the admitted Domain and opaque bearer to the reviewed child and reports the Wrangler step', async () => {
+    const owned = [{ type: 'traces', slug: 'traces-owned' }, { type: 'logs', slug: 'logs-owned' }];
+    const configured = owned.map(destination => ({ ...destination, name: `${destination.type}-wrangler-name` }));
+    const { result, invoked } = run({ encryptionMode: 'plain' }, [],
+      { selected: true, publiclyServed: true, targetKind: 'cloudflare-workers' }, { owned, configured, failures: [] });
+    await expect(result).resolves.toMatchObject({ ok: true, state: 'wrangler_required', destinations: configured });
+    expect(invoked).toEqual([expect.objectContaining({ set: expect.arrayContaining([
+      expect.objectContaining({ name: 'OTEL_EXPORTER_OTLP_ENDPOINT', managedBy: 'telemetry',
+        source: { kind: 'value', value: 'https://collector.example.test/' } }),
+      expect.objectContaining({ name: 'OTEL_EXPORTER_OTLP_HEADERS', managedBy: 'telemetry',
+        source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-id', resourceRevision: 37 } }),
+    ]) })]);
+  });
+
+  it('requires confirmation to move or turn off and keeps the provider handles only for the selected move', async () => {
+    const owned = [{ type: 'traces', slug: 'traces-owned' }, { type: 'logs', slug: 'logs-owned' }];
+    const configured = owned.map(destination => ({ ...destination, name: `${destination.type}-wrangler-name` }));
+    const worker = { targetKind: 'cloudflare-workers', selected: true, publiclyServed: true } as const;
+    const move = run({ encryptionMode: 'plain' }, [], { ...worker, move: true });
+    const off = run({ encryptionMode: 'plain' }, [], { ...worker, off: true });
+    for (const attempt of [move, off]) {
+      await expect(attempt.result).resolves.toMatchObject({ ok: false, errorCode: 'telemetry_deletion_confirmation_required' });
+      expect(attempt.invoked).toEqual([]);
+    }
+    const moved = run({ encryptionMode: 'plain' }, [], { ...worker, move: true, confirm: true }, { owned, configured, failures: [] });
+    await expect(moved.result).resolves.toMatchObject({ ok: true, state: 'wrangler_required', destinations: configured });
+    expect(moved.invoked).toEqual([expect.objectContaining({ telemetryMachineId: 'replacement-collector',
+      set: expect.arrayContaining([expect.objectContaining({ name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+        source: { kind: 'value', value: 'https://replacement.example.test/' } })]) })]);
+    const removed = run({ encryptionMode: 'plain' }, [], { ...worker, off: true, confirm: true }, { owned: [], configured: [], failures: [] });
+    await expect(removed.result).resolves.toMatchObject({ ok: true, state: 'wrangler_required', destinations: [] });
+    expect(removed.invoked).toEqual([expect.objectContaining({ telemetryMachineId: null, set: [],
+      remove: [{ purpose: 'variable', name: 'OTEL_EXPORTER_OTLP_HEADERS', phase: 'runtime' }] })]);
+  });
+
+  it('requires the exact public Domain before writing Worker telemetry', async () => {
+    const { result, invoked } = run({ encryptionMode: 'plain' }, [], { targetKind: 'cloudflare-workers' });
+    await expect(result).resolves.toMatchObject({ ok: false, errorCode: 'collector_public_domain_required' });
+    expect(invoked).toEqual([]);
   });
 });

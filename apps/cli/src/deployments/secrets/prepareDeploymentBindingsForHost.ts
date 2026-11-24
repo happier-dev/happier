@@ -66,7 +66,8 @@ export type PreparePlatformBindingsForHost = (request: Readonly<{
     content: DeploymentEnvironmentContentV1; previousContent: DeploymentEnvironmentContentV1;
     targetLink: DeploymentTargetLinkHeaderV1; linkContent: DeploymentTargetLinkContentV1; context: ActionExecutorContext;
 }>) => Promise<Readonly<{ linkContent: DeploymentTargetLinkContentV1;
-    providerVariables: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']> }>>;
+    providerVariables: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>;
+    completeProviderVariables?: PreparedDeploymentBindingStorageV1['completeProviderVariables'] }>>;
 
 /** Explicit author preparation only. P40's single bindings CAS remains the sole writer. */
 export function createPrepareDeploymentBindingsForHost(host: Readonly<{
@@ -85,6 +86,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     return async (request: DeploymentBindingPreparationRequestV1):
         Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure> => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
         let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
+        let completeProviderVariables: PreparedDeploymentBindingStorageV1['completeProviderVariables'];
         let targetLinkContent: PreparedDeploymentBindingStorageV1['targetLinkContent'];
         let admission: Awaited<ReturnType<typeof readEnvironmentSecretBindingPreparationForHost>> | undefined;
         let dataRolePreparation: Awaited<ReturnType<PrepareDataRoleBindingsForHost>> | undefined;
@@ -203,9 +205,11 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 const synchronized = await host.preparePlatformBindings({ input, environment: loaded, content: candidate.content,
                     previousContent: current.content, targetLink: platformLink, linkContent: opened.content, context });
                 providerVariables = synchronized.providerVariables;
+                completeProviderVariables = synchronized.completeProviderVariables;
                 const binding = context.externalActionExecutionAuthorization?.binding;
-                const artifactId = binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                    ? createDeploymentLinkContentArtifactIdV1({ ...binding, deploymentLinkAdmission: { environmentId: input.environmentId } }) : undefined;
+                const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || telemetryChild)
+                    ? createDeploymentLinkContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                        deploymentLinkAdmission: { environmentId: input.environmentId } }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
                     ...(artifactId ? { publication: 'create' as const } : {}), content: { ...(artifactId ? { artifactId } : {}),
                         header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: candidate.content.name },
@@ -213,7 +217,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 targetLinkContent = { targetLinkId: platformLink.id,
                     expectedTargetLinkRevision: platformLink.revision, contentArtifactId: created.artifactId,
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
-                if (dataRoleTargetLinkIds.length === 0) return { ...await complete([]), providerVariables, targetLinkContent };
+                if (dataRoleTargetLinkIds.length === 0) return { ...await complete([]), providerVariables, targetLinkContent,
+                    ...(completeProviderVariables ? { completeProviderVariables } : {}) };
             }
             if (!request.buildMachineId && !request.environmentUpdate && !child
                 && 'set' in input && input.set.length === 0 && input.remove.length > 0
@@ -321,7 +326,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 .map(grant => [machineSecretGrantSubjectKey(grant), grant]));
             await dataRolePreparation?.complete([...grants.values()]);
             return { ...await complete([...grants.values()]), ...(providerVariables ? { providerVariables } : {}),
-                ...(targetLinkContent ? { targetLinkContent } : {}) };
+                ...(targetLinkContent ? { targetLinkContent } : {}),
+                ...(completeProviderVariables ? { completeProviderVariables } : {}) };
         } catch (error) {
             const result = failure(request.context.signal?.aborted ? { code: 'cancelled' } : error);
             return providerVariables ? carryActionFailureDiagnostic({ ...result, effectAttempted: true, details: { providerVariables } }, result) : result;

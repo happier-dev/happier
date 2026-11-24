@@ -3316,6 +3316,21 @@ Environment's Domain list, and the Domain content captured on that collector.
 Another Machine or Environment, a removed selection and any other route stay
 refused.
 
+For Cloudflare Workers, reviewed Telemetry settings synchronize one
+destination each for traces and logs on the connected Cloudflare Account.
+A newly allocated destination stays disabled and secret-free until its assigned
+slug is saved on the existing runtime Link. Moving the collector updates the
+owned destinations. Turning Telemetry off or deleting the Worker through
+Happier releases the destination slugs recorded on that Link.
+
+Saving returns `wrangler_required` with the destination names and API slugs.
+Add the names to the Worker's Wrangler observability configuration and
+redeploy. The Cloudflare credential needs Workers Observability Write.
+Cloudflare’s destination list returns the configured headers with their values,
+so members of that Cloudflare account with Observability Read can read the
+collector bearer.
+[Cloudflare Workers OpenTelemetry export](https://developers.cloudflare.com/workers/observability/opentelemetry-export/).
+
 The Own-server launch settles per-service telemetry facts in the serving
 Receipt's private `machineResults[].telemetrySampling`. Select the exact Machine
 installation and service. The optional `provenance` is `authored` when an

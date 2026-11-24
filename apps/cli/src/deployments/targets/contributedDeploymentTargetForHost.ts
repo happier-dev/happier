@@ -614,6 +614,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     deploymentId: receipt!.deployment.id, expectedDeploymentRevision: receipt!.deployment.revision,
                     actionOperationId: receipt!.deployment.actionOperationId,
                     operation: receipt!.deployment.operation,
+                    ...(role === 'teardown' ? { ownedTelemetryDestinations: environment.targetLinks
+                        .find(item => item.targetLink.id === request.input.targetLinkId)?.content?.ownedTelemetryDestinations ?? [] } : {}),
                     ...(content.platform.observation.providerDeploymentId ? { providerDeploymentId: content.platform.observation.providerDeploymentId } : {}),
                     ...(role === 'deploy' || role === 'uploadDeploy' ? deploymentSource : {}),
                     ...(role === 'rollback' || role === 'promote' ? { priorDeployment: { environmentId: previous!.deployment.environmentId,

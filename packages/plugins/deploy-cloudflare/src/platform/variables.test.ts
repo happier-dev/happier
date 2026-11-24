@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -406,5 +406,143 @@ it('deletes an owned Worker secret through the explicit secret endpoint and pres
       owned: [owned('OWNED')], remove: ['OWNED', 'FOREIGN'] })).resolves.toMatchObject({ owned: [], failures: [] });
     expect(bindings).toEqual([{ name: 'FOREIGN', type: 'secret_text' }]);
     expect(requests.map(request => request.method)).toEqual(['GET', 'DELETE']);
+  } finally { await kit.dispose(); }
+});
+
+it('synchronizes only acknowledged Worker destinations and keeps the collector bearer at the HTTP boundary', async () => {
+  const token = 'fixture-collector-bearer';
+  const root = '/workers/observability/destinations';
+  const mutations: string[] = [];
+  const routes: string[] = [];
+  const names = new Map<string, string>();
+  let reads = 0;
+  let refuseLogs = true;
+  const http = createPluginHttpFixture({ async request(request) {
+    const path = new URL(request.url).pathname.split('/accounts/' + common.providerIdentity.providerAccountId)[1];
+    if (path !== root && !path.startsWith(root + '/')) {
+      expect(request.method).toBe('GET');
+      return response(workerSettingsExample);
+    }
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get('page'));
+    mutations.push(request.method + ' ' + path + (request.method === 'GET' ? ' ' + page : ''));
+    if (request.method === 'GET') {
+      // A destination may be beyond the first page of the account inventory.
+      if (page === 1) return response(Array.from({ length: 50 }, (_, index) => ({
+        slug: 'foreign-' + index, name: 'foreign-' + index, enabled: true, scripts: [],
+        configuration: { type: 'logpush', logpushDataset: 'opentelemetry-traces', headers: {} },
+      })));
+      expect(page).toBe(2);
+      return response([...names].map(([slug, name]) => ({ slug, name, enabled: true, scripts: [],
+        configuration: { type: 'logpush', logpushDataset: slug === 'trace-owned' ? 'opentelemetry-traces' : 'opentelemetry-logs',
+          headers: { Authorization: token } } })));
+    }
+    if (request.method === 'DELETE') {
+      names.delete(path.split('/').at(-1)!);
+      return response(null, 404);
+    }
+    const body = JSON.parse(new TextDecoder().decode(request.body));
+    if (request.method === 'POST') {
+      expect(body).toMatchObject({ enabled: false, configuration: { headers: {} } });
+      expect(body.name).toMatch(new RegExp(`^happier-${sync.targetLinkId}-(logs|traces)-[0-9a-f-]{36}$`));
+      expect(Object.keys(body.configuration.headers)).toEqual([]);
+      expect(body.skipPreflightCheck).toBeUndefined();
+    } else {
+      expect(body).toMatchObject({ enabled: true, configuration: { headers: { Authorization: 'Bearer ' + token }, replaceHeaders: true } });
+    }
+    routes.push(body.configuration.url);
+    if (request.method === 'POST' && body.configuration.logpushDataset === 'opentelemetry-logs' && refuseLogs) {
+      return response(null, 409);
+    }
+    const slug = request.method === 'POST'
+      ? body.configuration.logpushDataset === 'opentelemetry-traces' ? 'trace-owned' : 'log-owned'
+      : path.slice(path.lastIndexOf('/') + 1);
+    if (request.method === 'POST') names.set(slug, body.name);
+    return response({ name: names.get(slug), slug, enabled: body.enabled, scripts: [],
+      configuration: { ...body.configuration,
+        logpushDataset: body.configuration.logpushDataset ?? (slug === 'trace-owned' ? 'opentelemetry-traces' : 'opentelemetry-logs'),
+        headers: { Authorization: token } } });
+  } });
+  const unsupported = async (): Promise<never> => { throw new Error('Unexpected secret operation'); };
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http,
+    secrets: { readSavedSecret: async (ref, options) => {
+      expect(ref).toBe('happier:shared-secret:v1:telemetry');
+      expect(options?.resourceRevision).toBe(7);
+      reads++;
+      return token;
+    }, saveShared: unsupported, status: unsupported, get: unsupported, set: unsupported, delete: unsupported } } });
+  const input = { ...sync, providerIdentity: { ...common.providerIdentity, providerResourceId: 'worker-exact' },
+    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
+    preparedNative: { projectName: 'worker-exact' } };
+  const target = (collectorUrl: string, owned: { type: string; slug: string }[]) => ({
+    owned, collectorUrl,
+  });
+  const collector = 'https://collector.example.test';
+  const replacement = 'https://replacement.example.test';
+  const bearer = { kind: 'secret', ref: 'happier:shared-secret:v1:telemetry', resourceRevision: 7 };
+  const traces = { type: 'traces', slug: 'trace-owned' };
+  const logs = { type: 'logs', slug: 'log-owned' };
+  try {
+    const first = await kit.invokeAction('workers-variables-sync', { ...input,
+      telemetryDestination: { decision: 'allocate', ...target(collector, []) } });
+    expect(first).toMatchObject({ telemetryDestination: { owned: [traces], configured: [],
+      failures: [{ type: 'logs', code: 'deployment_conflict' }] } });
+    expect(reads).toBe(0);
+    expect(JSON.stringify(first)).not.toContain(token);
+
+    refuseLogs = false;
+    const allocated = await kit.invokeAction('workers-variables-sync', { ...input,
+      telemetryDestination: { decision: 'allocate', ...target(replacement, [traces]) } });
+    expect(allocated).toMatchObject({ telemetryDestination: { owned: [traces, logs], configured: [], failures: [] } });
+    expect(reads).toBe(0);
+    const moved = await kit.invokeAction('workers-variables-sync', { ...input,
+      telemetryDestination: { decision: 'activate', ...target(replacement, [traces, logs]), bearer } });
+    expect(moved).toMatchObject({ telemetryDestination: { owned: [traces, logs],
+      configured: [{ ...traces, name: names.get(traces.slug) }, { ...logs, name: names.get(logs.slug) }], failures: [] } });
+    expect(JSON.stringify(moved)).not.toContain(token);
+    expect(routes).toEqual([collector + '/v1/traces', collector + '/v1/logs', replacement + '/v1/logs',
+      replacement + '/v1/traces', replacement + '/v1/logs']);
+    expect(await kit.invokeAction('workers-variables-sync', { ...input,
+      telemetryDestination: { decision: 'remove', owned: [traces, logs] } }))
+      .toMatchObject({ telemetryDestination: { owned: [], failures: [] } });
+    expect(mutations).toEqual([`POST ${root}`, `POST ${root}`, `POST ${root}`,
+      `GET ${root} 1`, `GET ${root} 2`, `PATCH ${root}/trace-owned`,
+      `GET ${root} 1`, `GET ${root} 2`, `PATCH ${root}/log-owned`,
+      `GET ${root} 1`, `GET ${root} 2`, `DELETE ${root}/trace-owned`,
+      `GET ${root} 1`, `GET ${root} 2`, `DELETE ${root}/log-owned`]);
+    expect(reads).toBe(1);
+  } finally { await kit.dispose(); }
+});
+
+it.each(['activate', 'remove'] as const)('refuses to %s a destination named for another Link', async decision => {
+  const destination = '/workers/observability/destinations';
+  const requests: string[] = [];
+  const readSavedSecret = vi.fn(async () => 'fixture-collector-bearer');
+  const unsupported = async (): Promise<never> => { throw new Error('Unexpected secret operation'); };
+  const foreign = { slug: 'retained-slug', name: 'happier-another-link-traces-10000000-0000-4000-8000-000000000001',
+    configuration: { type: 'logpush', logpushDataset: 'opentelemetry-traces', headers: {} } };
+  const http = createPluginHttpFixture({ async request(request) {
+    const path = new URL(request.url).pathname.split('/accounts/' + common.providerIdentity.providerAccountId)[1];
+    if (!path.startsWith(destination)) return response(workerSettingsExample);
+    requests.push(request.method + ' ' + path);
+    if (request.method === 'GET') return response([{ ...foreign, enabled: true, scripts: [] }]);
+    return response({ ...foreign, enabled: true, scripts: [] });
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http,
+    secrets: { readSavedSecret, saveShared: unsupported, status: unsupported, get: unsupported, set: unsupported, delete: unsupported } } });
+  const owned = [{ type: 'traces', slug: foreign.slug }];
+  try {
+    await expect(kit.invokeAction('workers-variables-sync', { ...sync,
+      providerIdentity: { ...common.providerIdentity, providerResourceId: 'worker-exact' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
+      preparedNative: { projectName: 'worker-exact' },
+      telemetryDestination: { decision, owned, ...(decision === 'activate' ? {
+        collectorUrl: 'https://collector.example.test',
+        bearer: { kind: 'secret', ref: 'happier:shared-secret:v1:telemetry', resourceRevision: 7 },
+      } : {}) },
+    })).resolves.toMatchObject({ telemetryDestination: { owned, configured: [],
+      failures: [{ type: 'traces', code: 'deployment_access_denied' }] } });
+    expect(requests).toEqual(['GET ' + destination]);
+    expect(readSavedSecret).not.toHaveBeenCalled();
   } finally { await kit.dispose(); }
 });

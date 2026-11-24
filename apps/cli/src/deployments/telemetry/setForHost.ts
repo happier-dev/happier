@@ -57,6 +57,8 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             const previousCapabilities = resolveDeploymentTelemetryCapabilitiesV1(current.content.telemetry);
             const capabilities = resolveDeploymentTelemetryCapabilitiesV1({ ...current.content.telemetry, ...input.capabilities });
             const capabilitiesChanged = !sameStrictJsonValue(capabilities, previousCapabilities);
+            const runtimeLink = current.targetLinks.find(link => link.id === current.environment.runtimeTargetLinkId);
+            const worker = runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'cloudflare-workers';
             const success = (revision: number): DeploymentEnvironmentTelemetrySetSuccessV1 => ({ ok: true,
                 environmentId: input.environmentId, revision, state: 'redeploy_required' });
             const keepCollector = input.rotate && input.collector === undefined && previousMachineId !== null;
@@ -91,8 +93,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                     installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(rowKey, 'base64')) } : undefined);
                 if (!pin) return refuse('machine_unavailable', { role: 'telemetry', machineId });
                 collectorPin = pin;
-                const runtimeLink = current.targetLinks.find(link => link.id === current.environment.runtimeTargetLinkId);
-                if (runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'vercel') {
+                if (worker || runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'vercel') {
                     const selected = input.publicCollectorDomain;
                     if (!selected) {
                         // Rotate carries the endpoint from the admitted collector binding into the existing CAS.
@@ -117,7 +118,8 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             }
             const pinChanged = !sameStrictJsonValue(current.content.telemetryCollector ?? null, collectorPin);
             const remove = owned.map(binding => ({ purpose: 'variable' as const, name: binding.name, phase: binding.phase }));
-            if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged && !pinChanged) return success(input.expectedRevision);
+            if (!worker && machineId === null && previousMachineId === null && owned.length === 0
+                && !capabilitiesChanged && !pinChanged) return success(input.expectedRevision);
             const set: EnvironmentSecretBindingInputV1[] = [];
             if (machineId !== null) {
                 const headers = owned.find(binding => binding.name === 'OTEL_EXPORTER_OTLP_HEADERS');
@@ -160,7 +162,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 }
                 const existing = TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.flatMap(name => owned.filter(binding =>
                     binding.name === name && binding.phase === 'runtime'));
-                if (machineId === previousMachineId && !input.rotate && !capabilitiesChanged && !pinChanged && owned.length === set.length
+                if (!worker && machineId === previousMachineId && !input.rotate && !capabilitiesChanged && !pinChanged && owned.length === set.length
                     && sameBindingIntent(existing, set)) return success(input.expectedRevision);
             }
             const child = context.hostReviewedChild ?? refuse('admission_unavailable');
@@ -173,7 +175,13 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                     remove: remove.filter(binding => !replaced.has(`${binding.phase}:${binding.name}`)) }) });
             if (!result.ok) return result;
             const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);
-            return saved.ok ? success(saved.revision) : refuse(saved.error);
+            if (!saved.ok) return refuse(saved.error);
+            if (!worker) return success(saved.revision);
+            const destination = saved.providerVariables?.telemetryDestination;
+            if (!destination) return refuse('deployment_content_unavailable', { revision: saved.revision });
+            const firstFailure = destination.failures[0];
+            if (firstFailure) return refuse(firstFailure.code, { revision: saved.revision, ...destination });
+            return { ...success(saved.revision), state: 'wrangler_required', destinations: destination.configured };
         } catch (error) { return projectDeploymentException(error, { signal: context.signal, phase: 'deployment.telemetry.set' }); }
     };
 }

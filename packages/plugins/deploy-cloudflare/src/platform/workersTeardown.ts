@@ -1,8 +1,9 @@
-import { PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
+import { PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetTeardownInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { requestTeardownResource, type DeploymentContext } from './deploymentHttp.js';
 import { type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
+import { removeWorkerTelemetryDestinations } from './variables.js';
 
-type Selection = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>, 'providerIdentity' | 'providerEnvironment' | 'preparedNative'>;
+type Selection = Pick<CloudflareRoleInput<DeploymentTargetTeardownInputV1, WorkerSelection>, 'providerIdentity' | 'providerEnvironment' | 'preparedNative' | 'targetLinkId' | 'ownedTelemetryDestinations'>;
 
 /** Native Worker IDs survive renames. A Preview has its own identity and never
  * selects the parent Worker or its shared routes/domains for removal.
@@ -27,7 +28,11 @@ export async function teardownWorker(input: Selection, context: DeploymentContex
   const path = resourcePath(input);
   const accountId = input.providerIdentity.providerAccountId;
   return settleDeploymentTargetResourceRemovalV1({
-    ...(observeOnly ? {} : { remove: async () => (await requestTeardownResource(context, accountId, path, ['write', 'DELETE'])).kind === 'absent' }),
+    ...(observeOnly ? {} : { remove: async () => {
+      const { failures: [failure] } = await removeWorkerTelemetryDestinations(context, accountId, input.targetLinkId, input.ownedTelemetryDestinations ?? []);
+      if (failure) throw new PluginError({ code: failure.code, retryable: false });
+      return (await requestTeardownResource(context, accountId, path, ['write', 'DELETE'])).kind === 'absent';
+    } }),
     observeAbsent: async () => (await requestTeardownResource(context, accountId, path, ['read', 'GET'])).kind === 'absent',
     now: context.now,
   });

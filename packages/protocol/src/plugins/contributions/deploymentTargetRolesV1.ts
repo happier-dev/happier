@@ -4,8 +4,8 @@ import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../tea
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTimestampV1Schema as timestamp } from '../../deployments/deploymentIdentifiersV1.js';
-import { DeploymentPlatformSourceIntentV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
-import { DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariablesV1.js';
+import { DeploymentPlatformSourceIntentV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
+import { DeploymentOwnedTelemetryDestinationsV1Schema, DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariablesV1.js';
 export * from './deploymentTargetVariablesV1.js';
 import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
@@ -109,6 +109,7 @@ export const DeploymentTargetLinkProviderContentV1Schema = lazyZodSchema(() => z
     repositoryAccess: z.optional(DeploymentTargetRepositoryAccessV1Schema),
     preparedNative: z.optional(DeploymentTargetPreparedNativeV1Schema),
     ownedVariables: z.optional(z.array(DeploymentTargetOwnedVariableV1Schema)),
+    ownedTelemetryDestinations: z.optional(DeploymentOwnedTelemetryDestinationsV1Schema),
     data: z.optional(DeploymentManagedDataPresentationV1Schema),
     providerUrl: z.optional(publicUrl),
 }));
@@ -196,6 +197,13 @@ export type DeploymentTargetVariablesReadInputV1 = z.infer<typeof DeploymentTarg
 export const DeploymentTargetVariablesSyncInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetVariablesReadInputV1Schema, {
     desiredRevision: revision, set: z.array(EnvironmentVariableBindingV1Schema), remove: z.array(id),
     useOurs: z.array(id), keepTheirs: z.array(id),
+    telemetryDestination: z.optional(z.discriminatedUnion('decision', [
+        z.strictObject({ decision: z.literal('allocate'), owned: DeploymentOwnedTelemetryDestinationsV1Schema,
+            collectorUrl: z.string().check(z.url({ protocol: /^https$/u })) }),
+        z.strictObject({ decision: z.literal('activate'), owned: DeploymentOwnedTelemetryDestinationsV1Schema,
+            collectorUrl: z.string().check(z.url({ protocol: /^https$/u })), bearer: DeploymentSecretBindingSourceV1Schema }),
+        z.strictObject({ decision: z.literal('remove'), owned: DeploymentOwnedTelemetryDestinationsV1Schema }),
+    ])),
 }));
 export type DeploymentTargetVariablesSyncInputV1 = z.infer<typeof DeploymentTargetVariablesSyncInputV1Schema>;
 export const DeploymentTargetLifecycleInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetRoleCommonInputV1Schema, {
@@ -214,7 +222,9 @@ export const DeploymentTargetUploadDeployInputV1Schema = lazyZodSchema(() => z.e
 }));
 export const DeploymentTargetObserveInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
 export const DeploymentTargetCancelInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
-export const DeploymentTargetTeardownInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
+export const DeploymentTargetTeardownInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
+    ownedTelemetryDestinations: z.optional(DeploymentOwnedTelemetryDestinationsV1Schema),
+}));
 const logsInput = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
     cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), ref: z.optional(id), tail: z.optional(z.literal(true)),
 }));
