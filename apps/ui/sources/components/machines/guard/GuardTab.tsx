@@ -17,6 +17,7 @@ import { useMachineGuardActivity, useMachineGuardView } from '@/sync/domains/mac
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { describeAsleepAsOf } from '@/components/settings/machines/managed/managedLifecyclePresentation';
 
 import { MachineActivityPage } from './activity/MachineActivityPage';
 import { MachineActivityRow } from './activity/MachineActivityRow';
@@ -107,7 +108,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
                 : { id: 'loading', kind: 'loading' as const, iconName: undefined, title: t('machineGuard.activity.loading') };
     return (
         <View testID="machine-guard">
-            <ItemGroup surface="none" header="none">
+            <ItemGroup surface="none">
                 <View style={styles.introBlock}>
                     <Text style={styles.intro}>
                         {facts.recipient ? t('machineGuard.states.recipient', { machine: props.machineName }) : t('machineGuard.intro', { machine: props.machineName })}
@@ -148,7 +149,12 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
  * page header already says the machine is offline.
  */
 function OfflineBanner(props: Readonly<{ serverId: string; machineId: string; onRetry: () => void }>) {
-    const { lastSeenAt = null } = useMachinePresenceSummary(props.serverId, props.machineId);
+    const { lastSeenAt = null, nativeState } = useMachinePresenceSummary(props.serverId, props.machineId);
+    // Asleep is a state, not a failure: the power presenter says what these settings are from, once, and nothing
+    // offers a retry that cannot answer until it wakes (the freshness chip steps aside for it).
+    if (nativeState === 'asleep' && lastSeenAt !== null) {
+        return <MachineOfflineNotice testID="machine-guard-asleep" title={describeAsleepAsOf(lastSeenAt)} />;
+    }
     return (
         <MachineOfflineNotice testID="machine-guard-offline"
             title={t('machineGuard.states.offlineBody', { time: lastSeenAt === null ? t('machineGuard.states.lastKnown') : formatAsOfTime(lastSeenAt) })}

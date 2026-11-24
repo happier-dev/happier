@@ -2465,6 +2465,7 @@ const machineResourceUiTranslations = {
                 lastReport: Shared_machineResourceUiTranslations.machinePhrase('解释 ', ' 的最新资源报告'),
                 lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('检查 ', ' 的最新存储报告'),
                 notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('', ' 恢复在线时告诉我'),
+                notifyWhenWakes: '它唤醒时告诉我',
                 notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('我同意为 ', ' 启用持续的机器离线提醒和恢复更新。'),
                 setupDocker: Shared_machineResourceUiTranslations.machinePhrase("在 ", " 上设置 Docker"),
                 setupReview: Shared_machineResourceUiTranslations.machinePhrase("查看 ", " 上已设置的内容"),

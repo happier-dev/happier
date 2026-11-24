@@ -24,6 +24,7 @@ import {
 } from './buildMachineSelectionBuckets';
 import { MachinePresenceDot, MachineRowMark, MachineSelectionRowAccessory } from './MachineSelectionRowAccessory';
 import { describeMachinePresenceLine, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
+import { describeAsleepDestinationClause } from '@/components/settings/machines/managed/managedLifecyclePresentation';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
@@ -390,6 +391,12 @@ function hasNativePowerWord(machine: MachineDisplayRenderable, managedMachine: M
     return state === 'stopped' || state === 'starting' || state === 'stopping';
 }
 
+/** A Session row on an asleep Machine that Send does not start: what does start it (UI refinements 2026-11-24). */
+function describeAsleepRowReason(machine: MachineDisplayRenderable, purpose: MachineDestinationPurposeV1): string | undefined {
+    if (purpose !== 'session' || projectMachineManagedPresence(machine)?.offline?.state !== 'stopped') return undefined;
+    return describeAsleepDestinationClause({ startsOnSend: false, runtime: machine.managedInputRuntime, shared: machine.isShared === true });
+}
+
 /**
  * Presence is the Machine's only blocker: it is offline and nothing else (content, access, a worker's
  * own refusal) stands between it and the destination. The one decision both the row reason and the
@@ -420,9 +427,12 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
 ): Readonly<{ selectable: boolean; reason?: string; copySetupAction?: MachineDestinationCopySetupAction }> {
     const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId), machine, scope);
     const presence = resolveMachinePickerPresence(machine, undefined, scope);
+    // An asleep row that Send does not start says what does, from the power presenter (not a failure).
+    const asleepReason = describeAsleepRowReason(machine, purpose);
     if (!eligibility.eligible) {
         // An offline machine answers no worker status; its presence line already says why it can't be chosen.
-        return { selectable: false, reason: isBlockedOnlyByPresence(eligibility, presence) ? undefined : describeMachineDestinationEligibility(eligibility, machine, workerSubject, purpose),
+        return { selectable: false, reason: (eligibility.reason === 'new_session_wake_unavailable' ? asleepReason : undefined)
+            ?? (isBlockedOnlyByPresence(eligibility, presence) ? asleepReason : describeMachineDestinationEligibility(eligibility, machine, workerSubject, purpose)),
             ...(eligibility.reason === 'needs_copy' ? { copySetupAction: eligibility.action } : {}) };
     }
     const decided = resolveMachineAvailability?.(machine, serverId);
@@ -432,6 +442,7 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
         return {
             selectable,
             reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose, getMachineDisplayName(machine) ?? machine.id)
+                ?? (!selectable ? asleepReason : undefined)
                 ?? (!selectable && presence.status === 'unknown' ? t('common.unavailable') : undefined),
         };
     }

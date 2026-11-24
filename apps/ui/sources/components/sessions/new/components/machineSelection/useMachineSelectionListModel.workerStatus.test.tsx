@@ -466,11 +466,12 @@ describe('worker destination list demand', () => {
             expect(option?.subtitle).toContain('managedWake.startsOnSend');
         } else if (online) {
             expect(option?.subtitle).not.toContain('managedWake.startsOnSend');
-        } else if (newSessionWake?.kind === 'unavailable') {
-            expect(option?.subtitle).toContain(newSessionWake.reason === 'controller_unavailable'
-                ? 'managedMachines.controller.requiredUnnamed' : 'managedWake.startBeforeSend');
-        } else if (wakeOnAcceptedMessage) {
-            expect(option?.subtitle).toContain('common.unavailable');
+        } else {
+            // Asleep is a state, not a failure: a row Send does not start says what does, never "unavailable".
+            expect(option?.subtitle).toContain('managedPower.asleep');
+            expect(option?.subtitle).toContain(newSessionWake?.kind === 'unavailable' && newSessionWake.reason === 'controller_unavailable'
+                ? 'managedPower.startsWhenManagerOnline' : 'managedPower.ownerStartsIt');
+            expect(option?.subtitle).not.toContain('common.unavailable');
         }
         await hook.unmount();
     });

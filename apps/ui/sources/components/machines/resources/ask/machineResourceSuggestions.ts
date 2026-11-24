@@ -41,6 +41,8 @@ export type MachineResourceComposerSuggestion = Readonly<{
 export type MachineResourceSuggestionFacts = Readonly<{
     machine: MachineResourceSuggestionMachine;
     online: boolean;
+    /** Offline because it is asleep (its native power state): it wakes, it does not come back. */
+    asleep?: boolean;
     /** A resource sample retained by this app session, not just a daemon publication. */
     hasLastReport?: boolean;
     memoryPressure?: MachineResourceSummaryV1['memory']['pressure'];
@@ -77,7 +79,8 @@ export function deriveMachineResourceSuggestions(
     if (!facts.online) {
         // The block's description already says the machine is offline: its tiles do not repeat the cause.
         const reason = '';
-        const notifyTitle = t('machineResources.askSuggestions.prompts.notifyWhenBack', { machine: machine.name });
+        const notifyTitle = facts.asleep ? t('machineResources.askSuggestions.prompts.notifyWhenWakes')
+            : t('machineResources.askSuggestions.prompts.notifyWhenBack', { machine: machine.name });
         return retain([
             ...(facts.hasLastReport ? [make('lastReport', t('machineResources.askSuggestions.prompts.lastReport', { machine: machine.name }), reason)] : []),
             ...(facts.happierStorageBytes != null ? [make('lastStorageReport', t('machineResources.askSuggestions.prompts.lastStorageReport', { machine: machine.name }), reason)] : []),

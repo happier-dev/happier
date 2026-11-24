@@ -2,6 +2,7 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ManagedCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ProviderNativeOptionFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAsleepWake } from '@/sync/domains/pending/managedWakeProjection';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 
@@ -436,4 +437,28 @@ function describeAsleepLine(wake: ManagedAsleepWake | undefined): string {
     case 'off': return t('managedPower.asleepNoWake');
     case undefined: return t('managedPower.asleep');
   }
+}
+
+/**
+ * Asleep is a state, not a failure (UI refinements 2026-11-24). What a destination row says after its power word
+ * ("Asleep · …"): that Send starts it, or else what does, from the same wake rule the asleep line above reads.
+ */
+export function describeAsleepDestinationClause(input: Readonly<{
+  startsOnSend: boolean;
+  runtime: ManagedMachineInputRuntimeV1 | null | undefined;
+  /** Someone else's Machine: its owner starts it, not this person. */
+  shared: boolean;
+}>): string {
+  if (input.startsOnSend) return t('managedWake.startsOnSend');
+  const wake = input.runtime;
+  if (wake?.asleepWake === 'waitsForController'
+    || (wake?.newSessionWake?.kind === 'unavailable' && wake.newSessionWake.reason === 'controller_unavailable')) {
+    return t('managedPower.startsWhenManagerOnline');
+  }
+  return input.shared ? t('managedPower.ownerStartsIt') : t('managedPower.startFromMachine');
+}
+
+/** The freshness of what an asleep Machine last reported: said once, with no retry, since nothing answers until it wakes. */
+export function describeAsleepAsOf(at: number): string {
+  return t('managedPower.asleepAsOf', { time: formatAsOfTime(at) });
 }

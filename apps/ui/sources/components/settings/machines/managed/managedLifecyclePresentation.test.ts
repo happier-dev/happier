@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
+import { describeAsleepAsOf, describeAsleepDestinationClause, describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 
 describe('native Ends presentation', () => {
@@ -53,4 +53,22 @@ describe('the one destructive action of a machine being created (TH MB-6)', () =
     expect(resolveManagedDestructiveAction({ allocation: 'may-exist', deleteSupported: true })).toBe('cancelCreation');
     expect(resolveManagedDestructiveAction({ allocation: 'unsubmitted', deleteSupported: true })).toBe('cancelCreation');
   });
+});
+
+describe('asleep is a state, not a failure (UI refinements 2026-11-24)', () => {
+    const asleepOff = { nativeReady: false, wakeState: null, state: 'asleep' as const, asleepWake: 'off' as const };
+    it.each([
+        ['starts on Send', { startsOnSend: true, runtime: asleepOff, shared: false }, 'managedWake.startsOnSend'],
+        ['own, Send does not start it', { startsOnSend: false, runtime: asleepOff, shared: false }, 'managedPower.startFromMachine'],
+        ['shared, Send does not start it', { startsOnSend: false, runtime: asleepOff, shared: true }, 'managedPower.ownerStartsIt'],
+        ['waits for its manager', { startsOnSend: false, shared: false, runtime: { ...asleepOff, wakeState: 'asleep' as const, asleepWake: 'waitsForController' as const,
+            newSessionWake: { kind: 'unavailable' as const, reason: 'controller_unavailable' as const } } }, 'managedPower.startsWhenManagerOnline'],
+    ])('a destination row says what starts it (%s)', (_name, input, key) => {
+        expect(describeAsleepDestinationClause(input)).toBe(t(key as Parameters<typeof t>[0]));
+    });
+
+    it('says the as-of time of what an asleep machine last reported, as a state', () => {
+        const at = Date.UTC(2026, 10, 18, 12, 18);
+        expect(describeAsleepAsOf(at)).toBe(t('managedPower.asleepAsOf', { time: formatAsOfTime(at) }));
+    });
 });

@@ -193,6 +193,7 @@ function AskSuggestions(props: Readonly<{
     const happierStorageBytes = storage.summary ? readHappierStorageBytes(storage.summary) : null;
     const leftBehindCount = processes.answer?.state === 'live'
       ? selectMachineProcessesLeftBehind(processes.answer.leftBehind).count : null;
+    const asleep = useMachinePresenceSummary(props.serverId, props.machineId).nativeState === 'asleep';
     const reported = summary?.kind === 'reporting' ? summary.summary : null;
     const hasLastReport = reported !== null;
     const memoryPressure = reported?.memory.pressure;
@@ -214,6 +215,7 @@ function AskSuggestions(props: Readonly<{
             directory: directory ?? '',
           },
           online,
+          asleep,
           hasLastReport,
           calm: hasLastReport && calm,
           memoryPressure,
@@ -244,6 +246,7 @@ function AskSuggestions(props: Readonly<{
         props.machineId,
         props.machineName,
         online,
+        asleep,
         props.serverId,
         hasLastReport,
         memoryPressure,

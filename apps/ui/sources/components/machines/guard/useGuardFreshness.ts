@@ -36,15 +36,17 @@ export function useGuardActivityFreshness(activity: MachineGuardActivityHookResu
  */
 export function useGuardFreshness(input: Readonly<{ serverId: string; machineId: string }>): MachineFreshness {
     const guard = useMachineGuardView(input);
-    const { reachability, lastSeenAt = null } = useMachinePresenceSummary(input.serverId, input.machineId);
+    const { reachability, lastSeenAt = null, nativeState } = useMachinePresenceSummary(input.serverId, input.machineId);
     const { view, offline, status, pending, receivedAtMs, retry } = guard;
+    const asleep = nativeState === 'asleep';
     return React.useMemo((): MachineFreshness => {
         if (reachability === 'unknown') return NONE;
-        if (offline) return lastSeenAt !== null ? { kind: 'offline', at: lastSeenAt } : NONE;
+        // An asleep machine's notice already says what these settings are from; the time is said once.
+        if (offline) return lastSeenAt !== null && !asleep ? { kind: 'offline', at: lastSeenAt } : NONE;
         if (status === 'not_reported') return NONE;
         if (view === null) return status === 'error' ? NONE : { kind: 'checking', at: null };
         if (status === 'error' && receivedAtMs !== null) return { kind: 'stale', at: receivedAtMs, onRetry: retry };
         if (pending || status === 'loading') return { kind: 'checking', at: receivedAtMs };
         return LIVE;
-    }, [lastSeenAt, offline, pending, reachability, receivedAtMs, retry, status, view]);
+    }, [asleep, lastSeenAt, offline, pending, reachability, receivedAtMs, retry, status, view]);
 }

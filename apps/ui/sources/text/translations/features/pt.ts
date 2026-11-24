@@ -2556,6 +2556,7 @@ const machineResourceUiTranslations = {
                 lastReport: Shared_machineResourceUiTranslations.machinePhrase('Explica o último relatório de recursos de ', ''),
                 lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('Revê o último relatório de armazenamento de ', ''),
                 notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('Avisa-me quando ', ' voltar'),
+                notifyWhenWakes: 'Avise-me quando ela acordar',
                 notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('Concordo em ativar alertas contínuos de máquina offline e atualizações de recuperação para ', '.'),
                 setupDocker: Shared_machineResourceUiTranslations.machinePhrase("Configurar o Docker em ", ""),
                 setupReview: Shared_machineResourceUiTranslations.machinePhrase("Ver o que está configurado em ", ""),

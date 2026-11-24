@@ -2466,6 +2466,7 @@ const machineResourceUiTranslations = {
                 lastReport: Shared_machineResourceUiTranslations.machinePhrase('解釋 ', ' 的最新資源報告'),
                 lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('檢查 ', ' 的最新儲存報告'),
                 notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('', ' 恢復連線時告訴我'),
+                notifyWhenWakes: '它喚醒時告訴我',
                 notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('我同意為 ', ' 啟用持續的機器離線提醒和恢復更新。'),
                 setupDocker: Shared_machineResourceUiTranslations.machinePhrase("在 ", " 上設定 Docker"),
                 setupReview: Shared_machineResourceUiTranslations.machinePhrase("查看 ", " 上已設定的內容"),

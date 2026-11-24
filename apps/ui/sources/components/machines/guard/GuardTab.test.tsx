@@ -427,6 +427,18 @@ describe('GuardTab', () => {
         expect(screen.getTextContent()).not.toContain(t('machineGuard.states.offlineTitle', { machine: 'leeroy-mbp' }));
     });
 
+    it('says an asleep machine is asleep, gives the as-of time once and offers no retry', async () => {
+        const activeAt = Date.UTC(2026, 10, 18, 12, 18);
+        const { screen } = await mount({ overrides: { active: false, activeAt,
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep', asleepWake: 'off' } } });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-guard-asleep')).not.toBeNull()); });
+        const text = screen.getTextContent();
+        expect(text).toContain(t('managedPower.asleepAsOf', { time: formatAsOfTime(activeAt) }));
+        expect(text.split(formatAsOfTime(activeAt))).toHaveLength(2);
+        expect(screen.findByTestId('machine-guard-offline-retry')).toBeNull();
+        expect(screen.findByTestId('machine-guard-offline')).toBeNull();
+    });
+
     it('keeps the saved rules under one line saying the first read failed, instead of emptying the tab', async () => {
         const { screen } = await mount({ rpc: method => { if (method === RPC_METHODS.MACHINES_GUARD_GET || method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST) throw new Error('unreachable'); return undefined; } });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-guard-error')).not.toBeNull()); });

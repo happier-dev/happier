@@ -19,6 +19,7 @@ export const en = {
             lastReport: machinePhrase('Explain the last resource report from ', ''),
             lastStorageReport: machinePhrase('Review the last storage report from ', ''),
             notifyWhenBack: machinePhrase('Tell me when ', ' is back'),
+            notifyWhenWakes: 'Tell me when it wakes',
             notifyWhenBackConsent: machinePhrase('I agree to enable ongoing Machine offline alerts and recovery updates for ', '.'),
             setupDocker: machinePhrase("Set up Docker on ", ""),
             setupReview: machinePhrase("Check what is set up on ", ""),

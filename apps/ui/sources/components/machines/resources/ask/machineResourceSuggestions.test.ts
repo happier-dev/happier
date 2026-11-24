@@ -49,6 +49,14 @@ describe('machine resource suggestions', () => {
         expect(suggestions.map((suggestion) => suggestion.reason)).toEqual(['', '', '']);
     });
 
+    it('asks to be told when an asleep machine wakes, not when it is back', () => {
+        const [notify] = deriveMachineResourceSuggestions({ ...calm, online: false, asleep: true });
+        expect(notify.kind).toBe('notifyWhenBack');
+        expect(notify.title).toBe(t('machineResources.askSuggestions.prompts.notifyWhenWakes'));
+        // The prompt still names the machine for the agent, through its consent sentence.
+        expect(notify.fill.text).toContain(t('machineResources.askSuggestions.prompts.notifyWhenBackConsent', { machine: machine.name }));
+    });
+
     it('keeps suggestion identity machine-qualified and fills only text and placement', () => {
         const first = deriveMachineResourceSuggestions(calm);
         expect(deriveMachineResourceSuggestions({ ...calm, machine: { ...machine } }, first)).toBe(first);

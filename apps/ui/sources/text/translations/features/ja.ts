@@ -2520,6 +2520,7 @@ const machineResourceUiTranslations = {
                 lastReport: Shared_machineResourceUiTranslations.machinePhrase('', ' の最新リソースレポートを説明して'),
                 lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('', ' の最新ストレージレポートを確認して'),
                 notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('', ' が再接続されたら知らせて'),
+                notifyWhenWakes: '起動したら知らせて',
                 notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('', ' の継続的なオフライン通知と復旧の更新を有効にすることに同意します。'),
                 setupDocker: Shared_machineResourceUiTranslations.machinePhrase("", " に Docker をセットアップ"),
                 setupReview: Shared_machineResourceUiTranslations.machinePhrase("", " に何が設定されているか確認"),
