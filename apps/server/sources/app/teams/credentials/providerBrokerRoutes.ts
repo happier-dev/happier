@@ -321,12 +321,14 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         }
         if (openRequest.v === 3) {
             const admission = request.externalActionActionBrokerAdmission;
-            if (!admission || admission.resourceId !== openRequest.resourceId
+            const binding = request.externalActionExecutionAuthorizationBinding;
+            if (!binding || !admission || admission.resourceId !== openRequest.resourceId
                 || admission.machineId !== openRequest.initiatorMachineId) {
                 return reply.send({ ok: false, reasonCode: 'resource_forbidden' });
             }
             const result = await openTeamCredentialActionBroker({
                 actorAccountId: request.userId, rootActionId: admission.rootActionId,
+                initiatorInstallation: { accountId: binding.custodianAccountId, installationId: binding.installationId },
                 ...(admission.admittedReviewedChildActionId ? { admittedReviewedChildActionId: admission.admittedReviewedChildActionId } : {}),
                 authentication: readSessionAccessAuthenticationFromRequest(request), request: openRequest,
                 readCurrentPresence, readPoolSourceEligibility: createTeamCredentialPoolSourceEligibilityReader(app.forwardRpcForUser),

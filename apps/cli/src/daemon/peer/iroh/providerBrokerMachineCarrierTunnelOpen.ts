@@ -63,8 +63,10 @@ export type ProviderBrokerMachineCarrierTunnel = Readonly<{
   close(): Promise<void>;
   readFailureDiagnostic?(): Promise<MachineCarrierFailureDiagnostic | undefined>;
 }>;
-type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerWatcherOpenResponseV1 | ProviderBrokerAccountOpenResponseV2 | ProviderBrokerActionOpenResponseV3;
-const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerWatcherOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, ProviderBrokerActionOpenResponseV3Schema]);
+type BrokerRefreshOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerWatcherOpenResponseV1 | ProviderBrokerAccountOpenResponseV2;
+type BrokerOpenResponse = BrokerRefreshOpenResponse | ProviderBrokerActionOpenResponseV3;
+const BrokerRefreshOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerWatcherOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema]);
+const BrokerOpenResponseSchema = z.union([BrokerRefreshOpenResponseSchema, ProviderBrokerActionOpenResponseV3Schema]);
 type BrokerAuthority = SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
 function brokerAuthorityBinding(authority: BrokerAuthority) {
   if (authority.payload.v === 3) return providerBrokerActionRouteGrantExpectedBindingV3(SignedProviderBrokerActionRouteGrantV3Schema.parse(authority));
@@ -97,7 +99,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
   observeSessionCarrierFailure?: (sessionId: string, read: () => Promise<MachineCarrierFailureDiagnostic | undefined>) => void;
 }>): (request: Readonly<{
   brokerOpen: Extract<BrokerOpenResponse, { ok: true }>;
-  refreshBrokerOpen?: (signal?: AbortSignal) => Promise<BrokerOpenResponse>;
+  refreshBrokerOpen?: (signal?: AbortSignal) => Promise<BrokerRefreshOpenResponse>;
   signal?: AbortSignal;
 }>) => Promise<ProviderBrokerMachineCarrierTunnel> {
   return async ({ brokerOpen: brokerOpenInput, refreshBrokerOpen, signal }) => {
@@ -166,7 +168,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         }
         const recordOutcome = !watcher && payload.v === 1 && payload.consumer.kind === 'session'
           ? input.beginSessionApplicationRequest?.(payload.consumer.sessionId) : undefined;
-        const freshOpen = BrokerOpenResponseSchema.parse(await refreshBrokerOpen(signal));
+        const freshOpen = BrokerRefreshOpenResponseSchema.parse(await refreshBrokerOpen(signal));
         if (!freshOpen.ok) {
           signal?.throwIfAborted();
           const body = providerBrokerApplicationFailureBody(freshOpen, payload.v === 1 ? payload.resourceId : undefined);

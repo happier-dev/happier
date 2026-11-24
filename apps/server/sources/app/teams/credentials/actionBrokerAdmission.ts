@@ -31,6 +31,7 @@ import { readTeamCredentialBrokerPresenceDemand, resolveTeamCredentialBrokerPlac
 
 export type TeamCredentialActionBrokerOpenInput = Readonly<{
     actorAccountId: string;
+    initiatorInstallation: Readonly<{ accountId: string; installationId: string }>;
     rootActionId: string;
     admittedReviewedChildActionId?: string;
     authentication: SessionAccessAuthentication;
@@ -69,7 +70,7 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
     const brokerMachineIds = await readTeamCredentialBrokerPresenceDemand({ resource: hint });
     let presence: Awaited<ReturnType<TeamCredentialActionBrokerOpenInput['readCurrentPresence']>>;
     try {
-        presence = await input.readCurrentPresence({ initiatorAccountId: input.actorAccountId,
+        presence = await input.readCurrentPresence({ initiatorAccountId: input.initiatorInstallation.accountId,
             initiatorMachineId: request.initiatorMachineId, brokerAccountId: hint.custodianAccountId, brokerMachineIds });
     } catch {
         input.signal?.throwIfAborted();
@@ -100,11 +101,14 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             return { ok: false, reasonCode: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired };
         }
     }
-    const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: input.actorAccountId,
-        machineId: request.initiatorMachineId, consumer: request.consumer });
+    // A shared controller runs its owning Account's declaration. The Team
+    // credential binding below separately admits the requester.
+    const declarationHost = { accountId: input.initiatorInstallation.accountId,
+        machineId: request.initiatorMachineId, machineInstallationId: input.initiatorInstallation.installationId };
+    const preparedDeclaration = await readTeamCredentialActionDeclaration({ ...declarationHost, consumer: request.consumer });
     input.signal?.throwIfAborted();
     const result = await inTx(async tx => {
-        await acquireAccountChangePublicationLocksInTx(tx, [input.actorAccountId, hint.custodianAccountId],
+        await acquireAccountChangePublicationLocksInTx(tx, [input.actorAccountId, hint.custodianAccountId, declarationHost.accountId],
             { includeSingleAccount: true, intent: 'serializing' });
         input.signal?.throwIfAborted();
         const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
@@ -125,12 +129,12 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             return { ok: false as const, reasonCode: 'resource_changed' as const };
         }
         const declaration = await admitTeamCredentialActionDeclarationInTx(tx, {
-            accountId: input.actorAccountId, machineId: request.initiatorMachineId, rootActionId: input.rootActionId,
+            ...declarationHost, rootActionId: input.rootActionId,
             pluginVersion: request.consumer.pluginVersion, consumer: request.consumer, source: admitted.sourceBinding,
             preparedDeclaration,
             ...(input.admittedReviewedChildActionId ? { admittedReviewedChildActionId: input.admittedReviewedChildActionId } : {}),
         });
-        if (!declaration.ok) return { ok: false as const, reasonCode: 'resource_forbidden' as const };
+        if (!declaration.ok) return { ok: false as const, reasonCode: declaration.reason };
         const initiator = await readProviderBrokerInitiatorEndpointInTx(tx, {
             accountId: input.actorAccountId, machineId: request.initiatorMachineId, sessionId: null });
         if (!initiator) return { ok: false as const, reasonCode: 'broker_unavailable' as const, refusalReason: 'initiator_endpoint_unavailable' };

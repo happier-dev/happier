@@ -139,13 +139,23 @@ describe('two-Account Team provisioner managed entry point', () => {
       deliveryMode: brokerRealm ? 'brokered' : 'direct' });
     const signing = nacl.sign.keyPair();
     const installationId = crypto.randomUUID();
-    await db.machine.update({ where: { id: shared.machine.id }, data: { installationId,
+    const sharedController = role === 'check' && brokerRealm;
+    const controllerOwner = sharedController ? shared.custodian : shared.recipient;
+    const declaration = createReleaseLessDeclarationV1(bundled.manifest);
+    if (sharedController) {
+      await db.machineGrant.create({ data: { principalKind: 'account', machineId: shared.machine.id,
+        accountId: shared.recipient.id, accessLevel: 'admin', createdByAccountId: controllerOwner.id } });
+      await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: shared.recipient.id, pluginId: manifest.id } },
+        data: { accountId: controllerOwner.id, releaseLessDeclaration: { schemaVersion: 2, legacyDeclaration: null,
+          machines: [{ machineId: shared.machine.id, machineInstallationId: installationId, declaration }] } } });
+    }
+    await db.machine.update({ where: { id: shared.machine.id }, data: { accountId: controllerOwner.id, installationId,
       installationPublicKey: signing.publicKey, operationProtocolCapabilitiesRevision: 1, pluginMaterializationRevision: BigInt(1),
       operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
-    await db.pluginMachineMaterialization.create({ data: { accountId: shared.recipient.id, serverIdentityId: homeId,
+    await db.pluginMachineMaterialization.create({ data: { accountId: controllerOwner.id, serverIdentityId: homeId,
       machineId: shared.machine.id, materializationId: installationId, pluginId: manifest.id, version: manifest.version,
       sourceClass: 'bundledFirstParty', portableRelease: false,
-      archiveDigestSha256: createReleaseLessDeclarationV1(bundled.manifest).manifestDigestSha256,
+      archiveDigestSha256: declaration.manifestDigestSha256,
       uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
     const app = createAuthenticatedTestApp({ authentication: 'real' });
     registerExternalActionRoutes(app);
@@ -169,6 +179,8 @@ describe('two-Account Team provisioner managed entry point', () => {
     app.addHook('preHandler', async request => { if (request.url.endsWith('/direct-material')) materialRequests.push(request.body); });
     const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
     const credentials = { token: await createAccountTokenForTests(shared.recipient.id, { kind: 'account', authority: 'present_user' }), encryption: null } as const;
+    const controllerToken = sharedController ? await createAccountTokenForTests(controllerOwner.id,
+      { kind: 'account', authority: 'present_user' }) : credentials.token;
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'two-account-managed-runtime-'));
     onTestFinished(() => rm(happyHomeDir, { recursive: true, force: true }));
     vi.stubEnv('HAPPIER_HOME_DIR', happyHomeDir);
@@ -274,7 +286,7 @@ describe('two-Account Team provisioner managed entry point', () => {
         await db.machine.update({ where: { id: brokerMachine.id }, data: { installationId: custodianInstallationId,
           installationPublicKey: custodianKeys.publicKey, operationProtocolCapabilitiesRevision: 1,
           operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1, 3] }, irohMachineEndpoint: { protocolVersions: [1], ...target.endpoint } } } });
-        await presence.connect({ baseUrl: serverUrl, token: credentials.token, accountId: shared.recipient.id,
+        await presence.connect({ baseUrl: serverUrl, token: controllerToken, accountId: controllerOwner.id,
           machineId: shared.machine.id, installationId, keys: signing });
         await presence.connect({ baseUrl: serverUrl, token: custodianCredentials.token, accountId: shared.custodian.id,
           machineId: brokerMachine.id, installationId: custodianInstallationId, keys: custodianKeys });
@@ -457,6 +469,16 @@ describe('two-Account Team provisioner managed entry point', () => {
         const wrongRoute = await app.inject({ method: 'POST', url: sessionBoundPath, headers: sessionBoundHeaders, payload: firstBrokerOpen });
         expect(wrongRoute.statusCode).toBe(401);
         expect(wrongRoute.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+
+        const undeclared = { ...firstBrokerOpen, consumer: { ...firstBrokerOpen.consumer,
+          actionId: `${manifest.id}/actions/undeclared`, purpose: { ...firstBrokerOpen.consumer.purpose,
+            consumer: { pluginId: manifest.id, localId: 'undeclared' } } } };
+        const undeclaredHeaders = createExternalActionAuthorizedRequestHeaders({ authorization, target: authorization.binding.target,
+          installationId, privateKey: signing.secretKey, effectActionId: rootActionId, method: 'POST', path: url, body: undeclared });
+        const absent = await app.inject({ method: 'POST', url, headers: undeclaredHeaders, payload: undeclared });
+        expect(absent.statusCode).toBe(200);
+        expect(ProviderBrokerActionOpenResponseV3Schema.parse(absent.json()))
+          .toEqual({ ok: false, reasonCode: 'action_not_declared' });
         expect(brokerAdmissions).toBe(1);
       }
       await db.teamCredentialResource.update({ where: { id: shared.resource.id }, data: { memberGrants: { deleteMany: {} } } });

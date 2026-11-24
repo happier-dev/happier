@@ -75,7 +75,7 @@ export async function executeTeamCredentialBrokerAction(input: TeamCredentialBro
   const opened = ProviderBrokerActionOpenResponseV3Schema.parse(await input.openBroker({ v: 3,
     resourceId: input.selection.resourceId, initiatorMachineId: input.initiatorMachineId, consumer, inputDigest }, input.signal));
   if (!opened.ok) throw new PluginError({ code: opened.reasonCode, message: opened.reasonCode,
-    ...(opened.failureCause ? { failureCause: opened.failureCause } : {}) });
+    ...('failureCause' in opened && opened.failureCause ? { failureCause: opened.failureCause } : {}) });
   const payload = opened.authority.payload;
   if (payload.teamId !== input.teamId || payload.resourceId !== input.selection.resourceId
     || payload.initiator.machineId !== input.initiatorMachineId || payload.inputDigest !== inputDigest

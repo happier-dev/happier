@@ -554,10 +554,16 @@ export const SignedProviderBrokerActionRouteGrantV3Schema = lazyZodSchema(() => 
 export const IrohProviderBrokerActionHandshakeV3Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(3), kind: z.literal('provider_broker'), authority: SignedProviderBrokerActionRouteGrantV3Schema,
 }));
-export const ProviderBrokerActionOpenResponseV3Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
-  z.strictObject({ ok: z.literal(true), authority: SignedProviderBrokerActionRouteGrantV3Schema,
-    target: ProviderBrokerOpenTargetV1Schema }),
-  ProviderBrokerAdmissionFailureV1Schema,
+export const ProviderBrokerActionDeclarationRefusalV3Schema = lazyZodSchema(() =>
+  z.enum(['action_not_declared', 'purpose_not_declared', 'source_not_declared']));
+export type ProviderBrokerActionDeclarationRefusalV3 = z.infer<typeof ProviderBrokerActionDeclarationRefusalV3Schema>;
+export const ProviderBrokerActionOpenResponseV3Schema = lazyZodSchema(() => z.union([
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), authority: SignedProviderBrokerActionRouteGrantV3Schema,
+      target: ProviderBrokerOpenTargetV1Schema }),
+    ProviderBrokerAdmissionFailureV1Schema,
+  ]),
+  z.strictObject({ ok: z.literal(false), reasonCode: ProviderBrokerActionDeclarationRefusalV3Schema }),
 ]));
 export const ProviderBrokerActionAdmissionV3Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(3), authority: SignedProviderBrokerActionRouteGrantV3Schema,

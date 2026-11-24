@@ -2621,8 +2621,12 @@ offered to the requesting Account on that Machine. Run startup resolves the
 selected credential through the existing admission path.
 
 Finite declared Actions in unreleased 0.3 use Home's Team operation admission
-owner for the selected delivery mode. For brokered V3 Actions, Home signs the
-requester, declared purpose, source and input digest and records one admission
+owner for the selected delivery mode. For brokered V3 Actions, Home reads the
+declaration from the Account that owns the exact Machine installation running
+the Action. It admits the requester's Team entitlement separately and returns
+the specific Action, purpose, or source declaration refusal if one applies.
+Use matching 0.3 development Home and CLI builds to read these refusal codes.
+Home signs the requester, declared purpose, source and input digest and records one admission
 in the existing RepeatKey store until the signed grant expires. The first
 custodian carrier request atomically consumes that mark; another carrier using
 the same grant receives `operation_not_current`. This consumption does not
