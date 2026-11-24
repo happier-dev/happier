@@ -10,8 +10,10 @@ import {
 } from "@/app/teams/actorContext";
 import type { SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import type { Tx } from "@/storage/inTx";
+import { TeamMembershipStatus } from "@/storage/enums.generated";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { projectTeamCreationPolicy } from "@/app/teams/creationPolicy";
+import { projectTeamPolicyV1 } from "@/app/teams/projections";
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessCandidatesInspectResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { assertSessionAccessManageAccessInTx } from './sessionAccessGrantService';
@@ -125,9 +127,24 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         }
     }
     let creationDecision: ResolveSessionAccessPrincipalsResponseV1["creationDecision"] = null;
+    let creationRefusal: ResolveSessionAccessPrincipalsResponseV1["creationRefusal"];
     if (input.creationTeamId) {
         const context = contexts.get(input.creationTeamId);
         const qualification = qualifications.get(input.creationTeamId);
+        // A member whose current sign-in this Team does not accept is told so: the same
+        // qualification decides the Session write, which refuses with the same code.
+        // Anyone else learns nothing about the Team.
+        if (context?.membership?.status === TeamMembershipStatus.active && qualification && !qualification.ok) {
+            creationRefusal = {
+                v: 1,
+                teamId: context.team.id,
+                teamName: context.team.name,
+                code: qualification.error === "team_authentication_required"
+                    ? "session_access_authentication_required"
+                    : "session_access_authentication_unavailable",
+                accepted: projectTeamPolicyV1(context.team).authenticationPolicy?.accepted ?? [],
+            };
+        }
         if (context && qualification?.ok && grantableTeamIds.has(input.creationTeamId)) {
             creationDecision = {
                 v: 1,
@@ -138,7 +155,8 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
             };
         }
     }
-    return { v: 1, principals: result, ...(input.creationTeamId !== undefined ? { creationDecision } : {}) };
+    return { v: 1, principals: result, ...(input.creationTeamId !== undefined ? { creationDecision } : {}),
+        ...(creationRefusal ? { creationRefusal } : {}) };
 }
 
 function principalKey(subject: PrincipalRefV1): string {

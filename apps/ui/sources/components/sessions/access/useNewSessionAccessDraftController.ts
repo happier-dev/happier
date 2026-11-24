@@ -1,11 +1,14 @@
 import * as React from 'react';
 import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
-import type { SessionAccessCreationDecisionV1, SessionAccessPrincipalSummaryV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import type { SessionAccessCreationDecisionV1, SessionAccessCreationRefusalV1, SessionAccessPrincipalSummaryV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { useRouter, type Href } from 'expo-router';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
@@ -83,7 +86,17 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const [revision, setRevision] = React.useState(0);
     const [pendingContextTeamId, setPendingContextTeamId] = React.useState<string | null | undefined>(undefined);
     const [explainedReason, setExplainedReason] = React.useState<Readonly<{ code: string; message: string }> | null>(null);
-    const [creationDecision, setCreationDecision] = React.useState<SessionAccessCreationDecisionV1 | null | undefined>(undefined);
+    const [creationOutcome, setCreationDecision] = React.useState<SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null | undefined>(undefined);
+    // The Home refuses a Team whose sign-in rule the current sign-in does not meet with a typed refusal, for the
+    // restored context and for a Team the person just chose; either is said once, with the step that meets it.
+    const creationRefusal = creationOutcome && 'code' in creationOutcome ? creationOutcome : null;
+    const creationDecision = creationRefusal ? null : creationOutcome as SessionAccessCreationDecisionV1 | null | undefined;
+    const [contextRefusal, setContextRefusal] = React.useState<SessionAccessCreationRefusalV1 | null>(null);
+    const signInRefusal = contextRefusal ?? creationRefusal;
+    // Read at press time: navigation is not an input of the projected reason.
+    const router = useRouter();
+    const routerRef = React.useRef(router);
+    routerRef.current = router;
     const [pendingContextDecision, setPendingContextDecision] = React.useState<Readonly<{ teamId: string; retry: number }> | null>(null);
     const [pendingContextTarget, setPendingContextTarget] = React.useState<SessionAccessDirectoryTeamContext | null>(null);
     const [contextDecisionError, setContextDecisionError] = React.useState(false);
@@ -143,8 +156,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const creationDecisionRevision = React.useRef(0);
     const creationDecisionCache = React.useRef<Readonly<{
         key: string;
-        value?: SessionAccessCreationDecisionV1 | null;
-        pending?: Promise<SessionAccessCreationDecisionV1 | null>;
+        value?: SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null;
+        pending?: Promise<SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null>;
     }> | null>(null);
     const [creationDecisionRetryRevision, setCreationDecisionRetryRevision] = React.useState(0);
     React.useEffect(() => {
@@ -223,7 +236,18 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     // authoritative only when the selected-Home server has returned its typed
     // decision; a missing decision must never be inferred from a cached row.
     const primaryTeamPolicy = primaryTeamDecisionPolicy;
-    const primaryTeamPolicyUnavailable = primaryTeamId !== null && creationDecision !== undefined && creationDecision === null && primaryTeamPolicy === null;
+    const primaryTeamPolicyUnavailable = primaryTeamId !== null && creationDecision !== undefined && creationDecision === null
+        && creationRefusal === null && primaryTeamPolicy === null;
+    const signInReason = React.useMemo(() => signInRefusal ? presentTeamSignInRequired({
+        code: signInRefusal.code, teamId: signInRefusal.teamId, teamName: signInRefusal.teamName, serverId: scope.serverId,
+        accepted: signInRefusal.accepted, navigate: (href) => routerRef.current.push(href as Href),
+    }) : null, [scope.serverId, signInRefusal]);
+    // Signing in again on this Home is the natural boundary: the decision is read again then, not polled.
+    React.useEffect(() => subscribeHomeCredentialChange((event) => {
+        if (event.serverId !== scope.serverId) return;
+        setContextRefusal(null);
+        setCreationDecisionRetryRevision((value) => value + 1);
+    }), [scope.serverId]);
     const primaryTeamDecisionPending = primaryTeamId !== null && creationDecision === undefined;
 
     const rows = React.useMemo<readonly SessionAccessGrantRowModel[]>(() => grants.map((grant) => {
@@ -322,6 +346,12 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             isCurrent: () => active,
         }).then((decision) => {
             if (!active) return;
+            if (decision !== null && 'code' in decision) {
+                setPendingContextDecision(null);
+                setContextDecisionError(false);
+                setContextRefusal(decision);
+                return;
+            }
             if (decision === null) {
                 setContextDecisionError(true);
                 setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') });
@@ -352,6 +382,12 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const setContext = React.useCallback((teamId: string | null) => {
         if (!editable || primaryTeamId === teamId || (primaryTeamId !== null && (primaryTeamDecisionPending || primaryTeamPolicyUnavailable))) return;
         if (creationDecision?.requiredByPolicy === true) return;
+        setContextRefusal(null);
+        // A restored Team this sign-in cannot use leaves Private one press away.
+        if (teamId === null && creationRefusal !== null) {
+            submitContext(null);
+            return;
+        }
         if (teamId !== null && teamId !== primaryTeamId) {
             setContextDecisionError(false);
             setExplainedReason(null);
@@ -369,7 +405,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             return;
         }
         submitContext(teamId, target);
-    }, [creationDecision?.requiredByPolicy, editable, primaryTeamDecisionPending, primaryTeamId, primaryTeamPolicy, primaryTeamPolicyUnavailable, submitContext]);
+    }, [creationDecision?.requiredByPolicy, creationRefusal, editable, primaryTeamDecisionPending, primaryTeamId, primaryTeamPolicy, primaryTeamPolicyUnavailable, submitContext]);
 
     const actions = React.useMemo<SessionAccessEditorActions>(() => ({
         setQuery,
@@ -474,6 +510,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             summary: projectSessionAccessChipSummary({ grants: rows, audienceComplete: true }),
             context: {
                 primaryTeamId,
+                ...(signInReason ? { unavailableReason: signInReason } : {}),
                 ...(pendingContextDecision || contextDecisionError ? {
                     operation: contextDecisionError ? 'error' as const : 'saving' as const,
                     ...(contextDecisionError ? { error: {
@@ -489,9 +526,12 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                         } } : {}) },
                     ...[
                         ...(primaryTeamPolicy && !directory.teamContexts.some((team) => team.teamId === primaryTeamPolicy.teamId) ? [primaryTeamPolicy] : []),
+                        ...(signInRefusal && !directory.teamContexts.some((team) => team.teamId === signInRefusal.teamId)
+                            ? [{ teamId: signInRefusal.teamId, name: signInRefusal.teamName }] : []),
                         ...directory.teamContexts,
                     ].map((team) => ({ teamId: team.teamId, label: team.name,
-                        ...(primaryTeamDecisionPending || pendingContextDecision?.teamId === team.teamId ? { blockedReason: {
+                        ...(signInReason && team.teamId === signInRefusal?.teamId ? { blockedReason: signInReason }
+                        : primaryTeamDecisionPending || pendingContextDecision?.teamId === team.teamId ? { blockedReason: {
                             code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
                         } } : creationDecision?.requiredByPolicy === true && team.teamId !== primaryTeamId
                             ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }

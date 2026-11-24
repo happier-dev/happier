@@ -16632,6 +16632,13 @@ const simplifiedChinese: TeamsTranslationRoot = {
             generic: '操作未完成，没有任何内容被更改。',
             policySaveFailed: '无法保存此团队设置。请检查当前值后重试。',
             signInOutdated: '此登录无法使用团队。请在此设备上退出此 Home，然后重新登录。',
+            // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
+            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team}需要你使用以下方式登录：${methods}`,
+            signInRequiredAction: '登录',
+            signInMethodEmailPassword: '邮箱和密码',
+            signInMethodCertificate: '设备证书',
+            signInMethodTeamConnection: '团队单点登录',
+            signInMethodsOr: '或',
             outcomeUnknown: 'Home 可能已经完成此更改。请先刷新团队，再重试。',
             authenticationRequired: "请使用此团队要求的方式登录，然后重试。",
             forbidden: '你没有进行此更改的权限。',

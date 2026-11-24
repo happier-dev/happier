@@ -7,6 +7,7 @@ import { TeamGroupNameProjectionV1Schema } from '../../teams/groupLabel.js';
 import { SessionAccessGrantV1Schema, SessionAccessLevelV1Schema, SessionGrantMutationV1Schema, type SessionAccessLevelV1 } from './sessionAccessGrantV1.js';
 import { SessionAccessAccountSummaryV1Schema } from './sessionAccessPrincipalV1.js';
 import { TeamExternalSharingPolicyV1Schema } from '../../teams/team.js';
+import { TeamAcceptedAuthenticationV1Schema } from '../../auth/teamAuthenticationPolicy.js';
 import {
   gainsSessionAccessDelegationCapabilityV1,
   SessionEffectiveAccessV1Schema,
@@ -85,10 +86,26 @@ export const SessionAccessCreationDecisionV1Schema = lazyZodSchema(() => z.stric
 }));
 export type SessionAccessCreationDecisionV1 = z.infer<typeof SessionAccessCreationDecisionV1Schema>;
 
+/**
+ * Why a member cannot start a Session in this Team with their current sign-in:
+ * the same refusal the Session write gives, so the draft says it before the
+ * person tries. Only a member of the Team receives it.
+ */
+export const SessionAccessCreationRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  teamId: z.string().check(z.minLength(1)),
+  teamName: z.string(),
+  code: z.enum(['session_access_authentication_required', 'session_access_authentication_unavailable']),
+  /** The sign-ins this Team accepts, as its members already read them in the Team's policy. */
+  accepted: z.array(TeamAcceptedAuthenticationV1Schema),
+}));
+export type SessionAccessCreationRefusalV1 = z.infer<typeof SessionAccessCreationRefusalV1Schema>;
+
 export const ResolveSessionAccessPrincipalsResponseV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   principals: z.array(SessionAccessPrincipalSummaryV1Schema),
   creationDecision: z.optional(z.nullable(SessionAccessCreationDecisionV1Schema)),
+  creationRefusal: z.optional(SessionAccessCreationRefusalV1Schema),
 }));
 export type ResolveSessionAccessPrincipalsResponseV1 = z.infer<typeof ResolveSessionAccessPrincipalsResponseV1Schema>;
 

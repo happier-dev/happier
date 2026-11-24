@@ -10,7 +10,8 @@ export type ShareAccessLevel = 'view' | 'edit' | 'admin';
 /** The one level order every sheet shows, whatever order an owner or a server returns. */
 export const SHARE_ACCESS_LEVEL_ORDER: readonly ShareAccessLevel[] = ['view', 'edit', 'admin'];
 
-export type ShareUiReason = Readonly<{ code: string; message: string }>;
+/** `action`: the one step that resolves the reason (a sign-in it needs), shown beside it instead of Retry or Add. */
+export type ShareUiReason = Readonly<{ code: string; message: string; action?: Readonly<{ label: string; onPress: () => void }> }>;
 export type ShareUiError = ShareUiReason & Readonly<{ retryable: boolean }>;
 /**
  * Inputs for the canonical `Avatar` owner, not a second avatar model. Teams and Groups carry no

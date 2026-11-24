@@ -134,6 +134,9 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             if (seen.has(row.principal.key)) return [];
             seen.add(row.principal.key);
             const reason = row.addition.kind === 'blocked' ? row.addition.reason : undefined;
+            // A refusal with its own way forward (the sign-in a Team needs) is said in full beneath the name
+            // and offers that step where Add was: adding again could only be refused again.
+            const resolution = row.operation.kind === 'error' ? row.operation.error.action : undefined;
             // A candidate the Home refuses reads as unavailable: a short state instead of Add, and pressing the row
             // explains it in full. The reason itself is not repeated on every row; a refusal shared by the whole
             // sheet (an archived context Team) is said once by the adapter, and a row's own reason is one press away.
@@ -145,8 +148,12 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
                 icon: visual(row.principal),
                 loading: row.operation.kind === 'saving',
                 disabled: row.operation.kind === 'saving',
-                onSelect: () => reason ? actions.explain(reason) : actions.addPrincipal(row.principal.ref),
-                ...(reason ? {} : { rightAccessoryOutsidePressable: true,
+                ...(resolution ? { subtitleLines: 0 } : {}),
+                onSelect: () => resolution ? resolution.onPress() : reason ? actions.explain(reason) : actions.addPrincipal(row.principal.ref),
+                ...(resolution ? { rightAccessoryOutsidePressable: true,
+                    rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={resolution.label}
+                        testID={`${idPrefix}${ns}-candidate-action:${row.principal.key}`} onPress={resolution.onPress} /> }
+                : reason ? {} : { rightAccessoryOutsidePressable: true,
                     rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={host.text('common.add')}
                         testID={`${idPrefix}${ns}-add:${row.principal.key}`}
                         disabled={row.operation.kind === 'saving'}

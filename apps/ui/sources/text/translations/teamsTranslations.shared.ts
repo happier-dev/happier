@@ -194,6 +194,13 @@ export const english = {
             forbidden: 'You do not have permission for this change.',
             // A released 0.2 sign-in still works at the Home, but Team routes refuse it.
             signInOutdated: 'Teams aren’t available with this sign-in. Sign out of this Home on this device, then sign in again to use them.',
+            // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
+            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} needs you signed in with ${methods}.`,
+            signInRequiredAction: 'Sign in',
+            signInMethodEmailPassword: 'email and password',
+            signInMethodCertificate: 'a device certificate',
+            signInMethodTeamConnection: 'the Team’s single sign-on',
+            signInMethodsOr: ' or ',
             authenticationRequired: "Sign in with the method this Team requires, then try again.",
             notFound: 'This Team is no longer available.',
             archived: 'This Team is archived. Restore it to make changes.',

@@ -16,6 +16,8 @@ import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionC
 import { createSessionAccessClient, inspectSessionAccessCandidates, SessionAccessApiError, SessionAccessApprovalPendingError } from '@/sync/api/session/sessionAccessApi';
 import { readSessionDataKeyEnvelopeCollectionPage, prepareSessionDataKeyEnvelopesDetached } from '@/sync/api/session/sessionDataKeyEnvelopesApi';
 import { t } from '@/text';
+import { useRouter, type Href } from 'expo-router';
+import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
 import { HappyError } from '@/utils/errors/errors';
 import { projectSessionAccessEditorSnapshot, sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';
 import { sessionAccessGrantMutation } from './sessionAccessGrantMutation';
@@ -379,9 +381,21 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         // is only worth fetching once the Home agrees the grant exists.
         if(mutation&&result.changed)prepareEncryptedAccess(undefined,'pass');
     },[lifetime,prepareEncryptedAccess,refresh,scopeKey]);
+    // Read at press time: navigation is not an input of the mutation callbacks.
+    const router=useRouter();
+    const routerRef=React.useRef(router);
+    routerRef.current=router;
     const settleFailedMutation=React.useCallback(async(
-        key:string,mutation:SessionGrantMutationV1|null,subject:PrincipalRefV1,issue:SessionAccessUiError,
+        key:string,mutation:SessionGrantMutationV1|null,subject:PrincipalRefV1,failure:SessionAccessUiError,
     )=>{
+        // A Team or Group refused because this sign-in does not meet the Team's rule says which sign-in it
+        // needs and leads to it, under that Team's row; adding again could only be refused again.
+        const teamId=subject.kind==='account'?null:subject.teamId;
+        const team=teamId?directoryTeamsRef.current.find((candidate)=>candidate.teamId===teamId):undefined;
+        const issue:SessionAccessUiError=teamId&&(failure.code==='session_access_authentication_required'||failure.code==='session_access_authentication_unavailable')
+            ? presentTeamSignInRequired({code:failure.code,teamId,teamName:team?.name??t('session.access.team'),serverId:input.scope.serverId,
+                accepted:team?.authenticationPolicy?.accepted??[],navigate:(href)=>routerRef.current.push(href as Href)})
+            : failure;
         dispatch({type:'operation',scopeKey,key,operation:issue.retryable
             ? {kind:'error',error:issue,reconcileIntent:mutation?{kind:'set',mutation}:{kind:'remove',subject}}
             : {kind:'error',error:issue}});
@@ -389,7 +403,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         // committed. The authoritative list settles the row only when it proves
         // this exact set/remove intent; a mismatching row keeps the retryable error.
         if(issue.retryable)await refresh();
-    },[refresh,scopeKey]);
+    },[input.scope.serverId,refresh,scopeKey]);
     const mutate=React.useCallback(async(subject:PrincipalRefV1,mutation:SessionGrantMutationV1|null,adds=false)=>{
         if (!lifetime.current || currentScope.current!==scopeKey) return;
         // One approval at a time, exactly like the Board: an open approval holds the editor.

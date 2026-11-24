@@ -219,6 +219,29 @@ describe('SessionAccessEditor', () => {
         expect(intent.retryDirectory).toHaveBeenCalledWith('group');
         expect(screen.findByTestId('session-access-browse:group')).not.toBeNull();
     });
+    it('says under a Team row which sign-in it needs and offers the way there instead of Add', async () => {
+        vi.useFakeTimers();
+        const intent = actions();
+        const signIn = vi.fn();
+        const willow: SessionAccessCandidateRowModel = {
+            principal: { ref: { kind: 'team', teamId: 'willow' }, key: 'team:willow', displayName: 'Willow Design Studio', accessibilityLabel: 'Willow Design Studio, Team' },
+            addition: { kind: 'allowed' },
+            operation: { kind: 'error', error: { code: 'session_access_authentication_required',
+                message: 'Willow Design Studio needs you signed in with Recovery key.', retryable: false,
+                action: { label: 'Sign in to this Team', onPress: signIn } } },
+        };
+        const directory = { sections: [{
+            kind: 'team' as const, title: 'Teams', candidates: [willow], status: 'idle' as const, resolved: true,
+            cursor: null, hasMore: false, loadingMore: false, resolverKey: 'teams', resolveCandidates: async () => [willow],
+        }] };
+        const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="compact" />);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(screen.getTextContent()).toContain('Willow Design Studio needs you signed in with Recovery key.');
+        expect(screen.findByTestId('session-access-add:team:willow')).toBeNull();
+        await screen.pressByTestIdAsync('session-access-candidate-action:team:willow');
+        expect(signIn).toHaveBeenCalledTimes(1);
+        expect(intent.addPrincipal).not.toHaveBeenCalled();
+    });
     it.each(['compact', 'full'] as const)('keeps acknowledged principals during search and failed refresh in %s', async (presentation) => {
         const intent = actions();
         const issue = { code: 'unavailable', message: 'Unavailable', retryable: true };

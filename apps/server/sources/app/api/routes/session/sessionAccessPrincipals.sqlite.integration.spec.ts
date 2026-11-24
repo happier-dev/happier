@@ -157,6 +157,42 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         } });
     });
 
+    it("answers a member whose sign-in this Team does not accept with the refusal the write gives, and tells no one else", async () => {
+        const accepted = [{ kind: "home_method", methodId: "key_challenge" }];
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const restricted = await db.team.create({ data: {
+            name: "Willow Design Studio", authenticationPolicy: { v: 1, mode: "restricted", accepted },
+        } });
+        const open = await db.team.create({ data: { name: "Open studio" } });
+        for (const teamId of [restricted.id, open.id]) {
+            await inTx((tx) => admitTeamMemberInTx(tx, { teamId, accountId: member.id, role: "member", historyAccess: "all_existing" }));
+        }
+        const decide = (actorId: string, teamId: string, qualified: boolean) => app.inject({
+            method: "POST", url: "/v1/session-access/principals/resolve",
+            headers: {
+                "x-test-user-id": actorId,
+                ...(qualified ? { "x-test-authentication-evidence": JSON.stringify(accepted) } : {}),
+            },
+            payload: { v: 1, subjects: [], creationTeamId: teamId },
+        });
+
+        const refused = await decide(member.id, restricted.id, false);
+        expect(refused.statusCode).toBe(200);
+        expect(refused.json()).toEqual({ v: 1, principals: [], creationDecision: null, creationRefusal: {
+            v: 1, teamId: restricted.id, teamName: restricted.name,
+            code: "session_access_authentication_required", accepted,
+        } });
+
+        const unrestricted = await decide(member.id, open.id, false);
+        expect(unrestricted.json().creationDecision).toMatchObject({ teamId: open.id });
+        expect(unrestricted.json()).not.toHaveProperty("creationRefusal");
+
+        // A non-member learns nothing about the Team or its sign-in rule.
+        const stranger = await decide(outsider.id, restricted.id, false);
+        expect(stranger.json()).toEqual({ v: 1, principals: [], creationDecision: null });
+    });
+
     it("rejects authority fields and incomplete Group references at the strict request boundary", async () => {
         const actor = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         for (const payload of [

@@ -910,6 +910,38 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         expect(latest!.model.context?.options.find((option) => option.teamId === 'team-local')?.blockedReason).toBeUndefined();
     });
 
+    it('says which sign-in a Team needs and leads there, while Private stays a choice', async () => {
+        const profile = await upsertServerProfile({ name: 'Restricted decision Home', serverUrl: 'https://restricted-decision.example.test' });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'creator' })).toString('base64url')}.signature`,
+        });
+        creationDecisionNetworkMode.enabled = true;
+        setRuntimeFetch(async (url, init) => {
+            const parsed = new URL(String(url));
+            if (parsed.pathname === '/v1/auth/ping') return new Response('{}');
+            if (parsed.pathname === '/v1/session-access/principals/resolve') {
+                const body = JSON.parse(String(init?.body ?? '{}')) as { creationTeamId?: string };
+                if (!body.creationTeamId) return new Response(JSON.stringify({ v: 1, principals: [] }));
+                // Exactly what the Home answers a member whose current sign-in this Team does not accept.
+                return new Response(JSON.stringify({ v: 1, principals: [], creationDecision: null, creationRefusal: {
+                    v: 1, teamId: 'team-willow', teamName: 'Willow Design Studio',
+                    code: 'session_access_authentication_required', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+                } }));
+            }
+            return new Response('{}', { status: 404 });
+        });
+        let latest: Controller | null = null;
+        await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available"
+            scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
+        const expected = t('teams.errors.signInRequired', { team: 'Willow Design Studio', methods: t('settingsAccount.secretKey') });
+        await vi.waitFor(() => expect(latest!.model.context?.unavailableReason?.message).toBe(expected));
+        const context = latest!.model.context!;
+        expect(context.unavailableReason?.action?.label).toBe(t('teams.errors.signInRequiredAction'));
+        expect(context.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();
+        expect(context.options.find((option) => option.teamId === 'team-willow')?.blockedReason?.message).toBe(expected);
+        expect(JSON.stringify(context)).not.toContain(t('session.access.contextPolicyUnavailable'));
+    });
+
     it('retries an unavailable creation decision through the existing content retry action', async () => {
         const profile = await upsertServerProfile({ name: 'Retry decision Home', serverUrl: 'https://retry-decision.example.test' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({

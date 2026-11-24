@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SessionAccessPrincipalSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
+import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamPolicyV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
@@ -32,6 +32,8 @@ export type SessionAccessDirectoryTeamContext = Readonly<{
     name: string;
     sessionCreationPolicy?: TeamSessionCreationPolicyV1;
     externalSharingPolicy?: TeamExternalSharingPolicyV1;
+    /** The Team's sign-in rule as its members read it, to name what a refused sign-in needs. */
+    authenticationPolicy?: TeamPolicyV1['authenticationPolicy'];
 }>;
 
 type DirectoryCandidateRow = SessionAccessCandidateRowModel;
@@ -318,6 +320,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 name: team.name,
                 sessionCreationPolicy: team.policy.sessionCreationPolicy,
                 externalSharingPolicy: team.policy.externalSharingPolicy,
+                authenticationPolicy: team.policy.authenticationPolicy,
             })),
             nextCursor: outcome.value.nextCursor,
         };
@@ -774,7 +777,12 @@ export function useSessionAccessDirectory(input: Readonly<{
         // is already the Group directory's answer before anyone browses it.
         const teamRefusal = groupPage === null && teamPage.failed && teamPage.failure?.retryable === false
             ? teamPage.failure : undefined;
-        const groupFailed = teamRefusal !== undefined || currentGroupPage.teamDiscoveryFailed || groupSources.some((source) => source.failed);
+        // One Team refusing its Groups (its sign-in rule, for one) leaves the other Teams' Groups usable:
+        // that Team's Groups are left out and its own row explains why. It is the directory's answer only
+        // when no Team could answer; a retryable failure still offers Retry.
+        const sourceFailure = groupSources.find((source) => source.failed && source.failure?.retryable !== false)
+            ?? (groupSources.length > 0 && groupSources.every((source) => source.failed) ? groupSources[0] : undefined);
+        const groupFailed = teamRefusal !== undefined || currentGroupPage.teamDiscoveryFailed || sourceFailure !== undefined;
         const groupHasMore = groupFailed
             || hasUninitializedKnownTeam
             || currentGroupPage.teamCursor !== null
@@ -787,7 +795,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             status: groupFailed ? 'error' : currentGroupPage.loadingMore ? 'refreshing' : 'idle',
             ...(groupFailed ? { error: teamDirectoryError(teamRefusal ?? (currentGroupPage.teamDiscoveryFailed
                 ? currentGroupPage.teamDiscoveryFailure
-                : groupSources.find((source) => source.failed)?.failure)) } : {}),
+                : sourceFailure?.failure)) } : {}),
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,
             hasMore: groupHasMore,
             loadingMore: currentGroupPage.loadingMore,

@@ -3,7 +3,7 @@ import { bindSessionAccessActionHttpRequestV1, isSessionAccessActionIdV1 } from 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionGrantMutationV1Schema, type SessionGrantIntentV1, type SessionGrantMutationV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 import { UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/social/friends';
-import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessContextRequestV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessContextRequestV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1, type SessionAccessCreationRefusalV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionPublicLinkGetActionResultV1Schema, SessionPublicLinkRemoveActionResultV1Schema, SessionPublicLinkCreateActionInputV1Schema, SessionPublicLinkCreateActionResultV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
@@ -662,7 +662,7 @@ export async function resolveSessionAccessPrincipals(options: SessionAccessReque
  */
 export async function resolveSessionAccessCreationDecision(options: SessionAccessRequestOptions & Readonly<{
     teamId: string;
-}>): Promise<SessionAccessCreationDecisionV1 | null> {
+}>): Promise<SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null> {
     const assertCurrent = () => {
         if (options.signal?.aborted || options.isCurrent?.() === false) throw new SessionAccessApiError('session_access_stale_scope');
     };
@@ -678,6 +678,7 @@ export async function resolveSessionAccessCreationDecision(options: SessionAcces
         assertCurrent();
         if (!response.ok) throw createSessionAccessApiErrorFromResponse(await response.json().catch(() => null), response.status);
         const parsed = ResolveSessionAccessPrincipalsResponseV1Schema.parse(await response.json());
-        return parsed.creationDecision ?? null;
+        // A member whose sign-in this Team does not accept gets the refusal the Session write would give.
+        return parsed.creationRefusal ?? parsed.creationDecision ?? null;
     });
 }

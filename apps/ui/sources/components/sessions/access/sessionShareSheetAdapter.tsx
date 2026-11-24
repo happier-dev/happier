@@ -261,7 +261,11 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                     // The one place the Home's refusal is said: under the context that causes it.
                     id: 'session-context-reason', testID: `${idPrefix}session-access-context-reason`,
                     label: contextReason.message, icon: () => <SessionContextReasonMark />,
-                    onSelect: () => actions.explain(contextReason),
+                    // A reason with its own way forward (the sign-in a Team needs) says it whole and offers that step.
+                    ...(contextReason.action ? { labelLines: 0, rightAccessoryOutsidePressable: true,
+                        rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation} label={contextReason.action!.label}
+                            testID={`${idPrefix}session-access-context-reason-action`} onPress={contextReason.action!.onPress} /> } : {}),
+                    onSelect: () => contextReason.action ? contextReason.action.onPress() : actions.explain(contextReason),
                 }] : [])] });
                 const confirmation = context.confirmation;
                 if (confirmation) afterAccess.push({ kind: 'static', id: 'context-confirmation', title: confirmation.label, options: [

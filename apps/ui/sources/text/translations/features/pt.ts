@@ -16742,6 +16742,13 @@ const portuguese: TeamsTranslationRoot = {
             generic: 'Não foi possível concluir. Nada foi alterado.',
             policySaveFailed: 'Não foi possível guardar esta definição da equipa. Reveja os valores atuais e tente novamente.',
             signInOutdated: 'As equipas não estão disponíveis com este início de sessão. Termine a sessão deste Home neste dispositivo e inicie-a novamente para as usar.',
+            // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
+            signInRequired: ({ team, methods }: { team: string; methods: string }) => `${team} exige que inicie sessão com ${methods}.`,
+            signInRequiredAction: 'Iniciar sessão',
+            signInMethodEmailPassword: 'email e palavra-passe',
+            signInMethodCertificate: 'um certificado do dispositivo',
+            signInMethodTeamConnection: 'o início de sessão único da equipa',
+            signInMethodsOr: ' ou ',
             outcomeUnknown: 'O Home pode ter concluído esta alteração. Atualize a equipa antes de tentar novamente.',
             authenticationRequired: "Inicie sessão com o método exigido por esta equipa e tente de novo.",
             forbidden: 'Não tem permissão para esta alteração.',
