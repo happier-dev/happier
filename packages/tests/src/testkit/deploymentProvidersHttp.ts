@@ -162,6 +162,11 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
           // Preserve P45's guard and official raw OID/text-array framing at HTTPS.
           if (body.queries?.[0]?.query !== postgresqlReadOnlyRoleGuardSql) throw new Error('Neon request omitted its read-role guard');
           if (rejectNextManagedQuery === 'neon') { rejectNextManagedQuery = undefined; return ok({ code: '42601', message: 'Fixture syntax error' }, 400); }
+          if (body.queries?.[1]?.query.includes('FROM pg_catalog.pg_namespace')) {
+            return ok({ results: [{ command: 'DO', fields: [], rows: [], rowCount: null },
+              { command: 'SELECT', fields: [{ name: 'nspname', dataTypeID: 19 }],
+                rows: [['public'], ['second']], rowCount: 2 }] });
+          }
           const empty = body.queries?.[1]?.query.includes('WHERE false');
           return ok({ results: [{ command: 'DO', fields: [], rows: [], rowCount: null },
             { command: 'SELECT', fields: [{ name: 'marker', dataTypeID: 25 }, { name: 'duplicate', dataTypeID: 25 },
@@ -182,9 +187,17 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
           if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok(project(branch));
           if (method === 'POST' && path === `/v1/projects/${branch.supabaseRef}/database/query/read-only`) {
             // The external fixture models the Management API query body.
-            const body = JSON.parse(request.body) as { query: string };
+            const body = JSON.parse(request.body) as { query: string; parameters?: unknown[] };
             if (body.query === 'SELECT current_database() AS database') return ok([{ database: 'postgres' }]);
             if (rejectNextManagedQuery === 'supabase') { rejectNextManagedQuery = undefined; return ok({ message: 'Fixture throttled' }, 429); }
+            if (body.query.includes('FROM pg_catalog.pg_namespace')) {
+              if (!Array.isArray(body.parameters)) throw new Error('Supabase catalog query omitted the positional parameter array');
+              return ok([{ nspname: 'public' }, { nspname: 'second' }]);
+            }
+            if (body.query.includes('FROM pg_catalog.pg_class')) {
+              return ok([{ relkind: 'r', size_bytes: '30', relname: 'dbw_managed_sentinel', estimated_rows: '1',
+                relation_bytes: '10', table_bytes: '20', index_bytes: '10' }]);
+            }
             return ok(body.query.includes('WHERE false') ? [] : [{ marker: branch.marker, absent: null, empty_text: '' }]);
           }
         }

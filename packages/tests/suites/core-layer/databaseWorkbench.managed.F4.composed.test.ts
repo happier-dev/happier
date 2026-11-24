@@ -18,6 +18,8 @@ import {
     DATABASE_PLUGIN_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_DESCRIBE_ACTION_ID_V1,
+    DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+    DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
     type DatabaseActionIdV1,
 } from '@happier-dev/database-protocol';
@@ -227,6 +229,18 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       expect(empty).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [],
         ...(provider === 'neon' ? { columns: [{ name: 'marker' }, { name: 'duplicate' }, { name: 'duplicate' }, { name: 'absent' }, { name: 'empty_text' }] } : {}),
         completeness: provider === 'neon' ? { complete: true } : { complete: false, reason: 'transport_unproven' } }] });
+      const schemas = () => semantic(DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+        { operation: 'schemas.list', target, page: { rows: 1 } }, 'person');
+      expect(await schemas()).toMatchObject({ ok: true, operation: 'schemas.list', schemas: [{ name: 'public' }],
+        completeness: { complete: false, reason: 'page', continuation: { after: 'public' } } });
+      if (provider === 'supabase') {
+        expect(await semantic(DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+          { operation: 'relations.list', target, schema: 'public', page: { rows: 10 } }, 'person'))
+          .toMatchObject({ ok: true, operation: 'relations.list',
+            relations: [{ relation: { schema: 'public', name: 'dbw_managed_sentinel' }, kind: 'table', estimatedRows: '1' }] });
+        boundary.rejectNextManagedQuery(provider);
+        expect(await schemas()).toMatchObject({ ok: false, status: 'failed', code: 'provider_http_429' });
+      }
       {
         // Permit the person at the owning Environment policy so this assertion
         // distinguishes transport support from the default editing-off refusal.

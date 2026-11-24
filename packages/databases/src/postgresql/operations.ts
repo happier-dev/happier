@@ -35,11 +35,20 @@ export interface PostgresqlNativeResult {
 export interface PostgresqlCompiledStatement {
     text: string;
     values: Array<string | boolean | Buffer | null>;
+    /** Ordered projection for catalog transports that return records instead of positional rows. */
+    resultFields?: PostgresqlNativeResult['fields'];
 }
 export type PostgresqlQuery = (statement: PostgresqlCompiledStatement) => Promise<PostgresqlNativeResult>;
 export type PostgresqlExecutionOptions = Readonly<{
     stats?: DatabaseStatsExecutionContextV1 & PostgresqlStatsCompilationV1;
 }>;
+
+const schemaCatalogFields = [{ name: 'nspname', dataTypeID: 19 }] as const;
+const relationCatalogFields = [
+    { name: 'relname', dataTypeID: 19 },
+    { name: 'relkind', dataTypeID: 18 },
+    ...['estimated_rows', 'relation_bytes', 'table_bytes', 'index_bytes', 'size_bytes'].map(name => ({ name, dataTypeID: 25 })),
+] as const;
 
 export function postgresqlFailureCause(error: unknown): DatabaseFailureCauseV1 {
     const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed';
@@ -408,7 +417,9 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
             return statsOperationResultV1('postgresql', input.request, plan, resultSets, options.stats);
         }
         case 'schemas.list': {
-            const native = await query({ text: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND ($1::text IS NULL OR strpos(nspname,$1)>0) AND ($2::text IS NULL OR nspname>$2) ORDER BY nspname LIMIT $3", values: [input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
+            const native = await query({ text: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND ($1::text IS NULL OR strpos(nspname,$1)>0) AND ($2::text IS NULL OR nspname>$2) ORDER BY nspname LIMIT $3",
+                values: [input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)],
+                resultFields: schemaCatalogFields });
             const rows = native.rows.slice(0, input.page.rows);
             return { ok: true, operation: input.operation, schemas: rows.map(row => ({ name: scalar(row, 0) })), completeness: native.rows.length > rows.length
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
@@ -419,7 +430,9 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_table_size(c.oid)::text END AS table_bytes,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_indexes_size(c.oid)::text END AS index_bytes,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_total_relation_size(c.oid)::text END AS size_bytes
-                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`, values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
+                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`,
+                values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)],
+                resultFields: relationCatalogFields });
             const rows = native.rows.slice(0, input.page.rows);
             return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'v' ? 'view' : row[1] === 'm' ? 'materialized_view' : 'table',
                 ...(row[2] == null ? {} : { estimatedRows: scalar(row, 2) }),

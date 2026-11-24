@@ -1191,8 +1191,9 @@ shared operation functions in process and do not load the optional workbench
 runtime.
 
 Neon uses its selected branch/database read-only HTTP transport with native
-PostgreSQL field metadata. Supabase's restricted management transport exposes
-read statements with unknown native field types and explicitly unproven
+PostgreSQL field metadata. Supabase's restricted management transport uses
+the shared PostgreSQL catalog queries to list schemas and relations. Arbitrary
+read statements have unknown native field types and explicitly unproven
 completeness. Unsupported operations return typed unavailable results.
 
 Managed writes bind an existing direct connection Saved Secret through
@@ -1308,11 +1309,13 @@ Managed data targets declare their read-only query Action in the plugin's data
 role contribution. The shared UI preserves the recorded credential principal
 and dispatches to the Environment controller with the same result contract.
 The admitted project, branch, and database identify the query target. Supabase uses its Management API's
-[dedicated read-only query endpoint](https://supabase.com/docs/reference/api/v1-read-only-query),
-with PostgreSQL positional parameters and JSON keys `"1"`, `"2"`, in order.
-It verifies the endpoint's current database before submitting the person's SQL.
-Its public response lacks completeness and empty-result column metadata, so
-results explicitly report unknown completeness. Neon uses its SQL HTTP transport
+[dedicated read-only query endpoint](https://supabase.com/docs/reference/api/v1-read-only-query)
+with PostgreSQL positional parameters in a JSON array. It verifies the
+endpoint's current database before submitting a catalog query or a person's
+statement. Catalog pages use the shared dialect's ordered projection and
+continuation. Arbitrary statements explicitly report unknown completeness
+because the response lacks completeness and empty-result column metadata.
+Neon uses its SQL HTTP transport
 with the `happier_ro` password from the managed target's `dataRole` Saved Secret
 binding. The binding is opened through the ordinary Environment secret
 materializer, never an Account Saved Secret lookup. The database owner must
