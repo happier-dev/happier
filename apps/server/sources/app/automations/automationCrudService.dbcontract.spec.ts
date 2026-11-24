@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 import { observeLazyPrismaQuery } from "@/app/changes/accountPublicationContention.testkit";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
@@ -370,6 +371,42 @@ describe("Automation Event CRUD database contract", () => {
     afterAll(async () => {
         if (sqliteHarness) await sqliteHarness.close();
         else if (dbConnected) await db.$disconnect();
+    });
+
+    it.skipIf(provider !== "postgres")("reads the exact Event caller materialization only once", async () => {
+        const account = await seedEventWriterAccount();
+        await db.pluginMachineMaterialization.update({
+            where: { machineId_materializationId: { machineId: account.machineId, materializationId: account.materializationId } },
+            data: { serverIdentityId: await getOrCreateServerIdentityId() },
+        });
+        const read = () => readAutomationEventStoredDefinitionsV1({ accountId: account.id,
+            caller: { pluginId: EVENT_PLUGIN_ID, machineId: account.machineId,
+                machineInstallationId: account.machineInstallationId, materializationId: account.materializationId,
+                sourceCustody: { kind: "managed", immutableGenerationId: "observation-crud-fixture", installSource: "archive" } },
+            input: { transport: { kind: "checkpointedPull" } },
+        });
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        const materializationReads: string[] = [];
+        onDbClientQuery(client, event => {
+            if (/^\s*SELECT\b/i.test(event.query) && event.query.includes('"PluginMachineMaterialization"')) {
+                materializationReads.push(event.query);
+            }
+        });
+        const originalTransaction = db.$transaction;
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(client.$transaction, client, args);
+        } });
+        try {
+            expect(await read()).toMatchObject({ kind: "page", definitions: [] });
+            console.info("AUTOMATION_EVENT_MATERIALIZATION_SELECTS", materializationReads.length);
+            expect(materializationReads).toHaveLength(1);
+        } finally {
+            db.$transaction = originalTransaction;
+            await client.$disconnect();
+        }
+
+        await db.machine.update({ where: { id: account.machineId }, data: { kind: "ephemeral_session_runner" } });
+        await expect(read()).rejects.toMatchObject({ code: "caller_materialization_not_current" });
     });
 
     it("creates, reads, pauses and resumes an observation-only Event without a recipe or execution assignment", async () => {

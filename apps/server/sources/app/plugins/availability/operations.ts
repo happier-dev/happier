@@ -51,6 +51,7 @@ import { retirePluginCollectionCandidatePreparationStagesTx } from "@/app/plugin
 import { getOrCreateServerIdentityId, readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { requireManagedControllerInTx } from "@/app/machines/managed/managedRows";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
@@ -1549,7 +1550,9 @@ export async function resolveCurrentClaimablePluginMachineMaterializationTx(para
     machineInstallationId: string;
     materializationId: string;
     pluginId: string;
-    version: string;
+    /** Exact release holders supply their version. Occurrence callers use the selected row's version. */
+    version?: string;
+    requirePersistentMachine?: true;
     requiredMachineOperationCapability?: MachineOperationProtocolCapabilityNameV1;
 }>): Promise<CurrentClaimablePluginMachineMaterialization> {
     const machine = await params.tx.machine.findFirst({
@@ -1557,6 +1560,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationTx(para
             accountId: params.accountId,
             id: params.machineId,
             installationId: params.machineInstallationId,
+            ...(params.requirePersistentMachine ? persistentMachineWhere : {}),
         },
         select: {
             pluginMaterializationRevision: true,
@@ -1577,7 +1581,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationTx(para
             machineId: params.machineId,
             materializationId: params.materializationId,
             pluginId: params.pluginId,
-            version: params.version,
+            ...(params.version === undefined ? {} : { version: params.version }),
         },
         select: {
             serverIdentityId: true,

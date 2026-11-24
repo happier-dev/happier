@@ -8,7 +8,6 @@ import { resolveCurrentPluginDeclarationTx } from "@/app/plugins/availability/cu
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
 import { readCurrentPluginWebhookEndpointTargetTxV1 } from "@/app/plugins/webhooks/endpointStore";
 import type { Tx } from "@/storage/inTx";
-import { persistentMachineWhere } from "@/app/machines/machineSelection";
 
 export type AutomationEventCallerV1 = Readonly<{
     pluginId: string;
@@ -126,22 +125,6 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
 }>> {
     const materializationAccountId = params.caller.materializationAccountId ?? params.accountId;
-    const row = await params.tx.pluginMachineMaterialization.findUnique({
-        where: {
-            machineId_materializationId: {
-                machineId: params.caller.machineId,
-                materializationId: params.caller.materializationId,
-            },
-            machine: persistentMachineWhere,
-        },
-        select: { accountId: true, pluginId: true, version: true },
-    });
-    if (
-        !row
-        || row.accountId !== materializationAccountId
-        || row.pluginId !== params.caller.pluginId
-    ) fail("caller_materialization_not_current");
-
     const current = await resolveCurrentClaimablePluginMachineMaterializationTx({
         tx: params.tx,
         accountId: materializationAccountId,
@@ -150,7 +133,7 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
         machineInstallationId: params.caller.machineInstallationId,
         materializationId: params.caller.materializationId,
         pluginId: params.caller.pluginId,
-        version: row.version,
+        requirePersistentMachine: true,
     });
     if (current.kind !== "current") fail("caller_materialization_not_current");
     return {
