@@ -1154,6 +1154,13 @@ The controller projects Production protection from the admitted Environment
 into the native and managed database descriptors. Staged Changes uses that
 fact for the destructive review treatment.
 
+Environment managers set **Database access** in Environment Settings. The
+editor audience can be disabled, restricted to Project managers, available to
+Project members who can deploy, or chosen from its people, groups and Teams. A Preview inherits the
+editor audience and agent level from its template. Home evaluates the selected
+target against that policy at request admission. A change takes effect for the
+next request. A write already admitted can finish.
+
 The existing service Exec owner supplies native container reachability to the
 shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,
 parameter binding and typed ordered result decoding. Reads use the dedicated
@@ -1249,6 +1256,14 @@ PostgreSQL 14 installations whose PUBLIC schema grants CREATE require an owner
 to configure schema privileges before setup; bootstrap does not change shared
 PUBLIC privileges. Ordinary queries consume the admitted sealed read-role
 credential and retain the read-only transaction on every fresh native session.
+
+Own Server PostgreSQL edits use the separate `happier_rw` binding. If it is
+missing, the Workbench offers **Set up write login** through the same reviewed
+bindings Action. For an eligible non-superuser database owner, bootstrap
+configures a `NOINHERIT` login and the write transaction sets the owner role
+locally. With a superuser owner, bootstrap grants access to existing relations
+and sequences and sets default privileges for future objects owned by that
+owner. Once setup succeeds, the person can retry the staged changes.
 
 A controller can dispatch that reviewed setup to the serving Machine through
 the existing signed deployment child. The exact admitted proof and executor's

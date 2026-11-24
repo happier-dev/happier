@@ -9613,6 +9613,22 @@ scoped to the mounted Account's own Session store.
 
 ## Approval is decided in one place
 
+### Database access in 0.3 development
+
+`database.access.read` describes access for the selected database. Worktree and
+manual database settings are changed through `database.access.set` on the Machine.
+For a deployed database, the read result identifies the Environment policy and
+its revision. Environment managers change that policy through
+`deployments.environments.update`. A Preview uses its template's policy.
+
+The selected target's agent level is **None**, **Read**, **Read and write (asks
+first)** or **Read and write (no approval)**. The person must also have the
+corresponding access to the target. The existing approval resolver applies the
+asks-first floor and retains stricter personal settings. A reviewed ordered
+write runs in one transaction. Parameter values and edited cell values go to
+the live executor. The approval Artifact redacts those inputs, and the result
+body returns to the live caller.
+
 In 0.3 development, `account.plugins.data.erase` is available to Agents and MCP
 through `account_plugins_data_erase`. It defaults to Ask through the ordinary
 approval policy: requesting erasure creates an approval request, and the original
