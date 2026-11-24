@@ -46,7 +46,6 @@ import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/role
 import { supportsAgentWorkspaceWriteDenial } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { isSessionTerminalPermanentlyAbsent, SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
-import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 import { SessionActivityHeadlineBundleV1Schema } from '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1';
@@ -255,7 +254,7 @@ import {
 import type {
     ProviderBindingLaunchHandoffV1,
 } from '@/plugins/runtime/providerBindings/handoff';
-import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
+import { beginSessionLaunchSecretRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import {
     createNativeAgentInputFilesService,
     type NativeAgentSessionHostServiceOwners,
@@ -5576,10 +5575,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 supportsInFlightSteer: sessionCapabilities.delivery.includes('steer'),
             });
             let lateDiagnosticRedaction:
-                ReturnType<typeof beginProviderBindingRuntimeDiagnosticRedaction>
-                | null = null;
-            let lateProfileDiagnosticRedaction:
-                ReturnType<typeof registerSensitiveDiagnosticValues>
+                ReturnType<typeof beginSessionLaunchSecretRedaction>
                 | null = null;
             let session: AgentSessionRuntime;
             let operations: ReturnType<typeof createNativeAgentSessionOperations>;
@@ -5621,8 +5617,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const sanitizeBoundaryError = (error: unknown) =>
                 sanitizeNativeAgentSessionBoundaryError(
                     error,
-                    lateProfileDiagnosticRedaction !== null
-                    || lateDiagnosticRedaction !== null,
+                    lateDiagnosticRedaction !== null,
                 );
             const cleanupRuntimeScope = () => {
                 cleanupRuntimeScopePromise ??= (async () => {
@@ -5658,8 +5653,6 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         }
                     } finally {
                         try {
-                            lateProfileDiagnosticRedaction?.close();
-                            lateProfileDiagnosticRedaction = null;
                             lateDiagnosticRedaction?.close();
                             lateDiagnosticRedaction = null;
                         } finally {
@@ -5947,12 +5940,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             }
                             return value;
                         });
-                    lateProfileDiagnosticRedaction =
-                        registerSensitiveDiagnosticValues(
-                            sensitiveProfileValues,
-                        );
                     lateDiagnosticRedaction =
-                        beginProviderBindingRuntimeDiagnosticRedaction({
+                        beginSessionLaunchSecretRedaction({
                             agentId: identity.agentId,
                             providerBindingActive:
                                 providerBindingHandoff !== undefined,
@@ -5960,6 +5949,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 params.agent.richDefinition?.definition
                                     .providerRequirements,
                             environment: lateEnvironment,
+                            launchSecretValues: sensitiveProfileValues,
                         });
                 }
                 assertGenerationCurrent();

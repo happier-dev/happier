@@ -1428,7 +1428,9 @@ describe('executeSpawnSessionRequest', () => {
       ok: true, cleanupOnFailure: null, cleanupOnExit: null,
       expandedEnvironmentVariables: {}, extraEnvForChild: {},
     });
-    vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async () => {
+    let runnerTranscriptSecretValues: readonly string[] | undefined;
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
+      runnerTranscriptSecretValues = input.runnerAgentSessionBootstrapAuthorization?.bootstrap?.transcriptSecretValues;
       events.push('spawn');
       return { type: 'success', sessionId: 'session-1' };
     });
@@ -1444,6 +1446,8 @@ describe('executeSpawnSessionRequest', () => {
       const childInput = vi.mocked(resolveSpawnChildEnvironment).mock.calls.at(-1)?.[0];
       expect(childInput?.profileEnvironmentVariables.PROFILE_SECRET === 'synthetic-spawn-material').toBe(true);
     }
+    // The runner writes this Session's transcript: the daemon hands it the saved-secret value it injected.
+    expect(runnerTranscriptSecretValues?.includes('synthetic-spawn-material') ?? false).toBe(withSecret);
     expect(release).toHaveBeenCalledTimes(1);
     expect(hoisted.createRuntimeProviderSpawnAuthorizationAttempt).not.toHaveBeenCalled();
   });

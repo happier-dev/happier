@@ -1,6 +1,7 @@
 import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
@@ -3253,11 +3254,16 @@ describe('native Agent session host adapter', () => {
         expect(redactBugReportSensitiveText(
             'value=profile-plaintext',
         )).toBe('value=[REDACTED]');
+        // This process writes the Session transcript: an Agent echo of the saved secret stays out of it.
+        expect(redactTranscriptSecrets({ text: 'value=profile-plaintext' }))
+            .toEqual({ text: 'value=[redacted]' });
         await created.operations.resetOrDisposeRuntime();
         expect(dispose).toHaveBeenCalledOnce();
         expect(redactBugReportSensitiveText(
             'value=profile-plaintext',
         )).toBe('value=profile-plaintext');
+        expect(redactTranscriptSecrets({ text: 'value=profile-plaintext' }))
+            .toEqual({ text: 'value=profile-plaintext' });
     });
 
     it('preserves missing Agent CLI diagnosis across native Session startup failure cleanup', async () => {
@@ -3578,7 +3584,7 @@ describe('native Agent session host adapter', () => {
         const runnerRedactionClose = vi.fn();
         const runnerRedaction = vi.spyOn(
             providerBindingRuntimeDiagnosticRedaction,
-            'beginProviderBindingRuntimeDiagnosticRedaction',
+            'beginSessionLaunchSecretRedaction',
         ).mockReturnValue({ close: runnerRedactionClose });
         try {
             const generationController = new AbortController();

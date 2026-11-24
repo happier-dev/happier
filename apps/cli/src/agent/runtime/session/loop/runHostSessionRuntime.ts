@@ -267,7 +267,7 @@ import {
   consumeProviderBindingLaunchHandoffFromEnvironments,
   type ProviderBindingLaunchHandoffV1,
 } from '@/plugins/runtime/providerBindings/handoff';
-import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
+import { beginSessionLaunchSecretRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
 import { bindHostedSessionId, bindHostedSessionLiveWork, bindHostedSessionProjectFilesSource, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindPlacedSessionWorkspaceSource } from '@/workspaces/source/placedSessionWorkspaceSource';
@@ -1266,7 +1266,7 @@ async function runHostedSessionRuntime(
   const providerBindingMaterialization = providerBindingHandoff?.materialization;
   const providerBindingMetadataUpdate = providerBindingHandoff?.sessionBindingMetadata
     ?? (launchModelRef?.providerConnectionId === null ? null : undefined);
-  const providerBindingRuntimeDiagnosticRedaction = beginProviderBindingRuntimeDiagnosticRedaction({
+  const sessionLaunchSecretRedaction = beginSessionLaunchSecretRedaction({
     agentId: config.policyAgentId,
     providerBindingActive: providerBindingHandoff !== undefined,
     ...(Object.prototype.hasOwnProperty.call(
@@ -4566,7 +4566,7 @@ async function runHostedSessionRuntime(
     startupRegistrationLifetime.abort();
     await sessionAccountRuntime?.dispose();
     disposeAgentSessionRealtimeVoiceRpc?.();
-    providerBindingRuntimeDiagnosticRedaction.close();
+    sessionLaunchSecretRedaction.close();
   }
 }
 

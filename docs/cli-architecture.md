@@ -6770,6 +6770,17 @@ once at the Agent-state commit (`ApiSessionClient.updateAgentState`), so permiss
 request arguments carrying an echoed secret are stored redacted too. No bearer
 is logged.
 
+A Session's launch secrets reach the same redactor in the process that writes its
+transcript. For a daemon-spawned Session the daemon writes its launch redaction
+lease (Profile saved secrets, Provider binding credentials, managed and
+request-auth credentials materialized before spawn) into the runner bootstrap as
+`transcriptSecretValues`; the runner registers them when it reads the bootstrap.
+A foreground Session registers its admission's sensitive Profile and Connected
+Account environment. Both go through `beginSessionLaunchSecretRedaction`
+(`plugins/runtime/providerBindings/runtimeDiagnosticRedaction.ts`), which also
+registers the credential values an active Provider binding owns in the launch
+environment, for diagnostics and the transcript, until the Session ends.
+
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
 holder binary; no Node bridge process per Session). The relay reads the
 context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE` (and its registration's

@@ -11,7 +11,10 @@
  * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers, the session hook
  * server, and the secret values the daemon materialized into a runner-spawned launch (Project
  * secret bindings, Profile secret bindings, produced native credentials), registered by the
- * runner's exec authorization for the launch's life. The registry is process-local: it protects
+ * runner's exec authorization for the launch's life. A Session's own launch secrets (Profile saved
+ * secrets, Provider binding and Connected Account credentials the daemon materialized, carried in
+ * the runner bootstrap or the foreground admission) register through
+ * `beginSessionLaunchSecretRedaction` for the Session's life. The registry is process-local: it protects
  * the process that writes this Session's transcript, so registration happens there.
  */
 const registeredSecrets = new Map<string, number>();

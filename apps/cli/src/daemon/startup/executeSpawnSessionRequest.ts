@@ -1457,6 +1457,9 @@ export async function executeSpawnSessionRequest(
                     happyHomeDir: configuration.happyHomeDir,
                     publicReleaseRing: configuration.publicReleaseRing,
                     descriptor: runnerAgentSessionDescriptor,
+                    // The runner writes this Session's transcript: hand it every secret value this
+                    // launch's materializers injected (the lease is complete once the child env is).
+                    transcriptSecretValues: providerDiagnosticRedactionLease.values(),
                     ...(startupRuntimeDescriptorV1 ? { launch: {
                         runtimeDescriptorV1: startupRuntimeDescriptorV1,
                         ...projectAgentIsolationSessionBootstrap(params.agentIsolation, connectedServices.agentLaunchMaterials),

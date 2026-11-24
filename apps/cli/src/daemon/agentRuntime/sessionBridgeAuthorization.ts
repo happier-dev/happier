@@ -556,6 +556,7 @@ export async function createRunnerAgentSessionBootstrapAuthorization(
     publicReleaseRing: PublicReleaseRing;
     descriptor: AgentRuntimeDaemonSessionDescriptorV1;
     launch?: AgentRuntimeRunnerBootstrapLaunchV1;
+    transcriptSecretValues?: readonly string[];
   }>,
 ): Promise<Readonly<{
   authorization: RunnerAgentSessionBootstrapAuthorization;
@@ -587,7 +588,8 @@ export async function createRunnerAgentSessionBootstrapAuthorization(
       happyHomeDir: params.happyHomeDir,
       publicReleaseRing: params.publicReleaseRing,
     });
-  const bootstrap = AgentRuntimeRunnerBootstrapV1Schema.parse({ v: 1, descriptor, ...(params.launch ? { launch: params.launch } : {}) });
+  const bootstrap = AgentRuntimeRunnerBootstrapV1Schema.parse({ v: 1, descriptor, ...(params.launch ? { launch: params.launch } : {}),
+    ...(params.transcriptSecretValues?.length ? { transcriptSecretValues: [...params.transcriptSecretValues] } : {}) });
   await writePrivateBearerFile({
     path: bootstrapFilePath,
     contents: `${JSON.stringify(bootstrap)}\n`,

@@ -447,6 +447,12 @@ export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.strictO
     /** Selected installed payload for the Agent's executable sidecars. */
     agentIsolationManagedHappierBinaryPath: z.optional(BoundedPathSchema),
   })),
+  /**
+   * The secret values the daemon materialized into this launch (its launch redaction lease:
+   * Profile saved secrets, Provider binding credentials, managed and request-auth credentials).
+   * The runner writes the Session transcript and keeps them out of it for the Session's life.
+   */
+  transcriptSecretValues: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));
 
 export type AgentRuntimeRunnerBootstrapV1 = z.infer<typeof AgentRuntimeRunnerBootstrapV1Schema>;

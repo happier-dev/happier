@@ -188,6 +188,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         restoreForegroundRuntimeEnvironment = null;
       }
     };
+    let daemonLaunchSecretRedaction: Readonly<{ close(): void }> | null = null;
 
     try {
       const cliArgumentAgentId =
@@ -282,6 +283,16 @@ Provider CLI Options:
         : null;
       if (bootstrap && bootstrap.descriptor.backendId !== params.backendIdForSessionRuntime.trim()) {
         throw new Error('Runner bootstrap does not match the selected Agent command');
+      }
+      if (bootstrap?.transcriptSecretValues?.length) {
+        // The daemon materialized these secrets into this launch. This process spawns the Agent
+        // and writes its transcript, so they stay redacted for the Session command's life.
+        const { beginSessionLaunchSecretRedaction } = await import('@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction');
+        daemonLaunchSecretRedaction = beginSessionLaunchSecretRedaction({
+          agentId: bootstrap.descriptor.agentId,
+          providerBindingActive: false,
+          launchSecretValues: bootstrap.transcriptSecretValues,
+        });
       }
       // The admitted bootstrap is the sole daemon→runner selection carrier.
       // Its declaration identifies the contribution; launch retains the selected
@@ -1085,6 +1096,7 @@ Provider CLI Options:
       endSessionCommand(exitCode);
     } finally {
       await cleanupForegroundAdmission();
+      daemonLaunchSecretRedaction?.close();
     }
   }));
 }
