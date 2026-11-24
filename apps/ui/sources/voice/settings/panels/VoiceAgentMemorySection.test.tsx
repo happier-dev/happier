@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
-import { renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { Modal } from '@/modal';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -85,15 +84,12 @@ describe('VoiceAgentMemorySection', () => {
     account.replaceVoice(voice);
     account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: {
       v: 1, actions: { 'settings.invoke': { approvalRequiredSurfaces: ['ui'] } },
-    } }));
+    } }), { version: (storage.getState().settingsVersion ?? 0) + 1 });
+    vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
     const screen = await render(voice);
-    let pending!: Promise<void>;
-    await act(async () => { pending = screen.findAllByTestId('settings.voice.memory.forget')[0]!.props.onPress(); });
-    await waitForTestEvent(account.subscribe, () => account.artifacts.list(), artifacts => artifacts.length === 1);
-    expect(account.artifacts.list()).toHaveLength(1);
-    await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-    await act(async () => { await pending; });
-    expect(Modal.confirm).not.toHaveBeenCalled();
+    await act(async () => { await screen.findAllByTestId('settings.voice.memory.forget')[0]!.props.onPress(); });
+    expect(Modal.confirm).toHaveBeenCalledOnce();
+    expect(account.artifacts.list()).toHaveLength(0);
     expect(await readPersistentVoiceTranscriptEpoch()).toBe(0);
   });
   it.each([true, false])('keeps the admitted Forget confirmation (confirmed: %s)', async confirmed => {
