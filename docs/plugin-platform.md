@@ -187,6 +187,9 @@ details and remediation. Existing causes without a native code remain valid.
 Unavailable client Actions use the same refusal projection as failed Actions.
 The shared presentation preserves an authored sentence and correlates it with
 the request ID. A code-only unavailable Action uses the existing localized copy.
+An unexpected handler exception returns a generic message with the typed failure
+cause. The daemon writes the exception message and first available stack frame to
+its local file log after invocation-scoped secret redaction.
 
 
 ## Channel message observation demand (unreleased 0.3)

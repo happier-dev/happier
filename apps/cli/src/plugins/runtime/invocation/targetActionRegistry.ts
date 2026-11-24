@@ -601,10 +601,24 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
         let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
         let readDataRole: PluginInvocationServicesSeed['readDataRole'];
+        const redactDiagnosticText = params.redactDiagnosticText;
         const result = await invokePrepared({
             recordDiagnostic: diagnostic => logger.warnLocalFile('[Deployment] Unavailable', {
                 ...diagnostic, requestId: invocation.requestId ?? correlationId,
             }),
+            ...(redactDiagnosticText ? { recordUnexpectedHandlerFailure: (error: unknown) => {
+                if (!(error instanceof Error)) return;
+                const scope = { pluginId: registration.pluginId, occurrenceId: registration.occurrenceId, correlationId };
+                const stack = error.stack;
+                const message = error.message;
+                const topFrame = stack?.split('\n').slice(1).find(line => /^\s+at /.test(line))?.trim();
+                logger.warnLocalFile('Plugin Action handler exception', {
+                    pluginId: registration.pluginId, localId: registration.localId,
+                    requestId: invocation.requestId ?? correlationId,
+                    message: redactDiagnosticText(scope, message),
+                    ...(topFrame ? { topFrame: redactDiagnosticText(scope, topFrame) } : {}),
+                });
+            } } : {}),
             ...(invocation.signal ? { signal: invocation.signal } : {}),
             ...(params.revalidateActionFormInput
                 ? {

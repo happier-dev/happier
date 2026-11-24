@@ -1344,7 +1344,7 @@ describe('createPluginActionInvocation', () => {
     expect(genericResult).toEqual({
       status: 'failed',
       code: 'plugin_action_execution_failed',
-      message: 'upstream credential is secret',
+      message: 'Plugin operation failed',
       data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
     expect(genericResult).not.toHaveProperty('cause');
@@ -1427,7 +1427,7 @@ describe('createPluginActionInvocation', () => {
     })).resolves.toEqual({
       status: 'failed',
       code: 'plugin_action_execution_failed',
-      message: 'provider credential is secret',
+      message: 'Plugin operation failed',
       data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
   });

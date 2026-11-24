@@ -2255,6 +2255,38 @@ describe('buildTargetActionInvocationRegistry', () => {
         } finally { target.dispose(); boundary.mockRestore(); identity.mockRestore(); }
     });
 
+    it('keeps unexpected handler exception text in the redacted daemon file diagnostic', async () => {
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
+        const secret = 'fixture-action-confidential-value';
+        const requestId = 'fixture-handler-failure';
+        const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const pluginManifest = manifest({ inputSchema: {
+            type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false,
+        }, inputHints: { fields: [{ path: 'value', title: 'Value', widget: 'secret' }] } });
+        const invoke: ActionHandler = async function throwFixtureHandlerError() {
+            const error = new TypeError(`fixture handler failed for ${secret}`);
+            error.stack = `TypeError: ${error.message}\n    at throwFixtureHandlerError (/fixture/action.ts:1:2)\n    at outerCaller (/fixture/outer.ts:3:4)`;
+            throw error;
+        };
+        const target = buildRegistry({ ...owners, contributes: registry({ pluginManifest }),
+            targetActivationFacts: [fact()], targetRegistrations: [{ pluginId: 'acme.alpha', occurrenceId: '7',
+                registration: { family: 'actions', localId: 'run', value: invoke } }],
+        });
+        try {
+            const result = await target.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli', requestId, input: { value: secret } });
+            expect(result).toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed',
+                data: { failureCause: { phase: 'action.handler', errorClass: 'TypeError' } } });
+            expect(warn).toHaveBeenCalledWith('Plugin Action handler exception', expect.objectContaining({
+                pluginId: 'acme.alpha', localId: 'run', requestId,
+                message: expect.stringContaining('fixture handler failed for'),
+                topFrame: 'at throwFixtureHandlerError (/fixture/action.ts:1:2)',
+            }));
+            expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+            expect(JSON.stringify(warn.mock.calls)).not.toContain('outerCaller');
+            expect(JSON.stringify(result)).not.toContain('fixture handler failed for');
+        } finally { target.dispose(); warn.mockRestore(); }
+    });
+
     it.each([false, true])('preserves admitted managed byte custody and its typed failure in Account Actions (refused=%s)', async refused => {
         const portable = manifest({ execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } });
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });

@@ -828,6 +828,8 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
 
 type PluginActionInvocationOptions = Readonly<{
   recordDiagnostic?(diagnostic: ActionOutputDiagnostic): void;
+  /** In-process host diagnostic for an unexpected handler throw. */
+  recordUnexpectedHandlerFailure?(error: unknown): void;
   signal?: AbortSignal;
   /** Host-only admission that runs after input validation, before handler effects. */
   preDispatch?(input: PluginActionInvocationHandlerInput): (
@@ -1089,12 +1091,11 @@ export function createPluginActionInvocation(params: Readonly<{
               ...(pluginError.data === undefined ? {} : { data: pluginError.data }),
             }, pluginError));
           }
+          try { options.recordUnexpectedHandlerFailure?.(error); } catch { /* Diagnostics cannot replace settlement. */ }
           return Object.freeze({
             status: 'failed',
             code: PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
-            message: projectPluginActionFailureMessage(
-              error instanceof Error ? error.message : 'Plugin action execution failed',
-            ),
+            message: PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
             data: { failureCause: { ...projectActionFailureCauseV1(error, 'action.handler') } },
           });
         }
