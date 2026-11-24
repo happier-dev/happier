@@ -732,6 +732,59 @@ describe('applyMachineSetup', () => {
     // recipe journey without duplicates; CHECK/APPLY may publish distinct phases.
     expect(await exerciseReviewedPlans(20)).toBe(await exerciseReviewedPlans(0));
   });
+  it('publishes the private sudo question on the reviewed Setup checklist and clears it on Stop', async () => {
+    const f = await fixture(true);
+    const selection = { ref: { pluginId: 'com.example.tools', recipeId: 'install', revision: '1' }, inputs: {} };
+    const plan = await checkMachineSetupEffectPlan({
+      basis: { kind: 'setup', machineId: 'guest', desiredRevision: 0, selection },
+      steps: [MachineRecipeStepV1Schema.parse({ id: 'install', kind: 'script', shell: 'bash',
+        body: 'echo installed', affects: 'none', check: { body: 'exit 1', unsatisfiedExitCodes: [1] } })],
+      backend: createMachineSetupNativeBackend({ run: async () => ({ code: 1, stdout: '', stderr: '' }) }),
+    });
+    const spawn = vi.fn<MachineElevationSpawn>(() => {
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      let finish!: (result: { code: number | null; signal: string | null }) => void;
+      const settled = new Promise<{ code: number | null; signal: string | null }>(resolve => { finish = resolve; });
+      queueMicrotask(() => stderr.write('[happier-sudo-password:operator]\n'));
+      return { stdin, stdout, stderr, settled, terminate: async () => {
+        stdin.destroy();
+        stdout.end();
+        stderr.end();
+        finish({ code: null, signal: 'SIGTERM' });
+      } };
+    });
+    const work = applyMachineSetup({ ...f.input,
+      setup: { items: [{ kind: 'setupRecipe', selection }], scripts: [{ body: 'echo after', affects: 'none' }] },
+      recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }],
+      elevation: { installationId: 'installation', installedCli: '/managed/happier', spawn,
+        readPolicy: async () => ({ version: 1, mode: 'ask', administratorUsername: 'operator' }),
+        verifyCurrent: async () => true,
+        observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
+          rootEquivalentGroups: [], passwordlessSudoToRoot: 'denied', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
+      } });
+    const latest = () => {
+      const ref = f.updates.at(-1)?.domainRef;
+      return ref?.kind === 'machineSetup' ? ref : undefined;
+    };
+    let taskId: string | undefined;
+    try {
+      await vi.waitFor(() => {
+        expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ executable: 'sudo' }));
+        expect(latest()).toMatchObject({ setupTask: { id: expect.any(String), taskKind: 'machine.setup.apply.v1',
+          prompt: { kind: 'sudo.password', adminUsername: 'operator' } }, steps: [
+          { planIndex: 0, stepId: 'install', state: 'pending' },
+          { planIndex: 1, stepId: 'script:0', state: 'pending' },
+        ] });
+        taskId = latest()?.setupTask?.id;
+      });
+    } finally {
+      f.controller.abort();
+      await work;
+    }
+    expect(await work).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(latest()?.setupTask).toEqual({ id: taskId, taskKind: 'machine.setup.apply.v1' });
+    expect(f.spawned).toHaveLength(0);
+  });
   it('refuses config and process effects when cancelled during native tool resolution', async () => {
     const f = await fixture(true);
     const result = await applyMachineSetup({ ...f.input,

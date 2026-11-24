@@ -2,6 +2,7 @@ import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/pro
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineSetupPlansRequireAdministratorV1,
   runMachineSetupNativeCommand, buildUserManagerGroupRefreshStep, machineSetupStepChangesDaemonGroupsV1,
@@ -207,6 +208,9 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
   const snapshot = createSetupOperationSnapshot(attachment, input.plans, update => input.operation.operationOwnerUpdate.update(update),
     input.sources.flatMap(source => source.scripts ?? []));
   const operation = { ...input.operation, operationOwnerUpdate: { update: snapshot.update } };
+  const publishTask = (taskId: string, prompt?: MachineSudoPasswordPromptV1) => {
+    snapshot.update({ domainRef: { ...attachment, setupTask: { id: taskId, taskKind, ...(prompt ? { prompt } : {}) } } });
+  };
   let outcome: ActionExecuteResult | undefined;
   const task = await owner.startAdmitted({ run: async context => {
     const emit: typeof context.emit = event => { context.emit(event); snapshot.emit(event); };
@@ -218,9 +222,19 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
     if (!isMachineSetupResultUnsettled(result)) snapshot.settle(result);
     if (!result.ok) throw new SystemTaskExecutionError(result.errorCode ?? 'machine_setup_apply_failed', result.error);
     return { operationId };
-  } }, taskKind);
-  const setupTask = { id: task.taskId, taskKind };
-  snapshot.update({ domainRef: { ...attachment, setupTask } });
+  } }, taskKind, {
+    started: task => publishTask(task.taskId),
+    prompt: (task, question) => {
+      const data = question?.data;
+      const prompt = question?.kind === 'sudo.password' && data && typeof data === 'object'
+        && 'machineId' in data && data.machineId === input.machineId
+        && 'installationId' in data && data.installationId === input.elevation?.installationId
+        && 'operationId' in data && data.operationId === operationId
+        ? MachineSudoPasswordPromptV1Schema.safeParse({ kind: question.kind,
+          adminUsername: 'administratorUsername' in data ? data.administratorUsername : undefined }) : null;
+      publishTask(task.taskId, prompt?.success ? prompt.data : undefined);
+    },
+  });
   const cancel = () => { void owner.cancel(task); };
   signal.addEventListener('abort', cancel, { once: true });
   if (signal.aborted) cancel();
