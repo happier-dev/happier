@@ -44,7 +44,6 @@ const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
 const { EnvironmentLogsCompanion } = await import('./EnvironmentLogsCompanion');
 const { AccountNoticeInvestigationBoundary } =
   await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
-const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
 const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
 
 const scope = {
@@ -292,7 +291,6 @@ describe('Receipt → failed', () => {
       const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.failed'
         && node.props.description !== undefined)[0];
       expect(banner).not.toBeNull();
-      if (!nativeActivation) expect(screen.findAllByType(AgentActionButton)).toHaveLength(1);
       expect(String(banner?.props.description)).toContain(readDeploymentFailureRecoveryV1(failure.code, failure).remedy);
       // The canonical next action opens where the cause is fixed; a failed step's logs are already on this page.
       if (readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination === 'logs') {

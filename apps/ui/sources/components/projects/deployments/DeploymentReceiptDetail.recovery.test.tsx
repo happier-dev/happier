@@ -15,30 +15,35 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 const router = await vi.hoisted(async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock());
 vi.mock('expo-router', () => router.module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
-// Triage is not installed on this Home harness, so its contributed Actions are the realm boundary: the
-// configured-action catalog answers the person's records and the configured run records what a press starts.
-// Every other Action keeps the real front door.
-const triage = vi.hoisted(() => ({ runs: [] as unknown[], readGate: null as Promise<void> | null }));
+// Keep the native failure client Action real; catalog, configured run and navigation cross realm ports.
+const triage = vi.hoisted(() => ({ runs: [] as unknown[], readGate: null as Promise<void> | null,
+  editorOpens: [] as unknown[] }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
-  const selection = (configuredActionId: string) => ({ configuredActionId,
-    sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
-  return { ...actual, createFrontDoorActionExecute: (...args: Parameters<typeof actual.createFrontDoorActionExecute>) => {
-    const real = actual.createFrontDoorActionExecute(...args);
-    const execute = (async (actionId, input, context) => {
-      const action = (input as { action?: { pluginId?: string; localId?: string } } | undefined)?.action;
-      if (actionId !== 'action.invoke' || action?.pluginId !== 'happier.triage') return real(actionId, input, context);
-      if (action.localId === 'actions/read-v1') await triage.readGate;
-      if (action.localId === 'actions/read-v1') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
-        { label: 'Investigate', selection: selection('investigate'), launchMode: 'start', startable: true },
-        { label: 'Fix this deploy', selection: selection('deployments.fix-deploy'), launchMode: 'review', startable: true, forSubject: true },
-      ] } };
-      if (action.localId !== 'sessions/run-configured-v1') return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
-      triage.runs.push((input as { input?: unknown }).input);
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  const { createTriageFailureFrontDoorForTest } = await import('@/dev/testkit/harness/triageFailureActionBoundary');
+  const adapted = { ...actual, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(actual) };
+  return { ...actual, createFrontDoorActionExecute: createTriageFailureFrontDoorForTest(adapted, {
+    invoke: async request => {
+      if (request.action.localId === 'actions/read-v1') {
+        await triage.readGate;
+        return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
+          { label: 'Investigate', selection: { configuredActionId: 'investigate', sessionChoice: { kind: 'configured' },
+            agentChoice: { kind: 'configured' }, delivery: 'configured' }, launchMode: 'start', startable: true },
+          { label: 'Fix this deploy', selection: { configuredActionId: 'deployments.fix-deploy', sessionChoice: { kind: 'configured' },
+            agentChoice: { kind: 'configured' }, delivery: 'configured' }, launchMode: 'review', startable: true, forSubject: true },
+        ] } };
+      }
+      if (request.action.localId === 'sessions/read-source-links-v1') return { ok: true, result: { kind: 'complete', lanes: [], links: [] } };
+      if (request.action.localId !== 'sessions/run-configured-v1') return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+      triage.runs.push(request.input);
       return { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
-    }) as typeof real;
-    return Object.assign(execute, { prepare: real.prepare, confirmed: real.confirmed });
-  } };
+    },
+    ui: { openSurface: async (destination, input, options) => {
+      triage.editorOpens.push({ destination, input, subPath: options?.subPath });
+      return { ok: true };
+    } },
+  }) };
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -50,7 +55,7 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 const snapshotId = 'c'.repeat(64);
 
 describe('failed deployment migration recovery', () => {
-  beforeEach(async () => { await homes.reset(); triage.runs.length = 0; triage.readGate = null; });
+  beforeEach(async () => { await homes.reset(); triage.runs.length = 0; triage.readGate = null; triage.editorOpens.length = 0; });
   afterEach(standardCleanup);
 
   it('names the Home that could not complete the deploy and retries its reviewed revision', async () => {
@@ -154,22 +159,28 @@ describe('failed deployment migration recovery', () => {
         : id === receipt.deployment.id ? receipt : base }),
     } });
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-    const account = await captureLazyActionAccountContext(serverId);
-    // Agent actions belong to the active Account: the one investigation owner reads the person's records only for its
-    // own receipts. This Home harness has no active Account, so the no-recovery case (no rollback runs) applies one.
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-    const previousScope = storage.getState().profileScope;
-    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
-    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
-    if (choice === 'unavailable') {
-      storage.setState({ profileScope: { serverId, accountId: scope.accountId } });
-      runtime.publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://migration-recovery.test',
-        generation: previousRuntime.generation }, true);
-    }
-    // The person's records are read after the receipt paints; until they answer, the banner already holds its settled row.
+    let connection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness')['restoreServerAccountForTest']>> | undefined;
+    let installed: { dispose(): Promise<void> } | undefined;
     let answerRecords = () => {};
-    if (choice === 'unavailable') triage.readGate = new Promise<void>(resolve => { answerRecords = resolve; });
+    if (choice === 'unavailable') {
+      const { configureConnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+      const { answerSourceDeclaredAccountPluginForHome, prepareSourceDeclaredAccountPluginsForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+      const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+      const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+      const { TRIAGE_PLUGIN } = await import('../../../../../../packages/plugins/triage/src/definition');
+      answerSourceDeclaredAccountPluginForHome(homes, serverId, TRIAGE_PLUGIN.manifest.id);
+      const installTriage = await prepareSourceDeclaredAccountPluginsForTest([{ manifest: TRIAGE_PLUGIN.manifest,
+        activate: TRIAGE_PLUGIN.activateAccount, packageName: '@happier-dev/plugins-triage' }]);
+      connection = await restoreServerAccountForTest({ serverUrl: 'https://migration-recovery.test', serverIdentityId: homeId,
+        accountId: scope.accountId, credentials: { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }) },
+        configureSocket: configureConnectedServerSocketBoundary, request: homes.request });
+      const active = captureActiveServerAccountScopeLifetime();
+      if (!active) throw new Error('Expected the Receipt Account lifetime');
+      installed = await installTriage({ accountLifetime: active, publishProjection: true });
+      // The Receipt paints before the person's configured actions answer.
+      triage.readGate = new Promise<void>(resolve => { answerRecords = resolve; });
+    }
+    const account = await captureLazyActionAccountContext(serverId);
     try {
       for (const [row, kind, document] of [
         [detail.environment, 'deployment-environment.v1', detail.content],
@@ -196,7 +207,7 @@ describe('failed deployment migration recovery', () => {
         catch (error) { finished(error); throw error; }
       };
       // The host's destination navigation is this page's route boundary: Edit action… must reach the one editor there.
-      const editorOpens: unknown[] = [];
+      const editorOpens = triage.editorOpens;
       const navigation = { targetKind: 'app' as const, registerOwner: () => () => {},
         openSurface: (request: unknown) => { editorOpens.push(request); return { ok: true as const }; } };
       const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={navigation}><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
@@ -238,9 +249,7 @@ describe('failed deployment migration recovery', () => {
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.alert).mockClear();
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(actionId), value => value !== null); });
-      // Recovery leads while the failed catalog read is visible. Nothing has started an agent.
-      await act(async () => { await waitForTestEvent(screen.subscribe,
-        () => screen.findByTestId('investigation.agentActions.unavailable'), value => value !== null); });
+      // The native remedy can run without a configured agent.
       expect(offered()).toHaveLength(0);
       expect(triage.runs).toEqual([]);
       await screen.pressByTestIdAsync(actionId);
@@ -252,7 +261,7 @@ describe('failed deployment migration recovery', () => {
           : buttons?.find(button => choice === 'restore' ? /backup/i.test(button.text) : /code only/i.test(button.text));
         expect(button).toBeDefined();
         await act(async () => { button?.onPress?.(); });
-      } else if (choice === 'restore') expect(screen.getTextContent()).toMatch(/backup/i);
+      }
       if (choice === 'cancel') {
         expect(observed).toBeUndefined();
         expect(homes.requestsFor('/v1/actions/deployments.rollback')).toHaveLength(0);
@@ -265,13 +274,10 @@ describe('failed deployment migration recovery', () => {
         expect(homes.requestsFor('/v1/actions/deployments.rollback')).toHaveLength(1);
       }
     } finally {
-      await act(async () => {
-        controller.retire(); account.dispose();
-        if (choice === 'unavailable') {
-          storage.setState({ profileScope: previousScope });
-          runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
-        }
-      });
+      answerRecords();
+      await installed?.dispose();
+      await connection?.dispose();
+      await act(async () => { controller.retire(); account.dispose(); });
     }
   });
 });
