@@ -138,8 +138,9 @@ export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: s
  * deliberate Technical details, including when the approved effect has a recorded failure.
  */
 export function alertApprovalFailure(error: unknown, fallbackMessage = t('approvals.decisionError')): void {
-    // A confirmed execution cancellation is already visible in its receipt.
-    if (error instanceof ApprovalExecutionError && error.code === 'cancelled') return;
+    // A confirmed cancellation is already visible in the approval or execution receipt.
+    if (error instanceof HappyError && (error.code === 'approval_canceled'
+        || error instanceof ApprovalExecutionError && error.code === 'cancelled')) return;
     const { reason, code } = presentApprovalFailure(error, fallbackMessage);
     const failureCause = typeof error === 'object' && error !== null && 'failureCause' in error && error.failureCause !== undefined
         ? readActionFailureCauseV1(error.failureCause) : undefined;

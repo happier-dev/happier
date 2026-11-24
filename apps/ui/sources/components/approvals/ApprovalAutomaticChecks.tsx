@@ -108,23 +108,31 @@ export function useApprovalAutomaticChecksControls(input: Readonly<{
 }>) {
   const decision = readApprovalAutomaticChecksDecision(input.checks);
   const { decide, unavailable, isDeciding, setIsDeciding } = input;
-  const run = React.useCallback(async (operation: () => Promise<boolean>) => {
-    if (unavailable || isDeciding) return;
+  const [isCancellingChecks, setIsCancellingChecks] = React.useState(false);
+  const cancelInFlight = React.useRef(false);
+  const run = React.useCallback(async (operation: () => Promise<boolean>, cancel = false) => {
+    if (unavailable || (cancel ? cancelInFlight.current : isDeciding)) return;
+    const setBusy = cancel ? setIsCancellingChecks : setIsDeciding;
+    if (cancel) cancelInFlight.current = true;
     try {
-      setIsDeciding(true);
+      setBusy(true);
       if (!(await operation())) Modal.alert(t('common.error'), t('approvals.decisionError'));
     } catch (error) {
       if (!(error instanceof ApprovalExecutionError)) alertApprovalFailure(error);
     } finally {
-      setIsDeciding(false);
+      if (cancel) cancelInFlight.current = false;
+      setBusy(false);
     }
   }, [isDeciding, setIsDeciding, unavailable]);
   const consent = decision?.kind === 'consent' ? decision : null;
   const answerConsent = React.useCallback((answer: 'allow' | 'skip') => consent ? run(() => decide('approve', {
     triggerConsent: { automationId: consent.automationId, triggerId: consent.triggerId, decision: answer } })) : Promise.resolve(),
   [consent?.automationId, consent?.triggerId, decide, run]);
-  const cancelChecks = React.useCallback(() => run(() => decide('cancel')), [decide, run]);
-  return { decision, answerConsent, cancelChecks };
+  // Checking is published while Approve awaits the Run. Only an outstanding Cancel holds this control.
+  const checking = decision?.kind === 'checking';
+  const cancelChecks = React.useCallback(() => checking ? run(() => decide('cancel'), true) : Promise.resolve(),
+    [checking, decide, run]);
+  return { decision, answerConsent, cancelChecks, isCancellingChecks, cancelDisabled: unavailable || isCancellingChecks };
 }
 
 /** The running check's elapsed time, ticking in this leaf only so the card above it never re-renders per second. */

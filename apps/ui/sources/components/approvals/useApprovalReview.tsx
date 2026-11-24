@@ -455,16 +455,19 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   ), [handoffTargetApproval, handoffTargetActionArgs, handoffTargetMachine, handoffTargetMachineLabel, machineLabel, machineId, session, sessionContext]);
   const decide = React.useCallback(
     async (decision: 'approve' | 'reject' | 'cancel', choice?: Readonly<{ keepUndo?: boolean;
-      triggerConsent?: ApprovalDecisionOptions['triggerConsent'] }>) => {
-      if (!parsed || decisionInFlightRef.current || parsed.request.status !== 'open') return;
+      triggerConsent?: ApprovalDecisionOptions['triggerConsent']; cancelingChecks?: true }>) => {
+      const cancelingChecks = decision === 'cancel' && choice?.cancelingChecks === true;
+      if (!parsed || (!cancelingChecks && decisionInFlightRef.current) || parsed.request.status !== 'open') return;
       // Answering a shared check's consent is not approving the Action (D15), so the Action's withholding never gates it.
       const triggerConsent = decision === 'approve' ? choice?.triggerConsent : undefined;
       // Fails closed for a programmatic press too, not only for the dimmed control.
       if (decision === 'approve' && !triggerConsent && (approvalWithheld || secretPrompt || proposal?.approveWithheld)) return;
 
       try {
-        decisionInFlightRef.current = true;
-        setIsDeciding(true);
+        if (!cancelingChecks) {
+          decisionInFlightRef.current = true;
+          setIsDeciding(true);
+        }
         if (triggerConsent) {
           // The request stays open while its checks settle; the refreshed Artifact says what happens next.
           if (!await decideActionApproval('approve', { triggerConsent })) throw new Error('approval_decision_failed');
@@ -529,8 +532,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         if (isVersionConflict) Modal.alert(t('common.error'), err.message);
         else if (!isStaleDecision && !hasSettledExecution) alertApprovalFailure(err);
       } finally {
-        decisionInFlightRef.current = false;
-        setIsDeciding(false);
+        if (!cancelingChecks) {
+          decisionInFlightRef.current = false;
+          setIsDeciding(false);
+        }
       }
     },
     [approvalWithheld, bindingChoice, secretPrompt, computerChoice, decideActionApproval, parsed, proposal, props.artifactId, refreshArtifact, replayRoute, requestedServerId, sessionConsentChoice, sessionId, setRecordedDecision],
@@ -545,7 +550,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   );
   const decideChecks = React.useCallback(async (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => {
     // The review's decide alerts its own failures, so the controls never alert twice.
-    await decide(decision, options?.triggerConsent ? { triggerConsent: options.triggerConsent } : undefined);
+    await decide(decision, decision === 'cancel' ? { cancelingChecks: true }
+      : options?.triggerConsent ? { triggerConsent: options.triggerConsent } : undefined);
     return true;
   }, [decide]);
   const checks = useApprovalAutomaticChecksControls({ checks: automaticChecks, decide: decideChecks,
@@ -742,7 +748,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const override = checksDecision?.kind === 'override';
   const decisionBar = parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval && !confidentialInputs
     && (!requesterConfirmation || requesterMayDecide) ? (
-    <ApprovalDecisionBar testID="approvals.actions" busy={isDeciding && !homeUnavailable}
+    <ApprovalDecisionBar testID="approvals.actions" busy={(checking ? checks.isCancellingChecks : isDeciding) && !homeUnavailable}
       irreversible={review?.irreversible === true && !confidentialAction && !consent && !checking}
       layout={handoffTargetPresentation ? 'stacked' : 'inline'}
       approve={checking ? undefined : consent ? (canAllow ? {
@@ -757,7 +763,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         accessibilityHint: approveWithheldReason ?? undefined,
         onPress: () => decide('approve'),
       } : undefined}
-      dismiss={override || (projectCommand && !checking) ? undefined : { testID: 'approvals.cancel', disabled: isDeciding,
+      dismiss={override || (projectCommand && !checking) ? undefined : { testID: 'approvals.cancel',
+        disabled: checking ? checks.cancelDisabled : isDeciding,
         ...(checking ? { label: t('workflows.triggers.checks.cancel') } : { accessibilityHint: t('approvals.dismissHint') }),
         onPress: () => { void (checking ? checks.cancelChecks() : decide('cancel')); } }}
       reject={checking ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),

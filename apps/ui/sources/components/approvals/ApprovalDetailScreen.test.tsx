@@ -1831,6 +1831,76 @@ describe('ApprovalDetailScreen', () => {
     }
   });
 
+  it('cancels the running check while the original approval is still awaiting settlement', async () => {
+    const artifact = await createApiTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
+    const invocation = projectTargetActionApprovalInvocationV1(request);
+    if (!invocation) throw new Error('Expected the contributed Action invocation');
+    const selected = { phase: 'before', actionIds: [invocation.actionId], mode: 'wait', onFailure: 'ask',
+      automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+      workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' } as const;
+    const { automationId, triggerId } = selected;
+    const pending = TargetActionApprovalRequestV1Schema.parse({ ...request, automaticChecks: {
+      phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready', subjects: [], notices: [],
+      selected: [selected], consents: [{ automationId, triggerId, decision: 'allow' }], runs: [], results: [],
+    } });
+    const checking = TargetActionApprovalRequestV1Schema.parse({ ...pending, updatedAtMs: pending.updatedAtMs + 1,
+      automaticChecks: { ...pending.automaticChecks, phase: 'checking',
+        humanDecision: { kind: 'approve', decidedAtMs: pending.updatedAtMs + 1 },
+        runs: [{ automationId, triggerId, runId: 'run-freeze' }] } });
+    const canceled = TargetActionApprovalRequestV1Schema.parse({ ...checking, status: 'canceled',
+      updatedAtMs: checking.updatedAtMs + 1 });
+    const withRequest = (next: typeof request) => ({ ...artifact,
+      header: buildTargetActionApprovalArtifactHeaderV1(next), body: JSON.stringify(next) });
+    currentArtifact = withRequest(pending);
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const { Modal } = await import('@/modal');
+    const { ApprovalRequestDecideInputSchema } = await import('@happier-dev/protocol/actions/specs/approvals');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    const approveReply = createDeferred<void>();
+    const cancelReply = createDeferred<void>();
+    const decisions: string[] = [];
+    const path = '/v1/actions/approval.request.decide';
+    homes.answer(account.serverId, path, { select: async body => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      const { artifactId, decision } = ApprovalRequestDecideInputSchema.parse(envelope.input);
+      if (artifactId !== artifact.id) throw new Error('Decision reached the wrong approval');
+      decisions.push(decision);
+      if (decision === 'approve') {
+        commitRemoteArtifact(withRequest(checking));
+        publishHomeAccountChange(account.serverId, [artifact.id], { changeKinds: ['artifact'] });
+        await approveReply.promise;
+      } else {
+        await cancelReply.promise;
+        commitRemoteArtifact(withRequest(canceled));
+        publishHomeAccountChange(account.serverId, [artifact.id], { changeKinds: ['artifact'] });
+      }
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+        requestId: envelope.requestId, execution: decision === 'cancel' ? { ok: true, result: { status: 'canceled' } }
+          : { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false } }) };
+    } });
+
+    let approve: Promise<void> | undefined;
+    try {
+      await act(async () => { approve = screen.pressByTestIdAsync('approvals.approve'); });
+      await vi.waitFor(() => expect(screen.findByTestId('approvals.automatic-checks:checking')).not.toBeNull());
+      expect(decisionButton(screen, 'approvals.cancel')?.props.disabled).toBe(false);
+      await screen.pressByTestIdAsync('approvals.cancel');
+      await vi.waitFor(() => expect(decisions).toEqual(['approve', 'cancel']));
+      expect(decisionButton(screen, 'approvals.cancel')?.props.disabled).toBe(true);
+      cancelReply.resolve();
+      await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.canceled'));
+    } finally {
+      cancelReply.resolve();
+      approveReply.resolve();
+      await act(async () => { await approve; });
+    }
+    expect(decisions).toEqual(['approve', 'cancel']);
+    expect(screen.findByTestId('approvals.cancel')).toBeNull();
+    expect(Modal.alert).not.toHaveBeenCalled();
+  });
+
   it('uses the executed receipt when the deciding Home loses its reply', async () => {
     const artifact = await createApiTargetActionApprovalArtifact();
     const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));

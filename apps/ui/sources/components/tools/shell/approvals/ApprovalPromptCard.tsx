@@ -217,7 +217,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
             ) : checks.decision?.kind === 'checking' ? (
                 <View style={styles.checksFooter}>
                     <RoundButton testID="approval-prompt-checks-cancel" size="small" display="secondary"
-                        title={t('workflows.triggers.checks.cancel')} disabled={decisionDisabled} loading={isDeciding}
+                        title={t('workflows.triggers.checks.cancel')} disabled={checks.cancelDisabled} loading={checks.isCancellingChecks}
                         onPress={() => { void checks.cancelChecks(); }} />
                 </View>
             ) : consentWithDecision ? (
@@ -348,7 +348,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const automaticChecks = readApprovalAutomaticChecksForRequest(props.approval.v === 2 ? props.approval : null);
     // A refusal by a before check says its reason inside the checks block, once.
     const checksCarryRefusal = readApprovalAutomaticChecksCarryRefusal(automaticChecks);
-    const { decision: checksDecision, answerConsent: onTriggerConsent, cancelChecks: onCancelChecks } = useApprovalAutomaticChecksControls({
+    const { decision: checksDecision, answerConsent: onTriggerConsent, cancelChecks: onCancelChecks,
+        cancelDisabled, isCancellingChecks } = useApprovalAutomaticChecksControls({
         checks: automaticChecks, decide, unavailable: decisionDisabled, isDeciding, setIsDeciding });
     const openChecksRoute = React.useMemo(() => transcriptSource.navigate
         ? (route: string) => navigateWithBlurOnWeb(() => transcriptSource.navigate?.(route)) : undefined, [transcriptSource]);
@@ -487,7 +488,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             ) : checksDecision?.kind === 'checking' ? (
                 <View style={styles.checksFooter}>
                     <RoundButton testID="approval-prompt-checks-cancel" size="small" display="secondary"
-                        title={t('workflows.triggers.checks.cancel')} disabled={decisionDisabled} loading={isDeciding}
+                        title={t('workflows.triggers.checks.cancel')} disabled={cancelDisabled} loading={isCancellingChecks}
                         onPress={() => { void onCancelChecks(); }} />
                 </View>
             ) : checksDecision?.kind === 'consent' ? (
