@@ -88,8 +88,9 @@ export async function acquireEligibleHomeCarrier(input: HomeCarrierAcquisitionIn
         verifiedApplicationOrigin = runtimeOrigin;
     };
     // The device's managed Home receipt admits this local candidate without publishing
-    // a loopback address in the descriptor other devices use. Verify the current listener
-    // before using it, just as we do for an independently declared fallback.
+    // a loopback address in the descriptor other devices use. Check the current listener's
+    // public Home identity before using it, just as we do for an independently declared
+    // fallback; this catches a different Home, not an impostor (local-machine trust).
     if (selected?.personalHomeBootstrapCompleted && !browserHost.eligible && browserHost.reason === 'desktop_host'
         && input.verification.kind === 'authenticated') {
         const canonical = new URL(input.descriptor.canonicalServerUrl);

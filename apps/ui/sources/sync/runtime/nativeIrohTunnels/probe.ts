@@ -14,7 +14,9 @@ export type IrohHomeTunnelProbeFailureReason =
  * Shared Home endpoint verification for a native lease or declared HTTPS, in order:
  * 1. public `/v1/features` through the exact transport origin, whose
  *    `serverIdentityId` must equal the expected Home identity; a different Home
- *    is refused before any credential leaves;
+ *    is refused before any credential leaves. The identity is public, so this
+ *    does not authenticate the listener: loopback carries the same local-machine
+ *    trust as other loopback endpoints (docs/peer-mediation.md);
  * 2. real endpoint readiness against that same origin: `/v1/auth/ping` with the
  *    scoped token for an enrolled caller, or `/health` for pre-token enrollment
  *    (authenticated readiness subsumes health).

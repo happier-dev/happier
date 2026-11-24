@@ -54,8 +54,11 @@ HTTP/HTTPS running.
 
 On its hosting desktop, a completed managed Personal Home can use its canonical
 loopback listener even when its shareable Iroh descriptor has no reachable address.
-The app checks that the listener serves the saved Home identity before sending the
-Home-scoped token for the readiness probe. The same-computer path leaves the
+Before sending the Home-scoped token for the readiness probe, the app checks that the
+listener reports the saved Home's public `serverIdentityId`. That catches a different
+Home on the port; it does not authenticate the listener. Like other loopback endpoints,
+this path trusts the local computer: another OS user who binds the port while the Home
+is stopped and echoes the public identity would receive the token. The same-computer path leaves the
 server-published descriptor available for other devices to use as published.
 
 The existing layout owner (`resolveHomeIrohEndpointKeyPath`, also consumed by
