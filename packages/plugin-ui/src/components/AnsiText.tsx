@@ -18,6 +18,7 @@ export type AnsiTextProps = Readonly<{
   /**
    * Already-tokenized text and its plain form (a log index keeps both per line), so a re-render never
    * tokenizes again. `plainText` is what selection, copy and Find ranges address.
+   * Supply `plainText` on its own for a literal log message with no ANSI interpretation.
    */
   tokens?: readonly AnsiTextToken[];
   plainText?: string;
@@ -116,7 +117,9 @@ export function AnsiText({
             tokens,
             plainText: plainText ?? tokens.map((token) => token.text).join(''),
           }
-        : tokenizeAnsiText(text ?? ''),
+        : text === undefined && plainText !== undefined
+          ? { plainText, tokens: [{ text: plainText, start: 0, end: plainText.length, style: {} }] }
+          : tokenizeAnsiText(text ?? ''),
     [tokens, plainText, text],
   );
   const base = tokenized.tokens[0]?.start ?? 0;

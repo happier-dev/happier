@@ -15,6 +15,23 @@ function rgb(hex: string): string {
 }
 
 describe('AnsiText', () => {
+  it('renders a literal log message without interpreting terminal escapes and finds text in that message', () => {
+    const context = createSurfaceContext();
+    const message = 'literal \u001b[31m <b>body</b>';
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <AnsiText testID="log" plainText={message}
+          ranges={[{ start: message.indexOf('body'), end: message.indexOf('body') + 4, current: true }]} />
+      </PluginUiProvider>,
+    );
+    try {
+      const root = mount.container.querySelector('[data-testid="log"]')!;
+      expect(root.textContent).toBe(message);
+      expect(root.querySelector('b')).toBeNull();
+      expect(root.querySelector('[data-testid="find-match-current"]')?.textContent).toBe('body');
+    } finally { mount.unmount(); }
+  });
+
   it('draws standard terminal colours in the theme inks, never as markup, and marks Find ranges on the plain text', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(

@@ -7,6 +7,7 @@
 
 import * as React from 'react';
 import {
+  AnsiText,
   Icon,
   Item,
   ItemGroup,
@@ -361,11 +362,10 @@ function CapturedLogLine({
       </Stack>
       {message === null ? null : (
         <Stack gap="none" grow testID={testID ? `${testID}.message` : undefined}>
-          <Text
-            variant="code"
+          <AnsiText
             selectable={!truncated}
             tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'}
-            value={message}
+            plainText={message}
           />
         </Stack>
       )}
