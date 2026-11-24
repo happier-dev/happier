@@ -2794,6 +2794,41 @@ describe('default Action executor mode and catalog contracts', () => {
       scope: storage.getState().profileScope })).toBeNull();
     expect(deleteRequests).toBe(1);
   });
+  it('presents the Home’s offline Machine refusal when deleting a stopped Session', async () => {
+    const sessionId = 'offline-delete-session';
+    const metadata = { machineId: 'machine-a', path: '/repo', host: 'tester.local', flavor: 'codex' };
+    installSession(sessionId, metadata, serverId, 1,
+      createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, active: false, metadata }));
+    storage.setState({ sessions: { ...storage.getState().sessions,
+      [sessionId]: { ...storage.getState().sessions[sessionId]!, active: false, activeAt: 0, presence: 0 } } });
+    const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+    const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
+    const { Modal } = await import('@/modal');
+    const { t } = await import('@/text');
+    const diagnostic = {
+      reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine',
+    };
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: 'machine-a', actionId: 'session.delete', tokenEpoch: 0,
+      execute: async () => { throw new Error('An offline Machine cannot execute Delete'); },
+    });
+    homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
+    homes.answer(serverId, 'POST /v1/actions/session.delete', {
+      status: 409, body: { error: 'invalid_request', code: 'target_unavailable', diagnostic },
+    });
+    await expect(executeSessionAction({ actionId: 'ui.session.delete',
+      target: createSessionActionTarget({ session: storage.getState().sessions[sessionId]!, serverId, isConnected: true }),
+      context: { confirmed: true },
+    })).resolves.toBe(false);
+    expect(Modal.alert).toHaveBeenLastCalledWith(t('common.error'), t('errors.machineNotAnswering'),
+      expect.arrayContaining([expect.objectContaining({ text: t('approvals.technicalDetails') })]));
+    const detailButton = vi.mocked(Modal.alert).mock.lastCall?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+    await detailButton?.onPress?.();
+    expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.technicalDetails'), expect.stringContaining('target_unavailable'));
+    expect(storage.getState().sessions[sessionId]).toBeDefined();
+    expect(homes.requestsFor('/v1/actions/session.delete')).toHaveLength(1);
+    expect(homes.requestsFor(`/v1/sessions/${sessionId}`).filter(request => request.method === 'DELETE')).toHaveLength(0);
+  });
   it('retains the Home delete conflict payload at the UI error boundary', async () => {
     const session = createSessionFixture({ id: 'conflict-session', serverId, active: false, activeAt: 0, presence: 0,
       metadata: { path: '/repo', host: 'tester.local', terminal: {

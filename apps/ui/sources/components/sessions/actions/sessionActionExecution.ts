@@ -21,6 +21,8 @@ import { resolveSessionToolCallsMenuState } from './sessionToolCallsMenuState';
 import { sessionOrganizationActions } from '@/sync/ops/sessionOrganization/sessionOrganizationActions';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
+import { resolveMachineTargetUnavailableReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { router } from 'expo-router';
 import { createFilteredBoardRoute } from '@/components/boards/boardsRoutes';
 import { resolveSessionCoordinatorMenuControls } from './sessionActionAvailability';
@@ -517,15 +519,24 @@ export async function executeSessionAction(params: Readonly<{
                 t('sessionInfo.failedToUnarchiveSession'),
             );
             return;
-        case SESSION_ACTION_DELETE_ID:
+        case SESSION_ACTION_DELETE_ID: {
             if (!params.target.serverId || (!params.target.canDelete && !params.target.canStopAndDelete)) {
                 throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
             }
-            throwIfFailed(await resolveDeleteSession(params.context)(params.target.sessionId, {
+            const result = await resolveDeleteSession(params.context)(params.target.sessionId, {
                 serverId: params.target.serverId,
                 confirmed: params.context?.confirmed,
-            }), t('sessionInfo.failedToDeleteSession'));
+            });
+            if (result && !result.success && result.code === 'target_unavailable') {
+                const reason = resolveMachineTargetUnavailableReasonCopy(result.details);
+                if (reason) {
+                    alertActionFailure({ reason, code: result.code, context: readSafeFailureDetails(result.details) });
+                    return false;
+                }
+            }
+            throwIfFailed(result, t('sessionInfo.failedToDeleteSession'));
             return;
+        }
         case SESSION_ACTION_PIN_ID:
         case SESSION_ACTION_UNPIN_ID: {
             const setPinned = resolveSetPinned(params.context);

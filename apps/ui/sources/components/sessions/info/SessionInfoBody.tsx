@@ -1085,12 +1085,12 @@ function SessionInfoContent({
   }, [performArchive]);
 
   const [deletingSession, performDelete] = useHappyAction(async (target: typeof sessionActionTarget) => {
-    await executeSessionAction({
+    const result = await executeSessionAction({
       actionId: SESSION_ACTION_DELETE_ID,
       target,
       context: { confirmed: true },
     });
-    handleExitAfterSessionMutation();
+    if (result !== false) handleExitAfterSessionMutation();
   });
 
   const handleDeleteSession = React.useCallback(async () => {
