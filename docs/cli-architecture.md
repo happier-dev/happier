@@ -6049,8 +6049,10 @@ it must not infer suppression from empty text, a sentinel or the last step.
 
 Workflow machine start capacity is independent of trigger scope. The incumbent Automation
 worker's active-execution map reserves the existing server-configured budget
-only for accepted graphs that can start an Agent. Existing-Session writes from
-Account recipes and Session-scoped triggers reserve no slot. At a full budget,
+only for accepted graphs that can start an Agent within the Run. A composed
+Review dispatcher delegates the start to its child Workflow, which reserves the
+slot for the reviewer. Existing-Session writes from Account recipes and
+Session-scoped triggers reserve no slot. At a full budget,
 the worker still claims Workflow recipes so it can classify their private graph;
 new Agent starts wait on that same budget with claim cancellation and heartbeat
 still active. `scopeSessionId` retains Session-trigger identity and serialization,

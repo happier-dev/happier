@@ -237,10 +237,15 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
   };
 }
 
+function startsAgentInWorkflow(actionId: string, actionInput: WorkflowMaterializedLeafV1['actionInput']): boolean {
+  return isAgentStartActionV1(actionId)
+    && (actionId !== 'review.start' || !requiresReviewWorkflowCompositionV1(actionInput ?? {}));
+}
+
 /** Machine start admission is about execution, never trigger scope. */
 export function workflowRequiresMachineStartCapacityV1(leaves: readonly WorkflowMaterializedLeafV1[]): boolean {
   return leaves.flatMap(listWorkflowAcceptedLeafSelectionsV1).some(leaf => {
-    if (leaf.kind === 'action') return leaf.actionId !== undefined && isAgentStartActionV1(leaf.actionId);
+    if (leaf.kind === 'action') return leaf.actionId !== undefined && startsAgentInWorkflow(leaf.actionId, leaf.actionInput);
     if (leaf.kind !== 'step') return false;
     const conversation = leaf.selection.conversation?.kind;
     return conversation !== 'existing_session' && conversation !== 'origin_session' && conversation !== 'from_step';
@@ -278,8 +283,7 @@ function projectActionStart(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineI
       machineId: snapshot.machineId, actionId: leaf.actionId, input: leaf.actionInput ?? {},
     }) };
   }
-  if (!leaf.actionId || !isAgentStartActionV1(leaf.actionId)) return { leaves: [] };
-  if (leaf.actionId === 'review.start' && requiresReviewWorkflowCompositionV1(leaf.actionInput ?? {})) return { leaves: [] };
+  if (!leaf.actionId || !startsAgentInWorkflow(leaf.actionId, leaf.actionInput)) return { leaves: [] };
   const selection = leaf.selection;
   const baseline = { machineId: snapshot.machineId, directory: snapshot.workspaceTarget.project.directory };
   const actionInput = { ...leaf.actionInput };

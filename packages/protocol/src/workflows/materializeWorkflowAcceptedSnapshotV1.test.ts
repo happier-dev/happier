@@ -16,7 +16,7 @@ import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import historicalReviewAndConvergeV1 from './fixtures/historicalReviewAndConvergeV1.json';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from './builtins/repositoryReview.js';
-import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
+import { buildReviewStepsWorkflowV1, REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
@@ -472,6 +472,34 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     })).toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: kind === 'fresh',
       targetSessionIds: kind === 'fresh' ? [] : ['origin'] } });
   });
+
+  it.each(['implicit steps', 'selected steps', 'fix'] as const)(
+    'reserves Review start capacity in the reviewer child only (%s)', async variant => {
+      const reviewers = [{ kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex', cwd: '/project',
+        includeSessionTranscript: false }];
+      const focus = 'Review the staged greeting return value.';
+      const steps = [{ kind: 'review' as const, reviewers, instructions: focus }];
+      const then = variant === 'fix' ? 'fix' as const : 'report' as const;
+      const effects: MaterializeWorkflowAcceptedSnapshotV1Input['effects'] = {
+        resolveTargetAvailability: available,
+        resolveSessionTarget: resolveOriginSessionTarget,
+        readActionContract: async actionId => {
+          const published = actionSpecToActionDefinitionV1(getActionSpec(actionId));
+          return { inputSchema: published.inputSchema, outputSchema: published.outputSchema ?? {} };
+        },
+      };
+      const origin = { kind: 'direct' as const, originSessionId: 'origin' };
+      const child = buildReviewStepsWorkflowV1({ sessionId: 'origin', reviewers, steps, cwd: '/project',
+        scope: 'changes', instructions: focus, then }, { reviewId: '7d20a27c-8adb-49e6-a7a8-3d44bebee2d8', roundOrdinal: 1 });
+      await expect(materialize({ definition: child.definition, effects,
+        context: { ...context, origin, inputs: child.inputs },
+      })).resolves.toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: true } });
+      await expect(materialize({ definition: REVIEW_AND_CONVERGE_WORKFLOW_V1, effects,
+        context: { ...context, origin, inputs: { reviewSession: originSessionTarget.address, reviewers, focus, then,
+          ...(variant === 'selected steps' ? { steps } : {}) } },
+      })).resolves.toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: false } });
+    },
+  );
 
   it.each(['default steps', 'explicit steps', 'repository review'] as const)(
     'admits the selected Session reviewer for %s', async variant => {
