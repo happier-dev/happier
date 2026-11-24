@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ACTION_IDS } from './actionIds.js';
 import type { ActionId } from './actionIds.js';
 import type { AutomationDefinitionDetail } from '../automations/automationApiV3.js';
-import type { ActionExecutorContext } from './actionExecutor.js';
+import { createActionExecutor, type ActionExecutorContext } from './actionExecutor.js';
 import {
   normalizeActionsSettingsV1,
   setScopedActionApprovalPreference,
@@ -30,6 +30,35 @@ function expectOwnUiReview(
   expect(decision.required, message).toBe(false);
   expect(decision.uiConfirmationRequired === true, message).toBe(confirmationRequired);
 }
+
+const RESET_CREDIT_ACTION_ID = 'session.usageLimit.consumeResetCredit';
+const resetCreditInput = { sessionId: 'reset-credit-session' };
+const ownUiResetCreditContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+
+it('requires local confirmation before a person applies a usage-limit reset credit in the app', () => {
+  expectOwnUiReview(resolveActionApprovalRouting({
+    actionId: RESET_CREDIT_ACTION_ID,
+    spec: getActionSpec(RESET_CREDIT_ACTION_ID),
+    context: ownUiResetCreditContext,
+    input: resetCreditInput,
+    settings: EMPTY_SETTINGS,
+  }), true);
+});
+
+it('spends no usage-limit reset credit when the person declines confirmation', async () => {
+  let spendRequests = 0;
+  const executor = createActionExecutor({
+    presentUserActionConfirmation: async () => false,
+    sessionUsageLimitConsumeResetCredit: async () => {
+      spendRequests++;
+      return { ok: true, status: 'ready' };
+    },
+  });
+
+  const result = await executor.execute(RESET_CREDIT_ACTION_ID, resetCreditInput, ownUiResetCreditContext);
+
+  expect({ result, spendRequests }).toMatchObject({ result: { ok: false, errorCode: 'approval_canceled' }, spendRequests: 0 });
+});
 
 it.each(['agent', 'mcp'] as const)('asks before a %s applies Review fixes unless the person saved a waiver', surface => {
   const actionId = 'review.apply';

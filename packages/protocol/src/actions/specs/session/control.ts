@@ -364,6 +364,7 @@ function createSessionRecoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.usageLimit.consumeResetCredit', executionPlacement: 'session', approval: {result: 'required'},
+    irreversible: true,
     sideEffectClass: 'external',
     title: 'Apply usage-limit reset credit',
     description: 'Ask the session runtime to spend a connected-service reset credit for usage-limit recovery.',
