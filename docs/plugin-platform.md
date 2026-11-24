@@ -1860,6 +1860,10 @@ to manifest arrays. Existing `activate(api)` registers ordinary declared Actions
 and Resources only. The same field declaration supports service-entity numeric
 columns with units and optional presentation metadata; number fields remain
 display-only. The declaration path adds no Resource demand or runtime binding.
+While the wide Services Apps view is presented, it uses the shared App-shell
+projection demand to read declarations for installations whose source content
+is absent from the Home census, including local development plugins. The
+App-shell union publishes their columns into the open view.
 The Services fact adapter binds Resource columns to the public closed
 `{entity:'service', serverId, environmentIds:[...]}` launch input. Each result
 row supplies `environmentId`, `value`, and optional `provenance` and `trend`.

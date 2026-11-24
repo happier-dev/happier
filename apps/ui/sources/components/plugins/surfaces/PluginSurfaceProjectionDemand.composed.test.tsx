@@ -6,8 +6,11 @@ import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/deployment-templates/src/manifest';
 import { CHANNELS_UI, PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../../../../../packages/plugins/channels/src/manifest';
+import { createServiceColumnSource } from '../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { NewAppScreen } from '@/components/projects/starters/NewAppScreen';
+import { AllDeploymentsView, type AllDeploymentsRead } from '@/components/projects/deployments/AllDeploymentsScreen';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { socketRpcCodec } from '@happier-dev/sync-client';
@@ -94,15 +97,17 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills', 'services'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
     const starterSurface = surface === 'starter' || surface === 'starter-warm';
     const skillsSurface = surface === 'skills';
-    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface || skillsSurface ? Date.now() : 0, storageMode: 'plain' });
+    const servicesSurface = surface === 'services';
+    const serviceManifest = servicesSurface ? PluginManifestV2Schema.parse(createServiceColumnSource().manifest) : null;
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface || skillsSurface || servicesSurface ? Date.now() : 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
     const shippedManifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
-    const pluginId = starterSurface ? shippedManifest.id : 'acme.preview';
+    const pluginId = starterSurface ? shippedManifest.id : serviceManifest?.id ?? 'acme.preview';
     const pluginVersion = starterSurface ? shippedManifest.version : '1.0.0';
     const registrySources = starterSurface ? (shippedManifest.contributes.registrySources ?? []).map(definition => ({
         ...projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: shippedManifest.version,
@@ -128,6 +133,8 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     const sourceCustody = { kind: 'development', registeredRootId: 'preview-root' } as const;
     const executionOrigin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
         sourceRef: { machineId: machine.id, pluginId, sourceCustody } });
+    const serviceEntries = serviceManifest ? Object.fromEntries(Object.entries(projectPluginPortableUiDeclarationsV1(serviceManifest))
+        .map(([id, entry]) => [id, { ...entry, executionOrigin, occurrenceId: widget.occurrenceId }])) : null;
     const storeKind = projectPluginStoreKindDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
         id: 'theme', title: 'Themes', viewId: 'store', operations: {
             list: 'list', read: 'read', installed: 'installed', prepare: 'prepare', acquire: 'acquire', manage: 'manage',
@@ -170,7 +177,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             familiesById: {
                 ...(starterSurface ? { registrySources: { family: 'registrySources', entriesById: Object.fromEntries(registrySources.map((entry: { id: string }) => [entry.id, { ...entry, executionOrigin }])) } } : {}),
                 storeKinds: { family: 'storeKinds', entriesById: { [storeKind.id]: storeKind } },
-                pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } },
+                pluginUi: { family: 'pluginUi', entriesById: serviceEntries ?? { [widget.id]: widget } },
                 skills: { family: 'skills', entriesById: skillsSurface ? { [skillId]: {
                     id: skillId, pluginId, pluginVersion,
                     definition: { id: 'fixture-skill', directory: 'skills/fixture-skill' },
@@ -210,8 +217,10 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     });
     const promptCatalog = createPromptLibraryCatalogBoundary();
     let availabilityCursor = 1;
+    let serviceInstalled = false;
+    let serviceEnabled = false;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
-        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface || skillsSurface }], route: async request => {
+        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface || skillsSurface || servicesSurface }], route: async request => {
         if (starterSurface && request.path.startsWith('/v1/actions/')) {
             // The Home HTTP boundary keeps the real Action envelope and registry host.
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
@@ -228,15 +237,19 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'])
             return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor,
                 snapshots: fleet.map((entry, index) => ({ serverIdentityId, machineId: entry.id,
-                    materializations: index === 0 ? [materialization, ...fleetMaterializations[index]!.slice(1)] : fleetMaterializations[index]! })) }));
+                    materializations: servicesSurface && !serviceInstalled ? []
+                        : index === 0 ? [materialization, ...fleetMaterializations[index]!.slice(1)] : fleetMaterializations[index]! })) }));
         if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
             const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
-            const known = input.knownPluginIds ?? [];
+            const known = input.knownPluginIds ?? input.pluginIds ?? [];
             const page = known.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
             return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor, pluginIds: [],
                 ...(known.length > page.length ? { nextCursor: page.at(-1) } : {}),
                 intentReads: page.map(id => ({ pluginId: id, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
-                    hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [] }) })), failedPluginIds: [] }));
+                    hostingCapability: { enabled: false },
+                    intent: serviceEnabled && id === pluginId ? { pluginId, enabled: true, desiredVersion: null,
+                        offlineUiHosting: 'disabled', writableCollections: [], revision: '1' } : null,
+                    release: null, packageAssets: [], uiArtifacts: [] }) })), failedPluginIds: [] }));
         }
         return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method, headers: request.headers }) ?? undefined;
     } });
@@ -285,10 +298,19 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
                 .map(kind => React.createElement('StoreKind', { key: kind.key, testID: kind.key }))}</>;
         }
         const definition = { kind: 'installed', surface: { pluginId, localId: 'conversations' } } as const;
+        const servicesRead: AllDeploymentsRead = {
+            snapshot: { status: 'ready', failure: null, value: { items: [{
+                environment: createDeploymentEnvironmentHeaderV1({ id: 'busy', projectSourceId: 'shop' }),
+                title: 'Production', currentDeployment: null,
+            }], nextCursor: null } },
+            refresh: async () => {}, hasNextPage: false, hasPreviousPage: false, nextPage: () => {}, previousPage: () => {},
+        };
         function Presented({ visible }: Readonly<{ visible: boolean }>) {
             current = usePluginUiProjectionCurrentness({ ...target, load: false });
             if (starterSurface) return <AppShellPluginUiProjectionProvider>{visible ? <NewAppScreen onClose={() => {}} /> : null}</AppShellPluginUiProjectionProvider>;
             if (skillsSurface) return <AppShellPluginUiProjectionProvider>{visible ? <SkillsSettingsLayout /> : null}</AppShellPluginUiProjectionProvider>;
+            if (servicesSurface) return <AppShellPluginUiProjectionProvider>{visible ? <AllDeploymentsView read={servicesRead}
+                serverId={serverId} lifetime={lifetime} presented /> : null}</AppShellPluginUiProjectionProvider>;
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
                 <StoreDiscover demand={{ presented: visible }} project={null}>
                     {() => <DeclaredDirectoryKinds />}
@@ -317,6 +339,25 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         expect(requests).toEqual([]);
         if (surface === 'store' || surface === 'store-directory') expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(0);
         await tree.update(<Presented visible />);
+        if (servicesSurface) {
+            const column = `all-deployments.columns.column:${pluginId}/requests`;
+            const find = (testID: string) => tree!.tree.root.findAllByProps({ testID });
+            await waitForHomeGovernance(() => expect(find('all-deployments.row.busy').length).toBeGreaterThan(0));
+            await act(async () => { find('all-deployments.columns').find(node => typeof node.props.onPress === 'function')!.props.onPress(); });
+            await waitForHomeGovernance(() => expect(find('all-deployments.columns.menu').length).toBeGreaterThan(0));
+            expect(find(column)).toHaveLength(0);
+            expect(requests).toEqual([]);
+            serviceInstalled = true;
+            serviceEnabled = true;
+            availabilityCursor += 1;
+            await act(async () => { await sync.refreshPluginAccountAvailability(); });
+            await waitForHomeGovernance(() => expect(find(column).length).toBeGreaterThan(0));
+            const settledReads = requests.length;
+            await tree.update(<Presented visible={false} />);
+            await flushHookEffects();
+            expect(requests).toHaveLength(settledReads);
+            return;
+        }
         if (skillsSurface) {
             await waitForHomeGovernance(() => {
                 const skill = readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true })?.skillsById[skillId];

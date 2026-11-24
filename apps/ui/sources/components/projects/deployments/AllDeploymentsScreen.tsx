@@ -30,6 +30,7 @@ import { t } from '@/text';
 
 import { DeploymentEnvironmentRows, deploymentEnvironmentColumns, SERVICES_APPS_COLLECTION_ID, ServicesPageSheetAfterContext, type DeploymentEnvironmentColumnsBinding } from './DeploymentEnvironmentRows';
 import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useDeploymentInventory } from './useDeploymentProject';
@@ -234,9 +235,11 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const localizeColumn = useProjectedPluginLocalizedTextResolver();
   const appsMenuColumns = React.useMemo(() => collectionColumnsMenuColumns(
     { id: 'title', title: t('projects.deployments.services.columnEnvironment') }, deploymentEnvironmentColumns(false, columnProjection, localizeColumn)), [columnProjection, localizeColumn]);
-  const columnsMenu = view === 'apps' && !phone && fittedColumnIds !== null ? <CollectionColumnsMenuButton
-    collectionId={SERVICES_APPS_COLLECTION_ID} columns={appsMenuColumns} fittedIds={fittedColumnIds ?? null}
-    testID="all-deployments.columns" /> : null;
+  const columnsMenu = view === 'apps' && !phone && fittedColumnIds !== null ? <>
+    {props.lifetime && props.presented !== false ? <PluginSurfaceProjectionDemand accountScope={props.lifetime.scope} /> : null}
+    <CollectionColumnsMenuButton collectionId={SERVICES_APPS_COLLECTION_ID} columns={appsMenuColumns}
+      fittedIds={fittedColumnIds ?? null} testID="all-deployments.columns" />
+  </> : null;
   const header = (create: boolean) => (
     <ServicesPageHeader servicesView={servicesView} placesSpaces={placesSpaces && create} header={{
       testID: 'all-deployments.header',
