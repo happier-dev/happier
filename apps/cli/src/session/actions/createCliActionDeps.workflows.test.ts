@@ -1,5 +1,6 @@
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -1785,6 +1786,14 @@ describe('createCliActionDeps workflow boundary', () => {
       ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
     });
     const authenticatedReads: string[] = [];
+    http.request.mockImplementation(async (request: { url: string; method: string; headers: Record<string, string> }) => {
+      expect(request).toMatchObject({
+        url: `https://session-home.test${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${credentials.token}` },
+      });
+      return { status: 200, data: { v: 1, rows: [] } };
+    });
     const get = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string, options: { headers: Record<string, string> }) => {
       if (url.endsWith('/v2/account/session-follow-preferences')) {
