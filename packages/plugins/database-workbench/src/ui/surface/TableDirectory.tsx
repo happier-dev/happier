@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ErrorState, Icon, Row, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Icon, Row, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import {
   Collection,
   useHappierCollection,
@@ -12,6 +12,7 @@ import {
   useWorkbenchLocation,
 } from '../hooks.js';
 import { approxRowsLabel, bytesLabel } from './sizes.js';
+import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import { CataloguePagination } from './CataloguePagination.js';
 
 type DirectoryRow = ReturnType<
@@ -40,7 +41,6 @@ function bySize(left: Sized, right: Sized): number {
  * and total bytes. It reads the same relation page the rail's open schema reads; no second catalogue demand.
  */
 export function TableDirectory(props: Readonly<{ targetKey: string }>) {
-  const translate = usePluginTranslation();
   const location = useWorkbenchLocation();
   const schemas = useDatabaseRelations(props.targetKey);
   const schema = schemas.schemas[0]?.name;
@@ -56,19 +56,7 @@ export function TableDirectory(props: Readonly<{ targetKey: string }>) {
       }
     />
   ) : schemas.status === 'unavailable' ? (
-    <ErrorState
-      layout="line"
-      kind="unavailable"
-      title={translate(
-        'plugins.database.rail.failed',
-        'Tables could not be read',
-      )}
-      details={
-        schemas.error instanceof Error ? schemas.error.message : undefined
-      }
-      onRetry={schemas.refresh}
-      retryLabel={translate('plugins.database.retry', 'Try again')}
-    />
+    <CatalogueReadFailure error={schemas.error} refresh={schemas.refresh} />
   ) : null;
 }
 
@@ -169,17 +157,7 @@ function SchemaDirectory(
   }, [translate]);
   if (page.status === 'unavailable') {
     return (
-      <ErrorState
-        layout="line"
-        kind="unavailable"
-        title={translate(
-          'plugins.database.rail.failed',
-          'Tables could not be read',
-        )}
-        details={page.error instanceof Error ? page.error.message : undefined}
-        onRetry={page.refresh}
-        retryLabel={translate('plugins.database.retry', 'Try again')}
-      />
+      <CatalogueReadFailure error={page.error} refresh={page.refresh} />
     );
   }
   return (

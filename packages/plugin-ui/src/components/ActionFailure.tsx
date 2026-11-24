@@ -3,12 +3,14 @@ import { presentActionFailure, type PluginUiActionFailurePresentationV1 } from '
 
 import { usePluginHostApi } from '../hostApi/context.js';
 import type { PluginActionExecution } from '../hostApi/executeAction.js';
-import { ErrorState } from './State.js';
+import { ErrorState, type ErrorStateProps } from './State.js';
 
 type Failure = Extract<PluginActionExecution, { status: 'error' | 'outcomeUnknown' }>;
 
 /** Show the reason and disclose the safe technical details of a settled Action failure. */
-export function ActionFailure({ execution }: Readonly<{ execution: PluginActionExecution }>) {
+export function ActionFailure({ execution, onRetry, retryLabel }: Readonly<{
+  execution: PluginActionExecution;
+}> & Pick<ErrorStateProps, 'onRetry' | 'retryLabel'>) {
   const host = usePluginHostApi();
   const failure = execution.status === 'error' || execution.status === 'outcomeUnknown' ? execution : null;
   const [presented, setPresented] = useState<Readonly<{
@@ -42,5 +44,6 @@ export function ActionFailure({ execution }: Readonly<{ execution: PluginActionE
   const presentation = presented?.failure === failure && presented.host === host ? presented.presentation : null;
   return <ErrorState layout="line" title={presentation?.reason ?? failure.message}
     description={presentation?.nextStep ?? undefined}
-    details={presentation?.technicalDetails.map(line => line.value).join('\n') || failure.code} />;
+    details={presentation?.technicalDetails.map(line => line.value).join('\n') || failure.code}
+    onRetry={onRetry} retryLabel={retryLabel} />;
 }

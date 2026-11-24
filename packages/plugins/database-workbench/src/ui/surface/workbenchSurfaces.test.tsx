@@ -329,6 +329,44 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('discloses a managed catalogue refusal and retries the selected schema', async () => {
+    const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+      targetLinkId: 'link', database: 'postgres', contribution: { pluginId: 'happier.deploy.supabase', contributionId: 'database' },
+      platformProjectId: 'project', branchId: 'branch' } as const;
+    const managed = { ...descriptor, target } satisfies DatabaseDescriptorV1;
+    const path = encodeWorkbenchRootSubPath(target);
+    const code = 'provider_http_429';
+    const base = daemonAnswers([managed]);
+    let allowRead = false;
+    let refused = false;
+    const executeAction = async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (request.action === databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1) && !allowRead) {
+        expect(request.input).toMatchObject({ target, schema: 'public' });
+        refused = true;
+        return { ok: false, status: 'failed', code, reason: 'The provider is throttling catalogue reads.' };
+      }
+      return base(request);
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'catalogue-refusal', mountNonce: 'catalogue-refusal' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: path,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(managed), executeAction },
+    });
+    try {
+      await settle(20);
+      expect(refused).toBe(true);
+      await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+      expect(await fixture.getByText(code)).toBeTruthy();
+      expect(await fixture.getByText('The provider is throttling catalogue reads.')).toBeTruthy();
+      allowRead = true;
+      await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
+      await settle(20);
+      expect(await fixture.getByText('invoices')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('selects only Console when the location carries the last table and reuses the opened target', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({

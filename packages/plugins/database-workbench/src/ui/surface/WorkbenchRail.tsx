@@ -29,6 +29,7 @@ import {
 import { sameRelation } from '../location.js';
 import { workbenchTargetKey } from '../workbench.js';
 import { approxRowsLabel } from './sizes.js';
+import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import { databaseEngineName } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
 import { NavigationList } from '@happier-dev/plugin-ui/components';
@@ -289,17 +290,7 @@ function SchemaRelations(
     return <LoadingState layout="line" rows={4} rowShape="compact" />;
   if (status === 'unavailable') {
     return (
-      <ErrorState
-        layout="line"
-        kind="unavailable"
-        title={props.translate(
-          'plugins.database.rail.failed',
-          'Tables could not be read',
-        )}
-        details={error instanceof Error ? error.message : undefined}
-        onRetry={refresh}
-        retryLabel={props.translate('plugins.database.retry', 'Try again')}
-      />
+      <CatalogueReadFailure error={error} refresh={refresh} />
     );
   }
   return (
@@ -422,17 +413,7 @@ export function WorkbenchRailList(
         <LoadingState layout="line" rows={6} rowShape="compact" />
       ) : null}
       {status === 'unavailable' ? (
-        <ErrorState
-          layout="line"
-          kind="unavailable"
-          title={translate(
-            'plugins.database.rail.schemasFailed',
-            'Schemas could not be read',
-          )}
-          details={error instanceof Error ? error.message : undefined}
-          onRetry={refresh}
-          retryLabel={translate('plugins.database.retry', 'Try again')}
-        />
+        <CatalogueReadFailure error={error} refresh={refresh} />
       ) : null}
       {status === 'empty' ? (
         <Text

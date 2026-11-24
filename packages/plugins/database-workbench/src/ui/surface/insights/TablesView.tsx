@@ -1,3 +1,4 @@
+import { CatalogueReadFailure } from '../CatalogueReadFailure.js';
 import * as React from 'react';
 import type { DatabaseRelationV1, DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
 import {
@@ -227,18 +228,7 @@ export function InsightsSchemaSelection(props: Readonly<{
   const schema = chosen ?? relations.schemas[0]?.name;
   if (relations.status === 'unavailable') {
     return (
-      <ErrorState
-        kind="unavailable"
-        title={translate(
-          'plugins.database.rail.schemasFailed',
-          'Schemas could not be read',
-        )}
-        details={
-          relations.error instanceof Error ? relations.error.message : undefined
-        }
-        onRetry={relations.refresh}
-        retryLabel={translate('plugins.database.retry', 'Try again')}
-      />
+      <CatalogueReadFailure error={relations.error} refresh={relations.refresh} />
     );
   }
   return (
