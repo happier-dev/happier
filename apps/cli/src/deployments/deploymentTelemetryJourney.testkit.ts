@@ -655,7 +655,11 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         async send(input: Readonly<{ endpoint?: string; authorization?: 'missing' | 'invalid'; serviceName?: string; at?: number }> = {}) {
                             const traceId = randomUUID().replaceAll('-', '');
                             const at = BigInt(input.at ?? Date.now()) * 1_000_000n;
-                            const response = await fetch(`${input.endpoint ?? endpoint}/v1/traces`, {
+                            // The delivered receiver hostname only resolves on the workload's private Docker network.
+                            // Re-select the running container so a stale token can be exercised after redeploy.
+                            const runningContainer = containersByEnvironment.get(selectedEnvironmentId);
+                            if (!runningContainer) throw new Error('F14 ingest probe requires a running workload');
+                            const options = {
                                 method: 'POST', headers: { 'Content-Type': 'application/json',
                                     ...(input.authorization === 'missing' ? {} : input.authorization === 'invalid'
                                         ? { Authorization: 'Bearer unknown-f14-token' } : headers) },
@@ -666,10 +670,21 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                                     name: 'SELECT probe', kind: 3, startTimeUnixNano: String(at), endTimeUnixNano: String(at + 1_000_000n),
                                     attributes: [{ key: 'db.system', value: { stringValue: 'postgresql' } },
                                         { key: 'db.query.text', value: { stringValue: 'SELECT 1' } }] }] }] }] }),
-                            });
-                            const status = response.status;
-                            await response.arrayBuffer();
-                            return { status, traceId };
+                            };
+                            const probe = execute('docker', ['exec', '-i', runningContainer, 'node', '-e', `
+                                const { url, options } = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+                                fetch(url, options).then(async response => {
+                                    await response.arrayBuffer();
+                                    process.stdout.write(String(response.status));
+                                }).catch(error => {
+                                    console.error('F14 workload ingest probe failed', error.cause?.code ?? error.name);
+                                    process.exitCode = 1;
+                                });
+                            `], { signal: lifetime.signal });
+                            // The authorization headers pass by stdin and do not appear in command arguments.
+                            probe.child.stdin!.end(JSON.stringify({ url: `${input.endpoint ?? endpoint}/v1/traces`, options }));
+                            const { stdout } = await probe;
+                            return { status: z.coerce.number().int().min(100).max(599).parse(stdout), traceId };
                         },
                     };
                 };
