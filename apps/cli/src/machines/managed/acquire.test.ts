@@ -29,6 +29,8 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient, openManagedPresetAdmission } from './acquire';
+import { readSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
+import type { ManagedMachineControllerError } from './acquire';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { readManagedMachine } from './readManagedMachine';
@@ -4862,6 +4864,23 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
             runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry, ...accountInputs,
         }, { requestId: 'request' }, 'machines.managed.bootstrap.retry');
         expect(await client.isCurrent(bound)).toBe(false);
+    });
+    it('keeps Home\'s signed controller-proof refusal phase on the managed Action failure', async () => {
+        const url = 'https://home.example/v1/machines/managed/controller/current';
+        // The credential transport projects Home's 403 with the real parser before the controller client sees it.
+        const refusal = readSignedHomeAuthorizationHttpError(403,
+            { code: 'permission_denied', error: 'credential_scope_denied', authorizationRefusal: 'resolved_target' }, url);
+        expect(refusal).toBeDefined();
+        vi.spyOn(axios, 'post').mockRejectedValue(refusal);
+        const client = createManagedMachineControllerClient({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller,
+            runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry, ...accountInputs,
+        }, { requestId: 'request' }, 'machines.managed.bootstrap.retry');
+        const failure = await client.readCurrent(ManagedMachineV1Schema.parse({ ...machine, homeId: 'home', allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } }))
+            .then(() => undefined, (error: ManagedMachineControllerError) => error.toActionFailure('machines.managed.bootstrap.retry'));
+        expect(failure).toMatchObject({ errorCode: 'action_forbidden',
+            error: 'action_forbidden (home_signed_authorization_rejected:resolved_target)',
+            failureCause: { phase: 'home.authorization.resolved_target', httpStatus: 403 } });
     });
     it.each(['permission_denied', 'server-conflict', 'server-validation', 'global-code', 'fastify-code', 'rejected-http', 'typed-transport', 'transport', 'replaced-resource', 'unsupported-endpoint'] as const)('preserves controller observation refusal codes and permits later native invocation (%s)', async refusal => {
         const homeId = 'srv_native_currentness';

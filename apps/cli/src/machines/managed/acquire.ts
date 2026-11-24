@@ -9,6 +9,7 @@ import { projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-com
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { isMachineProvisionerWorkspaceAttachmentV1, MachineProvisionerSnapshotResultV1Schema, readMachineProvisionerSessionPlacementV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isExternalActionManagedWakeRootV1, readExternalActionManagedRetryGuestCliV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
@@ -373,6 +374,9 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             // Rejected HTTP responses use the same code/status parser; transport
             // failures retain their machine-readable code without request details.
             if (axios.isAxiosError<unknown>(error) && error.response) return error.response;
+            // Home's projected signed refusal keeps its typed failure as the public child.
+            if (error instanceof SignedHomeAuthorizationHttpError) throw new ManagedMachineControllerError(error.code, error.response.status,
+                undefined, error.failure.failureCause, error.failure);
             // The credential client refuses some statuses (e.g. 431) as a coded status error without an Axios response.
             const refusedStatus = readHttpStatus(error);
             if (refusedStatus !== null) throw requestFailure(path, 'status', refusedStatus,

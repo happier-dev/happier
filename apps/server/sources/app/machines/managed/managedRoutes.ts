@@ -11,6 +11,7 @@ import type { Fastify } from "@/app/api/types";
 import { resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readExternalActionManagedAcquireAdmission } from '@/app/auth/externalActionManagedAdmission';
+import { refuseExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -41,11 +42,11 @@ import { readServerGuestCliIdentity } from '@/app/runtime/serverRelease';
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
 export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string | null | undefined, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
     if (request.externalActionExecutionAuthorized !== true
-        || !controllerMachineId
-        || request.externalActionExecutionMachineId !== controllerMachineId
         || !request.externalActionExecutionRequestId
-        || !request.externalActionExecutionCustodianAccountId
-        || !effects.includes(request.externalActionEffectActionId ?? "")) throw new ManagedMachineError("permission_denied");
+        || !request.externalActionExecutionCustodianAccountId) throw new ManagedMachineError("permission_denied", "proof_shape");
+    if (!controllerMachineId
+        || request.externalActionExecutionMachineId !== controllerMachineId) throw new ManagedMachineError("permission_denied", "resolved_target");
+    if (!effects.includes(request.externalActionEffectActionId ?? "")) throw new ManagedMachineError("permission_denied", "effect_family");
     return { requestId: request.externalActionExecutionRequestId, custodianAccountId: request.externalActionExecutionCustodianAccountId };
 }
 const effects = ["machines.managed.acquire", "machines.managed.inspect", "machines.managed.bootstrap.retry", "machines.managed.cancel", ...MANAGED_CONTROL_ACTION_IDS_V1];
@@ -205,7 +206,12 @@ async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
     try { return reply.send(await execute()); }
     catch (error) {
         if (!(error instanceof ManagedMachineError || error instanceof ManagedControllerDeclarationError)) throw error;
-        return reply.code(error.code === "permission_denied" ? 403 : error.code === "managed_not_found" ? 404 : 409).send({ code: error.code });
+        const status = error.code === "permission_denied" ? 403 : error.code === "managed_not_found" ? 404 : 409;
+        if (!(error instanceof ManagedMachineError) || !error.authorizationRefusal) return reply.code(status).send({ code: error.code });
+        // A signed-proof refusal carries Home's canonical refusal shape and one warn
+        // with only the phase and the redacted route.
+        refuseExternalActionExecutionRequest(error.authorizationRefusal, { method: reply.request.method, path: reply.request.url });
+        return reply.code(status).send({ code: error.code, error: 'credential_scope_denied', authorizationRefusal: error.authorizationRefusal });
     }
 }
 

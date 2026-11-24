@@ -7,6 +7,7 @@ import { readManagedController, readManagedAdmissionState, projectManagedMachine
 import { MANAGED_RESIZE_ACTION_ID_V1, isManagedResizeActionIdV1, isManagedPowerOrDeleteActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export { readManagedController, readManagedAdmissionState, projectManagedMachine, readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
+import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -107,7 +108,9 @@ export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunch
     return createStoredReadSchema(RetainedManagedLaunchSnapshotV1Schema).parse(value);
 }
 export class ManagedMachineError extends Error {
-    constructor(readonly code: z.infer<typeof ManagedRefusalCodeV1Schema>) {
+    /** `authorizationRefusal` names the signed-proof check that refused, for the reply and its log. */
+    constructor(readonly code: z.infer<typeof ManagedRefusalCodeV1Schema>,
+        readonly authorizationRefusal?: ExternalActionAuthorizationRefusalPhase) {
         super(code);
     }
 }
