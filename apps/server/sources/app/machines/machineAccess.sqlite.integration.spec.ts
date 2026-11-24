@@ -34,10 +34,15 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, DATABASE_CELL_READ_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1, DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+    DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_SCHEMAS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1,
+    DATABASE_STRUCTURE_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
-import { DEPLOYMENT_ACTION_IDS_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -316,6 +321,43 @@ describe('Machine current access (real SQLite)', () => {
         expect(await list({ kind: 'environment', environment: environmentTarget.environment }))
             .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
         expect(await list({ kind: 'worktree' })).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        // The Data page's per-service size read is the same Environment database's stats read; Home
+        // places it on the controller itself. A backup read is no database target and keeps Manage.
+        const placed = (actionId: string, input: unknown) => inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+            actorAccountId: requester.id, machineId: f.machine.id, actionId, carrier: 'home_relay',
+            envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: f.machine.id }, input },
+            authentication: { authenticationAuthority: 'present_user' },
+        }));
+        const serviceRead = { serverId: 'home', environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'link',
+            machineId: f.machine.id, installationId: 'install' };
+        expect(await placed(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, { ...serviceRead, expectedRevision: 1, service: 'database' }))
+            .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
+        expect(await placed('deployments.backups.inventory', serviceRead)).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        // Every mounted Workbench request on that Environment database names its target, so Use carries each.
+        const mounted: readonly (readonly [string, Readonly<Record<string, unknown>>])[] = [
+            [DATABASE_DESCRIBE_ACTION_ID_V1, { operation: 'describe' }],
+            [DATABASE_SCHEMAS_LIST_ACTION_ID_V1, { operation: 'schemas.list' }],
+            [DATABASE_RELATIONS_LIST_ACTION_ID_V1, { operation: 'relations.list', schema: 'public' }],
+            [DATABASE_STRUCTURE_READ_ACTION_ID_V1, { operation: 'structure.read', relation: { schema: 'public', name: 'note' } }],
+            [DATABASE_ROWS_READ_ACTION_ID_V1, { operation: 'rows.read', relation: { schema: 'public', name: 'note' } }],
+            [DATABASE_CELL_READ_ACTION_ID_V1, { operation: 'cell.read' }],
+            [DATABASE_STATEMENT_RUN_ACTION_ID_V1, { operation: 'statement.run', mode: 'read' }],
+            [DATABASE_STATEMENT_RUN_ACTION_ID_V1, { operation: 'statement.run', mode: 'write' }],
+            [DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, { operation: 'statement.explain' }],
+            [DATABASE_EDITS_APPLY_ACTION_ID_V1, { operation: 'edits.apply' }],
+            [DATABASE_ACCESS_READ_ACTION_ID_V1, {}],
+            [DATABASE_STATS_READ_ACTION_ID_V1, { operation: 'stats.read' }],
+            [DATABASE_STATS_ENABLE_ACTION_ID_V1, { operation: 'stats.enable' }],
+            [DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, { operation: 'activity.cancel' }],
+            [DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1, {}],
+            [DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, {}],
+            [DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1, { role: 'detail' }],
+        ];
+        for (const [actionId, operands] of mounted) {
+            const action = parseQualifiedPluginActionId(actionId)!;
+            expect(await placed('action.invoke', { action, input: { ...operands, target: environmentTarget } }), actionId)
+                .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
+        }
     });
 
     it('admits machine-scoped plugin daemon Actions for Manage through authenticated ingress, refusing Can use', async () => {

@@ -473,10 +473,10 @@ export function projectExternalActionMachineAdmissionRefusalCause(
         errorCode: denial.requiredRole === 'manage' ? 'machine_manage_required' : denial.code };
 }
 
-/** A database Action on an Environment database: its admission names `databaseTarget`, or the
- * Environment itself for the listing (`databaseEnvironment`). */
-function isEnvironmentDatabaseActionInvoke(input: ExternalActionExecutionMachineAdmissionInput): boolean {
-    if (input.actionId !== ACTION_INVOKE_ACTION_ID_V1) return false;
+/** A read or write of an Environment's database, as its one admission projector names it: a database
+ * Action on `databaseTarget`, the Environment listing (`databaseEnvironment`), or a service's size read. */
+function isEnvironmentDatabaseAction(input: ExternalActionExecutionMachineAdmissionInput): boolean {
+    if (input.actionId !== ACTION_INVOKE_ACTION_ID_V1 && input.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
     let admission: DeploymentReadAdmissionV1 | undefined;
     try {
         admission = input.envelope ? projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: input.actionId, envelope: input.envelope })
@@ -484,7 +484,8 @@ function isEnvironmentDatabaseActionInvoke(input: ExternalActionExecutionMachine
     } catch {
         return false;
     }
-    return admission !== undefined && ('databaseTarget' in admission || 'databaseEnvironment' in admission);
+    return admission !== undefined && ('databaseTarget' in admission || 'databaseEnvironment' in admission
+        || admission.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1);
 }
 
 async function resolveExternalActionExecutionMachineAccessInTx(
@@ -577,7 +578,7 @@ async function resolveExternalActionExecutionMachineAccessInTx(
     // Exact native binding admission is mandatory even for a controller manager.
     if (input.actionId === 'machines.managed.credentials.install') return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
     if (input.actionId === MANAGED_EXEC_ACTION_ID_V1) return resolveManagedActionMachineAdmissionInTx(reader, input);
-    if (isEnvironmentDatabaseActionInvoke(input)) {
+    if (isEnvironmentDatabaseAction(input)) {
         // P3 M7: the Environment owner admits the person for its database target at
         // mint, and the receiving daemon runs only that exact Action and target.
         // This Machine carries it with Use, like other stored deployment work.
