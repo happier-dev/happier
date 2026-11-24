@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSessionSelector } from '@/sync/store/hooks';
@@ -11,8 +12,8 @@ export type SessionProjectFilesReturnSource = Readonly<{
 }>;
 
 /**
- * Where a copied Session's files came from: the recorded copy origin (`recipe.projectFilesOrigin`), never the
- * Session's execution Machine or managed controller. No origin means there is no Bring back path.
+ * Use the recorded copy origin (`recipe.projectFilesOrigin`) to locate the original folder and its execution Machine.
+ * Managed origins are reached through their recorded controller.
  */
 export function useSessionProjectFilesReturnSource(
   sessionId: string,
@@ -37,7 +38,7 @@ export function useSessionProjectFilesReturnSource(
     return source
       ? {
           serverId: source.serverId,
-          machineId: source.machineId,
+          machineId: resolveWorkspaceSyncExecutionMachineIdV1(source),
           rootPath: source.rootPath,
         }
       : null;
