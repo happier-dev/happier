@@ -21,6 +21,8 @@ import { createDeploymentTemplateGeneratedSecretForHost } from '../templates/gen
 import { updateOwnedSavedSecretResourceForOperation } from '@/settings/secrets/personalSavedSecretActionHost';
 import { sameBindingIntent } from '../secrets/sameBindingIntent';
 import { projectDeploymentException } from '../deploymentFailure';
+import type { Machine } from '@/api/types';
+import { readTelemetryCollectorDomainForHost, type PublicCollectorDomainInput } from '../targets/ownServer/domainRouteSelection';
 
 type Environment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'> & Readonly<{
     targetLinks: readonly DeploymentTargetLinkHeaderV1[];
@@ -33,7 +35,11 @@ type Host = Readonly<{
     readEnvironment(request: { environmentId: string; context: ActionExecutorContext }): Promise<Environment>;
     readProject(environment: Environment, context: ActionExecutorContext, readDefault: boolean): Promise<{ name: string; telemetryMachineId?: string }>;
     readMachine(machineId: string, context: ActionExecutorContext): Promise<{ metadata: Readonly<{ installationPublicKey?: string }> | null;
-        installationPublicKey?: string | null; encryptionMode?: 'plain' | 'e2ee' } | null>;
+        installationPublicKey?: string | null; encryptionMode?: 'plain' | 'e2ee'; deploymentApp?: Machine['deploymentApp'] } | null>;
+    publicCollectorDomain?: Readonly<{
+        get(input: Parameters<PublicCollectorDomainInput['get']>[0], context: ActionExecutorContext): ReturnType<PublicCollectorDomainInput['get']>;
+        open(id: string, context: ActionExecutorContext): ReturnType<PublicCollectorDomainInput['open']>;
+    }>;
 }>;
 const refuse = (code: string, details?: unknown): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
     ...(details === undefined ? {} : { details }) }); };
@@ -60,7 +66,11 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 collector: input.collector, rotate: input.rotate, projectDefaultMachineId: project?.telemetryMachineId });
             if (selection.kind === 'collector_required') return refuse('collector_required', selection);
             const machineId = selection.machineId;
+            if (previousMachineId !== null && previousMachineId !== machineId && !input.confirmDelete) {
+                return refuse('telemetry_deletion_confirmation_required', { machineId: previousMachineId });
+            }
             let collectorPin: DeploymentTelemetryCollectorPinV1 | null = null;
+            let exporterEndpoint: EnvironmentVariableBindingInputV1['source'] = { kind: 'deploymentFact', fact: 'telemetryEndpoint' };
             if (machineId !== null) {
                 const machine = await host.readMachine(machineId, context);
                 if (!machine) return refuse('machine_unavailable', { role: 'telemetry', machineId });
@@ -78,11 +88,25 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                     installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(rowKey, 'base64')) } : undefined);
                 if (!pin) return refuse('machine_unavailable', { role: 'telemetry', machineId });
                 collectorPin = pin;
+                const runtimeLink = current.targetLinks.find(link => link.id === current.environment.runtimeTargetLinkId);
+                if (runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'vercel') {
+                    const selected = input.publicCollectorDomain;
+                    if (!selected) return refuse('collector_public_domain_required');
+                    const { deploymentApp } = machine;
+                    if (!deploymentApp || selected.environmentId !== deploymentApp.environmentId
+                        || selected.targetLinkId !== deploymentApp.targetLinkId) return refuse('target_mismatch');
+                    const domain = host.publicCollectorDomain ?? refuse('admission_unavailable');
+                    const route = await readTelemetryCollectorDomainForHost({ kind: 'publicHttps', serverId: input.serverId,
+                        ...selected, collector: { machineId, deploymentId: deploymentApp.deploymentId, controller: deploymentApp.controller },
+                        signal: context.signal, get: operand => domain.get(operand, context), open: id => domain.open(id, context) });
+                    if (route.kind !== 'ready') {
+                        if (route.failure && 'errorCode' in route.failure) return route.failure;
+                        return refuse(route.reason, route.state ? { state: route.state } : route.failureCause);
+                    }
+                    exporterEndpoint = { kind: 'value', value: route.endpoint };
+                }
             }
             const pinChanged = !sameStrictJsonValue(current.content.telemetryCollector ?? null, collectorPin);
-            if (previousMachineId !== null && previousMachineId !== machineId && !input.confirmDelete) {
-                return refuse('telemetry_deletion_confirmation_required', { machineId: previousMachineId });
-            }
             const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
                 binding.purpose === 'variable' && binding.managedBy === 'telemetry'
                 && TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.some(name => name === binding.name));
@@ -117,7 +141,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                     }
                 }
                 const values: Record<typeof TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1[number], EnvironmentVariableBindingInputV1['source']> = {
-                    OTEL_EXPORTER_OTLP_ENDPOINT: { kind: 'deploymentFact', fact: 'telemetryEndpoint' },
+                    OTEL_EXPORTER_OTLP_ENDPOINT: exporterEndpoint,
                     OTEL_EXPORTER_OTLP_PROTOCOL: { kind: 'value', value: 'http/protobuf' },
                     OTEL_EXPORTER_OTLP_HEADERS: secret,
                     OTEL_SERVICE_NAME: { kind: 'value', value: `${project!.name}/${current.content.name}` },

@@ -23,6 +23,8 @@ export const DeploymentEnvironmentTelemetrySetInputV1Schema = lazyZodSchema(() =
     environmentId: DeploymentIdentifierV1Schema,
     expectedRevision: DeploymentRevisionV1Schema,
     collector: z.optional(z.nullable(z.strictObject({ machineId: DeploymentIdentifierV1Schema }))),
+    publicCollectorDomain: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema,
+        targetLinkId: DeploymentIdentifierV1Schema, domainId: DeploymentIdentifierV1Schema })),
     capabilities: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
     rotate: z.optional(z.literal(true)),
     confirmDelete: z.optional(z.literal(true)),
@@ -35,7 +37,7 @@ export const DeploymentEnvironmentTelemetrySetSuccessV1Schema = lazyZodSchema(()
 export type DeploymentEnvironmentTelemetrySetSuccessV1 = z.infer<typeof DeploymentEnvironmentTelemetrySetSuccessV1Schema>;
 /** Typed refusals the host Action raises before any bindings write; presenters recover from each in place. */
 export const DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1 = ['telemetry_deletion_confirmation_required', 'collector_required',
-    'telemetry_role_inactive', 'machine_unavailable'] as const;
+    'telemetry_role_inactive', 'machine_unavailable', 'collector_public_domain_required'] as const;
 export type DeploymentTelemetrySetRefusalV1 = (typeof DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1)[number];
 export function isDeploymentTelemetrySetRefusalV1(code: unknown): code is DeploymentTelemetrySetRefusalV1 {
     return typeof code === 'string' && (DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1 as readonly string[]).includes(code);

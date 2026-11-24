@@ -6735,6 +6735,124 @@ describe('deployment children retain their controller Action authority', () => {
         await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('admits a %s reviewed public collector Domain read only for its enrolled collector App', async mode => {
+        // Plan 115: a Vercel monitored Environment exports to the selected collector's public
+        // HTTPS Domain. The reviewed telemetry.set input names that Domain; Home binds it to
+        // the collector Machine's enrolled App receipt, and the routes keep requester access.
+        const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true });
+        const foreign = await fixture('account', 'account', { contentMode: mode });
+        if (!f.team) throw new Error('Expected Team owner');
+        const team = f.team;
+        const actionId = 'deployments.environments.telemetry.set';
+        // The collector App runs on `owner.member`; its enrolled child `owner.outsider` is the collector,
+        // shared with the requester's Team the same way any selected collector Machine is.
+        const collectorApp = async (owner: typeof f) => {
+            const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: owner.environment.projectSourceId,
+                createdByAccountId: owner.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: owner.member.id, ...await owner.content('deployment-environment.v1') } });
+            const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+                createdByAccountId: owner.account.id, role: 'runtime', state: 'deployed', sourceKind: 'host', hostTargetId: 'own-server',
+                targetKind: 'ownServer', machines: { create: [{ machineId: owner.member.id, installationId: owner.member.installationId,
+                    position: 0, state: 'active' }] }, ...await owner.content('deployment-target-link.v1') } });
+            const receipt = await db.deployment.create({ data: { ...owner.receipt, id: crypto.randomUUID(), environmentId: environment.id,
+                targetLinkId: link.id, state: 'succeeded', requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                acceptedControllerMachineId: owner.member.id, acceptedControllerInstallationId: owner.member.installationId,
+                ...await owner.content('deployment-receipt.v1') } });
+            const collector = owner.outsider;
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view',
+                createdByAccountId: owner.account.id }), machineId: collector.id } });
+            await db.machine.update({ where: { id: collector.id }, data: { deploymentAppDeploymentId: receipt.id } });
+            await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { telemetryMachineId: collector.id } });
+            const domain = async (environmentId: string, targetLinkId: string, bound: boolean) => {
+                const content = await owner.content('deployment-domain.v1');
+                const domainId = crypto.randomUUID();
+                const capture = { desired: true, content, listener: 'privateOrigin', dockerEngineId: 'native',
+                    installationPublicKey: privacyKit.encodeBase64(new Uint8Array(owner.member.keys.publicKey), 'base64url'),
+                    placement: { serverId, accountId: owner.account.id, environmentId, targetLinkId, machineId: owner.member.id,
+                        installationId: owner.member.installationId, nativeServer: 'private', domainId,
+                        requestId: crypto.randomUUID(), actionOperationId: crypto.randomUUID() },
+                    ...(bound ? { telemetryCollector: { machineId: collector.id, deploymentId: receipt.id } } : {}) };
+                const retired = await owner.content('deployment-domain.v1');
+                await db.deploymentDomain.create({ data: { id: domainId, environmentId, targetLinkId, createdByAccountId: owner.account.id,
+                    state: 'active', ...content, capturedPlacements: [capture, { ...capture, desired: false, content: retired }] } });
+                return { selection: { environmentId, targetLinkId, domainId }, contentArtifactId: content.contentArtifactId,
+                    retiredArtifactId: retired.contentArtifactId };
+            };
+            return { environment, link, collector, domain, receiptId: receipt.id };
+        };
+        const own = await collectorApp(f);
+        const selected = await own.domain(own.environment.id, own.link.id, true);
+        const unbound = await own.domain(own.environment.id, own.link.id, false);
+        const otherEnvironment = await own.domain(f.environment.id, f.link.id, true);
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const mint = async (publicCollectorDomain: typeof selected.selection, collector = own.collector) => {
+            const input: DeploymentEnvironmentTelemetrySetInputV1 = { serverId, environmentId: f.environment.id,
+                expectedRevision: f.environmentRevision, collector: { machineId: collector.id }, publicCollectorDomain };
+            const requestId = crypto.randomUUID();
+            const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+            const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target }, input,
+                material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+                : { v: 1 as const, requestId, target, input };
+            const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+                authentication, actionId, machineId: f.controller.id, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                { input: mode === 'e2ee' ? native : input, deploymentNativeAdmission: native });
+        };
+        const authorization = await mint(selected.selection);
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const send = (url: string, effectActionId: string, active = authorization) => app.inject({ method: 'GET', url, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: active.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: active.token, effectActionId, target, installationId: f.controller.installationId,
+                    requestId: active.binding.requestId, method: 'GET', path: url, privateKey: f.controller.keys.secretKey }),
+            } });
+            const query = `?serverId=${encodeURIComponent(serverId)}`;
+            const getDomain = (domain: typeof selected, active = authorization) => send(
+                `/v1/deployments/environments/${domain.selection.environmentId}/domains/${domain.selection.domainId}${query}`,
+                'deployments.domains.get', active);
+            const openArtifact = (artifactId: string, active = authorization) => send(`/v1/artifacts/${artifactId}`, actionId, active);
+            const admitted = await getDomain(selected);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ ok: true, domain: { id: selected.selection.domainId } });
+            const content = await openArtifact(selected.contentArtifactId);
+            expect(content.statusCode, content.body).toBe(200);
+            // Only the reviewed Domain of the enrolled App, and only its bound desired capture content.
+            for (const refused of [unbound, otherEnvironment]) expect((await getDomain(refused)).statusCode).toBe(401);
+            for (const artifactId of [selected.retiredArtifactId, unbound.contentArtifactId, own.environment.contentArtifactId,
+                own.link.contentArtifactId]) expect((await openArtifact(artifactId)).statusCode).toBe(401);
+            // Naming the Domain does not widen the root to the collector App's Environment.
+            expect((await send(`/v1/deployments/environments/${own.environment.id}${query}`,
+                'deployments.environments.get')).statusCode).toBe(401);
+            // The Domain-read effect is bound to the Domain GET route: on the App Environment's
+            // other routes its only operand is the in-scope Environment, and it is refused.
+            for (const route of ['', '/deployments', `/deployments/${own.receiptId}`, '/domains']) {
+                const misrouted = await send(`/v1/deployments/environments/${own.environment.id}${route}${query}`, 'deployments.domains.get');
+                expect(misrouted.statusCode, `${route}: ${misrouted.body}`).toBe(401);
+            }
+            // A review naming a Domain the collector App does not own admits nothing of it.
+            for (const named of [unbound, otherEnvironment]) {
+                const misnamed = await mint(named.selection);
+                expect((await getDomain(named, misnamed)).statusCode).toBe(401);
+                expect((await openArtifact(named.contentArtifactId, misnamed)).statusCode).toBe(401);
+            }
+            // A collector App in an Environment the requester cannot read: the bound purpose is
+            // admitted, and the Domain and Artifact routes still refuse with their own typed causes.
+            const theirs = await collectorApp(foreign);
+            const theirDomain = await theirs.domain(theirs.environment.id, theirs.link.id, true);
+            const granted = await mint(theirDomain.selection, theirs.collector);
+            const foreignRead = await getDomain(theirDomain, granted);
+            expect([403, 404], foreignRead.body).toContain(foreignRead.statusCode);
+            expect(foreignRead.json()).toMatchObject({ ok: false });
+            const foreignContent = await openArtifact(theirDomain.contentArtifactId, granted);
+            expect([403, 404], foreignContent.body).toContain(foreignContent.statusCode);
+        }, { authentication: 'real' });
+    });
+
     it.each(['plain', 'e2ee'] as const)('admits backup configure on the exact %s Environment controller and reviewed revision', async mode => {
         const f = await fixture('account', 'account', { contentMode: mode, readableEnvironment: true });
         const foreign = await fixture();

@@ -26,9 +26,11 @@ import { admitDeploymentMachineInTx, projectDeploymentSourceMachinePlacementFail
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPreviewCompanionMainInTx } from './previewEnvironmentRelation';
 import { deploymentInProgressStates, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
+import { readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentTargetLinkInputV1Schema,
     DeploymentDeployAdmissionInputV1Schema, DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentListInputV1Schema, DeploymentDomainCapturedPlacementsV1Schema,
-    DeploymentTargetLinksListInputV1Schema,
+    DeploymentTargetLinksListInputV1Schema, DeploymentDomainGetInputV1Schema,
     ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol';
@@ -45,6 +47,7 @@ import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_
 import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
     createDeploymentDomainContentArtifactIdV1, isDeploymentDomainNativeAdmissionV1,
     createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
+    type DeploymentTelemetryNativeAdmissionV1,
     computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
@@ -126,6 +129,30 @@ function readPreviewTemplateInAdmittedSource(environment: Readonly<{
 }
 
 /**
+ * A telemetry root reads a Domain only as its reviewed public collector Domain: one the
+ * selected collector's enrolled App owns, through its desired private origin on the App's
+ * accepted controller bound to that collector. Its readiness stays with the host selector.
+ */
+async function readTelemetryPublicCollectorDomainInTx(tx: Tx, admission: DeploymentTelemetryNativeAdmissionV1) {
+    const reviewed = admission.publicCollectorDomain;
+    if (!reviewed || !admission.collector) return null;
+    const machine = await tx.machine.findUnique({ where: { id: admission.collector.machineId },
+        select: { id: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true } });
+    const app = machine ? (await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine] })).get(machine.id) : undefined;
+    if (!app || app.environmentId !== reviewed.environmentId || app.targetLinkId !== reviewed.targetLinkId) return null;
+    const domain = await tx.deploymentDomain.findFirst({ where: { id: reviewed.domainId, environmentId: app.environmentId,
+        targetLinkId: app.targetLinkId, deletedAt: null }, select: { capturedPlacements: true } });
+    const captures = DeploymentDomainCapturedPlacementsV1Schema.safeParse(domain?.capturedPlacements);
+    const origin = captures.success ? captures.data.find(({ desired, listener, placement, telemetryCollector }) => desired
+        && listener === 'privateOrigin' && placement.domainId === reviewed.domainId && placement.environmentId === app.environmentId
+        && placement.targetLinkId === app.targetLinkId && placement.machineId === app.controller.machineId
+        && placement.installationId === app.controller.installationId
+        && telemetryCollector?.machineId === machine?.id && telemetryCollector.deploymentId === app.deploymentId) : undefined;
+    return origin ? { environmentId: app.environmentId, domainId: reviewed.domainId,
+        contentArtifactId: origin.content.contentArtifactId } : null;
+}
+
+/**
  * The one admitted deployment scope: every Environment, Source, Artifact and
  * Machine operand the signed root, accepted receipt or validated reviewed
  * reference names, expanded only through rows those Environments own.
@@ -137,7 +164,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     selectedReferenceEnvironmentId?: string,
 ): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
     artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>;
-    deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
+    deploymentIds?: ReadonlySet<string>; domainIds?: ReadonlySet<string>;
+    receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
         deployment: new Set<string>(), targetLink: new Set<string>(), domain: new Set<string>(), machine: new Set<string>() };
     const preparation = selectedReferenceEnvironmentId === undefined ? binding.deploymentPreparationAdmission : undefined;
@@ -155,10 +183,19 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         binding.deploymentReadAdmission, binding.deploymentLinkAdmission, binding.registryAppUpdateAdmission].filter(admission => admission !== undefined);
     if (admissions.length === 0 && binding.environmentId === undefined && acceptedEnvironmentId === undefined
         && selectedReferenceEnvironmentId === undefined) return null;
-    for (const admission of admissions) collectDeploymentOperands(admission, (kind, id) => {
+    const nativeAdmission = binding.deploymentNativeAdmission;
+    const telemetry = isDeploymentTelemetryNativeAdmissionV1(nativeAdmission) ? nativeAdmission : undefined;
+    // The reviewed public collector Domain names another Environment; it is bound
+    // below to the collector's enrolled App and never widens the root to that Environment.
+    for (const admission of admissions) collectDeploymentOperands(admission === telemetry
+        ? { ...telemetry, publicCollectorDomain: undefined } : admission, (kind, id) => {
         if (kind !== 'transport' && kind !== 'unknown') seeds[kind].add(id);
     });
-    const nativeAdmission = binding.deploymentNativeAdmission;
+    if (telemetry && readActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 && selectedReferenceEnvironmentId === undefined) {
+        const domain = await readTelemetryPublicCollectorDomainInTx(tx, telemetry);
+        return { environmentIds: new Set(domain ? [domain.environmentId] : []), sourceIds: new Set(), machineIds: new Set(),
+            artifactIds: new Set(domain ? [domain.contentArtifactId] : []), domainIds: new Set(domain ? [domain.domainId] : []) };
+    }
     const defaults = binding.actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission) && nativeAdmission.defaultsFor !== undefined;
     // A template's children (bindings, link, update) read the Environment mint admitted or this root
@@ -454,6 +491,7 @@ export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
         }
     }
     if (scope.deploymentIds && owned.deployment.some(id => !scope.deploymentIds!.has(id))) return false;
+    if (scope.domainIds && owned.domain.some(id => !scope.domainIds!.has(id))) return false;
     const [deployments, targetLinks, domains] = await Promise.all([
         owned.deployment.length === 0 ? 0 : tx.deployment.count({ where: { id: { in: owned.deployment }, environmentId: { in: environmentIds },
             ...(binding.deploymentNativeAdmission && 'kind' in binding.deploymentNativeAdmission && binding.deploymentNativeAdmission.kind === 'promote' ? { OR: [
@@ -1066,10 +1104,28 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     const bindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
     if (bindings && (proof.reviewedChild?.actionId !== effectActionId
         || proof.reviewedChild.role !== (telemetry ? DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 : 'backup.bindings'))) return false;
-    if (!bindings && effectActionId !== admission.actionId
+    const domainRead = telemetry && effectActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1;
+    if (!bindings && !domainRead && effectActionId !== admission.actionId
         && effectActionId !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && effectActionId !== PROJECT_SOURCE_READ_ACTION_ID_V1) return false;
     const method = proof.method.toUpperCase();
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
+    if (telemetry && admission.publicCollectorDomain && method === 'GET' && proof.body === undefined
+        && (domainRead || effectActionId === admission.actionId && proof.path.startsWith('/v1/artifacts/'))) {
+        // The reviewed public collector Domain and its bound content are read through the one scope.
+        // The Domain-read effect is first bound to its own declared Domain GET transport.
+        if (domainRead) {
+            const transport = getActionSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1).serverTransport;
+            const read = DeploymentDomainGetInputV1Schema.safeParse(proof.routeInput);
+            if (!transport || !read.success || bindHomeDomainHttpRequestV1({ transport,
+                inputSchema: DeploymentDomainGetInputV1Schema, input: read.data }).path !== proof.path) return false;
+            return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.data,
+                undefined, undefined, deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1) === true;
+        }
+        const [contentArtifactId] = (await readAdmittedDeploymentScopeInTx(tx, binding, undefined,
+            deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1))?.artifactIds ?? [];
+        if (contentArtifactId && proof.path === `/v1/artifacts/${encodeURIComponent(contentArtifactId)}`) return matches({ id: contentArtifactId });
+    }
+    if (domainRead) return false;
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId },
         select: { id: true, projectSourceId: true, contentArtifactId: true } });
     if (!environment) return false;

@@ -1538,6 +1538,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
     });
     const deploymentTelemetrySet = createEnvironmentTelemetrySetForHost({ ...host,
+        publicCollectorDomain: {
+            async get(input, context) {
+                const result = await storage('deployments.domains.get', input, context);
+                return 'errorCode' in result ? result : DeploymentDomainMutationResultV1Schema.parse(result);
+            },
+            open: (id, context) => open(id, context),
+        },
         readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
         async readProject(environment, context, readDefault) {
             const source = await publicationSources.projectSourcesRead!({ serverId: host.serverId, sourceId: environment.environment.projectSourceId }, context);
