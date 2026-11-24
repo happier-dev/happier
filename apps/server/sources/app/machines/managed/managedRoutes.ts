@@ -21,7 +21,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
 import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, reportManagedStoppedObservationInTx } from "./managedMutations";
-import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess, inManagedMachinePublicationTx } from "./managedRows";
+import { ManagedControllerDeclarationError, ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess, inManagedMachinePublicationTx } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation, admitsManagedTargetInTx } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
@@ -204,7 +204,7 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
 async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
     try { return reply.send(await execute()); }
     catch (error) {
-        if (!(error instanceof ManagedMachineError)) throw error;
+        if (!(error instanceof ManagedMachineError || error instanceof ManagedControllerDeclarationError)) throw error;
         return reply.code(error.code === "permission_denied" ? 403 : error.code === "managed_not_found" ? 404 : 409).send({ code: error.code });
     }
 }

@@ -30,7 +30,7 @@ import { applyMachineReplacement } from "@/app/machines/applyMachineReplacement"
 import { assertManagedWakeOriginCurrentInTx } from './managedWake';
 import { doesManagedNativeObservationSettleIntent } from './managedNativeObservation';
 import {
-    ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
+    ManagedControllerDeclarationError, ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
     requireActiveManagedResizeInTx, readManagedIntentReportAuthority,
     projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput, matchesManagedEnrollmentResource,
     createManagedMachineRetainedSchema,
@@ -872,7 +872,8 @@ export async function reportManagedAcquire(canonical: ManagedControllerReportV1,
         if ('presetContent' in canonical) throw new ManagedMachineError('invalid_request');
         const launch = readManagedLaunchSnapshot(row.launch);
         const declaration = await resolveManagedRowDeclarationInTx(tx, row);
-        if (!declaration || declaration.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
+        if (!declaration) throw new ManagedControllerDeclarationError('provider_declaration_missing');
+        if (declaration.schemaVersion !== launch.schemaVersion) throw new ManagedControllerDeclarationError('provider_schema_mismatch');
         const current = projectManagedMachine(row);
         const configurationFacts = !current.reviewedFacts ? canonical.configurationFacts : undefined;
         if (configurationFacts && (!sameManagedInput(configurationFacts.launch, current.launch)

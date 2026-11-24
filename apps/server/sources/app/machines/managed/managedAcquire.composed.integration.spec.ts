@@ -2035,7 +2035,7 @@ describe("managed acquisition durable authority", () => {
         expect(created).toMatchObject({ replayed: false, machine: { allocation: "unsubmitted", custodianAccountId: account.id } });
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
         const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
-        expect(retained.admittedInput).toEqual({ computeInput: input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest },
+        expect(retained.admittedInput).toMatchObject({ computeInput: input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest },
             enrollmentAccountId: account.id, requestEnvelopeDigest: request.requestEnvelopeDigest,
             // Home pins the guest CLI it will serve at admission (4902f15c22d).
             guestCli: expect.objectContaining({ source: 'home-payload' }) });

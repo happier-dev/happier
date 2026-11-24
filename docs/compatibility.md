@@ -13715,13 +13715,18 @@ controller payload and server together; this direct cut adds no capability gate,
 auth scope or migration. Facts fill the existing `reviewedFacts` column without
 rewriting the signed admitted input or replacing an existing reviewed snapshot.
 
-An admitted managed row resolves its native schema from that retained reviewed
-provisioner before consulting installed declarations. A controller republishing
-its declaration therefore cannot invalidate a later report for the admitted
-resource or prevent a successful observation from replacing `bootstrap.incomplete`.
-Rows without retained provisioner facts still use the existing installed-declaration
-lookup. New acquisitions continue selecting the current installed declaration;
-report currentness and native-resource validation are unchanged.
+A one-off admission keeps the provisioner Home selected in the existing
+admission record when there is no reviewed snapshot. Binding and enrollment
+use that retained declaration even if the controller withdraws or republishes
+its live declaration. Reviewed acquisitions keep using their stored
+provisioner. Earlier rows missing both snapshots still use the installed
+declaration for their exact controller installation. New admissions select
+the current declaration.
+
+Controller binding reports return HTTP 409 with
+`provider_declaration_missing` when Home cannot resolve a declaration and
+`provider_schema_mismatch` when its schema version differs from the retained
+launch. The controller carries either code into the Action failure receipt.
 
 Managed native failures in the same development V2 read retain a closed
 `managedNative` detail with `nativeCause`: an HTTP status class and optional

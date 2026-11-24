@@ -112,6 +112,13 @@ export class ManagedMachineError extends Error {
     }
 }
 
+/** A controller report reached Home without the native schema required to settle it. */
+export class ManagedControllerDeclarationError extends Error {
+    constructor(readonly code: import('@happier-dev/protocol/machines/managed/actionsV1').ManagedControllerDeclarationRefusalCodeV1) {
+        super(code);
+    }
+}
+
 /** Exact raw-row CAS retains unknown stored members rather than the read projection. */
 export function readManagedJsonEqualityOperand(value: unknown): Prisma.InputJsonValue {
     const parsed = StrictJsonValueSchema.safeParse(value);
@@ -132,6 +139,8 @@ const StoredManagedComputeInputSchema = z.union([
 ]);
 const StoredManagedAdmissionSchema = z.strictObject({
     guestCli: z.optional(GuestCliIdentityV1Schema),
+    /** Home-selected declaration when acquisition has no reviewed snapshot. */
+    acquireProvisioner: z.optional(z.strictObject({ provisioner: MachineProvisionerContributionV1Schema, accountAcquire: z.boolean() })),
     acquisitionMode: z.optional(z.literal('resource-bound')),
     workspaceAttachment: z.optional(ManagedGuestPlatformV1Schema),
     reuseIdle: z.optional(z.literal(true)),
@@ -306,15 +315,21 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
     return (await readManagedProjectionFactsInTx(tx, [input], options)).declarationFor(input);
 }
 
-/** An admitted row keeps its reviewed native schema across controller publication changes. */
+function readRetainedManagedRowDeclaration(row: StoredManagedMachine): ManagedDeclaration | null {
+    const admitted = readManagedAdmissionState(row.admittedInput).acquireProvisioner;
+    return admitted
+        ? { ...admitted.provisioner, ...admitted, acquireCredentialRequests: [] }
+        : readManagedReviewedDeclaration(row.reviewedFacts);
+}
+
+/** An admitted row keeps its native schema across controller publication changes. */
 export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine, declarationBodies?: ManagedDeclarationBodies) {
     // Preset declaration lives in the opaque content envelope. The server
     // retains routing/lifecycle facts only; a keyholding daemon resolves it.
     if (isStoredOpaquePresetMachine(row)) return null;
-    const reviewed = readManagedReviewedDeclaration(row.reviewedFacts);
-    if (reviewed) return reviewed;
-    // An unreviewed row reads the declaration its exact retained installation
-    // published, also after retirement; admission owns controller lifecycle.
+    const retained = readRetainedManagedRowDeclaration(row);
+    if (retained) return retained;
+    // Older unreviewed rows can still read their exact retained installation.
     return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts },
         { retainedInstallation: true, declarationBodies });
@@ -329,7 +344,7 @@ function managedDeclarationBodyKey(accountId: string, declarationKey: string): s
 
 /** Legacy unreviewed enrollment reads its immutable schema before registration's exclusive fence. */
 export async function readManagedRowDeclarationBodiesInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedDeclarationBodies> {
-    if (isStoredOpaquePresetMachine(row) || readManagedReviewedDeclaration(row.reviewedFacts)) return new Map();
+    if (isStoredOpaquePresetMachine(row) || readRetainedManagedRowDeclaration(row)) return new Map();
     return (await readManagedProjectionFactsInTx(tx, [{ homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider }],
         { retainedInstallation: true })).declarationBodies;

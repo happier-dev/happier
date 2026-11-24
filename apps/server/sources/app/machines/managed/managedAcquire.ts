@@ -339,6 +339,9 @@ export async function admitManagedAcquire(params: Readonly<{
                 controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
                 admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
                     ...(guestCli ? { guestCli } : {}),
+                    ...(!canonical.reviewedFacts ? { acquireProvisioner: {
+                        provisioner: declaration.provisioner, accountAcquire: declaration.accountAcquire,
+                    } } : {}),
                     enrollmentAccountId: params.requesterAccountId,
                     ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,

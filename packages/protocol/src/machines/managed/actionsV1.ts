@@ -558,7 +558,13 @@ export type ManagedGuestDiagnosticsV1 = z.infer<typeof ManagedGuestDiagnosticsV1
 export const ManagedInspectOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema,
   operation: z.optional(actionOperationSchema), guestDiagnostics: z.optional(ManagedGuestDiagnosticsV1Schema) }));
 export const ManagedCancelOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, operation: z.optional(actionOperationSchema) }));
-export const ManagedErrorV1Schema = lazyZodSchema(() => z.strictObject({ code: ManagedRefusalCodeV1Schema }));
+export const ManagedControllerDeclarationRefusalCodeV1Schema = lazyZodSchema(() => z.enum([
+  'provider_declaration_missing', 'provider_schema_mismatch',
+]));
+export type ManagedControllerDeclarationRefusalCodeV1 = z.infer<typeof ManagedControllerDeclarationRefusalCodeV1Schema>;
+export const ManagedErrorV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.union([ManagedRefusalCodeV1Schema, ManagedControllerDeclarationRefusalCodeV1Schema]),
+}));
 export const ManagedControllerCurrentnessV1Schema = lazyZodSchema(() => z.strictObject(current()));
 export const ManagedControllerCurrentInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { nativeRole: z.optional(z.literal('inspect')) })));
 /** Signed only by the current guest after its real admission drain commits idle. */

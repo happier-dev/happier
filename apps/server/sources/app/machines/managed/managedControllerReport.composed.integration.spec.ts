@@ -20,10 +20,12 @@ import { auth } from '@/app/auth/auth';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
-import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
+import { measure, seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
+import { readManagedAdmissionState } from './managedRows';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
@@ -72,10 +74,13 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         return { controller, keys };
     };
 
-    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired', 'controller-retired-unreviewed'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
+    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired', 'controller-retired-unreviewed',
+        'publication', 'legacy-missing', 'legacy-mismatched'] as const)('settles or explains a signed submitted Lima report (%s)', async (withdrawal) => {
         // Configurator admissions retain reviewed facts; Action/Session-originated
         // admissions may not, and report them with the issued native fact.
         const retired = withdrawal === 'controller-retired' || withdrawal === 'controller-retired-unreviewed';
+        const unpublished = withdrawal === 'publication' || withdrawal === 'legacy-missing';
+        const legacy = withdrawal === 'legacy-missing' || withdrawal === 'legacy-mismatched';
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const { controller, keys } = await createController(account.id);
@@ -99,7 +104,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
-        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || retired ? undefined : await auth.createApiToken({
+        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || unpublished || legacy || retired ? undefined : await auth.createApiToken({
             accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Acquire completion'),
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -183,16 +188,26 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
 
             // Retiring the controller closes new effects; the purchase it already
             // submitted must still be able to return its native identity.
-            if (retired) expect(await inTx(tx => revokeMachineInTx(tx, { accountId: account.id,
+            if (unpublished) {
+                const availability = createPluginAvailabilityOperations({ resolveHostingCapability: () => ({ enabled: false }),
+                    resolveServerIdentityId: async () => homeId });
+                const current = await db.machine.findUniqueOrThrow({ where: { id: controller.machineId },
+                    select: { pluginMaterializationRevision: true } });
+                const revision = Number(current.pluginMaterializationRevision);
+                expect(await availability.reportMaterializations({ accountId: account.id, publisherMachineId: controller.machineId,
+                    input: { expectedRevision: revision, snapshot: { serverIdentityId: homeId, machineId: controller.machineId, materializations: [] } } }))
+                    .toEqual({ outcome: 'replaced', revision: revision + 1 });
+            } else if (retired) expect(await inTx(tx => revokeMachineInTx(tx, { accountId: account.id,
                 machineId: controller.machineId }))).toMatchObject({ ok: true });
-            else if (!apiToken) await auth.signOutEverywhere(account.id);
-            else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
-            else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
-                grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
+            else if (apiToken) {
+                if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
+                else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
+                    grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
+            } else if (!legacy) await auth.signOutEverywhere(account.id);
             const freshAcquire = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
                     envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
-            expect(freshAcquire.statusCode, freshAcquire.body).toBe(withdrawal === 'api-token-grant' ? 403
+            expect(freshAcquire.statusCode, freshAcquire.body).toBe(unpublished || legacy ? 200 : withdrawal === 'api-token-grant' ? 403
                 : retired ? 409 : 401);
 
             const fact = AcquireResultV1Schema.parse(await provider.acquire({ managedId: admitted.machine.id, launch: launch.choices }));
@@ -257,10 +272,34 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 expect(mismatched.statusCode, mismatched.body).toBe(409);
                 expect(mismatched.json()).toMatchObject({ code: 'request_conflict' });
             }
-            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
-                .toMatchObject({ allocation: 'may-exist', resource: null });
+            const submittedRow = await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } });
+            expect(submittedRow).toMatchObject({ allocation: 'may-exist', resource: null });
+            if (legacy) {
+                // Reconstruct pre-fix storage. The mismatch fixture carries a
+                // declaration for a different schema on the same managed row.
+                const legacyAdmission = { ...readManagedAdmissionState(submittedRow.admittedInput) };
+                Reflect.deleteProperty(legacyAdmission, 'acquireProvisioner');
+                await db.managedMachine.update({ where: { id: submittedRow.id }, data: {
+                    admittedInput: legacyAdmission,
+                    ...(withdrawal === 'legacy-mismatched' ? { reviewedFacts: { ...configurationFacts,
+                        provisioner: { ...definition, schemaVersion: definition.schemaVersion + 1 } } } : {}),
+                } });
+                const code = withdrawal === 'legacy-missing' ? 'provider_declaration_missing' : 'provider_schema_mismatch';
+                await expect(client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts))
+                    .rejects.toMatchObject({ code, status: 409, failureCause: {
+                        phase: 'managed.controller.report', errorCode: code, httpStatus: 409,
+                    } });
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: submittedRow.id } }))
+                    .toMatchObject({ allocation: 'may-exist', resource: null });
+                return;
+            }
             const before = await db.account.findMany({ where: { id: { in: [account.id, viewer.id] } }, select: { id: true, seq: true } });
-            const reported = await client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts);
+            const report = () => client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts);
+            const reported = withdrawal === 'publication' ? await measure('issued-acquire-report', report).then(({ value, queries }) => {
+                expect(queries.filter(query => ['pluginMachineMaterialization', 'accountPluginIntent', 'accountPluginRelease'].includes(query.model)))
+                    .toHaveLength(0);
+                return value;
+            }) : await report();
             expect(reported.reviewedFacts).toEqual(configurationFacts);
             // Report-time presentation facts never join the admitted request identity.
             if (withdrawal !== 'controller-retired') expect((await db.managedMachine.findUniqueOrThrow({ where: { id: reported.id } })).admittedInput)
@@ -277,7 +316,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             expect(await client.reportIssuedAcquireFact(admitted.machine, fact, { ...configurationFacts, optionStatus: 'unavailable' }))
                 .toMatchObject({ id: reported.id, resource: fact.resource, reviewedFacts: configurationFacts });
             // A retired controller admits no further effects to exercise below.
-            if (retired) return;
+            if (retired || withdrawal === 'publication') return;
             const installedReport = { homeId, managedId: reported.id, controller, expectedIntentRevision: reported.intentRevision,
                 requestId, result: fact, bootstrapInstalled: true };
             const installed = await client.post('/v1/machines/managed/controller/report', installedReport, ManagedControllerMachineOutputV1Schema);
