@@ -44,6 +44,7 @@ async function installProviderPersistence(seeds: readonly Readonly<{
   const attempts: Array<readonly [string, string | null]> = [];
   const commits: Array<readonly [string, string | null]> = [];
   let beforePatch: (() => Promise<void>) | null = null;
+  let refuseClearFor: string | null = null;
   account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname === '/v2/sessions/lookup-by-tags') {
@@ -67,6 +68,11 @@ async function installProviderPersistence(seeds: readonly Readonly<{
       attempted = [decodeURIComponent(url.pathname.slice('/v2/sessions/'.length)),
         readVoiceProviderConversationMetadata(metadata, providerId)?.conversationId ?? null];
       attempts.push(attempted);
+      if (attempted[0] === refuseClearFor && attempted[1] === null) {
+        refuseClearFor = null;
+        return Response.json({ error: 'Session metadata privacy upgrade required',
+          code: 'metadata_privacy_upgrade_required' }, { status: 409 });
+      }
       const barrier = beforePatch;
       beforePatch = null;
       await barrier?.();
@@ -101,7 +107,7 @@ async function installProviderPersistence(seeds: readonly Readonly<{
   const factory = getProviderConversationServiceFactory(lease.host, providerId);
   return {
     host: lease.host, factory, attempts, commits,
-    rejectNextPatch: sessionHttp.rejectNextPatch,
+    refuseNextClear(sessionId: string) { refuseClearFor = sessionId; },
     beforeNextPatch(barrier: () => Promise<void>) { beforePatch = barrier; },
     read(sessionId: string) {
       return readVoiceProviderConversationMetadata(
@@ -182,8 +188,8 @@ describe('provider conversation service', () => {
   it('keeps a failed forget invalidated until an explicit retry succeeds', async () => {
     const fixture = await installProviderPersistence([{ sessionId: 'session-1', conversationId: 'conv-old' }]);
     const attempt = fixture.factory.createAttempt('session-1');
-    fixture.rejectNextPatch('session-1');
-    await expect(attempt.forget()).rejects.toThrow();
+    fixture.refuseNextClear('session-1');
+    await expect(attempt.forget()).rejects.toMatchObject({ code: 'metadata_privacy_upgrade_required' });
     expect(fixture.read('session-1')).toBe('conv-old');
     await attempt.write('conv-late');
     await attempt.forget();
