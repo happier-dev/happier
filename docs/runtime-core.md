@@ -1043,8 +1043,14 @@ issue at `client_start`. The nested `failureCause.actionCause` identifies
 app-server setup and spawn (`codex.app_server_spawn`), app-server initialization
 (`codex.app_server_initialize`), or retained thread lookup
 (`codex.thread_read`). It carries allowlisted error classes and codes with an
-HTTP status when available. Native messages and response data stay in the
-owning process.
+HTTP status when available. An initialization refusal also carries a stderr
+category and SHA-256 identities
+of the selected Codex home and requested SQLite override relative to the runtime
+user's home. An unavailable identity is null. These identities describe the
+launch request before native configuration is read. The native error message
+goes through redaction to the file logger. Session history carries the typed
+cause without the native message or response data. Use matching 0.3 development
+readers for this closed cause shape.
 
 The local warning for a failed thread lookup includes the UUID-shaped native
 thread ID, the resolved executable path, the version and Codex home reported

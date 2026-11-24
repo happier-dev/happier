@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { projectProviderSessionFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 
 import { withCodexNativeAttachFixture } from './appServer/runtime.nativeAttach.test-support.js';
@@ -64,26 +66,51 @@ describe('Codex continuation native failure evidence', () => {
     });
   });
 
-  it('identifies initialize rejection separately from thread lookup with the same RPC code', async () => {
+  it.each([
+    {
+      title: 'RPC rejection', options: { initializeFailure: { code: -32000, message: 'Initialization failed: api_key=PRIVATE_INITIALIZE' } },
+      errorClass: 'JsonRpcApplicationError', errorCode: '-32000', nativeErrorReason: 'stderr_unavailable',
+      localMessage: 'Initialization failed',
+    },
+    {
+      title: 'native child exit', options: { nativeProxyStderr: 'SQLite initialization failed: unable to open database file; api_key=PRIVATE_INITIALIZE' },
+      errorClass: 'Error', errorCode: expect.stringMatching(/^PLUGIN_EXEC_CLIENT_(EXITED|PROTOCOL_ERROR|WRITE_FAILED)$/u),
+      nativeErrorReason: 'stderr_sqlite',
+      localMessage: 'SQLite initialization failed',
+    },
+  ])('retains safe diagnostics on initialize failure after $title', async ({ title, options, localMessage, ...expected }) => {
     await withCodexNativeAttachFixture(async fixture => {
       const warn = vi.fn();
+      const debug = vi.fn();
+      const launchEnvironment = { ...fixture.launchEnvironment, values: {
+        HOME: fixture.directory, USERPROFILE: fixture.directory, CODEX_HOME: join(fixture.directory, 'private-native-home'),
+        CODEX_SQLITE_HOME: join(fixture.directory, 'private-sqlite-root'),
+      } };
       const context = {
         signal: new AbortController().signal,
-        services: { exec: fixture.exec, logger: { warn, debug: vi.fn() } },
-        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
+        services: { exec: fixture.exec, logger: { warn, debug } },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment },
       } as unknown as AgentSessionControlContext;
       const result = await createCodexNativeSessionControls().continuation.verify({
         kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'fresh-thread',
       }, context);
+      const digest = (relativePath: string) => createHash('sha256').update(relativePath).digest('hex');
+      const actionCause = {
+        phase: 'codex.app_server_initialize', httpStatus: null, ...expected,
+        codexLaunchPathIdentity: { codexHome: digest('private-native-home'), sqliteHome: digest('private-sqlite-root') },
+      };
       expect(result).toMatchObject({ status: 'unreachable', diagnostic: {
-        code: 'codex_continuation_unreachable',
-        details: { failureCause: {
-          phase: 'codex.app_server_initialize', errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
-        } },
+        code: 'codex_continuation_unreachable', details: { failureCause: actionCause },
       } });
+      if (result.status === 'reachable') throw new Error('Expected an initialization refusal');
+      const diagnostic = AgentRuntimeDiagnosticDataV1Schema.parse(result.diagnostic);
+      expect(projectProviderSessionFailureCause(diagnostic, 'client_start', { diagnosticCode: diagnostic.code }))
+        .toMatchObject({ phase: 'client_start', actionCause });
       expect(fixture.requests.some(request => request.method === 'thread/read')).toBe(false);
-      expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toContain('PRIVATE_INITIALIZE');
-    }, { initializeFailure: { code: -32000, message: 'Initialization failed: PRIVATE_INITIALIZE' } });
+      expect(JSON.stringify({ result, warnings: warn.mock.calls })).not.toMatch(/PRIVATE_INITIALIZE|private-native-home|private-sqlite-root|Initialization failed|unable to open database file/i);
+      expect(JSON.stringify(debug.mock.calls)).toContain(localMessage);
+      expect(JSON.stringify(debug.mock.calls)).not.toContain('PRIVATE_INITIALIZE');
+    }, options);
   });
 
   it('reads the thread through the target Session native launch identity, as its runtime does', async () => {

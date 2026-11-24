@@ -70,6 +70,7 @@ async function withControlClient<T>(
   context: AgentSessionControlContext,
   run: (client: Awaited<ReturnType<typeof createCodexNativeAppServerClient>>) => Promise<T>,
   onInitialize?: () => void,
+  onContinuationInitializeFailure?: (cause: ActionFailureCauseV1) => void,
 ): Promise<T> {
   const processEnv = context.session.launchEnvironment?.values;
   if (!processEnv) throw new PluginError({ code: 'codex_control_launch_scope_unavailable',
@@ -82,6 +83,7 @@ async function withControlClient<T>(
     processEnv,
     signal: context.signal,
     ...(onInitialize ? { onInitialize } : {}),
+    ...(onContinuationInitializeFailure ? { onContinuationInitializeFailure } : {}),
   });
   try {
     return await run(client);
@@ -223,6 +225,7 @@ const continuation: AgentSessionContinuationControl = {
       ? request.providerSessionId
       : request.source.providerSessionId;
     let phase = 'codex.app_server_spawn';
+    let initializeCause: ActionFailureCauseV1 | undefined;
     let lookupClient: Awaited<ReturnType<typeof createCodexNativeAppServerClient>> | undefined;
     try {
       await withControlClient(context, async (client) => {
@@ -231,11 +234,11 @@ const continuation: AgentSessionContinuationControl = {
         await client.request('thread/read', { threadId: providerSessionId, includeTurns: false });
       }, () => {
         phase = 'codex.app_server_initialize';
-      });
+      }, (cause) => { initializeCause = cause; });
       return { status: 'reachable' };
     } catch (error) {
       const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(readCodexAppServerPrimaryFailure(error));
-      const failureCause = { phase, errorClass, errorCode, httpStatus } satisfies ActionFailureCauseV1;
+      const failureCause = initializeCause ?? { phase, errorClass, errorCode, httpStatus } satisfies ActionFailureCauseV1;
       context.services.logger.warn('codex_continuation_unreachable', {
         ...failureCause,
         ...(lookupClient ? {

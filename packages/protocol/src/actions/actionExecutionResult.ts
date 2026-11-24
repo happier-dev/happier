@@ -219,7 +219,12 @@ export type ActionExecuteFailure = Readonly<Omit<z.infer<typeof ActionExecuteFai
   automationNotices?: readonly ActionAutomationNoticeV1[] | undefined;
 }>;
 
-/** Closed code-only cause; never exception messages, native output or arbitrary fields. */
+const CodexLaunchPathIdentitySchema = lazyZodSchema(() => z.strictObject({
+  codexHome: z.nullable(z.string().check(z.regex(/^[0-9a-f]{64}$/u))),
+  sqliteHome: z.nullable(z.string().check(z.regex(/^[0-9a-f]{64}$/u))),
+}));
+
+/** Closed cause; never exception messages, native output or arbitrary paths. */
 type KnownActionFailureCauseV1 = Readonly<{
   phase: string;
   errorClass: ActionErrorClassV1;
@@ -229,6 +234,8 @@ type KnownActionFailureCauseV1 = Readonly<{
   nativeErrorCode?: string;
   /** Producer-projected public reason code; never raw vendor close prose. */
   nativeErrorReason?: string;
+  /** SHA-256 of normalized paths relative to the native runtime user's home. */
+  codexLaunchPathIdentity?: z.infer<typeof CodexLaunchPathIdentitySchema>;
   /** Only the requester's refused Team Session start carries these values. */
   reasoningEffort?: TeamReasoningEffortRefusalV1;
 }>;
@@ -247,9 +254,11 @@ export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = l
   errorCode: z.nullable(z.string()),
   nativeErrorCode: z.optional(ActionNativeErrorCodeV1Schema),
   nativeErrorReason: z.optional(ActionNativeErrorCodeV1Schema),
+  codexLaunchPathIdentity: z.optional(CodexLaunchPathIdentitySchema),
   reasoningEffort: z.optional(TeamReasoningEffortRefusalV1Schema),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
 }).check(z.refine(value => value.reasoningEffort === undefined || value.errorCode === REASONING_EFFORT_NOT_ALLOWED),
+  z.refine(value => value.codexLaunchPathIdentity === undefined || value.phase === 'codex.app_server_initialize'),
   z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
   name: value.errorClass, code: value.errorCode,
 }).errorCode === value.errorCode || (value.errorCode !== null

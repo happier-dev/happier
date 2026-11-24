@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { PluginError, type JsonValue, type LoggerService } from '@happier-dev/plugin-sdk';
+import type { ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { codexNativeUpstreamConfigOverrides } from '../../providerBinding/runtimeConfig.js';
 import type {
     ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
@@ -28,7 +29,7 @@ import { withCodexNativeStartupLock } from './nativeStartupLock.js';
 import { buildCodexUserMcpServerDisableOverrides } from './config/overrides.js';
 import { assertCodexToolRestrictionRuntimeSupported, readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
-import { createCodexRealtimeEnabledAppServerLaunchUnavailableError, readCodexAppServerProbeFailureCode } from './startupFailure.js';
+import { createCodexRealtimeEnabledAppServerLaunchUnavailableError, projectCodexContinuationInitializeFailure, readCodexAppServerProbeFailureCode } from './startupFailure.js';
 export { isCodexRealtimeEnabledAppServerLaunchUnavailableError } from './startupFailure.js';
 export { resolveCodexHome } from '../../mcp/configServers.js';
 
@@ -423,6 +424,7 @@ type CodexNativeAppServerClientParams = Readonly<{
     initializeRequestOptions?: CodexAppServerRequestOptions;
     /** Content-free control diagnostics distinguish transport creation from initialization. */
     onInitialize?: () => void;
+    onContinuationInitializeFailure?: (cause: ActionFailureCauseV1) => void;
     onStartupWaiting?: (waiting: boolean) => void;
     transport?: CodexAppServerTransport;
 }>;
@@ -572,6 +574,17 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
     } catch (error) {
         annotateUnixSocketStartupFailure(error, params.transport);
         await client.dispose().catch(() => undefined);
+        if (params.onContinuationInitializeFailure && prepared) {
+            try {
+                const { cause, localDetails } = projectCodexContinuationInitializeFailure({
+                    error, env, requestedSqliteHome: prepared.requestedSqliteHome,
+                });
+                params.onContinuationInitializeFailure(cause);
+                params.logger?.debug('Codex continuation app-server initialization failed', localDetails);
+            } catch {
+                // Diagnostic failure leaves the initiating error in charge.
+            }
+        }
         if (error instanceof PluginError) throw error;
         if (params.signal?.aborted || !enableRealtimeConversation) throw error;
         throw createCodexRealtimeEnabledAppServerLaunchUnavailableError(error);
