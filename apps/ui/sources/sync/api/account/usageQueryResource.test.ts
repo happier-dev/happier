@@ -10057,7 +10057,10 @@ describe('usage query Work composition', () => {
     }
   });
 
-  it('dates the mounted page and Usage Action Work answer independently through accounting updates and a held growth read', async () => {
+  it.each(['growth', 'replacement', 'growth with an event on the retained turn'] as const)(
+  'keeps the mounted page and Usage Action Work answer dated and valid during %s', async change => {
+    const keepsFirstSession = change !== 'replacement';
+    const testsReuse = change === 'growth';
     const firstReadAt = Date.UTC(2026, 9, 12, 12);
     let now = firstReadAt;
     const machineId = 'work-currentness-machine';
@@ -10088,7 +10091,7 @@ describe('usage query Work composition', () => {
       },
     } satisfies UsageWorkEvidence;
     const held = createDeferred<void>();
-    let merged = false;
+    let merged = !testsReuse;
     let hold = false;
     let unavailable = false;
     scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
@@ -10097,7 +10100,10 @@ describe('usage query Work composition', () => {
       return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }) => ({
         sessionId, status: 'partial', pullRequestsRead: true,
         evidence: sessionId === first.sessionId
-          ? [{ ...linked, pullRequest: { ...linked.pullRequest, state: merged ? 'merged' : 'open' } }] : [],
+          ? [{ ...linked, pullRequest: { ...linked.pullRequest, state: merged ? 'merged' : 'open' } }]
+          : !keepsFirstSession && sessionId === added.sessionId
+            ? [{ ...linked, sessionId, pullRequest: { ...linked.pullRequest, number: 2, url: 'https://github.com/owner/repo/pull/2' } }]
+            : [],
       })) });
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
@@ -10119,8 +10125,8 @@ describe('usage query Work composition', () => {
       return content && decodeUsageQueryResource(content).results[0];
     };
     const workSource = (slice: ReturnType<typeof readPage>) => slice?.sources.find(source => source.source === 'work');
-    const expectWork = (slice: ReturnType<typeof readPage>, asOfMs: number, mergedPrCount: number, status: 'partial' | 'pending') => {
-      expect(workSource(slice)).toMatchObject({ status, asOfMs });
+    const expectSettledWork = (slice: ReturnType<typeof readPage>, asOfMs: number, mergedPrCount: number) => {
+      expect(workSource(slice)).toMatchObject({ status: 'partial', asOfMs });
       expect(slice?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount });
       expect(slice?.mergedOutcomes?.linkedMergedCount).toBe(mergedPrCount);
       expect(slice?.work?.outcomes.map(row => row.pullRequest.state)).toEqual([mergedPrCount ? 'merged' : 'open']);
@@ -10135,42 +10141,60 @@ describe('usage query Work composition', () => {
     try {
       await waitForPage();
       expect(scmTransport, 'a cold mount acquires Work once').toHaveBeenCalledTimes(1);
-      expectWork(readPage(), firstReadAt, 0, 'partial');
-      expectWork(await readAction(), firstReadAt, 0, 'partial');
+      for (const slice of [readPage(), await readAction()]) expectSettledWork(slice, firstReadAt, merged ? 1 : 0);
 
-      merged = true;
-      for (const offset of [1_100, 2_200, 3_300]) {
-        now = firstReadAt + offset;
-        contributions = [...contributions, { ...first, id: `event-${offset}` }];
-        pushAccounting();
-        await waitForPage();
-        for (const slice of [readPage(), await readAction()]) {
-          expect(slice?.sources.find(source => source.source === 'accounting')?.asOfMs).toBe(now);
-          expectWork(slice, firstReadAt, 0, 'partial');
+      if (testsReuse) {
+        merged = true;
+        for (const offset of [1_100, 2_200, 3_300]) {
+          now = firstReadAt + offset;
+          contributions = [...contributions, { ...first, id: `event-${offset}` }];
+          pushAccounting();
+          await waitForPage();
+          for (const slice of [readPage(), await readAction()]) {
+            expect(slice?.sources.find(source => source.source === 'accounting')?.asOfMs).toBe(now);
+            expectSettledWork(slice, firstReadAt, 0);
+          }
+          expect(readUsageAccountingReadAtMs(readPage()!)).toBe(now);
         }
-        expect(readUsageAccountingReadAtMs(readPage()!)).toBe(now);
+        expect(scmTransport, 'a forge merge plus accounting-only changes never reacquires Work').toHaveBeenCalledTimes(1);
       }
-      expect(scmTransport, 'a forge merge plus accounting-only changes never reacquires Work').toHaveBeenCalledTimes(1);
 
       now += 1_100;
-      contributions = [...contributions, added];
+      contributions = keepsFirstSession ? [...contributions, added] : [added];
+      if (change === 'growth with an event on the retained turn') {
+        contributions.push({ ...first, id: 'one-new-event-on-the-old-turn' });
+      }
       hold = true;
       pushAccounting();
       await expect.poll(() => scmTransport.mock.calls.length).toBe(2);
       await expect.poll(() => readPage()?.accounting?.totals.eventCount).toBe(contributions.length);
+      await expect.poll(() => workSource(readPage())?.status).toBe('pending');
       expect(scmTransport.mock.lastCall?.[0].payload.sessions.map((row: { sessionId: string }) => row.sessionId).sort())
-        .toEqual([first.sessionId, added.sessionId].sort());
-      expect.soft(workSource(readPage())).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
-      expect.soft(readPage()?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
-      const pendingAction = await readAction();
-      expect.soft(workSource(pendingAction)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
-      expect.soft(pendingAction.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
-      expect.soft(readPage()?.mergedOutcomes?.linkedMergedCount).toBe(0);
-      expect.soft(pendingAction.mergedOutcomes?.linkedMergedCount).toBe(0);
+        .toEqual(keepsFirstSession ? [first.sessionId, added.sessionId].sort() : [added.sessionId]);
+      const expectPending = (slice: ReturnType<typeof readPage>) => {
+        expect.soft(workSource(slice)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
+        expect.soft(slice?.workSummary?.pullRequestsRead).toBeUndefined();
+        expect.soft(slice?.workSummary?.mergedPrCount).toBeUndefined();
+        expect.soft(slice?.workSummary?.mergedSessionCount).toBeUndefined();
+        expect.soft(slice?.work?.outcomes.map(row => row.pullRequest.number)).toEqual(keepsFirstSession ? [1] : []);
+        if (change === 'growth with an event on the retained turn') {
+          expect.soft(slice?.work?.allocations.filter(row => row.outcome?.pullRequest.number === 1)).toHaveLength(2);
+          expect.soft(slice?.mergedOutcomes?.linkedMergedCount).toBe(1);
+        } else {
+          expect.soft(slice?.mergedOutcomes).toBeUndefined();
+        }
+      };
+      expectPending(readPage());
+      expectPending(await readAction());
+      // The Work clock must record the answer, even if Accounting and RPC issuance used another instant.
+      now += 600;
       held.resolve();
       await waitForPage();
-      expectWork(readPage(), now, 1, 'partial');
-      expectWork(await readAction(), now, 1, 'partial');
+      for (const slice of [readPage(), await readAction()]) {
+        expectSettledWork(slice, now, keepsFirstSession ? 1 : 0);
+        expect(slice?.work?.outcomes.map(row => row.pullRequest.number)).toEqual(keepsFirstSession ? [1] : [2]);
+      }
+      if (!testsReuse) return;
 
       now += 1_100;
       contributions = [...contributions, { ...first, id: 'new-turn-event', turnId: 'next-turn' }];
@@ -10190,7 +10214,7 @@ describe('usage query Work composition', () => {
       now += 1_100;
       await entry.refresh({ failedOnly: true });
       expect(scmTransport, 'explicit Retry reacquires failed Work').toHaveBeenCalledTimes(5);
-      expectWork(readPage(), now, 1, 'partial');
+      expectSettledWork(readPage(), now, 1);
     } finally {
       held.resolve();
       release();

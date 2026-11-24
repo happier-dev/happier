@@ -2671,19 +2671,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const refusal = withdrawn?.get(slice.key);
                         return refusal ? withdrawUsageQuerySlice(slice, refusal.errorCode) : slice;
                     }) };
-                    if (accountingOnly) batch = { ...batch, results: batch.results.map(slice => {
-                        const readAt = seedWorkInputs.get(slice.key)?.source?.asOfMs;
-                        const prior = previousByKey.get(slice.key);
-                        const priorSummary = prior?.workSummary;
-                        if (readAt === undefined || priorSummary?.pullRequestsRead !== true || !slice.sources.some(source =>
-                            source.source === 'work' && source.status === 'pending' && source.asOfMs === readAt)) return slice;
-                        // Keep the dated PR answer while Accounting can advance
-                        // ahead of its replacement. Pending still describes the
-                        // replacement, which alone covers the new selectors.
-                        const { pullRequestsRead, mergedPrCount, mergedSessionCount } = priorSummary;
-                        return { ...slice, workSummary: { ...slice.workSummary, pullRequestsRead, mergedPrCount, mergedSessionCount },
-                            mergedOutcomes: prior?.mergedOutcomes };
-                    }) };
                     // Usage arrivals age the admitted answer; they do not revoke
                     // it. Publish completed facts with their original input basis,
                     // so Refresh/reopen can acquire the newer accounting inputs.
