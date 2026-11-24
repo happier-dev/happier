@@ -47,6 +47,7 @@ import {
     loadNextOrdinarySessionListPage,
     useAppliedSessionListQuerySocketOnline,
     readOrdinarySessionListHomeState,
+    readSessionListQueryCorpusRevision,
     refreshOrdinarySessionList,
     resolveOrdinarySessionListHomeOwner,
     retrySessionListQueryHome,
@@ -477,6 +478,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
                 controller = createSessionListQueryHomeController({
                     serverId: home.serverId,
                     fetchPage: (page) => fetchSessionListQueryPageForHome(home.serverId, page),
+                    readCorpusRevision: () => readSessionListQueryCorpusRevision(home.serverId),
                     // The store owns what the list shows; the controller commits each
                     // applied page under the exact Account it was read for.
                     commitMembership: (queryKey, sessionIds) => storage.getState().commitSessionListQueryMembership(

@@ -41,16 +41,16 @@ async function mount(initialHomes: SessionListQueryHomeInput[], options: Readonl
     const state: { current: SessionListQuerySourceState | null } = { current: null };
     let suspendedRenderAttempts = 0;
     let unmounted = false;
-    function Host(props: Readonly<{ selectedHomes: SessionListQueryHomeInput[]; suspend: boolean }>) {
-        state.current = useSessionListQuerySourceState({ enabled: true, homes: props.selectedHomes });
+    function Host(props: Readonly<{ selectedHomes: SessionListQueryHomeInput[]; suspend: boolean; enabled: boolean }>) {
+        state.current = useSessionListQuerySourceState({ enabled: props.enabled, homes: props.selectedHomes });
         if (props.suspend) {
             suspendedRenderAttempts += 1;
             throw never;
         }
         return null;
     }
-    const render = (selectedHomes: SessionListQueryHomeInput[], suspend: boolean) => {
-        const content = <React.Suspense fallback={null}><Host selectedHomes={selectedHomes} suspend={suspend} /></React.Suspense>;
+    const render = (selectedHomes: SessionListQueryHomeInput[], suspend: boolean, enabled = true) => {
+        const content = <React.Suspense fallback={null}><Host selectedHomes={selectedHomes} suspend={suspend} enabled={enabled} /></React.Suspense>;
         root.render(options.strict ? <React.StrictMode>{content}</React.StrictMode> : content);
     };
     await act(async () => render(initialHomes, false));
@@ -62,8 +62,8 @@ async function mount(initialHomes: SessionListQueryHomeInput[], options: Readonl
                 for (const serverId of serverIds) expect(state.current?.statesByServerId[serverId]?.phase).toBe('ready');
             });
         },
-        async render(selectedHomes: SessionListQueryHomeInput[]) {
-            await act(async () => render(selectedHomes, false));
+        async render(selectedHomes: SessionListQueryHomeInput[], enabled = true) {
+            await act(async () => render(selectedHomes, false, enabled));
         },
         async suspend(selectedHomes: SessionListQueryHomeInput[]) {
             await act(async () => {
@@ -114,6 +114,38 @@ async function mountConsumers(selectedHomes: SessionListQueryHomeInput[], initia
 }
 
 describe('useSessionListQuerySourceState committed controller lifecycle', () => {
+    it('reuses a covered Session corpus until that Home announces a change', async () => {
+        const home = boundary.serverIds[0]!;
+        const selection = homes(home);
+        const screen = await mount(selection);
+        const queries = () => boundary.queryRequests.filter(request => request.serverId === home);
+        try {
+            await screen.ready(home);
+            const settled = screen.state.current?.statesByServerId[home];
+            const before = queries().length;
+            for (let index = 0; index < 3; index++) {
+                await screen.render(selection, false);
+                await screen.render(selection);
+                await screen.ready(home);
+            }
+            expect(queries().length - before, 'requests on three unchanged returns').toBe(0);
+            expect(screen.state.current?.statesByServerId[home]?.addresses).toBe(settled?.addresses);
+
+            await screen.render(selection, false);
+            boundary.setRows(home, ['changed-while-covered']);
+            await act(async () => publishHomeAccountChange(home));
+            expect(queries()).toHaveLength(before);
+            await screen.render(selection);
+            await screen.ready(home);
+            expect(queries()).toHaveLength(before + 1);
+            expect(screen.state.current?.statesByServerId[home]?.addresses).toEqual([
+                { serverId: home, sessionId: 'changed-while-covered' },
+            ]);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('makes zero idle Session queries after the first page fails and reads once on a Home change', async () => {
         const home = boundary.serverIds[0]!;
         boundary.failQueries(home, 'all');

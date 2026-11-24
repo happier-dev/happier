@@ -238,6 +238,7 @@ function appendAddresses(
 export function createSessionListQueryHomeController(params: Readonly<{
     serverId: string;
     fetchPage(request: SessionListQueryPageRequest): Promise<SessionListFetchResult>;
+    readCorpusRevision?(): string;
     /**
      * Receives every change of the applied membership (`null` when access denial
      * withdraws it). The store is the rendered owner; this controller keeps only the
@@ -259,6 +260,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
     let inFlight: Promise<void> | null = null;
     let refreshQueued = false;
     let ordinaryLastSuccessAt: number | null = null;
+    let coveredCorpus: Readonly<{ revision: string; membership: PageRequestPlan['membership'] }> | null = null;
     /**
      * A corpus that was current when its transport dropped. The changes catch-up and
      * presence placement deliver what changed while away, so a reconnect re-reads the
@@ -645,7 +647,22 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                     freshnessAt: null, metadataUpgradeRequiredCount: 0, membershipUnavailableReason: undefined });
             }
+            if (previousQueryKey !== nextQueryKey || readModeChanged || nextInput.online !== true) {
+                coveredCorpus = null;
+            }
             if (!nextInput.selected) {
+                if (previousInput?.selected) {
+                    const previousPlan = resolvePageRequestPlan(previousInput);
+                    const corpusRevision = params.readCorpusRevision?.();
+                    // Keep the settled strict corpus across cover. No request or
+                    // network demand stays active, and a wake can stale the answer.
+                    coveredCorpus = previousPlan?.source.kind === 'query' && corpusRevision !== undefined
+                        && nextInput.online === true && !nextInput.selectSession
+                        && inFlight === null && !refreshQueued && state.phase === 'ready'
+                        && state.appliedQueryKey === nextQueryKey && !readModeChanged
+                        ? { revision: corpusRevision, membership: previousPlan.membership }
+                        : null;
+                }
                 revision += 1;
                 activeAbortController?.abort('session-list-query-home-not-selected');
                 activeAbortController = null;
@@ -689,6 +706,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
             // adapter configured up front, in which case that adapter is the request
             // source — never a post-failure substitution.
             if (nextInput.supported !== true && !nextInput.ordinaryAdapter) {
+                coveredCorpus = null;
                 revision += 1;
                 activeAbortController?.abort('session-list-query-unsupported');
                 activeAbortController = null;
@@ -711,6 +729,14 @@ export function createSessionListQueryHomeController(params: Readonly<{
             const queryChanged = previousQueryKey !== nextQueryKey;
             const previousPlan = resolvePageRequestPlan(previousInput);
             const nextPlan = resolvePageRequestPlan(input);
+            const covered = coveredCorpus;
+            coveredCorpus = null;
+            if (covered && nextPlan?.source.kind === 'query'
+                && nextPlan.membership === covered.membership
+                && params.readCorpusRevision?.() === covered.revision) {
+                publishPhase(nextQueryKey, 'ready');
+                return;
+            }
             const hold = offlineHold;
             offlineHold = null;
             if (hold && previousInput?.online === false && !hold.missed && !queryChanged && !readModeChanged
@@ -747,7 +773,11 @@ export function createSessionListQueryHomeController(params: Readonly<{
             return refresh();
         },
         invalidate: (scope, rowFacets) => {
-            if (disposed || !input?.selected) return Promise.resolve();
+            if (disposed || !input) return Promise.resolve();
+            if (!input.selected) {
+                if (scope !== 'recover') coveredCorpus = null;
+                return Promise.resolve();
+            }
             // An unread page may hold a member a row write reorders into view, so only a
             // fully read corpus narrows the re-read to the inputs the writes can move.
             const fullyRead = !state.hasNext && !state.attentionHasNext;
@@ -769,7 +799,12 @@ export function createSessionListQueryHomeController(params: Readonly<{
         },
         place: (rows, readSortKey) => {
             // A held offline corpus still takes rows read over HTTP (presence recovery).
-            if (disposed || !input?.selected || (!input.online && !(offlineHold && input.online === false))) return true;
+            if (disposed || !input) return true;
+            if (!input.selected) {
+                coveredCorpus = null;
+                return true;
+            }
+            if (!input.online && !(offlineHold && input.online === false)) return true;
             const { query } = input;
             if (!isSessionListQueryRowPlaceable(query)) return false;
             // A row the facts cannot decide (a Space's manual branch) takes the Home's answer.

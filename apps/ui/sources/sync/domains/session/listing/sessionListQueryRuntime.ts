@@ -227,9 +227,13 @@ export async function fetchSessionListQueryPageForHome(
     }
 }
 
+export function readSessionListQueryCorpusRevision(serverId: string): string {
+    return `${readHomeAccountReadRevision(serverId)}:${readSessionListQueryReadEpoch(serverId)}`;
+}
+
 function fetchSharedPage(serverId: string, page: SessionListQueryPageRequest) {
     const key = JSON.stringify([
-        serverId, readHomeAccountReadRevision(serverId), readSessionListQueryReadEpoch(serverId),
+        serverId, readSessionListQueryCorpusRevision(serverId),
         page.source, readSharedMembership(page.membership), page.hydration ?? null, page.candidateStartedBy ?? null,
         page.limit ?? null, page.cursor ?? null, page.attentionCursor ?? null,
     ]);
