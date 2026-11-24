@@ -348,8 +348,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // from the FIRST `rootStep` and never re-reads the prop, so a parent that
     // swaps `rootStep` after mount would see the orchestrator stuck on the old
     // root. Hand every new root to the stack, which decides whether it is a
-    // refresh of the root the user is on (same step id — keep whatever they
-    // pushed on top of it) or a different destination (drain the stack).
+    // refresh of the open step tree (same root id) or a different destination
+    // (drain the stack).
     //
     // Dispatched DURING RENDER, not from an effect. React discards this render
     // pass and re-runs the component with the new stack before committing, so
@@ -372,9 +372,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // pushed destination step) republishes that step's latest content here:
     // a mounted same-id entry is refreshed in place exactly like an adopted
     // root, `null` pops back to the root, and an unmounted id pushes. This is
-    // how hydration and pagination keep flowing into a MOUNTED pushed step —
-    // pushed steps are snapshots, so without this mirror a destination list
-    // could never grow while the user is on it. Dispatched during render for
+    // how hydration and pagination keep flowing into an imperatively pushed
+    // step. Declarative children refresh with their root. Dispatched during render for
     // the same reason as `adoptRootStep` above. `undefined` means the prop is
     // absent and the list stays fully uncontrolled.
     const lastSyncedActiveStepRef = React.useRef<SelectionListStep | null | undefined>(undefined);

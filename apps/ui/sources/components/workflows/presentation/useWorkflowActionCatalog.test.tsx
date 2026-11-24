@@ -10,7 +10,7 @@ import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '@happier-dev/protocol/workflows';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -18,6 +18,13 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItems: true }).module;
+});
+vi.mock('@/components/ui/popover/Popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal,
+        { maxHeight: 480, maxWidth: 420, placement: 'bottom' }));
 
 // The daemon RPC behind the real network boundary is the only substitute; Sync, the
 // projection loader, its section reader and the catalog hook stay real.
@@ -80,11 +87,13 @@ describe('useWorkflowActionCatalog', () => {
     let serverId: string;
     const sectionsRead = new Set<string>();
     let deferred: ReturnType<typeof buildDeferredDaemonProjectionSections>;
+    let holdProjection: (() => Promise<void>) | undefined;
 
     beforeEach(async () => {
         network.resetRequests();
         storage.setState(storage.getInitialState(), true);
         sectionsRead.clear();
+        holdProjection = undefined;
         deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1, projection, projectionDigest: 'b'.repeat(64) }));
         const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
@@ -101,7 +110,10 @@ describe('useWorkflowActionCatalog', () => {
                 return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
             }
             const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
-            if (!read) return { ok: true, result: deferred.manifest };
+            if (!read) {
+                await holdProjection?.();
+                return { ok: true, result: deferred.manifest };
+            }
             for (const digest of [read.digest, ...read.includeDigests ?? []]) {
                 const section = sectionByIndexDigest.get(digest);
                 if (section) sectionsRead.add(section);
@@ -112,6 +124,7 @@ describe('useWorkflowActionCatalog', () => {
         await restoreConnectionToActiveServer({ token: home.token });
         clearDaemonMergedProjectionCacheForTests();
     });
+
     afterEach(async () => {
         standardCleanup();
         clearDaemonMergedProjectionCacheForTests();
@@ -506,5 +519,37 @@ describe('useWorkflowActionCatalog', () => {
         expect(complete).toMatchObject({ ok: true });
         if (!complete.ok) return;
         expect(ActionSpecSearchResultSchema.parse(complete.result).actionSpecs.map(spec => spec.id)).toContain('wait');
+    });
+
+    it('adds discovered choices to the Action submenu opened before Machine discovery settles', async () => {
+        const gate = Promise.withResolvers<void>();
+        let requested = false;
+        holdProjection = () => {
+            requested = true;
+            return gate.promise;
+        };
+        const { WorkflowAddBlockMenu } = await import('../editor/WorkflowAddBlockMenu');
+        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const onAdd = vi.fn();
+        const screen = await renderScreen(<WorkflowAddBlockMenu testID="add" scopeLabel="Workflow" onAdd={onAdd}
+            composerScope={{ kind: 'machine', machineId: 'picker-machine', serverId }} />);
+        const command = 'selection-list:add-action:option:add-action:machines.command.run';
+        const webhook = 'selection-list:add-action:option:add-action:webhooks.call';
+        try {
+            await screen.pressByTestIdAsync('add');
+            await screen.pressByTestIdAsync('selection-list:add-root:option:add-action');
+            await waitForHomeGovernance(() => expect(requested).toBe(true));
+            expect(screen.findByTestId(command)).toBeNull();
+            expect(screen.findByTestId(webhook)).toBeNull();
+            await act(async () => { gate.resolve(); });
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId(command)).not.toBeNull();
+                expect(screen.findByTestId(webhook)).not.toBeNull();
+            });
+            await screen.pressByTestIdAsync(webhook);
+            expect(onAdd).toHaveBeenCalledWith({ kind: 'action', actionId: 'webhooks.call' });
+        } finally {
+            gate.resolve();
+        }
     });
 });

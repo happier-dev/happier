@@ -16,8 +16,8 @@ export type SelectionListStepStackApi = Readonly<{
     popStep: () => void;
     /**
      * Take the consumer's latest root step. A root rebuilt for the SAME step id is a
-     * content refresh and replaces the root entry in place; a root with a different id
-     * is a different destination and drains the stack. See the reducer for why.
+     * content refresh of the root and its open declarative steps. A different
+     * root id is a different destination and drains the stack.
      */
     adoptRootStep: (rootStep: SelectionListStep) => void;
     /**
@@ -58,19 +58,26 @@ function stepStackReducer(
             // dispatch. Returning the input state is what makes a
             // render-phase dispatch settle.
             if (currentRoot === action.rootStep) return state;
-            // Rebuilding a step tree is not navigation. Consumers mint a fresh root
-            // object whenever any of its inputs move — the worktree picker rebuilds
-            // once a minute so its relative-time labels stay fresh, and again on every
-            // SCM snapshot refresh — and the rebuild carries the SAME step id because
-            // it describes the same destination. Swapping only the root entry keeps
-            // that refresh from evicting the user out of a step they pushed (and, with
-            // it, the worktree name they were half-way through typing). A root with a
-            // DIFFERENT id is a genuinely different destination, so the pushed steps
-            // belong to a tree that no longer exists and the stack drains.
             if (currentRoot !== undefined && currentRoot.id === action.rootStep.id && state.stack.length > 1) {
-                // `currentStep` is untouched, so the cross-slide must not be told
-                // anything happened: keep the prior direction.
-                return { stack: [action.rootStep, ...state.stack.slice(1)], direction: state.direction };
+                const stack = [action.rootStep];
+                for (let index = 1; index < state.stack.length; index += 1) {
+                    const parent = state.stack[index - 1];
+                    const child = state.stack[index];
+                    const section = parent.sections.find(section => section.kind === 'static'
+                        && section.options.some(option => option.openStep === child));
+                    if (section?.kind !== 'static') {
+                        // Imperative and controlled steps own their own content.
+                        return { stack: [...stack, ...state.stack.slice(index)], direction: state.direction };
+                    }
+                    const option = section.options.find(option => option.openStep === child);
+                    const updatedSection = stack[index - 1].sections.find(candidate => candidate.id === section.id);
+                    const updatedChild = updatedSection?.kind === 'static'
+                        ? updatedSection.options.find(candidate => candidate.id === option?.id)?.openStep
+                        : undefined;
+                    if (updatedChild?.id !== child.id) return { stack, direction: 'backward' };
+                    stack.push(updatedChild);
+                }
+                return { stack, direction: state.direction };
             }
             return { stack: [action.rootStep], direction: 'replace' };
         }
