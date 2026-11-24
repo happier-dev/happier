@@ -11,20 +11,8 @@ import { UpdateContainerSchema, EphemeralUpdateSchema } from '@happier-dev/proto
 import type { UpdateContainer } from '@happier-dev/protocol/updates';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import {
-  detectSessionTurnActivityFromProjection,
-  isSessionAgentThreadTextUserMessage,
-  isSessionAgentMessage,
-  readSessionProjectedPendingInputCount,
-  readSessionProjectedPendingRequestCount,
-  readSessionProjectedTurnStatus,
-  type SessionTurnActivity,
-} from '@/session/query/detectSessionTurnInFlight';
-import {
-  applySessionTurnLifecycleEvent,
-  detectSessionTurnLifecycleEvent,
-  isBareSessionReadyEvent,
-} from '@/session/shared/sessionTurnLifecycle';
+import { summarizeAgentState, waitForIdleObservation, type AgentStateSummary, type IdleSocketObserver, type SessionTurnActivity } from '@happier-dev/session-core/transcript';
+export { isIdle, summarizeAgentState, type AgentStateSummary } from '@happier-dev/session-core/transcript';
 import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionControlWaitIdleConfirmMs } from '@/session/transport/shared/sessionTimeouts';
 
@@ -168,69 +156,11 @@ export function openSessionEventSource(opts: {
     };
 }
 
-export type AgentStateSummary = Readonly<{
-  controlledByUser?: boolean;
-  pendingRequestsCount: number;
-}>;
-
-export function summarizeAgentState(value: unknown): AgentStateSummary {
-  const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  const controlledByUser = typeof obj?.controlledByUser === 'boolean' ? obj.controlledByUser : undefined;
-  const requests = obj?.requests;
-  const pendingRequestsCount =
-    requests && typeof requests === 'object' && !Array.isArray(requests) ? Object.keys(requests).length : 0;
-  return { ...(controlledByUser !== undefined ? { controlledByUser } : {}), pendingRequestsCount };
-}
-
-export function isIdle(summary: AgentStateSummary | null): boolean {
-  if (!summary) return true;
-  if (summary.controlledByUser === true) return false;
-  return summary.pendingRequestsCount === 0;
-}
-
-function summarizeProjectedPendingRequests(value: unknown): AgentStateSummary | null {
-  const pendingRequestsCount = readSessionProjectedPendingRequestCount(value);
-  if (pendingRequestsCount === null) {
-    return null;
-  }
-  return { pendingRequestsCount };
-}
-
-/**
- * The Session projection only carries the pending-request count, so a projected observation may
- * replace that count and nothing else. Merging it onto the freshest AgentState observation keeps
- * `controlledByUser` intact; otherwise a Session held by a live local terminal would be summarized
- * as idle and could be stopped underneath its user.
- */
-function mergeProjectedPendingRequestCount(
-  projected: AgentStateSummary | null,
-  observedAgentState: AgentStateSummary | null,
-): AgentStateSummary | null {
-  if (!projected) return null;
-  const controlledByUser = projected.controlledByUser ?? observedAgentState?.controlledByUser;
-  return {
-    ...(controlledByUser !== undefined ? { controlledByUser } : {}),
-    pendingRequestsCount: projected.pendingRequestsCount,
-  };
-}
-
-function readUpdateBodyAgentStateCiphertext(body: unknown): string | null {
-  const value = (body as { agentState?: { value?: unknown } } | null)?.agentState?.value;
-  if (typeof value !== 'string') return null;
-  return value.trim().length > 0 ? value : null;
-}
-
-function readSessionSnapshotAgentStateCiphertext(session: unknown): string | null {
-  const value = (session as { agentState?: unknown } | null)?.agentState;
-  if (typeof value !== 'string') return null;
-  return value.trim() || null;
-}
-
-function summarizeAgentStateCiphertext(params: Readonly<{
+function openAgentState(params: Readonly<{
   ciphertextBase64: string | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
   ctx: SessionEncryptionContext | null;
-}>): AgentStateSummary | null {
+}>): unknown {
   if (!params.ciphertextBase64) return null;
   try {
     const decrypted = params.sessionEncryptionMode === 'plain'
@@ -242,8 +172,7 @@ function summarizeAgentStateCiphertext(params: Readonly<{
             decodeBase64(params.ciphertextBase64, 'base64'),
           )
         : null;
-    if (decrypted === null) return null;
-    return summarizeAgentState(decrypted);
+    return decrypted;
   } catch {
     return null;
   }
@@ -287,466 +216,43 @@ export async function waitForIdleViaSocket(params: Readonly<{
   initialAgentStateCiphertextBase64: string | null;
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
 }>): Promise<{ idle: true; observedAt: number }> {
-  const initialObservedAgentState = summarizeAgentStateCiphertext({
-    ciphertextBase64: params.initialAgentStateCiphertextBase64,
-    sessionEncryptionMode: params.sessionEncryptionMode,
-    ctx: params.ctx,
+  const observer = createCliIdleSocketObserver(params);
+  return await waitForIdleObservation({
+    ...params, ...observer,
+    initialAgentState: observer.openAgentState(params.initialAgentStateCiphertextBase64),
   });
-  const initial =
-    params.initialAgentStateSummary !== undefined
-      ? mergeProjectedPendingRequestCount(params.initialAgentStateSummary, initialObservedAgentState)
-      : initialObservedAgentState;
-  let latestSummary = initial;
-  let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
-  let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
-  let requiresTranscriptIdleEvidence = params.initialTurnActivityRequiresTranscriptIdleEvidence === true;
-  let preferProjectionUpdates = params.preferProjectionUpdates === true;
-  const readyCompletesPendingUserTurns = params.readyCompletesPendingUserTurns !== false;
-  let observedTurnProgress = activeTaskInFlight;
-  // Pending retirement can precede observation of the successor turn. Retain the known
-  // input count until that successor is observed, including with older producers
-  // that lack exact publication correlation.
-  let pendingInputTurnsAwaitingMaterialization =
-    preferProjectionUpdates && pendingUserTurns > 0 ? pendingUserTurns : 0;
-  const hasTurnInFlight = () => activeTaskInFlight || pendingUserTurns > 0 || pendingInputTurnsAwaitingMaterialization > 0;
-  const initiallyIdle = isIdle(initial) && !hasTurnInFlight();
-  if (initiallyIdle && params.recheckTurnActivity) requiresTranscriptIdleEvidence = true;
-  const idleConfirmMs = initiallyIdle ? resolveSessionControlWaitIdleConfirmMs() : 0;
+}
 
-  const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
-  const deadlineMs = Date.now() + timeoutMs;
-
-  const result = await new Promise<{ idle: true; observedAt: number }>((resolve, reject) => {
-    let settled = false;
-    let waitingForIdleAfterFreshBusy = !initiallyIdle;
-    let hasFreshAgentStateObservation = false;
-    let observationRevision = 0;
-    let idleConfirmTimer: ReturnType<typeof setTimeout> | null = null;
-    let observation: ReturnType<typeof observeSessionSocketEvents> | null = null;
-
-    const cleanup = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      params.signal?.removeEventListener('abort', abort);
-      if (idleConfirmTimer) {
-        clearTimeout(idleConfirmTimer);
-        idleConfirmTimer = null;
-      }
-      void observation?.dispose().catch(() => undefined);
-    };
-
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('timeout'));
-    }, timeoutMs);
-
-    const abort = () => {
-      cleanup();
-      reject(params.signal?.reason ?? new Error('cancelled'));
-    };
-    params.signal?.addEventListener('abort', abort, { once: true });
-    if (params.signal?.aborted) {
-      abort();
-      return;
-    }
-
-    const applyRecheckedTurnActivity = (latestTurnActivity: SessionTurnActivity): boolean => {
-      if (!latestTurnActivity.turnInFlight && pendingInputTurnsAwaitingMaterialization > 0) {
-        requiresTranscriptIdleEvidence = true;
-        waitingForIdleAfterFreshBusy = true;
-        return false;
-      }
-      pendingUserTurns = latestTurnActivity.pendingUserTurns;
-      activeTaskInFlight = latestTurnActivity.activeTaskInFlight;
-      if (activeTaskInFlight) pendingInputTurnsAwaitingMaterialization = latestTurnActivity.pendingUserTurns;
-      if (latestTurnActivity.turnInFlight) {
-        requiresTranscriptIdleEvidence = !preferProjectionUpdates || requiresTranscriptIdleEvidence;
-        waitingForIdleAfterFreshBusy = true;
-        return false;
-      }
-      requiresTranscriptIdleEvidence = false;
-      return true;
-    };
-
-    const completeIdle = () => {
-      if (settled) return;
-      clearTimeout(timer);
-      cleanup();
-      resolve({ idle: true, observedAt: Math.min(Date.now(), deadlineMs) });
-    };
-
-    const recheckRequiredTranscriptIdleEvidence = async (): Promise<boolean> => {
-      if (!requiresTranscriptIdleEvidence) return true;
-      if (!params.recheckTurnActivity) return false;
-      const revision = ++observationRevision;
-      const latestTurnActivity = await params.recheckTurnActivity();
-      if (settled || revision !== observationRevision) return false;
-      return applyRecheckedTurnActivity(latestTurnActivity);
-    };
-
-    const resolveIdle = () => {
-      void (async () => {
-        try {
-          if (!(await recheckRequiredTranscriptIdleEvidence())) {
-            return;
-          }
-          if (settled || hasTurnInFlight() || (!isIdle(latestSummary) && hasFreshAgentStateObservation)) return;
-          completeIdle();
-        } catch {
-          // Wait for the next transcript/projection event or reconnect.
-        }
-      })();
-    };
-
-    const onConnect = () => {
-      const revision = ++observationRevision;
-      void (async () => {
-        try {
-          const latestTurnActivity = await params.recheckTurnActivity?.();
-          if (settled || revision !== observationRevision) return;
-          if (latestTurnActivity && !applyRecheckedTurnActivity(latestTurnActivity)) return;
-          const refreshedSession = await fetchSessionById({
-            reason: 'reconnect',
-            token: params.token, sessionId: params.sessionId,
-            ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-          });
-          if (settled || revision !== observationRevision || !refreshedSession) return;
-          const refreshedProjectionActivity = preferProjectionUpdates
-            ? detectSessionTurnActivityFromProjection(refreshedSession) : null;
-          if (refreshedProjectionActivity) {
-            pendingUserTurns = refreshedProjectionActivity.pendingUserTurns;
-            activeTaskInFlight = refreshedProjectionActivity.activeTaskInFlight;
-          }
-          const refreshedObservedAgentState = summarizeAgentStateCiphertext({
-            ciphertextBase64: readSessionSnapshotAgentStateCiphertext(refreshedSession),
-            sessionEncryptionMode: params.sessionEncryptionMode, ctx: params.ctx,
-          });
-          latestSummary = mergeProjectedPendingRequestCount(
-            preferProjectionUpdates ? summarizeProjectedPendingRequests(refreshedSession) : null,
-            refreshedObservedAgentState ?? latestSummary,
-          ) ?? refreshedObservedAgentState;
-          if (hasTurnInFlight() || !isIdle(latestSummary)) {
-            waitingForIdleAfterFreshBusy = true;
-            return;
-          }
-          resolveIdle();
-        } catch {
-          // The managed transport owns reconnection; missing evidence is not idle.
-        }
-      })();
-    };
-
-
-    const observePendingInputCount = (body: unknown) => {
-      const count = readSessionProjectedPendingInputCount(body);
-      if (count === null || count === 0) return;
-      pendingUserTurns = Math.max(pendingUserTurns, count);
-      if (preferProjectionUpdates) {
-        pendingInputTurnsAwaitingMaterialization = Math.max(pendingInputTurnsAwaitingMaterialization, count);
-      } else {
-        requiresTranscriptIdleEvidence = true;
-      }
-      waitingForIdleAfterFreshBusy = true;
-      if (idleConfirmTimer) {
-        clearTimeout(idleConfirmTimer);
-        idleConfirmTimer = null;
-      }
-    };
-
-    const onUpdate = (raw: unknown) => {
-      const parsed = UpdateContainerSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const update: UpdateContainer = parsed.data;
-      const observedBody = update.body;
-      const sessionId = 'sid' in observedBody ? observedBody.sid ?? ('sessionId' in observedBody ? observedBody.sessionId : undefined)
-        : 'id' in observedBody ? observedBody.id : undefined;
-      if (sessionId === params.sessionId) observationRevision += 1;
-
-      if (update.body?.t === 'pending-changed') {
-        if (!preferProjectionUpdates && !readyCompletesPendingUserTurns) return;
-        const body = update.body;
-        const sessionId = body.sid ?? body.sessionId;
-        if (sessionId !== params.sessionId) return;
-        observePendingInputCount(body);
-        if (readSessionProjectedPendingInputCount(body) === 0 && waitingForIdleAfterFreshBusy) resolveIdle();
-        return;
-      }
-
-      if (update.body?.t === 'update-session') {
-        const body = update.body;
-        if (String(body.id ?? '') !== params.sessionId) return;
-
-        if (preferProjectionUpdates || readyCompletesPendingUserTurns) observePendingInputCount(body);
-        const observedTurnStatus = readSessionProjectedTurnStatus(body.latestTurnStatus);
-        const projectedActivity = observedTurnStatus ? detectSessionTurnActivityFromProjection(body) : null;
-        const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns || projectedActivity !== null;
-        const projectedSummary = shouldReadProjection
-          ? mergeProjectedPendingRequestCount(
-              summarizeProjectedPendingRequests(body),
-              summarizeAgentStateCiphertext({
-                ciphertextBase64: readUpdateBodyAgentStateCiphertext(body),
-                sessionEncryptionMode: params.sessionEncryptionMode,
-                ctx: params.ctx,
-              }) ?? latestSummary,
-            )
-          : null;
-        const projectedTurnStatus = shouldReadProjection ? observedTurnStatus : null;
-        const canUseTerminalProjection =
-          preferProjectionUpdates
-          || readyCompletesPendingUserTurns
-          || observedTurnProgress
-          || activeTaskInFlight
-          || projectedTurnStatus === 'in_progress';
-        if (!canUseTerminalProjection && projectedTurnStatus && params.recheckTurnActivity) {
-          // Completion can precede this subscriber's first native output.
-          // The caller's current-input reader distinguishes it from an older
-          // turn; missing busy delivery is not evidence that work remains.
-          if (projectedSummary) {
-            latestSummary = projectedSummary;
-            hasFreshAgentStateObservation = true;
-          }
-          requiresTranscriptIdleEvidence = true;
-          resolveIdle();
-          return;
-        }
-        if (projectedActivity && projectedSummary) {
-          if (readyCompletesPendingUserTurns) preferProjectionUpdates = true;
-          if (projectedActivity.activeTaskInFlight) pendingInputTurnsAwaitingMaterialization = projectedActivity.pendingUserTurns;
-          const nextPendingUserTurns = projectedActivity.pendingUserTurns;
-          const nextActiveTaskInFlight = projectedActivity.activeTaskInFlight;
-          const nextTurnInFlight = nextActiveTaskInFlight || nextPendingUserTurns > 0;
-          if (nextTurnInFlight || !isIdle(projectedSummary)) {
-            pendingUserTurns = nextPendingUserTurns;
-            activeTaskInFlight = nextActiveTaskInFlight;
-            latestSummary = projectedSummary;
-            hasFreshAgentStateObservation = true;
-            observedTurnProgress = true;
-            waitingForIdleAfterFreshBusy = true;
-            if (idleConfirmTimer) {
-              clearTimeout(idleConfirmTimer);
-              idleConfirmTimer = null;
-            }
-            return;
-          }
-          if (!canUseTerminalProjection) {
-            return;
-          }
-          // The complete projection already proves no queued input or active
-          // turn remains. Missing transcript delivery cannot overrule its owner.
-          pendingInputTurnsAwaitingMaterialization = 0;
-          pendingUserTurns = nextPendingUserTurns;
-          activeTaskInFlight = nextActiveTaskInFlight;
-          latestSummary = projectedSummary;
-          hasFreshAgentStateObservation = true;
-          if (!waitingForIdleAfterFreshBusy) {
-            return;
-          }
-
-          resolveIdle();
-          return;
-        }
-        if (projectedTurnStatus || projectedSummary) {
-          let nextPendingUserTurns = pendingUserTurns;
-          let nextActiveTaskInFlight = activeTaskInFlight;
-          if (projectedTurnStatus) {
-            nextActiveTaskInFlight = projectedTurnStatus === 'in_progress';
-          }
-          const nextSummary = projectedSummary ?? latestSummary;
-          const nextTurnInFlight = nextActiveTaskInFlight || nextPendingUserTurns > 0;
-
-          if (nextTurnInFlight || !isIdle(nextSummary)) {
-            pendingUserTurns = nextPendingUserTurns;
-            activeTaskInFlight = nextActiveTaskInFlight;
-            if (projectedSummary) {
-              latestSummary = projectedSummary;
-              hasFreshAgentStateObservation = true;
-            }
-            observedTurnProgress = true;
-            waitingForIdleAfterFreshBusy = true;
-            if (idleConfirmTimer) {
-              clearTimeout(idleConfirmTimer);
-              idleConfirmTimer = null;
-            }
-            return;
-          }
-          if (pendingInputTurnsAwaitingMaterialization > 0) {
-            return;
-          }
-          if (!canUseTerminalProjection) {
-            return;
-          }
-          pendingUserTurns = nextPendingUserTurns;
-          activeTaskInFlight = nextActiveTaskInFlight;
-          if (projectedSummary) {
-            latestSummary = projectedSummary;
-            hasFreshAgentStateObservation = true;
-          }
-          if (!waitingForIdleAfterFreshBusy || latestSummary === null) {
-            return;
-          }
-
-          resolveIdle();
-          return;
-        }
-
-        const agentStateCiphertext = body.agentState?.value;
-        if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
-
-        const summary = summarizeAgentStateCiphertext({
-          ciphertextBase64: agentStateCiphertext,
-          sessionEncryptionMode: params.sessionEncryptionMode,
-          ctx: params.ctx,
-        });
-        if (!summary) {
-          return;
-        }
-        hasFreshAgentStateObservation = true;
-        latestSummary = summary;
-        if (!isIdle(summary)) {
-          waitingForIdleAfterFreshBusy = true;
-          if (idleConfirmTimer) {
-            clearTimeout(idleConfirmTimer);
-            idleConfirmTimer = null;
-          }
-          return;
-        }
-        if (!waitingForIdleAfterFreshBusy || hasTurnInFlight()) {
-          return;
-        }
-
-        resolveIdle();
-        return;
-      }
-
-      const messageBody = update.body;
-      if (messageBody.t !== 'new-message') return;
-      if (String(messageBody.sid ?? '') !== params.sessionId) return;
-      if (messageBody.delivery !== 'full') {
-        clearTimeout(timer);
-        cleanup();
-        reject(new Error('Session idle observation requires full message delivery'));
-        return;
-      }
-      if (
-        preferProjectionUpdates
-        && !requiresTranscriptIdleEvidence
-        && pendingInputTurnsAwaitingMaterialization === 0
-      ) return;
-      const decrypted = tryDecryptMessageEnvelope({
-        content: messageBody.message?.content,
-        sessionEncryptionMode: params.sessionEncryptionMode,
-        ctx: params.ctx,
+function createCliIdleSocketObserver(params: Readonly<{
+  token: string;
+  sessionId: string;
+  scope?: 'user';
+  ctx: SessionEncryptionContext | null;
+  sessionEncryptionMode: SessionStoredContentEncryptionMode;
+  resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
+}>) {
+  const open = (ciphertextBase64: string | null) => openAgentState({
+    ciphertextBase64, ctx: params.ctx, sessionEncryptionMode: params.sessionEncryptionMode,
+  });
+  const observe: IdleSocketObserver = handlers => observeSessionSocketEvents(params, {
+    ...handlers,
+    onUpdate: value => { void handlers.onUpdate(value).catch(handlers.onError); },
+  });
+  return {
+    openAgentState: open,
+    openMessage: (content: unknown) => tryDecryptMessageEnvelope({
+      content, ctx: params.ctx, sessionEncryptionMode: params.sessionEncryptionMode,
+    }),
+    confirmMs: resolveSessionControlWaitIdleConfirmMs(),
+    observe,
+    readSnapshot: async () => {
+      const projection = await fetchSessionById({
+        reason: 'reconnect', token: params.token, sessionId: params.sessionId,
+        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       });
-      if (!decrypted) return;
-
-      if (isSessionAgentThreadTextUserMessage(decrypted)) {
-        pendingInputTurnsAwaitingMaterialization = Math.max(0, pendingInputTurnsAwaitingMaterialization - 1);
-        pendingUserTurns += 1;
-        requiresTranscriptIdleEvidence = true;
-        waitingForIdleAfterFreshBusy = true;
-        if (idleConfirmTimer) {
-          clearTimeout(idleConfirmTimer);
-          idleConfirmTimer = null;
-        }
-        return;
-      }
-
-      const lifecycleEvent = detectSessionTurnLifecycleEvent(decrypted);
-      if (!lifecycleEvent) {
-        if (isSessionAgentMessage(decrypted) && hasTurnInFlight()) {
-          observedTurnProgress = true;
-        }
-        return;
-      }
-      if (
-        lifecycleEvent === 'ready'
-        && !readyCompletesPendingUserTurns
-        && !activeTaskInFlight
-        && !observedTurnProgress
-        && isBareSessionReadyEvent(decrypted)
-      ) {
-        return;
-      }
-      if (lifecycleEvent === 'ready' && !isBareSessionReadyEvent(decrypted) && pendingUserTurns > 0) {
-        observedTurnProgress = true;
-      }
-      if (lifecycleEvent === 'task_started') {
-        observedTurnProgress = true;
-      }
-
-      // A terminal native event can be the first observed fact for this input
-      // (for example an OpenCode quota refusal without task_started). Reduce
-      // the unobserved inputs through the same lifecycle owner as visible ones.
-      pendingInputTurnsAwaitingMaterialization = applySessionTurnLifecycleEvent({
-        pendingUserTurns: pendingInputTurnsAwaitingMaterialization,
-        activeTaskInFlight,
-        event: lifecycleEvent,
-      }).pendingUserTurns;
-
-      ({
-        pendingUserTurns,
-        activeTaskInFlight,
-      } = applySessionTurnLifecycleEvent({
-        pendingUserTurns,
-        activeTaskInFlight,
-        event: lifecycleEvent,
-      }));
-      if (lifecycleEvent === 'ready') {
-        latestSummary = { ...(latestSummary ?? {}), pendingRequestsCount: 0 };
-      }
-
-      const staleAgentStateSnapshot = !hasFreshAgentStateObservation;
-
-      if (hasTurnInFlight() || (!isIdle(latestSummary) && !staleAgentStateSnapshot)) {
-        waitingForIdleAfterFreshBusy = true;
-        if (idleConfirmTimer) {
-          clearTimeout(idleConfirmTimer);
-          idleConfirmTimer = null;
-        }
-        return;
-      }
-      if (!waitingForIdleAfterFreshBusy) {
-        return;
-      }
-
-      resolveIdle();
-    };
-
-    observation = observeSessionSocketEvents(params, {
-      onUpdate, onConnected: onConnect,
-      onError: (error) => { clearTimeout(timer); cleanup(); reject(error); },
-    });
-
-    if (initiallyIdle) {
-      idleConfirmTimer = setTimeout(() => {
-        idleConfirmTimer = null;
-        const revision = ++observationRevision;
-        void (async () => {
-          if (params.recheckTurnActivity) {
-            try {
-              const latestTurnActivity = await params.recheckTurnActivity();
-              if (settled || revision !== observationRevision) return;
-              requiresTranscriptIdleEvidence = false;
-              if (!applyRecheckedTurnActivity(latestTurnActivity)) {
-                waitingForIdleAfterFreshBusy = true;
-                return;
-              }
-              requiresTranscriptIdleEvidence = false;
-            } catch {
-              // Transcript confirmation is required before reporting idle. Keep the socket wait
-              // alive until fresh positive evidence arrives or the deadline rejects.
-              return;
-            }
-          }
-
-          resolveIdle();
-        })();
-      }, Math.min(idleConfirmMs, timeoutMs));
-    }
-  });
-
-  return result;
+      return projection ? { projection, agentState: open(typeof projection.agentState === 'string' ? projection.agentState : null) } : null;
+    },
+  };
 }
 
 export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{

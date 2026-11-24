@@ -61,6 +61,7 @@ import { createUiSessionHandoffRecoveryActionDeps } from './sessionHandoffRecove
 import { createUiPetChooseAction } from './petChooseAction';
 import { createUiPetActionExecute, createUiPetImportPrepare } from './petActionDeps';
 import { setClientEncryptionRequirement } from '@/sync/ops/settings/setClientEncryptionRequirement';
+import { createUiSessionWaitIdleActionDep } from './sessionWaitIdleActionDeps';
 import { createUiSessionCatalogActionDeps } from './sessionCatalogActionDeps';
 import { readSessionInputResultForAction } from '@/sync/api/session/sessionInputResultActions';
 import { readSessionTranscriptForAction } from '@/sync/api/session/sessionTranscriptActions';
@@ -4896,6 +4897,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return projectSpawnMcpServersPreviewInventory(result, input.limit);
     },
     sessionStatusGet: readUiSessionStatus.bind(undefined, accountContext),
+    sessionWaitIdle: createUiSessionWaitIdleActionDep(accountContext),
     ...createUiSessionCatalogActionDeps(accountContext, actionSessionRpc),
     sessionWorkStateGet: ({ sessionId, serverId }) => actionSessionRpc({
       sessionId, serverId, method: SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, payload: {},

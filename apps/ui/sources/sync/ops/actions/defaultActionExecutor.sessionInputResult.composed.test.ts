@@ -58,10 +58,7 @@ it('enumerates the UI catalog and probes the Session read guards with schema-val
         const result = await executor.execute(spec.id, input, { surface: 'ui', serverId, expectedAccountId: 'owner' });
         if (!result.ok && result.errorCode === 'unsupported_action') unsupported.push(spec.id);
     }
-    // These are routed to their domain owners. Changes to the list surface as a contract diff.
-    expect(unsupported.sort()).toEqual([
-        'session.wait.idle',
-    ]);
+    expect(unsupported).toEqual([]);
 });
 
 it('does not read a reply when Home conceals an unreadable Session', async () => {

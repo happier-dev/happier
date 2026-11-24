@@ -1,3 +1,4 @@
+import { DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS } from '@happier-dev/session-core/transcript';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 function readPositiveIntEnvMs(key: string, fallback: number): number {
@@ -11,7 +12,6 @@ function readPositiveIntEnvMs(key: string, fallback: number): number {
 
 const DEFAULT_SOCKET_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_SOCKET_ACK_TIMEOUT_MS = 10_000;
-const DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS = 250;
 const DEFAULT_SESSION_STOP_TIMEOUT_MS = 10_000;
 const DEFAULT_SESSION_STOP_POLL_INTERVAL_MS = 200;
 const DEFAULT_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS = 3_000;

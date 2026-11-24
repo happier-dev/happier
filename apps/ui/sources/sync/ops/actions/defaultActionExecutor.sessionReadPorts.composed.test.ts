@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeEach, expect, it, vi } from 'vitest';
 import { SESSION_RPC_METHODS, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -42,6 +42,41 @@ it.each([
     expect(await execute('foreign-session')).toEqual({ ok: true, result: {
         unsupported: true, [key]: [], diagnostic: 'session_not_found',
     } });
+});
+
+it('waits on requester evidence for an idle Session and conceals a foreign Session', async () => {
+    const serverId = await homes.addHome({ name: 'Idle Home', serverUrl: 'https://session-idle.test',
+        accountId: 'reader', currentAccount: true, accountEncryptionMode: 'plain' });
+    const visible = 'idle-session';
+    const response = createPlainSessionByIdResponseFixture(createSessionFixture({
+        id: visible, active: false, encryptionMode: 'plain', access: createSessionAccessFixture('owner'),
+        agentState: { controlledByUser: false, requests: {} },
+    }));
+    homes.answer(serverId, `GET /v2/sessions/${visible}`, { body: { session: {
+        ...response.session, latestTurnStatus: 'in_progress', pendingCount: 0,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+    } } });
+    homes.answer(serverId, 'GET /v2/sessions/foreign-session', { status: 404, body: { error: 'Session not found' } });
+    const executor = createDefaultActionExecutor();
+    const execute = (sessionId: string) => executor.execute('session.wait.idle', { sessionId, timeoutSeconds: 5 },
+        { surface: 'ui', serverId, expectedAccountId: 'reader' });
+
+    homes.answer(serverId, `GET /v1/sessions/${visible}/messages`, { body: {
+        messages: [], hasMore: false, activity: { latestTurnStatus: 'in_progress',
+            pendingCount: 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+            pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 },
+    } });
+    const pending = execute(visible);
+    await vi.waitFor(() => expect(network.socketBoundaries.some(socket => socket.listeners.get('update')?.size)).toBe(true),
+        { timeout: 750 });
+    const socket = network.socketBoundaries.find(socket => socket.listeners.get('update')?.size);
+    socket?.trigger('update', { id: 'idle-confirmed', seq: 2, createdAt: 2, body: {
+        t: 'update-session', id: visible, latestTurnStatus: 'completed', pendingCount: 0,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+        agentState: { version: 2, value: '{"controlledByUser":false,"requests":{}}' },
+    } });
+    expect(await pending).toMatchObject({ ok: true, result: { ok: true, sessionId: visible, idle: true, observedAt: expect.any(Number) } });
+    expect(await execute('foreign-session')).toMatchObject({ ok: true, result: { ok: false, code: 'session_not_found' } });
 });
 
 it('projects the Machine preview and preserves the Machine refusal', async () => {

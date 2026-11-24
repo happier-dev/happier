@@ -21,3 +21,5 @@ export * from '../usage/usageObservation.js';
 export * from '../usage/exactTurnUsage.js';
 export * from './readSessionInputResult.js';
 export * from './sessionInputOriginal.js';
+export * from './sessionTurnActivity.js';
+export * from './waitForSessionIdle.js';

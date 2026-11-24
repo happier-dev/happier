@@ -1,3 +1,4 @@
+import { resolveSessionIdleWaitDurationMs } from '@happier-dev/session-core/transcript';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { readProjectAccountRows, ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -192,15 +193,11 @@ export function createCliSessionStatusActionDeps(
 	      if (!params.credentials) {
 	        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
 	      }
-	      const normalizedTimeoutSeconds =
-	        typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-	          ? Math.min(3600, timeoutSeconds)
-	          : 300;
 	      const { waitForSessionIdle } = await import("@/session/services/waitForSessionIdle");
-	      return await waitForSessionIdle({
+      return await waitForSessionIdle({
 	        credentials: params.credentials,
 	        idOrPrefix: sessionId,
-	        timeoutMs: Math.max(1, Math.floor(normalizedTimeoutSeconds * 1000)),
+	        timeoutMs: resolveSessionIdleWaitDurationMs(timeoutSeconds),
 	        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
 	        ...(signal ? { signal } : {}),
 	      });
