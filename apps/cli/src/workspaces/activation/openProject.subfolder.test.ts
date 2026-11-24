@@ -118,6 +118,9 @@ describe('openProject with a subfolder the repository lacks', () => {
       source: state === 'no-remote' || state === 'credentialed' ? null : { repository: { nameWithOwner: 'owner/source' }, protocol: 'https' },
       branch: state === 'detached' ? null : 'feature/source',
     } });
+    if (state === 'named') expect(result).toMatchObject({ facts: { repositoryIdentity: {
+      kind: 'github', deployment: 'https://github.com', repository: 'owner/source',
+    } } });
     expect(JSON.stringify(result)).not.toContain('secret');
     OpenProjectResultV1Schema.parse(result);
   });
