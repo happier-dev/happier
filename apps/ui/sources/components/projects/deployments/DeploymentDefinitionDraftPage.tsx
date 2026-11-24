@@ -32,9 +32,8 @@ function DefinitionDraft(props: Readonly<{ lifetime: ServerAccountScopeLifetime;
     definitionKind={props.definitionKind} phone={phone} actions={actions} initialMachineId={props.initialMachineId}
     onDiscard={() => safeRouterBack({ router, fallbackHref: '/projects/new-app' })}
     onApprovalRequested={artifactId => router.pushRetainingCurrent(buildApprovalHref(artifactId, props.lifetime.scope.serverId))}
-    onSaved={(environmentId, next) => {
-      const projectSourceId = next?.projectSourceId ?? (projectChoice.selection && 'projectSourceId' in projectChoice.selection ? projectChoice.selection.projectSourceId : null);
-      if (projectSourceId) router.replace(buildDeploymentEnvironmentHref({ serverId: props.lifetime.scope.serverId, projectSourceId,
-        environmentId, ...(next?.tab ? { tab: next.tab } : {}) }) as never);
+    onSaved={(environmentId, { projectSourceId, tab }) => {
+      router.replace(buildDeploymentEnvironmentHref({ serverId: props.lifetime.scope.serverId, projectSourceId,
+        environmentId, ...(tab ? { tab } : {}) }) as never);
     }} />;
 }

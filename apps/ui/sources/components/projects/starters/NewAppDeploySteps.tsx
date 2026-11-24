@@ -117,7 +117,10 @@ function useDeployExits(props: BoundProps) {
     },
     [leaveTo, lifetime.scope.serverId],
   );
-  return { leaveTo, onApprovalRequested };
+  const onSaved: React.ComponentProps<typeof DeploymentEnvironmentDraft>['onSaved'] = (environmentId, { projectSourceId, tab }) => {
+    leaveTo(buildDeploymentEnvironmentHref({ serverId: lifetime.scope.serverId, projectSourceId, environmentId, ...(tab ? { tab } : {}) }));
+  };
+  return { onSaved, onApprovalRequested };
 }
 
 function RepositoryDeploy(
@@ -128,7 +131,7 @@ function RepositoryDeploy(
     () => createDeploymentActions(lifetime, projectSourceId),
     [lifetime, projectSourceId],
   );
-  const { leaveTo, onApprovalRequested } = useDeployExits(props);
+  const { onSaved, onApprovalRequested } = useDeployExits(props);
   return (
     <DeploymentEnvironmentDraft
       lifetime={lifetime}
@@ -140,16 +143,7 @@ function RepositoryDeploy(
       steps={props.steps}
       onApprovalRequested={onApprovalRequested}
       onDiscard={props.onLeave}
-      onSaved={(environmentId, next) =>
-        leaveTo(
-          buildDeploymentEnvironmentHref({
-            serverId: lifetime.scope.serverId,
-            projectSourceId,
-            environmentId,
-            ...(next?.tab ? { tab: next.tab } : {}),
-          }),
-        )
-      }
+      onSaved={onSaved}
     />
   );
 }
@@ -166,7 +160,7 @@ function DefinitionDeploy(
     () => createDeploymentActions(lifetime),
     [lifetime],
   );
-  const { leaveTo, onApprovalRequested } = useDeployExits(props);
+  const { onSaved, onApprovalRequested } = useDeployExits(props);
   return (
     <DeploymentEnvironmentDraft
       lifetime={lifetime}
@@ -181,24 +175,7 @@ function DefinitionDeploy(
       steps={props.steps}
       onApprovalRequested={onApprovalRequested}
       onDiscard={props.onLeave}
-      onSaved={(environmentId, next) => {
-        const selection = projectChoice.selection;
-        const projectSourceId =
-          next?.projectSourceId ??
-          (selection && 'projectSourceId' in selection
-            ? selection.projectSourceId
-            : null);
-        if (projectSourceId)
-          leaveTo(
-            buildDeploymentEnvironmentHref({
-              serverId: lifetime.scope.serverId,
-              projectSourceId,
-              environmentId,
-              ...(next?.tab ? { tab: next.tab } : {}),
-            }),
-          );
-        else props.onLeave();
-      }}
+      onSaved={onSaved}
     />
   );
 }
@@ -253,17 +230,11 @@ function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: CatalogTemp
   const actions = React.useMemo(() => createDeploymentActions(lifetime), [lifetime]);
   const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title, template: props.template }),
     [props.templateRef, props.title, props.template]);
-  const { leaveTo, onApprovalRequested } = useDeployExits(props);
+  const { onSaved, onApprovalRequested } = useDeployExits(props);
   return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId={null} projectChoice={projectChoice} catalogApp={catalogApp}
     phone={props.phone} actions={actions} platformAvailable initialMachineId={props.machineId} initialTargetKey={props.targetId}
     steps={props.steps} onApprovalRequested={onApprovalRequested} onDiscard={props.onLeave}
-    onSaved={(environmentId, next) => {
-      const selection = projectChoice.selection;
-      const projectSourceId = next?.projectSourceId ?? (selection && 'projectSourceId' in selection ? selection.projectSourceId : null);
-      if (projectSourceId) leaveTo(buildDeploymentEnvironmentHref({ serverId: lifetime.scope.serverId, projectSourceId,
-        environmentId, ...(next?.tab ? { tab: next.tab } : {}) }));
-      else props.onLeave();
-    }} />;
+    onSaved={onSaved} />;
 }
 
 /**

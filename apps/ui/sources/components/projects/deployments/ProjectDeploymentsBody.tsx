@@ -477,9 +477,9 @@ const ProjectDeploymentsPage = React.memo(
         actions={props.actions ?? null}
         onApprovalRequested={approval.requestApproval}
         platformAvailable={platformLink !== null}
-        onSaved={(id, next) => {
+        onSaved={(id, { tab }) => {
           setSelection({ environmentId: id, deploymentId: null });
-          if (next?.tab) navigateEnvironment({ tab: next.tab, section: null });
+          if (tab) navigateEnvironment({ tab, section: null });
           else ownDraft?.promoteAfterCreate?.(id);
           void refresh();
         }}

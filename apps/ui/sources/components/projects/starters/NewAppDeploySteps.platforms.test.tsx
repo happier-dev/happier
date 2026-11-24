@@ -116,7 +116,8 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
         expect(screen.findHostByTestId('project-deployments.draft.cantRun')).not.toBeNull(),
       );
       const text = screen.getTextContent();
-      expect(text).toMatch(/repository.*own server/i);
+      const { t } = await import('@/text');
+      expect(text).toContain(t('projects.deployments.recommendation.requiresRepositoryMany'));
       expect(text).toContain('Cloudflare Pages');
       expect(text).toContain('Cloudflare Workers');
       expect(text).not.toContain('Alpha runtime');

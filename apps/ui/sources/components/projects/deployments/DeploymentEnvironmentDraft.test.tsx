@@ -51,9 +51,12 @@ const repository = ProjectSourceRepositorySelectorV1Schema.parse({
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
-  it.each(['compose', 'image', 'unconfirmed image'] as const)('settles a repository-free Project with its %s Environment only at final confirmation', async scenario => {
+  it.each(['compose', 'image', 'unconfirmed image', 'partial image', 'legacy partial image', 'unconfirmed partial image'] as const)('settles a repository-free Project with its %s Environment only at final confirmation', async scenario => {
     const kind = scenario === 'compose' ? 'compose' : 'image';
     const unknown = scenario === 'unconfirmed image';
+    const legacyPartial = scenario === 'legacy partial image';
+    const unconfirmedPartial = scenario === 'unconfirmed partial image';
+    const partial = scenario === 'partial image' || legacyPartial || unconfirmedPartial;
     const { useDeploymentProjectChoice } = await import('./DeploymentProjectChoice');
     const serverId = await homes.addHome({ name: 'New app', serverUrl: `https://draft-new-project-${kind}.test`, accountId: 'alice',
       serverIdentityId: `srv_${(kind === 'compose' ? 'b' : 'c').repeat(32)}`, currentAccount: true });
@@ -65,10 +68,20 @@ describe('Environment draft Machine Home', () => {
     const discard = vi.fn();
     try {
       homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      const domainRefusal = partial ? DeploymentTemplateInstantiationPartialV1Schema.parse({
+        kind: 'partial', phase: 'domains', errorCode: unconfirmedPartial ? 'outcome_unknown' : 'foreign_effect_conflict',
+        environmentId: 'created-environment', revision: 1, savedSecrets: [],
+        ...(legacyPartial ? {} : { projectSourceId: 'created-project' }),
+        deployment: { ok: true, environmentId: 'created-environment', revision: 1,
+          deploymentId: 'saved-deployment', deploymentRevision: 1, state: 'succeeded' },
+      }) : null;
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
         failure: result => result === 'lost-create-reply'
-          ? { errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: true } : null,
+          ? { errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: true }
+          : domainRefusal && result === domainRefusal
+            ? { errorCode: domainRefusal.errorCode, error: domainRefusal.errorCode, details: domainRefusal, effectAttempted: true }
+            : null,
         execute: input => {
           if (typeof input === 'object' && input !== null && 'mode' in input) {
             const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
@@ -81,6 +94,7 @@ describe('Environment draft Machine Home', () => {
           }
           committed.push(DeploymentEnvironmentCreateInputV1Schema.parse(input));
           if (unknown) return 'lost-create-reply';
+          if (domainRefusal) return domainRefusal;
           return { ok: true, environmentId: 'created-environment', projectSourceId: 'created-project', revision: 1 };
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
@@ -123,6 +137,26 @@ describe('Environment draft Machine Home', () => {
         await act(async () => header().props.primaryAction.onPress());
         expect(discard).toHaveBeenCalledOnce();
         expect(saved).toHaveLength(0);
+      } else if (partial) {
+        const { t } = await import('@/text');
+        await waitForHomeGovernance(async () => { await act(async () => {});
+          expect(header().props.primaryAction.title).toBe(t(legacyPartial
+            ? 'projects.deployments.createOutcomeCheck' : 'projects.deployments.openEnvironment'));
+        });
+        expect(saved).toHaveLength(0);
+        await act(async () => header().props.primaryAction.onPress());
+        if (legacyPartial || unconfirmedPartial) {
+          const { buildDeploymentEnvironmentHref, SERVICES_ROUTE } = await import('./deploymentNavigation');
+          const homeId = account.accountLifetime.scope.serverId;
+          expect(routerMock.spies.push).toHaveBeenLastCalledWith(legacyPartial
+            ? `${SERVICES_ROUTE}?serverId=${encodeURIComponent(homeId)}`
+            : buildDeploymentEnvironmentHref({ serverId: homeId, projectSourceId: 'created-project',
+              environmentId: 'created-environment', deploymentId: 'saved-deployment' }));
+          expect(discard).toHaveBeenCalledOnce();
+          expect(saved).toHaveLength(0);
+        } else {
+          expect(saved).toEqual([['created-environment', { projectSourceId: 'created-project', tab: 'domains' }]]);
+        }
       } else {
         await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved).toHaveLength(1); });
         expect(saved).toEqual([['created-environment', { projectSourceId: 'created-project' }]]);
@@ -588,7 +622,7 @@ describe('Environment draft Machine Home', () => {
         expect(header().props.primaryAction.title).toBe(reviewTitle);
         await act(async () => header().props.primaryAction.onPress());
         if (outcome === 'confirmed') {
-          await waitForHomeGovernance(() => expect(saved).toEqual([['copied-environment', undefined]]));
+          await waitForHomeGovernance(() => expect(saved).toEqual([['copied-environment', { projectSourceId: 'source-app' }]]));
           expect(creates).toBe(1);
         } else {
           await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.refused')).not.toBeNull());
@@ -607,7 +641,7 @@ describe('Environment draft Machine Home', () => {
       expect(screen.getTextContent()).toContain('copied-environment');
       expect(header().props.cancelAction.testID).not.toBe('project-deployments.draft.back');
       await act(async () => header().props.primaryAction.onPress());
-      expect(saved).toEqual([['copied-environment', { tab: 'variables' }]]);
+      expect(saved).toEqual([['copied-environment', { projectSourceId: 'source-app', tab: 'variables' }]]);
       expect(creates).toBe(1);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
@@ -1333,9 +1367,9 @@ describe('Environment draft Machine Home', () => {
         expect(saved).toEqual([]);
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
         await act(async () => header().props.primaryAction.onPress());
-        expect(saved).toEqual([['platform-environment', { tab: 'settings' }]]);
+        expect(saved).toEqual([['platform-environment', { projectSourceId: 'source-app', tab: 'settings' }]]);
       } else {
-        expect(saved).toEqual([['platform-environment', undefined]]);
+        expect(saved).toEqual([['platform-environment', { projectSourceId: 'source-app' }]]);
       }
       await screen.unmount();
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
@@ -1467,7 +1501,7 @@ describe('Environment draft Machine Home', () => {
         source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
         providerCreate: { providerAccountId: 'organization', resourceName: 'new-project',
           productionBranch: 'main', sourceMethod: 'upload', providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } });
-      expect(saved).toEqual([['created-environment', undefined]]);
+      expect(saved).toEqual([['created-environment', { projectSourceId: 'source-app' }]]);
       await screen.unmount();
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
   });

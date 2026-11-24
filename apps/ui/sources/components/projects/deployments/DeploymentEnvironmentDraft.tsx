@@ -105,6 +105,15 @@ import {
 
 type Actions = ReturnType<typeof createDeploymentActions>;
 type PreparedCreate = Pick<Awaited<ReturnType<Actions['prepareCreate']>>, 'review' | 'run'>;
+type SavedEnvironment = Readonly<{ environmentId: string; projectSourceId?: string; revision: number }>;
+
+function refusedPlatformLink(outcome: Extract<DeploymentActionOutcome, { kind: 'refused' }>, saved: SavedEnvironment): DeploymentActionOutcome {
+  return { ...outcome, progress: {
+    kind: 'partial', ...saved,
+    phase: 'target', savedSecrets: [], errorCode: outcome.code,
+  } };
+}
+
 const DEFAULT_COMPOSE_PATH = 'compose.yaml';
 /** The own-server target is the catalog's own identity, so a suggested `targetId` resolves to the Machine card as is. */
 const OWN_SERVER_TARGET = OWN_SERVER_DEPLOYMENT_TARGET_V1.id;
@@ -159,7 +168,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       /** Where a door already chose (a suggested platform); the recommendation owner still decides what is offered. */
       initialTargetKey?: string | null;
       onApprovalRequested: (artifactId: string) => void;
-      onSaved: (environmentId: string, next?: Readonly<{ tab?: DeploymentEnvironmentTabV1; projectSourceId?: string }>) => void;
+      onSaved: (environmentId: string, next: Readonly<{ tab?: DeploymentEnvironmentTabV1; projectSourceId: string }>) => void;
       /** Whether this viewer can link a platform; without it the draft offers machines only. */
       platformAvailable?: boolean;
       onDiscard: () => void;
@@ -248,11 +257,12 @@ export const DeploymentEnvironmentDraft = React.memo(
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
     const createOutcomeUnknown = refusal?.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(refusal.code);
     const recoveryEnvironmentId = partial?.environmentId;
+    const recoveryProjectSourceId = partial?.projectSourceId ?? sourceId;
     const recoveryReceipt = partial?.deployment;
     const recoveryDeploymentId = recoveryReceipt && 'deploymentId' in recoveryReceipt ? recoveryReceipt.deploymentId : undefined;
     const checkCreatedEnvironment = () => {
-      const href = props.lifetime && sourceId && recoveryEnvironmentId
-        ? buildDeploymentEnvironmentHref({ serverId: props.lifetime.scope.serverId, projectSourceId: sourceId,
+      const href = props.lifetime && recoveryProjectSourceId && recoveryEnvironmentId
+        ? buildDeploymentEnvironmentHref({ serverId: props.lifetime.scope.serverId, projectSourceId: recoveryProjectSourceId,
             environmentId: recoveryEnvironmentId, ...(recoveryDeploymentId ? { deploymentId: recoveryDeploymentId } : {}) })
         : props.lifetime ? `${SERVICES_ROUTE}?serverId=${encodeURIComponent(props.lifetime.scope.serverId)}` : SERVICES_ROUTE;
       props.onDiscard();
@@ -361,6 +371,10 @@ export const DeploymentEnvironmentDraft = React.memo(
         ? composeDocument.trim().length > 0
         : branch !== null && (onPlatform || composePath.trim().length > 0)));
     const { actions, onSaved, onApprovalRequested } = props;
+    const openSavedEnvironment = (environmentId: string, projectSourceId: string | null | undefined, tab?: DeploymentEnvironmentTabV1) => {
+      if (projectSourceId) onSaved(environmentId, { projectSourceId, ...(tab ? { tab } : {}) });
+      else checkCreatedEnvironment();
+    };
     // A retention choice belongs to the Machine it was made for.
     React.useEffect(() => {
       setRetention('alwaysOn');
@@ -398,13 +412,13 @@ export const DeploymentEnvironmentDraft = React.memo(
         return;
       }
       if (partial) {
-        if (partial.environmentId) onSaved(partial.environmentId, { tab: deploymentPartialRecoveryTab(partial) });
+        if (recoveryEnvironmentId) openSavedEnvironment(recoveryEnvironmentId, recoveryProjectSourceId, deploymentPartialRecoveryTab(partial));
         return;
       }
       if (!valid || !actions || !chosen?.installationId || saving || !props.lifetime) return;
       setSaving(true);
       setRefusal(null);
-      let createdEnvironment: Readonly<{ environmentId: string; revision: number }> | null = null;
+      let createdEnvironment: SavedEnvironment | null = null;
       try {
         if (!prepared) {
           // A folder is opened on its Machine (Open's attach) only now, on the person's Save; the definition names it.
@@ -451,7 +465,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           setRefusal({ kind: 'refused', reason: 'other', code: created.error });
           return;
         }
-        createdEnvironment = created;
+        createdEnvironment = { environmentId: created.environmentId, revision: created.revision, projectSourceId: created.projectSourceId ?? sourceId ?? undefined };
         if (platformTarget && platformProvider) {
           // An existing resource links as reviewed; Create new makes it now, through the editor's own create intent.
           const environment = { id: created.environmentId, revision: created.revision };
@@ -460,19 +474,17 @@ export const DeploymentEnvironmentDraft = React.memo(
             : await buildPlatformTargetCreateLinkInput({ serverId: props.lifetime.scope.serverId, target: platformTarget, environment,
               requestKey: platformProvider.requestKey, providerCreate: platformProvider.providerCreate });
           if (!linkInput) {
-            setRefusal({ kind: 'refused', reason: 'other', code: 'invalid_parameters', progress: { kind: 'partial',
-              environmentId: created.environmentId, revision: created.revision, phase: 'target', savedSecrets: [], errorCode: 'invalid_parameters' } });
+            setRefusal(refusedPlatformLink({ kind: 'refused', reason: 'other', code: 'invalid_parameters' }, createdEnvironment));
             return;
           }
           const linked = await actions.link(linkInput, { confirmed: true });
           if (!linked.ok) {
             const outcome = readDeploymentActionResult(linked);
-            if (outcome.kind === 'refused') setRefusal({ ...outcome, progress: { kind: 'partial',
-              environmentId: created.environmentId, revision: created.revision, phase: 'target', savedSecrets: [], errorCode: outcome.code } });
+            if (outcome.kind === 'refused') setRefusal(refusedPlatformLink(outcome, createdEnvironment));
             return;
           }
         }
-        onSaved(created.environmentId, props.projectChoice && created.projectSourceId ? { projectSourceId: created.projectSourceId } : undefined);
+        openSavedEnvironment(createdEnvironment.environmentId, createdEnvironment.projectSourceId);
       } catch (error) {
         // Declining the controller's review in this step is the person's answer, not a failure.
         if (isActionApprovalDeclinedErrorCode((error as { code?: unknown } | null)?.code)) return;
@@ -482,12 +494,10 @@ export const DeploymentEnvironmentDraft = React.memo(
           setFormStep('configure');
         }
         if (outcome.kind === 'approval') {
-          if (createdEnvironment) onSaved(createdEnvironment.environmentId, { tab: 'settings' });
+          if (createdEnvironment) openSavedEnvironment(createdEnvironment.environmentId, createdEnvironment.projectSourceId, 'settings');
           onApprovalRequested(outcome.artifactId);
         }
-        setRefusal(createdEnvironment && outcome.kind === 'refused' ? { ...outcome, progress: { kind: 'partial',
-          environmentId: createdEnvironment.environmentId, revision: createdEnvironment.revision,
-          phase: 'target', savedSecrets: [], errorCode: outcome.code } } : outcome);
+        setRefusal(createdEnvironment && outcome.kind === 'refused' ? refusedPlatformLink(outcome, createdEnvironment) : outcome);
       } finally {
         setSaving(false);
       }
@@ -569,8 +579,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       setTargetKey(next);
     };
 
-    const saveTitle = createOutcomeUnknown
-        ? sourceId && recoveryEnvironmentId ? t('projects.deployments.openEnvironment') : t('projects.deployments.createOutcomeCheck')
+    const saveTitle = createOutcomeUnknown || recoveryEnvironmentId
+        ? recoveryProjectSourceId && recoveryEnvironmentId ? t('projects.deployments.openEnvironment') : t('projects.deployments.createOutcomeCheck')
         : partial
         ? t('projects.deployments.openEnvironment')
         : props.copyFrom
