@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useLaunchCurtainState } from '@/boot/launchCurtain';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
@@ -28,20 +29,25 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => true,
 }));
 
-/** A cold start's loading chain: boot → Account restore → a pane loading → Home loading → Home drawn. */
-type Stage = 'boot' | 'restore' | 'pane' | 'home-loading' | 'home';
+/** The first frame owns launch while the lazy pane loads independently. */
+type Stage = 'boot' | 'restore' | 'home-loading' | 'home';
 
-function App({ stage }: Readonly<{ stage: Stage }>) {
+function CurtainProbe() {
+  return React.createElement('CurtainProbe', { state: useLaunchCurtainState() });
+}
+
+function App({ stage, paneLoading = false }: Readonly<{ stage: Stage; paneLoading?: boolean }>) {
   return (
     <>
       {stage === 'boot' ? <AppLaunchState testID="app-boot-loading" /> : null}
       {stage === 'restore' ? (
         <AppLaunchState testID="workspace-account-restoring" />
       ) : null}
-      {stage === 'pane' ? <PaneLoadingFallback /> : null}
+      {paneLoading ? <PaneLoadingFallback testID="lazy-pane-loading" /> : null}
       {stage === 'home-loading' ? (
         <HomeHubLoading testID="home-hub.loading" />
       ) : null}
+      <CurtainProbe />
       <LaunchCurtain />
     </>
   );
@@ -67,14 +73,16 @@ describe('launch curtain', () => {
     standardCleanup();
   });
 
-  it('keeps one Loading planet from boot through restore and loading panes until the destination has drawn', async () => {
+  it('hands the curtain from boot through restore to Home, then releases it while a lazy pane is still loading', async () => {
     const screen = await renderScreen(<App stage="boot" />);
     const curtain = () => screen.findAllHostsByTestId('launch-curtain');
     expect(curtain()).toHaveLength(1);
     expect(screen.findAllHostsByTestId('launch-curtain-still')).toHaveLength(1);
     const firstCurtain = curtain()[0];
-    for (const stage of ['restore', 'pane', 'home-loading'] as const) {
-      await screen.update(<App stage={stage} />);
+    const readCurtain = () => screen.root.findByType('CurtainProbe').props.state;
+    const pendingPane = () => screen.findHostByTestId('lazy-pane-loading');
+    for (const stage of ['restore', 'home-loading'] as const) {
+      await screen.update(<App stage={stage} paneLoading />);
       await frame();
       await frame();
       // The same curtain instance, still up: no surface swap shows the page behind it.
@@ -83,19 +91,21 @@ describe('launch curtain', () => {
       expect(curtain()[0]!.props.pointerEvents).toBe('none');
       expect(curtain()[0]!.props.inert).toBe(true);
     }
-    // Home has drawn: nothing holds the curtain across a painted frame, so it leaves (this DOM has no Web
-    // Animations, so the fade completes at once) and takes the shell's Still frame with it.
-    await screen.update(<App stage="home" />);
+    expect(readCurtain()).toBe('up');
+    expect(pendingPane()).not.toBeNull();
+    await screen.update(<App stage="home" paneLoading />);
     await frame();
     expect(curtain()).toHaveLength(1);
     await frame();
+    // The DOM has no Web Animations, so LaunchCurtain completes its fade at once.
+    expect(readCurtain()).toBe('gone');
     expect(curtain()).toHaveLength(0);
+    expect(pendingPane()).not.toBeNull();
     expect(document.documentElement.classList.contains('launch-planet')).toBe(
       false,
     );
-    // A loading pane later in the session never raises it again.
-    await screen.update(<App stage="pane" />);
-    await frame();
-    expect(curtain()).toHaveLength(0);
+    await screen.update(<App stage="home" />);
+    expect(pendingPane()).toBeNull();
+    expect(readCurtain()).toBe('gone');
   });
 });

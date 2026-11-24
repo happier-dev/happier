@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -12,7 +11,5 @@ import { t } from '@/text';
 export const PaneLoadingFallback = React.memo((props: Readonly<{ testID?: string;
     /** What is opening, when the host knows it ("Opening Price point…"); otherwise a quiet "Loading…". */
     title?: string }>) => {
-    // At launch, the Loading planet stays until the pane has something to show.
-    useLaunchCurtainHold(true);
     return <SurfaceStateCard testID={props.testID} kind="loading" title={props.title ?? t('common.loading')} accessibilitySemantics="status" />;
 });
