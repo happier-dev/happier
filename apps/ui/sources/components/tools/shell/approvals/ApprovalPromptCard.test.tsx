@@ -439,7 +439,7 @@ describe('ApprovalPromptCard', () => {
         }
 
         it.each([
-            ['held', 'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+            ['held', 'session.askRecord.waitsForResume', 'errors.sessionHeldByPerson'],
             ['rejected', 'session.askRecord.notSent', null],
             ['outcomeUnknown', 'session.askRecord.unsure', 'session.askRecord.unsureHint'],
         ] as const)('keeps a %s result\'s receipt on the card at its call, saying where it went', async (status, detail, reason) => {

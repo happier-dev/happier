@@ -786,6 +786,20 @@ it('shows a folded card\'s first fact, keeping only the remaining facts behind D
     expect(screen.getTextContent()).toContain('http://127.0.0.1:4000');
 });
 
+it('folds only codes behind Technical details itself when a folded card has no facts after its first', async () => {
+    // "Details" names facts; with nothing but ids behind it, the card shows the one Technical details disclosure, one press deep.
+    const presentation = { rows: [
+        { kind: 'value', path: 'title', title: 'Title', value: 'W28 label group' },
+        { kind: 'value', path: 'groupId', title: 'Group id', value: 'group-7f3a', technical: true },
+    ], unrepresentable: null } satisfies ApprovalActionFieldsPresentation;
+    const screen = await renderScreen(<ActionApprovalFieldsCard collapsed presentation={presentation} />);
+    expect(screen.getTextContent()).toContain('W28 label group');
+    expect(screen.getTextContent()).not.toContain(t('approvals.details'));
+    expect(screen.findAllByTestId('approvals.details-disclosure')).toHaveLength(0);
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    expect(screen.getTextContent()).toContain('group-7f3a');
+});
+
 it('reads an open card\'s arguments as one key/value table with no inner card heading, the technical line as its last row', async () => {
     const presentation = describeApprovalActionFields({ actionId: 'browser.view.open', actionArgs: {
         commandId: 'cmd-1', browserSessionId: 'browser-session-1', viewId: 'view-1', kind: 'openView', platform: 'web', focus: true,

@@ -10535,7 +10535,7 @@ const enSession = {
     noAnswer: 'No answer',
     noAnswerYet: 'No answer yet',
     sent: 'Sent',
-    waitsForYou: 'Waits for you',
+    waitsForResume: 'Waits for a resume',
     notSent: 'Not sent',
     notAnswered: 'Couldn’t answer',
     unsure: 'Not sure it was sent',

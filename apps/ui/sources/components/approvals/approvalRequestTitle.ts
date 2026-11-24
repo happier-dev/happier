@@ -49,7 +49,10 @@ export function resolveApprovalRequestTitle(
   // A plugin Update travels as `plugins.install`; its evaluated review says it updates the installed plugin.
   const actionTitle = actionId === 'plugins.install' && readPluginInstallApprovalChange(input.preview) === 'update'
     ? t('settingsPlugins.updatePluginTitle') : readApprovalActionTitle(actionId);
-  const presentation = presentActionApproval({ ...input, actionId, subject: input.subject });
+  // A subject named by the very value the request sets (a renamed Session already reads by its new title) would say
+  // that value twice; the title then names the Action alone and the value reads once, in the facts.
+  const subject = input.subject?.trim() && !readsActionArgValue(input.actionArgs, input.subject.trim()) ? input.subject : null;
+  const presentation = presentActionApproval({ ...input, actionId, subject });
   const [firstLineRaw, ...rest] = String(input.storedTitle ?? '').split('\n');
   let firstLine = (firstLineRaw ?? '').trim();
   for (const sessionId of input.sessionIds ?? []) {
@@ -123,6 +126,11 @@ export function readApprovalArtifactTitleInput(
     executionOriginV1: parsed.request.v === 2 ? parsed.request.executionOriginV1 : undefined,
     sessionIds,
   };
+}
+
+function readsActionArgValue(actionArgs: unknown, text: string): boolean {
+  if (!actionArgs || typeof actionArgs !== 'object' || Array.isArray(actionArgs)) return false;
+  return Object.values(actionArgs).some(value => typeof value === 'string' && value.trim() === text);
 }
 
 /** A person-facing name for a built-in Action, or none: a raw Action id is never shown as copy. */

@@ -7570,7 +7570,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               noAnswer: '無回答',
               noAnswerYet: '尚無回答',
               sent: '已傳送',
-              waitsForYou: '等你處理',
+              waitsForResume: '等待恢復',
               notSent: '未傳送',
               notAnswered: '無法回答',
               unsure: '不確定是否已傳送',

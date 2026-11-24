@@ -562,6 +562,23 @@ describe('PendingMessagesTranscriptBlock', () => {
             await screen.unmount();
         });
 
+        it('draws the row\'s inline actions in the menu\'s order, Remove last and in ink', async () => {
+            sessionValue = personStoppedSession(createSessionAccessFixture('owner'));
+            const screen = await renderHeld(vi.fn(async () => true));
+            await hoverPendingMessageRow(screen, 'pending-held');
+            const overlay = screen.findByTestId('pendingMessages.actionsOverlay:pending-held')!;
+            const strip = overlay.findAll(node => typeof node.props.tooltip === 'string' && typeof node.props.onPress === 'function')
+                .map(node => node.props.accessibilityLabel as string)
+                .filter((label, index, all) => all.indexOf(label) === index);
+            await screen.pressByTestIdAsync('pendingMessages.message:pending-held');
+            const menu = screen.findAllByType('DropdownMenuItem').map(item => String(item.props.accessibilityLabel));
+            expect(strip).toEqual(menu);
+            const remove = overlay.findAll(node => node.props.testID === 'pendingMessages.remove:pending-held'
+                && typeof node.props.tone === 'string')[0];
+            expect(remove?.props.tone).not.toBe('danger');
+            await screen.unmount();
+        });
+
         it('offers no delivery control to a viewer without send access', async () => {
             sessionValue = personStoppedSession(createSessionAccessFixture('view'));
             const resume = vi.fn(async () => true);

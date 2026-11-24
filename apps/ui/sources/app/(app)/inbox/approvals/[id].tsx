@@ -3,12 +3,17 @@ import { type Href } from 'expo-router';
 import { useLocalSearchParams, Stack } from '@/components/appShell/workspace/destinationRoute';
 
 import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { t } from '@/text';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 
 const single = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
 
 export function ApprovalDetailPage() {
+  const inheritedBack = useNavigationBackControl();
+  // A phone opened straight on an approval (a link, a notification) goes back to the Inbox that lists it.
+  const phoneBack = usePhoneDestinationBack('approvals:back', '/inbox');
   const { id, serverId, completionHref, completionFocusFrom, completionFocusTo } = useLocalSearchParams<{
     id: string;
     serverId?: string;
@@ -34,7 +39,9 @@ export function ApprovalDetailPage() {
   return (
     <>
       <Stack.Screen options={screenOptions} />
-      {React.createElement(ApprovalDetailScreen, detailProps)}
+      <NavigationBackChromeProvider control={phoneBack ?? inheritedBack}>
+        {React.createElement(ApprovalDetailScreen, detailProps)}
+      </NavigationBackChromeProvider>
     </>
   );
 }

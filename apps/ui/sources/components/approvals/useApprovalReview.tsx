@@ -598,16 +598,15 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       ? presentActionFailureTechnicalDetails({ errorCode: executionFailure.code, error: executionFailure.code }) : [])),
     ...(deliveryFailure?.technicalDetails.map(line => ({ ...line, key: `delivery-${line.key}` })) ?? []),
   ];
-  const failureHeadline = failureOutcome?.headline ?? t('detailPages.approval.failureTitle');
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.
   const recordedFill = parsed.kind === 'built_in' ? readConfidentialFillSettlement(parsed.request) : null;
   const fillNotEntered = recordedFill !== null && recordedFill.status !== 'filled';
-  const statusNamesOutcome = displayStatus === 'outcome_unknown' || displayStatus === 'not_run';
   // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
   // leads here; "no reason" is said only when nothing was recorded.
   const failureSummary = executionFailure === null ? undefined : failureOutcome
     ? failureOutcome.reason ?? (failureOutcome.message === null ? t('approvals.failureNoReason') : undefined)
     : fillNotEntered ? undefined : executionFailure.reason;
+  const failureStatement = executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? failureSummary : undefined;
   // One Technical details disclosure per page: the failure's code joins the arguments' own lines when
   // the Details card is shown, and otherwise sits with the failure.
   const failureCodeInDetails = Boolean((executionFailure?.code || deliveryFailure) && shownActionFields && shownActionFields.rows.length > 0
@@ -665,24 +664,16 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         testID="approvals.status"
         title={t('approvals.fieldStatus')}
         detail={statusLabel}
+        // One failure statement: why it failed (or, for an unknown outcome, what to do) is the Status row's own line,
+        // before where its result went. A before check's refusal says its reason in the checks block, once
+        // (lab wait-v-arefused); the page title already names what failed, so no "Couldn't finish" row repeats it.
+        subtitle={failureStatement}
+        subtitleLines={0}
         // A failed request reads in the failure role; every other status stays quiet.
         detailStyle={displayStatus === 'failed' ? { color: theme.colors.state.danger.textForeground } : undefined}
         mode="info"
         showChevron={false}
       />
-      {/* Why it failed follows its status at once, before where its result went. A before check's refusal
-          says its reason in the checks block, once (lab wait-v-arefused). */}
-      {executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? (
-        <Item
-          testID="approvals.execution-failure"
-          // The Status row already names an unknown outcome, so this row leads with what to do instead of repeating it.
-          title={statusNamesOutcome && failureSummary ? failureSummary : failureHeadline}
-          subtitle={statusNamesOutcome ? undefined : failureSummary}
-          subtitleLines={0}
-          mode="info"
-          showChevron={false}
-        />
-      ) : null}
       {deliveryReceipt ? (
         <Item testID="approvals.result-delivery" title={t('runs.delivery.title')}
           detail={deliveryReceipt.detail} subtitle={deliveryReceipt.subtitle}

@@ -9353,7 +9353,7 @@ localTailscale: {
           noAnswer: '回答なし',
           noAnswerYet: 'まだ回答なし',
           sent: '送信済み',
-          waitsForYou: 'あなたを待っています',
+          waitsForResume: '再開待ち',
           notSent: '未送信',
           notAnswered: '回答できませんでした',
           unsure: '送信されたか不明',

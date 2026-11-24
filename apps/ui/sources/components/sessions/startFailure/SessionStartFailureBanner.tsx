@@ -28,6 +28,8 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
                 tone="warning"
                 title={notice.title ?? t('session.startFailure.title')}
                 body={notice.message}
+                // Its one action stays on the title's line, where it is not moved by Technical details opening below.
+                actionsPlacement="title"
                 // The transcript row for this failure defers to the notice, so its raw cause moves here.
                 content={<RuntimeIssueDetails issue={notice.issue} />}
                 {...(props.signIn

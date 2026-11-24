@@ -107,7 +107,7 @@ function describeTargetState(
     case 'held':
       return {
         variant: 'attention',
-        label: t('session.askRecord.waitsForYou'),
+        label: t('session.askRecord.waitsForResume'),
         icon: 'pause-circle',
         failed: false,
       };

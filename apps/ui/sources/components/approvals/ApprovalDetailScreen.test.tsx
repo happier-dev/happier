@@ -1405,7 +1405,7 @@ describe('ApprovalDetailScreen', () => {
       <ApprovalDetailScreen artifactId="artifact-1" completionHref="/" />,
     );
     // The readable reason leads; its typed code waits in the technical disclosure.
-    const reason = approvalItem(screen, 'approvals.execution-failure')?.props.subtitle;
+    const reason = approvalItem(screen, 'approvals.status')?.props.subtitle;
     expect(typeof reason).toBe('string');
     expect(reason).not.toContain('provider_unavailable');
     const { ApprovalTechnicalDetails } = await import('./ActionApprovalFieldsCard');
@@ -1593,7 +1593,7 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
 
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('approvals.staleFailure');
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('approvals.staleFailure');
   });
 
   it('names an unattempted effect in Status and an attempted failure by its action', async () => {
@@ -1607,16 +1607,18 @@ describe('ApprovalDetailScreen', () => {
     const outcomeOf = async (request: ApprovalRequestV2) => {
       currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
       const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-      return { status: approvalStatus(screen),
-        title: approvalItem(screen, 'approvals.execution-failure')?.props.title };
+      // One failure statement: the Status row carries the reason; no second "Couldn't finish" row repeats the title.
+      return { status: approvalStatus(screen), reason: approvalItem(screen, 'approvals.status')?.props.subtitle,
+        failureRow: screen.findByTestId('approvals.execution-failure') !== null };
     };
 
     expect(await outcomeOf(failedWith({
       errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable', effectAttempted: false,
-    }))).toEqual({ status: 'approvals.status.notRun', title: 'approvals.failureNoReason' });
+    }))).toEqual({ status: 'approvals.status.notRun', reason: 'approvals.failureNoReason', failureRow: false });
     expect(await outcomeOf(failedWith({
       errorCode: 'executor_failed', error: 'Executor failed', effectAttempted: true,
-    }))).toMatchObject({ title: 'approvals.failureNamed' });
+    // An attempted failure with no recorded reason reads "Failed" alone: the title already names what failed.
+    }))).toMatchObject({ reason: undefined, failureRow: false });
   });
 
   it('says what failed when a recorded failure carries only a machine code, never that the decision could not be saved', async () => {
@@ -1631,7 +1633,7 @@ describe('ApprovalDetailScreen', () => {
       });
       currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
       const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-      return approvalItem(screen, 'approvals.execution-failure')?.props.subtitle;
+      return approvalItem(screen, 'approvals.status')?.props.subtitle;
     };
 
     expect(await reasonOf('plugin_change_daemon_unavailable')).toBe('approvals.pluginChangeDaemonUnavailable');
@@ -1655,12 +1657,10 @@ describe('ApprovalDetailScreen', () => {
     currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-    const failure = approvalItem(screen, 'approvals.execution-failure');
-
-    // Refused before any effect: a neutral "Not run", and the row says why, once.
+    // Refused before any effect: a neutral "Not run", and the Status row says why, once.
     expect(approvalStatus(screen)).toBe('approvals.status.notRun');
-    expect(failure?.props.title).toBe('approvals.failureNotAuthorized');
-    expect(failure?.props.subtitle).toBeUndefined();
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('approvals.failureNotAuthorized');
+    expect(screen.findByTestId('approvals.execution-failure') === null).toBe(true);
   });
 
   it('says why the Action failed right after its status, before where its result went', async () => {
@@ -1680,7 +1680,9 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
     const order = screen.findAllByType(Item).map(node => node.props.testID)
       .filter(id => id === 'approvals.status' || id === 'approvals.execution-failure' || id === 'approvals.result-delivery');
-    expect(order).toEqual(['approvals.status', 'approvals.execution-failure', 'approvals.result-delivery']);
+    // The reason is the Status row's own line, so Delivery follows it directly.
+    expect(order).toEqual(['approvals.status', 'approvals.result-delivery']);
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBeTruthy();
     await screen.unmount();
   });
 
@@ -1694,11 +1696,9 @@ describe('ApprovalDetailScreen', () => {
     currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-    const failure = approvalItem(screen, 'approvals.execution-failure');
-
     expect(approvalStatus(screen)).toBeTruthy();
-    expect(failure?.props.title).toBe('errors.scmOutcomeUnknown');
-    expect(failure?.props.subtitle).toBeUndefined();
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('errors.scmOutcomeUnknown');
+    expect(screen.findByTestId('approvals.execution-failure') === null).toBe(true);
   });
 
   it('answers a shared check’s consent on the page as the transcript card does: the check leads, Allow · Skip answer it', async () => {
@@ -1943,7 +1943,7 @@ describe('ApprovalDetailScreen', () => {
   });
 
   it.each([
-    ['held', 'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+    ['held', 'session.askRecord.waitsForResume', 'errors.sessionHeldByPerson'],
     ['rejected', 'session.askRecord.notSent', undefined],
     ['outcomeUnknown', 'session.askRecord.unsure', 'session.askRecord.unsureHint'],
     ['accepted', undefined, undefined],
@@ -2046,7 +2046,7 @@ describe('ApprovalDetailScreen', () => {
   it.each([
     ['held for a person-stopped Session', { status: 'held', localId: 'approval-result:original', code: 'session_input_target_unavailable',
       failureCause: { phase: 'session.input.admission', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } },
-    'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+    'session.askRecord.waitsForResume', 'errors.sessionHeldByPerson'],
     ['of unknown outcome', { status: 'outcomeUnknown', localId: 'approval-result:original', code: 'session_input_outcome_unknown' },
       'session.askRecord.unsure', 'session.askRecord.unsureHint'],
   ] as const)('says a result delivery %s beside the executed Action, from its receipt', async (_name, delivery, detail, subtitle) => {
@@ -2099,7 +2099,7 @@ describe('ApprovalDetailScreen', () => {
     const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
     const reason = formatWorkflowProblemMessage(new WorkflowActionError({ rawCode: failure.errorCode,
       message: failure.error, failure }));
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe(reason);
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe(reason);
     const { assertApprovalExecutionSucceeded, presentApprovalFailure } =
       await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
     let caught: unknown;
@@ -2175,7 +2175,7 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const { presentProviderError } = await import('@/providers/connection/errorPresentation');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle)
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle)
       .toBe(presentProviderError('provider_connection_invalid').descriptionKey);
     expect(readRenderedText(screen)).not.toContain('provider_connection_invalid');
   });
@@ -2571,8 +2571,8 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-api-artifact-1" />);
     await screen.pressByTestIdAsync('approvals.approve');
 
-    if (errorCode === 'approval_stale') expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('approvals.staleFailure');
-    else expect(approvalItem(screen, 'approvals.execution-failure')).toBeTruthy();
+    if (errorCode === 'approval_stale') expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('approvals.staleFailure');
+    expect(screen.findByTestId('approvals.execution-failure') === null).toBe(true);
     expect(readRenderedText(screen)).toContain('approvals.status.failed');
     expect(readRenderedText(screen)).not.toContain('approvals.status.approved');
     expect(screen.findByTestId('approvals.approve')).toBeNull();
@@ -2977,7 +2977,7 @@ describe('ApprovalDetailScreen', () => {
     expect(readRenderedText(screen)).toContain(
       'The selected machine is offline.',
     );
-    expect(screen.findByTestId('approvals.execution-failure')).not.toBeNull();
+    expect(screen.findByTestId('approvals.execution-failure') === null).toBe(true);
     expect(screen.findByTestId('approvals.approve')).toBeNull();
     expect(screen.findByTestId('approvals.reject')).toBeNull();
   });

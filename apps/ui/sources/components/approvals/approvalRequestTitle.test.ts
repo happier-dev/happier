@@ -120,4 +120,15 @@ describe('resolveApprovalRequestTitle', () => {
         expect(titleOf(install)).toBe('Install plugin · Acme Storage');
         expect(readActionApprovalReview(install).approveVerb).toBe('Install');
     });
+
+    it('does not name the subject by the value the request sets', () => {
+        // A renamed Session already carries its new title: naming it by that title would say the value twice.
+        const actionArgs = { sessionId: 'session-1', title: 'Review the storefront guide' };
+        const renamed = resolveApprovalRequestTitle({ storedTitle: null, actionId: 'session.title.set', actionArgs,
+            subject: 'Review the storefront guide' });
+        expect(renamed.title).not.toContain('Review the storefront guide');
+        const named = resolveApprovalRequestTitle({ storedTitle: null, actionId: 'session.title.set', actionArgs,
+            subject: 'Billing cleanup' });
+        expect(named.title).toContain('Billing cleanup');
+    });
 });

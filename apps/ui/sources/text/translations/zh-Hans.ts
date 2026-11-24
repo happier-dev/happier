@@ -8732,7 +8732,7 @@ export const zhHans: TranslationStructure = {
         noAnswer: '无回答',
         noAnswerYet: '尚无回答',
         sent: '已发送',
-        waitsForYou: '等你处理',
+        waitsForResume: '等待恢复',
         notSent: '未发送',
         notAnswered: '无法回答',
         unsure: '不确定是否已发送',

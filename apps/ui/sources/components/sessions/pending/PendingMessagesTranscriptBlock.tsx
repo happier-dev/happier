@@ -603,6 +603,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         // nothing that reads or delivers the content is offered until the real text arrives.
         const isContentLoading = message.pendingDecryption?.kind === 'loading';
         const isHostFollowInput = presentation.isHostInput;
+        // A host line without a source to open says its delivery state on its own line, not on a line of its own.
+        const hostStatusInline = isHostFollowInput && !presentation.followInput && !presentation.hostOnboarding;
         // A new Bot's first-run seed is the host's line: the person never copies, edits or resends it as their words,
         // and a delivery that cannot run is the Session's failure, said once by its delivery presenter.
         const isHostOnboarding = presentation.hostOnboarding;
@@ -725,15 +727,17 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, visualState, session);
         const canSendAsNew = message.pendingRecovery?.canSendAsNew === true;
 
-	        const menuItems = (() => {
-	            const items: DropdownMenuItem[] = [];
+	        // One ordered list feeds the menu and the row's inline actions, so both read alike: the way forward after Copy,
+	        // Remove last.
+	        const rowActions = (() => {
+	            const items: PendingRowAction[] = [];
                 if (!presentation.canMutate) return items;
                 if (text && !isContentLoading && !isHostOnboarding) {
                     items.push({
                         id: 'copy',
                         testID: `pendingMessages.menu.copy:${message.id}`,
                         title: t('common.copy'),
-                        icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
+                        icon: 'copy',
                     });
                 }
                 if (transientAction?.id === 'interrupt_and_run') {
@@ -741,57 +745,82 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         id: 'interruptAndRun',
                         testID: `pendingMessages.interruptAndRun:${message.id}`,
                         title: t('session.pendingMessages.actions.interruptAndRunNow'),
-                        icon: <Icon name="stop-circle" size={16} color={theme.colors.text.secondary} />,
+                        icon: 'stop-circle',
                         disabled: deliveryActionBusy || pendingInputInterruptAndRun.busy,
                     });
                 }
                 // The way forward (Steer, Deliver and resume, Send now) leads, right after Copy; Remove stays last.
                 const forwardAt = items.length;
 	            if (launchFailedDraftId) {
-	                items.push({ id: 'openDraft', testID: `pendingMessages.menu.openDraft:${message.id}`, title: t('session.pendingMessages.actions.openDraft'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
+	                items.push({ id: 'openDraft', testID: `pendingMessages.menu.openDraft:${message.id}`, title: t('session.pendingMessages.actions.openDraft'), icon: 'pencil' });
 	            } else if (isCancellationState) {
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: 'trash', disabled: deliveryActionBusy });
 	            } else if (visualState.kind === 'send_failed') {
-	                items.push({ id: 'retrySend', title: t('session.pendingMessages.actions.retryDelivery'), icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'retrySend', title: t('session.pendingMessages.actions.retryDelivery'), icon: 'arrow-clockwise', disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: 'trash', disabled: deliveryActionBusy });
 	            } else if (hasDurableOutboxOperation) {
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: 'trash', disabled: deliveryActionBusy });
 	            } else if (isServerDeliveryInProgress) {
-	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: 'paper-plane', disabled: deliveryActionBusy });
 	            } else if (isUncertainDelivery) {
-	                items.push({ id: 'continueWaiting', testID: `pendingMessages.continueWaiting:${message.id}`, title: t('session.pendingMessages.actions.continueWaiting'), icon: <Icon name="clock" size={16} color={theme.colors.text.secondary} /> });
-	                items.push({ id: 'markDeliveryHandled', testID: `pendingMessages.markDeliveryHandled:${message.id}`, title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'dismissDelivery', testID: `pendingMessages.dismissDelivery:${message.id}`, title: t('session.pendingMessages.actions.dismiss'), icon: <Icon name="archive" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'continueWaiting', testID: `pendingMessages.continueWaiting:${message.id}`, title: t('session.pendingMessages.actions.continueWaiting'), icon: 'clock', menuOnly: true });
+	                items.push({ id: 'markDeliveryHandled', testID: `pendingMessages.markDeliveryHandled:${message.id}`, title: t('session.pendingMessages.actions.markHandled'), icon: 'checks', disabled: deliveryActionBusy });
+	                items.push({ id: 'dismissDelivery', testID: `pendingMessages.dismissDelivery:${message.id}`, title: t('session.pendingMessages.actions.dismiss'), icon: 'archive', disabled: deliveryActionBusy });
+	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: 'paper-plane', disabled: deliveryActionBusy });
 	            } else if (usesDeliveryResolutionActions) {
-	                items.push({ id: 'markDeliveryHandled', title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'markDeliveryHandled', title: t('session.pendingMessages.actions.markHandled'), icon: 'checks', disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: 'trash', disabled: deliveryActionBusy });
                 } else if (canUsePendingQueueActions) {
-		                if (!isContentLoading && !isHostOnboarding) items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
-		                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> });
+		                if (!isContentLoading && !isHostOnboarding) items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: 'pencil' });
+		                items.push({ id: 'remove', title: t('common.remove'), icon: 'trash' });
                 }
-	            const forward: DropdownMenuItem[] = [];
+	            const forward: PendingRowAction[] = [];
 	            if (canSteerNow && canUseDirectDeliveryActions) {
-	                forward.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> });
+	                forward.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: 'navigation-arrow' });
 	            }
 	            if (canUseDirectDeliveryActions && canDeliverByResume) {
 	                forward.push({
 	                    id: 'deliverAndResume',
 	                    testID: `pendingMessages.menu.deliverAndResume:${message.id}`,
 	                    title: t('session.pendingMessages.actions.deliverAndResume'),
-	                    icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />,
+	                    icon: 'paper-plane',
 	                    disabled: deliveryActionBusy,
 	                });
 	            } else if (canUseDirectDeliveryActions && !deliversByResume) {
 	                forward.push({
 	                    id: 'sendNow',
 	                    title: sendNowActionLabel,
-	                    icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />,
+	                    icon: 'paper-plane',
 	                });
 	            }
 	            items.splice(forwardAt, 0, ...forward);
 	            return items;
 	        })();
+	        const menuItems = toPendingRowMenuItems(rowActions, theme.colors.text.secondary);
+	        const runRowAction = async (itemId: string) => {
+            if (!presentation.canMutate) return;
+            setOpenMenuKey(null);
+            if (itemId === 'copy') await copyPendingMessageText(message, writeClipboard);
+            if (itemId === 'openDraft' && launchFailedDraftId) handleOpenLaunchDraft(launchFailedDraftId);
+            if (itemId === 'edit') await handleEdit(message);
+            if (itemId === 'remove') {
+                if (usesDeliveryResolutionActions) {
+                    await handleRemoveDelivery(message);
+        } else {
+                    await handleRemove(message);
+        }
+            }
+            if (itemId === 'dismissDelivery') await handleDismissDelivery(message);
+            if (itemId === 'sendAsNew') await handleSendAsNew(message);
+            if (itemId === 'retrySend') await handleRetrySend(message);
+            if (itemId === 'markDeliveryHandled') await handleMarkDeliveryHandled(message);
+            if (itemId === 'interruptAndRun' && transientAction?.id === 'interrupt_and_run') {
+                await handleInterruptAndRun(message, transientAction);
+            }
+            if (itemId === 'steerNow') await handleSteerNow(message);
+            if (itemId === 'sendNow') await handleSendNow(message);
+            if (itemId === 'deliverAndResume') await handleDeliverAndResume(message);
+        };
 
         return (
             <DropdownMenu
@@ -804,30 +833,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     }
                 }}
                 items={menuItems}
-                onSelect={async (itemId) => {
-                    if (!presentation.canMutate) return;
-                    setOpenMenuKey(null);
-                    if (itemId === 'copy') await copyPendingMessageText(message, writeClipboard);
-                    if (itemId === 'openDraft' && launchFailedDraftId) handleOpenLaunchDraft(launchFailedDraftId);
-                    if (itemId === 'edit') await handleEdit(message);
-                    if (itemId === 'remove') {
-                        if (usesDeliveryResolutionActions) {
-                            await handleRemoveDelivery(message);
-                        } else {
-                            await handleRemove(message);
-                        }
-                    }
-                    if (itemId === 'dismissDelivery') await handleDismissDelivery(message);
-                    if (itemId === 'sendAsNew') await handleSendAsNew(message);
-                    if (itemId === 'retrySend') await handleRetrySend(message);
-                    if (itemId === 'markDeliveryHandled') await handleMarkDeliveryHandled(message);
-                    if (itemId === 'interruptAndRun' && transientAction?.id === 'interrupt_and_run') {
-                        await handleInterruptAndRun(message, transientAction);
-                    }
-                    if (itemId === 'steerNow') await handleSteerNow(message);
-                    if (itemId === 'sendNow') await handleSendNow(message);
-                    if (itemId === 'deliverAndResume') await handleDeliverAndResume(message);
-                }}
+                onSelect={runRowAction}
                 popoverAnchor={menuAnchor}
                 placement="auto-vertical"
                 gap={6}
@@ -838,6 +844,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         style={[
                             styles.userMessageWrapper,
                             isHostFollowInput ? styles.hostInputContainer : null,
+                            hostStatusInline ? styles.hostInlineRow : null,
                             { paddingBottom: messageGapPx },
                             isWeb && (hoveredMessageId === message.id || menuOpen) ? styles.userMessageWrapperHovered : null,
                         ]}
@@ -863,6 +870,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         <PendingUtteranceSurface
                             testID={`pendingMessages.bubble:${message.id}`}
                             isHostFollowInput={isHostFollowInput}
+                            hostStatusInline={hostStatusInline}
                             onLayout={messagePresentation === 'head' ? (event) => {
                                 // The painted height of THIS utterance's bubble surface (padding included),
                                 // carried to the committed row that replaces it
@@ -934,7 +942,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             ) : null}
                         </PendingUtteranceSurface>
 
-                        <View style={[styles.pendingStatusRow, isHostFollowInput ? styles.hostStatusRow : null]}>
+                        <View style={[styles.pendingStatusRow, hostStatusInline ? styles.hostInlineStatusRow
+                            : isHostFollowInput ? styles.hostStatusRow : null]}>
                             {followInput ? <TranscriptFollowSourceAction followInput={followInput} serverId={props.serverId}
                                 testID={`pendingMessages.followSourceOpen:${message.id}`} style={styles.hostSourceAction} /> : null}
                             {isWeb && presentation.canMutate ? (
@@ -946,143 +955,19 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     revealed={hoveredMessageId === message.id || menuOpen || (!isHostOnboarding && (visualState.kind === 'send_failed' || launchFailedDraftId !== null || usesDeliveryResolutionActions || isUncertainDelivery))}
                                     style={styles.messageActionContainer}
                                 >
-                                    {text && !isContentLoading && !isHostOnboarding ? (
-                                        <PendingMessageCopyAction
-                                            writeClipboard={writeClipboard}
-                                            testID={`pendingMessages.copy:${message.id}`}
-                                            message={message}
-                                        />
-                                    ) : null}
-                                    {launchFailedDraftId ? (
-                                        <IconAction
-                                            testID={`pendingMessages.openDraft:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.openDraft')}
-                                            icon="pencil"
-                                            onPress={() => handleOpenLaunchDraft(launchFailedDraftId)}
-                                        />
-                                    ) : null}
-                                    {paintsMessageActionRow && pendingMessages.length > 1 && !hasEffectPossibleDelivery && !isLaunchOwnedPendingMessage(message) ? (
-                                        renderDragHandle({
-                                            children: null,
-                                            testID: `pendingMessages.reorder:${message.id}`,
-                                            accessibilityLabel: t('common.reorder'),
-                                        })
-                                    ) : null}
-                                    {visualState.kind === 'send_failed' ? (
-                                        <IconAction
-                                            testID={`pendingMessages.retrySend:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.retryDelivery')}
-                                            icon="arrow-clockwise"
-                                            onPress={() => handleRetrySend(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {usesDeliveryResolutionActions ? (
-                                        <IconAction
-                                            testID={`pendingMessages.markDeliveryHandled:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.markHandled')}
-                                            icon="checks"
-                                            onPress={() => handleMarkDeliveryHandled(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {isUncertainDelivery ? (
-                                        <IconAction
-                                            testID={`pendingMessages.markDeliveryHandled:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.markHandled')}
-                                            icon="checks"
-                                            onPress={() => handleMarkDeliveryHandled(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {isServerDeliveryInProgress && canSendAsNew && !isHostOnboarding ? (
-                                        <IconAction
-                                            testID={`pendingMessages.sendAsNew:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
-                                            icon="paper-plane"
-                                            onPress={() => handleSendAsNew(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {isUncertainDelivery ? (
-                                        <IconAction
-                                            testID={`pendingMessages.dismissDelivery:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.dismiss')}
-                                            icon="archive"
-                                            onPress={() => handleDismissDelivery(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {isUncertainDelivery && canSendAsNew && !isHostOnboarding ? (
-                                        <IconAction
-                                            testID={`pendingMessages.sendAsNew:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
-                                            icon="paper-plane"
-                                            onPress={() => handleSendAsNew(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {usesDeliveryResolutionActions ? (
-                                        <IconAction
-                                            testID={`pendingMessages.remove:${message.id}`}
-                                            accessibilityLabel={t('common.remove')}
-                                            icon="trash"
-                                            onPress={() => handleRemoveDelivery(message)}
-                                            tone="destructive"
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {hasDurableOutboxOperation && !usesDeliveryResolutionActions ? (
-                                        <IconAction
-                                            testID={`pendingMessages.remove:${message.id}`}
-                                            accessibilityLabel={t('common.remove')}
-                                            icon="trash"
-                                            onPress={() => handleRemove(message)}
-                                            tone="destructive"
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : null}
-                                    {canUsePendingQueueActions && !usesDeliveryResolutionActions && !isContentLoading && !isHostOnboarding ? (
-    	                                    <IconAction
-    	                                        testID={`pendingMessages.edit:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.edit')}
-                                            icon="pencil"
-                                            onPress={() => handleEdit(message)}
-                                        />
-                                    ) : null}
-                                    {canUsePendingQueueActions && !usesDeliveryResolutionActions ? (
-    	                                    <IconAction
-    	                                        testID={`pendingMessages.remove:${message.id}`}
-                                            accessibilityLabel={t('common.remove')}
-                                            icon="trash"
-                                            onPress={() => handleRemove(message)}
-                                            tone="destructive"
-                                        />
-                                    ) : null}
-    	                                {canSteerNow && canUseDirectDeliveryActions ? (
-    	                                    <IconAction
-    	                                        testID={`pendingMessages.steerNow:${message.id}`}
-    	                                        accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
-    	                                        icon="navigation-arrow"
-    	                                        onPress={() => handleSteerNow(message)}
-    	                                    />
-    	                                ) : null}
-                                    {canUseDirectDeliveryActions && canDeliverByResume ? (
-                                        <IconAction
-                                            testID={`pendingMessages.deliverAndResume:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.deliverAndResume')}
-                                            icon="paper-plane"
-                                            onPress={() => handleDeliverAndResume(message)}
-                                            disabled={deliveryActionBusy}
-                                        />
-                                    ) : canUseDirectDeliveryActions && !deliversByResume ? (
-    	                                    <IconAction
-    	                                        testID={`pendingMessages.sendNow:${message.id}`}
-    	                                        accessibilityLabel={sendNowActionLabel}
-    	                                        icon="paper-plane"
-    	                                        onPress={() => handleSendNow(message)}
-    	                                    />
-    	                                ) : null}
+                                    <PendingRowActionStrip
+                                        actions={rowActions}
+                                        message={message}
+                                        writeClipboard={writeClipboard}
+                                        onAction={runRowAction}
+                                        afterCopy={paintsMessageActionRow && pendingMessages.length > 1 && !hasEffectPossibleDelivery && !isLaunchOwnedPendingMessage(message) ? (
+                                            renderDragHandle({
+                                                children: null,
+                                                testID: `pendingMessages.reorder:${message.id}`,
+                                                accessibilityLabel: t('common.reorder'),
+                                            })
+                                        ) : null}
+                                    />
     	                            </RowActionRevealSlot>
                             ) : !isWeb && paintsMessageActionRow && presentation.canReorder ? (
                                 <View style={styles.messageActionContainer}>
@@ -1220,9 +1105,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ] : []),
             ...(!isArchivedUncertainty && !offersSendAgain ? [
                 { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
-                { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
                 ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> } as const] : []),
                 { id: 'sendNow', title: sendNowActionLabel, icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} /> },
+                // Remove stays last, as on a queued row.
+                { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
             ] : []),
         ];
 
@@ -1334,7 +1220,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             accessibilityLabel={t('common.remove')}
                                             icon="trash"
                                             onPress={() => handleRemoveDiscarded(message.id)}
-                                            tone="destructive"
                                         />
                                     </>
                                 ) : !isArchivedUncertainty ? (
@@ -1344,13 +1229,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             accessibilityLabel={t('session.pendingMessages.actions.requeue')}
                                             icon="arrow-elbow-up-left"
                                             onPress={() => handleRequeueDiscarded(message.id)}
-                                        />
-                                        <IconAction
-                                            testID={`pendingMessages.discarded.remove:${message.id}`}
-                                            accessibilityLabel={t('common.remove')}
-                                            icon="trash"
-                                            onPress={() => handleRemoveDiscarded(message.id)}
-                                            tone="destructive"
                                         />
                                         {canSteerNow ? (
                                             <IconAction
@@ -1365,6 +1243,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             accessibilityLabel={sendNowActionLabel}
                                             icon="paper-plane"
                                             onPress={() => handleSendDiscardedNow(message)}
+                                        />
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.remove:${message.id}`}
+                                            accessibilityLabel={t('common.remove')}
+                                            icon="trash"
+                                            onPress={() => handleRemoveDiscarded(message.id)}
                                         />
                                     </>
                                 ) : null}
@@ -1624,10 +1508,65 @@ const PendingMessageCopyAction = React.memo(function PendingMessageCopyAction(pr
             accessibilityLabel={t('common.copy')}
             icon={copied ? 'check' : 'copy'}
             onPress={handlePress}
-            tone={copied ? 'success' : 'default'}
         />
     );
 });
+
+/** One action a queued row offers, in the order its menu and its inline actions both read. */
+type PendingRowAction = Readonly<{
+    id: string;
+    title: string;
+    icon: IconName;
+    /** The menu entry's own test id, where it has one. */
+    testID?: string;
+    disabled?: boolean;
+    /** A menu answer that only closes the menu (Continue waiting) has nothing to do as an inline action. */
+    menuOnly?: true;
+}>;
+
+function toPendingRowMenuItems(actions: readonly PendingRowAction[], iconColor: string): DropdownMenuItem[] {
+    return actions.map((action) => ({
+        id: action.id,
+        ...(action.testID ? { testID: action.testID } : null),
+        title: action.title,
+        icon: <Icon name={action.icon} size={16} color={iconColor} />,
+        ...(action.disabled !== undefined ? { disabled: action.disabled } : null),
+    }));
+}
+
+/** A queued row's inline actions: its menu's actions in the menu's order, every glyph in ink at rest. */
+function PendingRowActionStrip(props: Readonly<{
+    actions: readonly PendingRowAction[];
+    message: PendingMessage;
+    writeClipboard: (text: string) => Promise<boolean>;
+    onAction: (id: string) => void | Promise<void>;
+    /** Drawn right after Copy (the reorder handle), or first when there is no Copy. */
+    afterCopy?: React.ReactNode;
+}>) {
+    const copyFirst = props.actions[0]?.id === 'copy';
+    return (
+        <>
+            {copyFirst ? (
+                <PendingMessageCopyAction
+                    writeClipboard={props.writeClipboard}
+                    testID={`pendingMessages.copy:${props.message.id}`}
+                    message={props.message}
+                />
+            ) : null}
+            {props.afterCopy}
+            {(copyFirst ? props.actions.slice(1) : props.actions).filter((action) => !action.menuOnly).map((action) => (
+                <IconAction
+                    key={action.id}
+                    testID={`pendingMessages.${action.id}:${props.message.id}`}
+                    accessibilityLabel={action.title}
+                    icon={action.icon}
+                    onPress={() => void props.onAction(action.id)}
+                    disabled={action.disabled}
+                />
+            ))}
+        </>
+    );
+}
 
 /**
  * A queued row's icon action: the shared icon-only button at the band's drawn 18 px, quiet like the committed
@@ -1639,11 +1578,11 @@ function IconAction(props: {
     onPress: () => void;
     accessibilityLabel: string;
     testID?: string;
-    tone?: 'default' | 'destructive' | 'success';
     disabled?: boolean;
 }) {
     const { theme } = useUnistyles();
-    const tint = props.tone === 'destructive' ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
+    // Every glyph reads in ink at rest, Remove included: the row's order, not its colour, keeps it last.
+    const tint = theme.colors.text.secondary;
     return (
         <IconButton
             testID={props.testID}
@@ -1654,7 +1593,6 @@ function IconAction(props: {
             variant="plain"
             size={MESSAGE_ACTION_SIZE_PX}
             iconSize={MESSAGE_ACTION_GLYPH_PX}
-            tone={props.tone === 'destructive' ? 'danger' : 'default'}
             interactiveTargetEdgesPx={{
                 leading: MESSAGE_ACTION_HIT_REACH.left,
                 trailing: MESSAGE_ACTION_HIT_REACH.right,
@@ -1673,12 +1611,16 @@ function IconAction(props: {
  */
 function PendingUtteranceSurface(props: Readonly<{
     isHostFollowInput: boolean;
+    /** A host line whose status reads at its end: the line takes the row's width up to it. */
+    hostStatusInline?: boolean;
     discarded?: boolean;
     onLayout?: React.ComponentProps<typeof UserMessageBubble>['onLayout'];
     testID?: string;
     children: React.ReactNode;
 }>) {
-    if (props.isHostFollowInput) return <View onLayout={props.onLayout} testID={props.testID}>{props.children}</View>;
+    if (props.isHostFollowInput) return (
+        <View onLayout={props.onLayout} testID={props.testID} style={props.hostStatusInline ? styles.hostInlineLine : null}>{props.children}</View>
+    );
     // The bubble hugs its own words: a status line under it that runs longer (a blocked reason) widens the
     // row's aligner, not the bubble.
     return (
@@ -1746,6 +1688,22 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'stretch',
         justifyContent: 'flex-end',
         marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
+    },
+    // A host line with no source to open carries its status at its own end, on the line it describes (a quiet
+    // "Approved · List machines … Queued"), its words wrapping before it.
+    hostInlineRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+    },
+    hostInlineLine: {
+        flex: 1,
+        minWidth: 0,
+    },
+    hostInlineStatusRow: {
+        alignSelf: 'flex-start',
+        flexShrink: 0,
+        height: Typography.variant('label').lineHeight,
+        marginLeft: theme.space.s8,
     },
     // The action is a text button: its label, not its box, starts on the notice's words, so it takes the
     // button's own inset back; the status takes the remaining width at the row's edge.

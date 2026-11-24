@@ -61,7 +61,7 @@ export function presentApprovalResultDelivery(
         : null;
     return {
       kind: 'held',
-      detail: t('session.askRecord.waitsForYou'),
+      detail: t('session.askRecord.waitsForResume'),
       subtitle:
         heldCause === 'held_by_person'
           ? t('errors.sessionHeldByPerson')

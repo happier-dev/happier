@@ -188,6 +188,8 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
         <View style={{ flexShrink: 1, minHeight: 0 }}>
           <ScrollView testID={props.testID ? `${props.testID}-facts` : undefined} style={{ flexShrink: 1, minHeight: 0 }}
             contentContainerStyle={bodyStyle} nestedScrollEnabled
+            // Facts that fit draw no track: a few pixels of inset past the bound are not hidden facts.
+            showsVerticalScrollIndicator={factsClipped}
             scrollEventThrottle={renderFade ? 16 : undefined}
             onScroll={renderFade ? (event) => setFactsOffset(event.nativeEvent.contentOffset.y) : undefined}
             onLayout={(event) => setFactsViewport(event.nativeEvent.layout.height)}

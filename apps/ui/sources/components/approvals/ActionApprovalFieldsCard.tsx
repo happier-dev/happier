@@ -230,7 +230,8 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
                     <Item
                         key={row.key}
                         title={<FieldLayout label={row.label} columns={columns}>
-                            <HappierApprovalFieldEntries {...look} entries={row.entries} density="page" />
+                            {/* Its values read in the same role and ink as every other fact here and on the card. */}
+                            <HappierApprovalFieldEntries {...look} entries={row.entries} stacked={!columns} />
                         </FieldLayout>}
                         mode="info"
                         showChevron={false}
@@ -254,7 +255,8 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
         return (
             <View style={styles.foldedFacts}>
                 {firstRow ? <HappierApprovalFields {...look} testID="approvals.first-fact" anatomy="stack" rows={[firstRow]} /> : null}
-                {remainingRows.length > 0 || technicalDetails ? <ExpandableItem
+                {/* "Details" names facts: with none left after the first, the codes fold behind Technical details itself. */}
+                {remainingRows.length === 0 ? technicalDetails : <ExpandableItem
                     testID="approvals.details-disclosure"
                     expanded={detailsOpen}
                     onExpandedChange={setDetailsOpen}
@@ -274,7 +276,7 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
                     <View style={styles.disclosureBody}>
                         <HappierApprovalFields {...look} anatomy="stack" rows={remainingRows} footer={technicalDetails} />
                     </View>
-                </ExpandableItem> : null}
+                </ExpandableItem>}
             </View>
         );
     }

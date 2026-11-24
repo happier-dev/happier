@@ -9503,7 +9503,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
           noAnswer: 'Без ответа',
           noAnswerYet: 'Ответа пока нет',
           sent: 'Отправлено',
-          waitsForYou: 'Ждёт вас',
+          waitsForResume: 'Ждёт возобновления',
           notSent: 'Не отправлено',
           notAnswered: 'Не смог ответить',
           unsure: 'Неясно, отправлено ли',

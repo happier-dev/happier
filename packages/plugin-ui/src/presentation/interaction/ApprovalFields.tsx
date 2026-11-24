@@ -157,6 +157,11 @@ export type HappierApprovalFieldEntriesProps<TSource = never> =
        * than their values.
        */
       density?: 'card' | 'page';
+      /**
+       * The entries sit under their argument's name rather than beside it (a stacked field on a phone, the stack
+       * anatomy): they step in one level so the nesting still reads.
+       */
+      stacked?: boolean;
     }>;
 
 export type HappierApprovalFieldsProps<TSource = never> =
@@ -315,7 +320,7 @@ export function HappierApprovalFieldEntries<TSource = never>(
   if (props.entries.length === 0) return null;
   const lines = readApprovalFieldEntryLines(props.entries);
   return (
-    <View style={{ gap: space.s4 }}>
+    <View style={{ gap: space.s4, ...(props.stacked ? { paddingLeft: HAPPIER_APPROVAL_FIELDS_METRICS.entryIndentPx } : null) }}>
       {lines.map((line, index) => line.kind === 'list' ? (
         <View
           key={`${index}:${line.label}`}
@@ -424,6 +429,7 @@ export function HappierApprovalFields<TSource = never>(
           {...look}
           entries={row.entries}
           density={page ? 'page' : 'card'}
+          stacked={props.anatomy === 'stack'}
         />
       );
     if (row.kind === 'answers') {
