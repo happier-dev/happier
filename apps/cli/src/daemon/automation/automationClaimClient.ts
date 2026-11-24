@@ -92,6 +92,7 @@ function toWorkerClaimResponse(response: AutomationV3WorkerClaimResponse): Autom
         }),
         origin: response.run.origin,
         workflowAcceptedSnapshotEnvelope: response.run.workflowAcceptedSnapshotEnvelope,
+        ...(response.run.machineAdmission ? { machineAdmission: response.run.machineAdmission } : {}),
         triggerId: null,
       },
       automation: null,
@@ -114,6 +115,7 @@ function toWorkerClaimResponse(response: AutomationV3WorkerClaimResponse): Autom
         }),
         recipeKind: response.run.recipeKind,
       executionInputEnvelope: response.run.executionInputEnvelope,
+      ...(response.run.machineAdmission ? { machineAdmission: response.run.machineAdmission } : {}),
       ...(response.run.workflowAcceptedSnapshotEnvelope === undefined ? {} : {
         workflowAcceptedSnapshotEnvelope: response.run.workflowAcceptedSnapshotEnvelope,
       }),

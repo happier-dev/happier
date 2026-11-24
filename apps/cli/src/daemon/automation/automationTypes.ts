@@ -6,6 +6,7 @@ import type {
   AutomationRunLifecycleSource,
   AutomationV3WorkerAssignmentsResponse,
 } from '@happier-dev/protocol';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 export type AutomationV3ClaimedRun = Readonly<{
   id: string;
@@ -21,6 +22,7 @@ export type AutomationV3ClaimedRun = Readonly<{
   automationEvidenceEnvelope?: string | null;
   /** Present only after the Run's one-time accepted-snapshot materialization. */
   workflowAcceptedSnapshotEnvelope?: string;
+  machineAdmission?: SocketRpcMachineAdmissionContextV1;
   /** Immutable Run-owned cause consumed with the frozen execution recipe. */
   cause: AutomationRunCause;
   /** Host-stamped firing cause depth, carried by the frozen server receipt. */
@@ -39,6 +41,7 @@ export type DirectWorkflowV3ClaimedRun = Readonly<{
   workflowResumeRequestedRevision?: number;
   origin: Readonly<{ kind: 'direct'; originSessionId?: string }>;
   workflowAcceptedSnapshotEnvelope: string;
+  machineAdmission?: SocketRpcMachineAdmissionContextV1;
   triggerId: null;
 }>;
 

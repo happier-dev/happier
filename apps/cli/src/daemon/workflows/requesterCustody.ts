@@ -51,7 +51,8 @@ export async function listWorkflowRequesterCredentialScopes(input: Omit<ScopeBin
 
 export async function retainWorkflowRequesterCredentials(input: Readonly<{
   scopeId: string; credentials: StoredCredentials; attribution: RequesterWorkAttributionV1; happyHomeDir: string; homeServerIdentityId?: string; automationId?: string;
-  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  machineAdmission?: NonNullable<SavedSecretOperationContextV1['machineAdmission']> & Readonly<{ encryptionMode?: 'plain' | 'e2ee' }>;
+  fromRunClaim?: true;
 }>): Promise<Awaited<ReturnType<typeof createRequesterSessionCredentialCustody>>> {
   if (input.machineAdmission && input.machineAdmission.actorAccountId !== input.attribution.accountId) {
     throw new Error('requester_session_custody_mismatch');
@@ -61,11 +62,11 @@ export async function retainWorkflowRequesterCredentials(input: Readonly<{
       scopeId: input.scopeId, homeServerIdentityId: input.homeServerIdentityId });
     const alreadyPublished = original && original.stored.automationId === input.automationId
       && !original.stored.automationScopePending && !original.stored.retireWhenIdle;
-    // Trigger custody is installed before Home publishes it. Direct Runs
-    // keep the admission they first captured, including an unavailable role.
+    // The receiving Action seeds custody before admission. Only an exact
+    // Home Run claim can replace a Run's captured role with its admitted role.
     const record = await createRequesterSessionCredentialCustody({ ...input,
       ...(input.automationId && !alreadyPublished ? { automationScopePending: true } : {}),
-      machineAdmission: !input.automationId && original ? original.stored.machineAdmission : input.machineAdmission,
+      machineAdmission: !input.fromRunClaim && !input.automationId && original ? original.stored.machineAdmission : input.machineAdmission,
       sessionId: input.scopeId, scope: 'workflow_trigger' });
     const active = activeScopes.get(record.path);
     if (active) active.retire = false;

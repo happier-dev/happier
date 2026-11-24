@@ -57,6 +57,7 @@ export const CustodySchema = z.strictObject({
   machineAdmission: z.optional(z.strictObject({
     custodianAccountId: z.string().check(z.minLength(1)),
     role: z.optional(z.enum(['use', 'manage'])),
+    encryptionMode: z.optional(z.enum(['plain', 'e2ee'])),
   })),
   sourceAdmission: z.optional(WorkspaceSyncSourceStandingAdmissionSchema),
   credentials: SessionRequesterBootstrapCredentialsV1Schema,

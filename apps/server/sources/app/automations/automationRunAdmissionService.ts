@@ -9,6 +9,7 @@ import { automationRunExecutionTargetTypeV1, parseAutomationStoredDefinitionExec
 import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { automationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/protocol/automations/result-delivery';
+import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { afterTx, type Tx } from "@/storage/inTx";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
@@ -218,8 +219,13 @@ const automationAdmissionDefinitionSelect = {
     },
 } satisfies Prisma.AutomationSelect;
 
-type AutomationAdmissionDefinition = Prisma.AutomationGetPayload<{
+type AutomationAdmissionDefinitionRow = Prisma.AutomationGetPayload<{
     select: typeof automationAdmissionDefinitionSelect;
+}>;
+type AutomationAdmissionDefinition = Omit<AutomationAdmissionDefinitionRow, 'assignments'> & Readonly<{
+    assignments: readonly (AutomationAdmissionDefinitionRow['assignments'][number] & Readonly<{
+        admittedMachineRole?: MachineAccessRoleV1;
+    }>)[];
 }>;
 
 const automationAdmissionTriggerSelect = {
@@ -250,7 +256,7 @@ type PreparedAutomationRunAdmission = Readonly<{
     executionInputEnvelope: string | null;
     workflowDefinitionEnvelope: string | null;
     automation: Omit<AutomationAdmissionDefinition, 'assignments'> & Readonly<{
-        assignments: readonly Readonly<{ machineId: string; priority: number;
+        assignments: readonly Readonly<{ machineId: string; priority: number; admittedMachineRole?: MachineAccessRoleV1;
             machine: Readonly<{ accountId: string; installationId: string | null }> }>[];
     }>;
     missedReason: "machine_offline" | "machine_presence_at_due_unavailable" | null;
@@ -371,7 +377,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
         : null;
     const target = params.request.runTargetMachineId === undefined ? undefined : params.runTargetAdmission;
     const targetAssignments = target?.kind === 'admitted' && target.availability === 'available'
-        ? [{ machineId: target.machineId, priority: 0,
+        ? [{ machineId: target.machineId, priority: 0, admittedMachineRole: target.role,
             machine: { accountId: target.custodianAccountId, installationId: target.installationId } }] : [];
     const admissionAutomation: PreparedAutomationRunAdmission['automation'] = {
         ...automation,
@@ -497,7 +503,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
                     machineId: assignment.machineId,
                     priority: assignment.priority,
                     ...(workflowDefinitionEnvelope !== null
-                        ? { admittedMachineInstallationId: assignment.machine.installationId } : {}),
+                        ? { admittedMachineInstallationId: assignment.machine.installationId,
+                            admittedMachineRole: assignment.admittedMachineRole ?? null } : {}),
                 })),
             },
             scheduledAt: request.now,
@@ -738,7 +745,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
                     deniedAssignmentAutomationIds.add(automation.id);
                 }
                 if (admission?.kind !== "admitted" || classifyMachineAvailabilityState(assignment.machine) === "revoked") return [];
-                return [{ ...assignment, machine: { ...assignment.machine, installationId: admission.installationId,
+                return [{ ...assignment, admittedMachineRole: admission.role, machine: { ...assignment.machine, installationId: admission.installationId,
                     accountId: admission.custodianAccountId } }];
             }),
         },

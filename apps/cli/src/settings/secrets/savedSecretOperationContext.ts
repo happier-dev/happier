@@ -62,7 +62,7 @@ function captureInvocationSecretMaterial(
 }
 
 export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
-  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'] | null;
   secretSources?: TargetSecretSourcesV1;
   credentials: StoredCredentials;
   snapshot: ActiveAccountSettingsSnapshot;
@@ -141,8 +141,8 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
   };
   // A requester Session runner holds the daemon's admission in its private credential custody.
   const requester = input.credentials.requesterSessionCredentialScope?.requesterSession;
-  const machineAdmission = input.machineAdmission ?? (requester?.machineAdmission
-    ? { actorAccountId: requester.attribution.accountId, ...requester.machineAdmission } : undefined);
+  const machineAdmission = input.machineAdmission === undefined && requester?.machineAdmission
+    ? { actorAccountId: requester.attribution.accountId, ...requester.machineAdmission } : input.machineAdmission;
   return Object.freeze({
     ...(machineAdmission ? { machineAdmission: Object.freeze({
       actorAccountId: machineAdmission.actorAccountId,

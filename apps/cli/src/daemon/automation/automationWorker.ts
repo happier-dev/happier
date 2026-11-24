@@ -25,6 +25,7 @@ import type {
 import type { Update } from '@/api/types';
 import { readStoredCredentials, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE, isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationApiV3';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createSnapshotActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -41,6 +42,11 @@ import { acquireWorkflowRequesterCredentials, createWorkflowRequesterCustody, li
 type AutomationMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
 >;
+
+type WorkflowCoordinatorClaim = Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0]
+  & Readonly<{ machineAdmission?: SocketRpcMachineAdmissionContextV1 }>;
+type WorkflowRecoveryRequester = Readonly<{ credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
+  machineAdmission?: SocketRpcMachineAdmissionContextV1 }>;
 
 export type AutomationWorkerHandle = Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
@@ -69,11 +75,11 @@ export function startAutomationWorker(params: {
   requesterHomeServerIdentityId?: string;
   machineAdmissionTransport?: AutomationMachineAdmissionTransport;
   env?: NodeJS.ProcessEnv;
-  coordinateWorkflowRun?: (claim: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0], requester?: Readonly<{
+  coordinateWorkflowRun?: (claim: WorkflowCoordinatorClaim, requester?: Readonly<{
     credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
   }>) => ReturnType<ReturnType<typeof createProductionWorkflowRunCoordinator>>;
   /** Existing custody reader, woken by control invalidation or release of a Workflow claim. */
-  recoverWorkflowRuns?: (runId?: string, requester?: Readonly<{ credentials: StoredCredentials; attribution: RequesterWorkAttributionV1 }>, signal?: AbortSignal) => Promise<void>;
+  recoverWorkflowRuns?: (runId?: string, requester?: WorkflowRecoveryRequester, signal?: AbortSignal) => Promise<void>;
 }): AutomationWorkerHandle {
   const env = params.env ?? process.env;
   const workerDecision = getAutomationWorkerFeatureDecision(env);
@@ -415,15 +421,24 @@ export function startAutomationWorker(params: {
   const recoverWorkflowCustody = (runId: string, scopeId?: string) => {
     void (async () => {
       const host = params.requesterWorkAttributionV1;
-      const requester = scopeId && host && params.requesterHomeServerIdentityId ? await acquireWorkflowRequesterCredentials({ scopeId,
+      const acquire = (id: string) => host && params.requesterHomeServerIdentityId ? acquireWorkflowRequesterCredentials({ scopeId: id,
         happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
         installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
-        ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) }) : null;
+        homeServerIdentityId: params.requesterHomeServerIdentityId }) : null;
+      const retainedRun = scopeId ? await acquire(runId) : null;
+      const requester = retainedRun ?? (scopeId && scopeId !== runId ? await acquire(scopeId) : null);
       if (scopeId && !requester) {
         await reportMissingRequesterCustody(runId);
         return;
       }
-      try { await params.recoverWorkflowRuns?.(runId, requester ?? undefined, workerCancellation.signal); }
+      // The trigger record supplies credentials only. Recovery may use an
+      // admission saved under this exact Run by its signed claim or Start.
+      const retained = retainedRun?.machineAdmission;
+      const machineAdmission = retained?.role && retained.encryptionMode && retainedRun ? {
+        ...retained, role: retained.role, encryptionMode: retained.encryptionMode,
+        machineId: retainedRun.attribution.machineId, installationId: retainedRun.attribution.installationId,
+      } : undefined;
+      try { await params.recoverWorkflowRuns?.(runId, requester ? { ...requester, machineAdmission } : undefined, workerCancellation.signal); }
       finally { await requester?.release(); }
     })().catch((error) => {
       logAutomationWarn('Workflow custody recovery failed; pending custody retained', error, {
@@ -639,7 +654,7 @@ export function startAutomationWorker(params: {
       const selectedActionExecutor = requester ? createCliActionExecutorFromCredentials({ credentials: executionCredentials,
         readCredentials: async () => executionCredentials, machineId: params.machineId,
         workflowRequesterCustody: createWorkflowRequesterCustody({ credentials: executionCredentials,
-          attribution: requester.attribution, machineAdmission: requester.machineAdmission, happyHomeDir: configuration.happyHomeDir,
+          attribution: requester.attribution, machineAdmission: claimed.run.machineAdmission, happyHomeDir: configuration.happyHomeDir,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), homeServerIdentityId: params.requesterHomeServerIdentityId }),
         isAutomationRunCurrent: caller => activeExecutions.get(caller.runId)?.automationId === caller.automationId,
         ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}) }) : actionExecutor;
@@ -661,6 +676,7 @@ export function startAutomationWorker(params: {
             leaseDurationMs: scheduler.leaseDurationMs,
             ...(params.coordinateWorkflowRun
               ? { coordinateWorkflowRun: (claim: Parameters<NonNullable<typeof params.coordinateWorkflowRun>>[0]) => params.coordinateWorkflowRun!({ ...claim,
+                machineAdmission: claimed.run.machineAdmission,
                 storageSignal: workerCancellation.signal,
                 registerLiveWorkProducer: producer => {
                   const active = activeExecutions.get(claimed.run.id);
@@ -733,7 +749,8 @@ export function startAutomationWorker(params: {
               if (admittedRequester) {
                 // Preserve the admitted credential while recovery joins any
                 // still-running Session start, including a disabled trigger.
-                try { await params.recoverWorkflowRuns?.(claimed.run.id, admittedRequester, workerCancellation.signal); }
+                try { await params.recoverWorkflowRuns?.(claimed.run.id,
+                  { ...admittedRequester, machineAdmission: claimed.run.machineAdmission }, workerCancellation.signal); }
                 finally { await releaseClaimedScope?.(); }
               } else recoverWorkflowCustody(claimed.run.id);
             }

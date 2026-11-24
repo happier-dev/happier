@@ -641,7 +641,7 @@ describe("workflowRunService (integration)", () => {
         expect(await db.automationAssignment.count({ where: { automationId: retained.id } })).toBe(0);
     });
 
-    it('claims guest Workflow content through the authenticated signed custodian HTTP entry', async () => {
+    it('keeps the admitted guest Machine role across signed claim, replay and reclaim', async () => {
         harness.resetEnv({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' });
         const custodian = await seed();
         const guest = await seed();
@@ -650,14 +650,28 @@ describe("workflowRunService (integration)", () => {
         await db.machine.update({ where: { id: custodian.machineId }, data: { installationId,
             installationPublicKey: new Uint8Array(keyPair.publicKey) } });
         await makeShareEligibleForTest(custodian.accountId, guest.accountId);
-        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId,
-            machineId: custodian.machineId, principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
+        const grant = { actorAccountId: custodian.accountId, machineId: custodian.machineId,
+            principal: { kind: 'account', accountId: guest.accountId } } as const;
+        await inTx(tx => setMachineAccessGrantInTx(tx, { ...grant, level: 'admin' }));
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+        const scheduled = await createAutomation({ accountId: guest.accountId, recipeFeaturePolicy: { workflowsEnabled: true },
+            input: { automationId: randomUUID(), name: 'Guest Workflow', enabled: true,
+                executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+                assignments: [{ machineId: custodian.machineId }], triggers: [{ triggerId, trigger: { kind: 'schedule', enabled: true,
+                    schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } }] } });
+        const admitOccurrence = (at: number, seed: number) => inTx(tx => admitAutomationRunTx({ tx,
+            accountId: guest.accountId, automationId: scheduled.id, now: new Date(at),
+            cause: AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId, triggerRevision: scheduled.triggers[0]!.revision,
+                triggerKind: 'schedule', occurrenceKey: Buffer.alloc(32, seed).toString('base64url'),
+                occurredAt: at, evidence: { scheduledFor: at } }),
+            recipeFeaturePolicy: { workflowsEnabled: true } }));
+        const occurrence = await admitOccurrence(Date.now() - 1000, 1);
+        if (occurrence.kind !== 'admitted') throw new Error(JSON.stringify(occurrence));
+        await inTx(tx => setMachineAccessGrantInTx(tx, { ...grant, level: 'view' }));
         const runId = randomUUID();
         await admitWorkflowRunOwner({ accountId: guest.accountId, machineId: custodian.machineId, runId,
             accountCurrentness: await accountCurrentness(guest.accountId), origin: { kind: 'direct' },
             acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: custodian.machineId, runId }) });
-        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId,
-            machineId: custodian.machineId, principal: { kind: 'account', accountId: guest.accountId } }));
         const requester = await createReviewStorageApp(guest.accountId);
         const host = await createReviewStorageApp(custodian.accountId);
         const { registerAutomationV3Routes } = await import('@/app/api/routes/automations/registerAutomationV3Routes');
@@ -675,10 +689,30 @@ describe("workflowRunService (integration)", () => {
                 headers: { ...host.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed(keyPair) } });
             expect(hostOnly.statusCode, hostOnly.body).toBe(200);
             expect(hostOnly.json().run).toBeNull();
-            const claimed = await requester.app.inject({ method: 'POST', url: path, payload: body,
-                headers: { ...requester.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed(keyPair) } });
-            expect(claimed.statusCode, claimed.body).toBe(200);
-            expect(claimed.json().run).toMatchObject({ id: runId });
+            const claim = async (signature = signed(keyPair)) => {
+                const response = await requester.app.inject({ method: 'POST', url: path, payload: body,
+                    headers: { ...requester.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signature } });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json().run;
+            };
+            const firstSignature = signed(keyPair);
+            const first = await claim(firstSignature);
+            expect(first).toMatchObject({ id: occurrence.run.id });
+            await inTx(tx => removeMachineAccessGrantInTx(tx, grant));
+            expect(await admitOccurrence(Date.now(), 2)).toEqual({ kind: 'ineligible', reason: 'noEnabledAssignment' });
+            expect(await db.automationRun.count({ where: { automationId: scheduled.id } })).toBe(1);
+            const replay = await claim(firstSignature);
+            const direct = await claim();
+            expect(direct).toMatchObject({ id: runId });
+            await db.automationRun.update({ where: { id: occurrence.run.id }, data: { leaseExpiresAt: new Date(0) } });
+            const reclaimed = await claim();
+            expect(reclaimed).toMatchObject({ id: occurrence.run.id, attempt: first.attempt + 1 });
+            expect([first, replay, reclaimed, direct]).toMatchObject([
+                { machineAdmission: { role: 'manage', installationId } },
+                { machineAdmission: { role: 'manage', installationId } },
+                { machineAdmission: { role: 'manage', installationId } },
+                { machineAdmission: { role: 'use', installationId } },
+            ]);
         } finally { await requester.app.close(); await host.app.close(); }
     });
 
@@ -745,9 +779,10 @@ describe("workflowRunService (integration)", () => {
         await expect(admitWorkflowRunOwner({ ...input, runId: nextRunId,
             acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: custodian.machineId, runId: nextRunId }) }))
             .rejects.toMatchObject({ code: "target_unavailable" });
+        expect(await db.automationRun.count({ where: { id: nextRunId } })).toBe(0);
         const nextOccurrence = await inTx(tx => admitAutomationRunTx({ tx, accountId: guest.accountId, automationId: automation.id,
             now: new Date(), cause: { kind: "manual", invokedAt: Date.now() + 1 }, recipeFeaturePolicy: { workflowsEnabled: true } }));
-        expect(nextOccurrence).toEqual({ kind: "ineligible", reason: "noEnabledAssignment" });
+        expect(nextOccurrence).toEqual({ kind: "ineligible", reason: "target_unavailable" });
         const claimed = await claimAutomationRun({ accountId: guest.accountId, machineId: custodian.machineId,
             leaseDurationMs: 30_000, scope: "workflow", recipeFeaturePolicy: { workflowsEnabled: true },
             claimRequest: { machineInstallationId: installationId, nonce: randomUUID(), expiresAt: new Date(Date.now() + 60_000) } });

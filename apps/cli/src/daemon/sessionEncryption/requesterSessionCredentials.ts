@@ -408,7 +408,7 @@ export async function admitRequesterSessionBootstrap(input: Readonly<{
 }
 
 export async function prepareRequesterSessionBootstrap(input: Readonly<{
-  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'] | null;
   credentials: StoredCredentials;
   attribution: RequesterWorkAttributionV1;
   homeServerIdentityId?: string;
@@ -427,7 +427,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
   const machineAdmission = input.machineAdmission ? Object.freeze({
     actorAccountId: input.machineAdmission.actorAccountId, custodianAccountId: input.machineAdmission.custodianAccountId,
     role: input.machineAdmission.role,
-  }) : undefined;
+  }) : input.machineAdmission;
   const verify = input.verifyMachineAdmissionCurrent;
   let bound: Readonly<{ sessionId: string; sessionCreationTag?: string }> | null = input.boundSessionId
     ? { sessionId: input.boundSessionId } : null;
@@ -1153,7 +1153,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   homeServerIdentityId?: string;
   automationId?: string;
   automationScopePending?: true;
-  machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
+  machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage'; encryptionMode?: 'plain' | 'e2ee' }>;
   executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
   sourceAdmission?: WorkspaceSyncSourceStandingAdmission;
   materializationKey?: string;
@@ -1168,7 +1168,8 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,
-      ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}) } } : {}),
+      ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}),
+      ...(input.machineAdmission.encryptionMode ? { encryptionMode: input.machineAdmission.encryptionMode } : {}) } } : {}),
     // Token and binding only: the in-memory carrier may also hold sealed requester context.
     ...(input.sourceAdmission ? { sourceAdmission: { authorization: { v: 1, token: input.sourceAdmission.authorization.token,
       binding: input.sourceAdmission.authorization.binding }, routing: input.sourceAdmission.routing } } : {}) }));

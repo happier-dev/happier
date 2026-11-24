@@ -7,6 +7,7 @@ import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvir
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { SocketRpcMachineAdmissionContextV1Schema } from '../machines/machineAccessV1.js';
 
 import {
   AutomationReplyHandoffStateV1Schema,
@@ -779,6 +780,10 @@ function addRunTriggerCauseCorrespondenceIssue(
   }
 }
 
+const WorkflowWorkerMachineAdmissionSchema = lazyZodSchema(() => z.omit(
+  SocketRpcMachineAdmissionContextV1Schema, { structuredMessageRouting: true },
+));
+
 const AutomationV3WorkerClaimedAutomationRunBaseSchema = lazyZodSchema(() => z.strictObject({
   id: IDENTIFIER_SCHEMA,
   automationId: IDENTIFIER_SCHEMA,
@@ -798,6 +803,8 @@ const AutomationV3WorkerClaimedAutomationRunBaseSchema = lazyZodSchema(() => z.s
   automationEvidenceEnvelope: z.optional(z.nullable(AutomationRunExecutionInputEnvelopeSchema)),
   /** Absent before daemon materialization; subsequent claims reuse the admitted Run snapshot. */
   workflowAcceptedSnapshotEnvelope: z.optional(WorkflowRunStoredEnvelopeStringSchema),
+  /** The claiming installation's frozen Workflow assignment. */
+  machineAdmission: z.optional(WorkflowWorkerMachineAdmissionSchema),
   triggerId: zMini.nullable(AutomationTriggerIdSchema),
   triggerRetired: z.boolean(),
   /** Immutable Run-owned cause consumed by the strict recipe materializer. */
@@ -815,7 +822,7 @@ const AutomationV3WorkerClaimedAutomationRunBaseSchema = lazyZodSchema(() => z.s
 
 function validateAutomationV3WorkerClaimedAutomationRun(
   value: Pick<z.infer<typeof AutomationV3WorkerClaimedAutomationRunBaseSchema>,
-    'triggerId' | 'triggerRetired' | 'cause' | 'recipeKind' | 'executionInputEnvelope' | 'automationEvidenceEnvelope'>,
+    'triggerId' | 'triggerRetired' | 'cause' | 'recipeKind' | 'executionInputEnvelope' | 'automationEvidenceEnvelope' | 'machineAdmission'>,
   context: z.core.$RefinementCtx,
 ) {
   addRunTriggerCauseCorrespondenceIssue(value, context);
@@ -834,11 +841,11 @@ function validateAutomationV3WorkerClaimedAutomationRun(
         message: 'A workflow-v2 claim requires explicit frozen trigger evidence, including null',
       });
     }
-  } else if (Object.hasOwn(value, 'automationEvidenceEnvelope')) {
+  } else if (Object.hasOwn(value, 'automationEvidenceEnvelope') || value.machineAdmission !== undefined) {
     context.addIssue({
       code: "custom",
-      path: ['automationEvidenceEnvelope'],
-      message: 'A legacy claim cannot carry workflow trigger evidence',
+      path: value.machineAdmission !== undefined ? ['machineAdmission'] : ['automationEvidenceEnvelope'],
+      message: 'Only a Workflow claim can carry Workflow admission or trigger evidence',
     });
   }
 }
@@ -860,6 +867,7 @@ const AutomationV3WorkerClaimedDirectWorkflowRunSchema = lazyZodSchema(() => z.s
     originSessionId: z.optional(IDENTIFIER_SCHEMA),
   }),
   workflowAcceptedSnapshotEnvelope: WorkflowRunStoredEnvelopeStringSchema,
+  machineAdmission: z.optional(WorkflowWorkerMachineAdmissionSchema),
   triggerId: z.null(),
   triggerRetired: z.literal(false),
 }));

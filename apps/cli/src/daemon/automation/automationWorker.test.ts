@@ -517,6 +517,8 @@ describe('automationWorker', () => {
     const { configuration } = await import('@/configuration');
     const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId, installationId: 'installation' };
     const guestCredentials = { token: 'guest-token', encryption: null };
+    const occurrenceAdmission = { actorAccountId: 'guest', custodianAccountId: 'custodian', machineId,
+      installationId: 'installation', role: 'use', encryptionMode: 'plain' } as const;
     const homeId = 'srv_guest_home';
     const origin = { kind: 'automation' as const, automationId };
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
@@ -553,18 +555,19 @@ describe('automationWorker', () => {
         return { data: emptyClaim };
       }
       if (guestClaimCount !== 2) return { data: emptyClaim };
-      return { data: AutomationV3WorkerClaimResponseSchema.parse({ run: { id: runId, automationId, triggerId,
+      return { data: { run: { id: runId, automationId, triggerId, machineAdmission: occurrenceAdmission,
         triggerRetired: false, cause: { kind: 'trigger', triggerId, triggerRevision: 0,
           triggerKind: 'schedule', occurrenceKey: Buffer.alloc(32, 7).toString('base64url'), occurredAt: now,
           evidence: { scheduledFor: now } }, recipeKind: 'workflow-v2', leaseExpiresAt: Date.now() + 30_000,
         attempt: 1, revision: 1, executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope },
-        automation: { id: automationId, name: 'Guest schedule', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS }) };
+        automation: { id: automationId, name: 'Guest schedule', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS } };
     });
     const worker = startCapacityAutomationWorker({ machineId, token: 'custodian-token',
       credentials: { token: 'custodian-token', encryption: null }, requesterHomeServerIdentityId: homeId,
       requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' },
       coordinateWorkflowRun: async (claim, requester) => {
         if (!requester) throw new Error('Expected guest requester custody');
+        expect(claim.machineAdmission).toEqual(occurrenceAdmission);
         const { credentials, attribution: requesterAttribution } = requester;
         return await createProductionWorkflowRunCoordinator({ token: credentials.token, accountId: requesterAttribution.accountId,
           machineId, storage, requesterWorkAttributionV1: requesterAttribution,
@@ -588,7 +591,8 @@ describe('automationWorker', () => {
     try {
       await worker.refreshAssignments();
       await retainWorkflowRequesterCredentials({ scopeId: triggerId, happyHomeDir: configuration.happyHomeDir,
-        attribution, credentials: guestCredentials, homeServerIdentityId: homeId });
+        attribution, credentials: guestCredentials, homeServerIdentityId: homeId,
+        machineAdmission: { ...occurrenceAdmission, role: 'manage' } });
       wake('older-run', 1);
       await olderClaimStarted.promise;
       wake(runId, 2);

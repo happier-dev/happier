@@ -2,12 +2,13 @@ import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execu
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import type { RpcLocalActionContext } from '../../api/rpc/types';
 import type { StoredCredentials } from '../../persistence';
 import type { MachineActionDirectTargetTransport } from '../../session/actions/createCliActionDeps';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
-import type { prepareRequesterSessionBootstrap, readRequesterMachineAdmissionCurrent, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
+import type { prepareRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 import { requiresWorkflowMachineActionAdmission } from '../../session/actions/cliActionDeps/machineTransport';
 
@@ -31,7 +32,7 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   runId: string;
   credentials: StoredCredentials;
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-  machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary;
+  machineAdmission?: SocketRpcMachineAdmissionContextV1;
   boundary: Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
@@ -50,34 +51,27 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
     'machineAdmission' | 'verifyMachineAdmissionCurrent'> | null>;
   dispose(): Promise<void>;
 }> {
-  let requester: Promise<(NonNullable<Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>>> & Readonly<{
-    machineAdmission: NonNullable<Awaited<ReturnType<typeof readRequesterMachineAdmissionCurrent>>>;
-  }>) | null> | undefined;
+  const { machineAdmission } = input;
+  let requester: ReturnType<typeof prepareRequesterSessionBootstrap> | undefined;
   const prepare = async (local: Pick<RpcLocalActionContext, 'executionRunWorkflowRunId' | 'requesterWorkAttributionV1'>) => {
     const expected = input.requesterWorkAttributionV1;
     const stamp = local.requesterWorkAttributionV1;
     if (!expected || local.executionRunWorkflowRunId !== input.runId
       || stamp?.accountId !== expected.accountId || stamp.serverId !== input.boundary.serverId
       || stamp.machineId !== input.transport.machineId || stamp.installationId !== expected.installationId
+      || machineAdmission && (machineAdmission.actorAccountId !== expected.accountId
+        || machineAdmission.machineId !== expected.machineId || machineAdmission.installationId !== expected.installationId)
       || !await input.isCurrent()) return null;
     requester ??= readRequesterHomeWithinActionLifetime(async () => {
-      const { prepareRequesterSessionBootstrap, readRequesterMachineAdmissionCurrent } = await import('../sessionEncryption/requesterSessionCredentials');
-      // Capture the existing Home admission once for this claimed Run. Later
-      // service Actions consume its role rather than borrowing custodian access.
-      const machineAdmission = await readRequesterMachineAdmissionCurrent({
-        credentials: input.credentials, attribution: expected,
-        serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
-        boundary: input.machineAdmissionBoundary,
+      const { prepareRequesterSessionBootstrap } = await import('../sessionEncryption/requesterSessionCredentials');
+      // Null denotes an admitted assignment without a recorded role. The
+      // settings bootstrap may not inherit a role from earlier custody.
+      return await prepareRequesterSessionBootstrap({
+        credentials: input.credentials, attribution: expected, boundary: input.boundary,
+        machineAdmission: machineAdmission ?? null,
+        verifyMachineAdmissionCurrent: input.isCurrent,
         ...(input.signal ? { signal: input.signal } : {}),
       });
-      if (!machineAdmission) return null;
-      const prepared = await prepareRequesterSessionBootstrap({
-      credentials: input.credentials, attribution: expected, boundary: input.boundary,
-      machineAdmission,
-      verifyMachineAdmissionCurrent: input.isCurrent,
-      ...(input.signal ? { signal: input.signal } : {}),
-      });
-      return prepared ? { ...prepared, machineAdmission } : null;
     }, input.signal);
     const prepared = await requester;
     return prepared && await prepared.admitted.isCurrent() ? prepared : null;
@@ -102,7 +96,7 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
     resolveActionRequesterContext: async () => {
       const prepared = await prepare({ executionRunWorkflowRunId: input.runId,
         requesterWorkAttributionV1: input.requesterWorkAttributionV1 });
-      return prepared ? { machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } : null;
+      return prepared ? { machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } : null;
     },
     transport: {
       machineId: input.transport.machineId,
@@ -117,9 +111,9 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
       // drop the stamped Run id that excludes this Run's own live work.
       ...(input.transport.machineReboot ? { machineReboot: async request => {
         const prepared = await prepare(request.context);
-        if (!prepared) return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
+        if (!prepared || !machineAdmission) return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
         return await input.transport.machineReboot!({ ...request, context: { ...request.context,
-          machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
+          machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
       } } : {}),
       invoke: async (method, request, options) => {
         // Startup observation and retained-operation recovery already belong to
@@ -141,15 +135,15 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
         const admittedComparison = method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
           && caller?.kind === 'workflowRun' && caller.runId === input.runId && caller.authorization.principal.kind === 'host'
           && !options?.rpcContext?.sessionActionOrigin
-          && prepared.machineAdmission.role === 'manage'
-          && prepared.machineAdmission.actorAccountId === prepared.machineAdmission.custodianAccountId
+          && machineAdmission?.role === 'manage'
+          && machineAdmission.actorAccountId === machineAdmission.custodianAccountId
           && isDetachedComparisonCapture(request, input.transport.machineId);
         // The Run's captured Home admission is the receiving Machine admission
         // native owners require, as Home's stamp is for the same direct Action.
         return await input.transport.invoke(method, request, { ...options,
-          ...(admittedComparison ? { admissionResult: { ok: true as const, admittedHostWorkflowRequester: prepared.machineAdmission } } : {}),
+          ...(admittedComparison ? { admissionResult: { ok: true as const, admittedHostWorkflowRequester: machineAdmission } } : {}),
           rpcContext: { requesterSessionBootstrap: prepared.admitted, callerAuthority: 'account_automation',
-            machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
+            machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
       },
     },
     dispose: async () => { await (await requester)?.cleanupOnFailure(); },

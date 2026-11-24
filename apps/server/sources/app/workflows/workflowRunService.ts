@@ -491,7 +491,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                     workflowCustodyState: "pending",
                     originDeliveryAckRevision: params.resultDelivery?.kind === 'originating_session' ? 0 : null,
                     assignments: { create: { machineId: params.machineId, priority: 0,
-                        admittedMachineInstallationId: admission.installationId } },
+                        admittedMachineInstallationId: admission.installationId, admittedMachineRole: admission.role } },
                 },
                 select: workflowRunSelect,
             });

@@ -9,11 +9,13 @@ import type { AutomationV3WorkerAssignmentsResponse } from '@happier-dev/protoco
 import { markAccountChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow, type EffectiveAccountEncryptionMode } from "@/app/encryption/accountEncryptionMode";
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
 import { AutomationV3WorkerClaimResponseSchema, AutomationV3WorkerClaimReceiptRunSchema, AutomationV3WorkerClaimedAutomationSchema, AutomationV3WorkerClaimedRunSchema, type AutomationV3WorkerClaimResponse, type AutomationV3WorkerClaimedAutomation, type AutomationV3WorkerClaimReceiptRun, type AutomationV3WorkerClaimedRun } from '@happier-dev/protocol/automations/automationApiV3';
 import { parseWorkflowStoredContentEnvelopeV1, validateWorkflowStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { parseAutomationRunExecutionRecipeV1, validateAutomationRunExecutionRecipeOuterV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { MachineAccessRoleV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
@@ -66,7 +68,8 @@ type AutomationClaimResult = Readonly<{
 type AutomationClaimRun = Prisma.AutomationRunGetPayload<{
     select: typeof automationRunWithAutomationSelect;
 }> & Readonly<{ triggerRetired?: boolean; recipeKind?: "legacy" | "workflow-v2" | "action-v1"; causeWorkDepth?: number;
-    lastSucceededRun?: Readonly<{ runId: string; checkpointEnvelope: string }> }>;
+    lastSucceededRun?: Readonly<{ runId: string; checkpointEnvelope: string }>;
+    machineAdmission?: AutomationV3WorkerClaimedRun['machineAdmission'] }>;
 
 function recipeKindForClaimRun(run: Pick<AutomationClaimRun, "workflowCustodyState" | "executionInputEnvelope">): "legacy" | "workflow-v2" | "action-v1" {
     if (run.workflowCustodyState !== null) return "workflow-v2";
@@ -140,6 +143,7 @@ function projectAutomationV3ClaimReceiptResult(
                     workflowResumeRequestedRevision: result.run.workflowResumeRequestedRevision,
                 }),
                 recipeKind: "workflow-v2",
+                ...(result.run.machineAdmission ? { machineAdmission: result.run.machineAdmission } : {}),
                 origin: {
                     kind: "direct",
                     ...(result.run.originSessionId === null ? {} : { originSessionId: result.run.originSessionId }),
@@ -167,6 +171,7 @@ function projectAutomationV3ClaimReceiptResult(
                 workflowResumeRequestedRevision: result.run.workflowResumeRequestedRevision,
             }),
             recipeKind: result.run.recipeKind ?? recipeKindForClaimRun(result.run),
+            ...(result.run.machineAdmission ? { machineAdmission: result.run.machineAdmission } : {}),
             executionInputEnvelope: result.run.executionInputEnvelope,
             ...(result.run.workflowAcceptedSnapshotEnvelope === null ? {} : {
                 workflowAcceptedSnapshotEnvelope: result.run.workflowAcceptedSnapshotEnvelope,
@@ -426,7 +431,7 @@ const automationClaimCandidateSelect = {
     automation: { select: { scopeSessionId: true } },
     leaseExpiresAt: true,
     dueAt: true,
-    assignments: { select: { machineId: true } },
+    assignments: { select: { machineId: true, admittedMachineInstallationId: true, admittedMachineRole: true } },
 } satisfies Prisma.AutomationRunSelect;
 
 /** Reads only frozen Run state and the recipe-derived assignment index. */
@@ -771,14 +776,18 @@ export async function claimAutomationRun(params: {
     const execute = async (): Promise<AutomationClaimResult> => await inTx(async (tx) => {
         let machineCustodianAccountId: string | null = null;
         let machineInstallationId: string | null = null;
+        let machineEncryptionMode: EffectiveAccountEncryptionMode | null = null;
         const readCurrentMachineClaimTime = async () => {
             const machine = await tx.machine.findFirst({
                 where: { ...(params.scope === 'workflow' && params.claimRequest ? {} : { accountId: params.accountId }), id: params.machineId, ...persistentMachineWhere,
                     revokedAt: null, replacedByMachineId: null },
-                select: { id: true, accountId: true, installationId: true },
+                select: { id: true, accountId: true, installationId: true,
+                    ...(params.scope === 'workflow' ? { account: { select: { encryptionMode: true } } } : {}) },
             });
             machineCustodianAccountId = machine?.accountId ?? null;
             machineInstallationId = machine?.installationId ?? null;
+            const mode = machine?.account && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
+            machineEncryptionMode = mode?.status === 'ready' ? mode.mode : null;
             const now = new Date();
             return machine && (!params.claimRequest || (
                 machine.installationId === params.claimRequest.machineInstallationId
@@ -1083,8 +1092,18 @@ export async function claimAutomationRun(params: {
                 });
             }
 
+            const recipeKind = recipeKindForClaimRun(projectedRun);
+            const assignment = candidate.assignments.find(assignment => assignment.machineId === params.machineId
+                && assignment.admittedMachineInstallationId === machineInstallationId);
+            const role = MachineAccessRoleV1Schema.safeParse(assignment?.admittedMachineRole);
+            const machineAdmission = recipeKind === "workflow-v2" && params.claimRequest
+                && role.success && machineInstallationId && machineCustodianAccountId && machineEncryptionMode ? {
+                    actorAccountId: params.accountId, custodianAccountId: machineCustodianAccountId,
+                    machineId: params.machineId, installationId: machineInstallationId,
+                    role: role.data, encryptionMode: machineEncryptionMode,
+                } : undefined;
             const settled = await settleClaimRequest({
-                run: { ...projectedRun, recipeKind: recipeKindForClaimRun(projectedRun),
+                run: { ...projectedRun, recipeKind, ...(machineAdmission ? { machineAdmission } : {}),
                     // The CAS consumed this request. Keep it only in this exact
                     // claim/receipt, never in the re-read mutable Run row.
                     workflowResumeRequestedRevision: candidate.workflowResumeRequestedRevision,

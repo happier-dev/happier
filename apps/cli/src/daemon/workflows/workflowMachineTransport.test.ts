@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import nacl from 'tweetnacl';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -52,7 +51,7 @@ describe('Workflow Run native Machine admission', () => {
 
   // A Workflow step reaches the same installed receivers as the directly invoked
   // Action. The Run's Home-admitted Machine access is the receiving admission;
-  // Home's published Machine access row is the external boundary.
+  // the signed worker claim supplies the admission.
   it.each(['owner', 'refused', 'guest'] as const)(
     'spends the claimed Run Machine admission at native receivers (%s)',
     async (access) => {
@@ -261,15 +260,13 @@ describe('Workflow Run native Machine admission', () => {
           happyHomeDir: root,
           getObservedServerIdentityId: () => homeId,
         },
-        machineAdmissionBoundary: {
+        machineAdmission: {
+          actorAccountId: accountId,
+          custodianAccountId,
           machineId,
-          daemonToken: 'custodian-daemon-token',
-          isHomeCurrent: () => true,
-          readInstallation: () => ({
-            installationId,
-            privateKey: nacl.sign.keyPair().secretKey,
-          }),
-          getObservedServerIdentityId: () => homeId,
+          installationId: access === 'refused' ? 'wrong-installation' : installationId,
+          role: access === 'guest' ? 'use' : 'manage',
+          encryptionMode: 'plain',
         },
         transport: {
           machineId,
@@ -454,8 +451,7 @@ describe('Workflow Run native Machine admission', () => {
       }
       currentRun = false;
       expect(await compare(runId)).toMatchObject({ errorCode: 'project_requester_credentials_unavailable' });
-      // The Run's Machine access is read once at capture, never per step.
-      expect(machineAccessReads).toBe(1);
+      expect(machineAccessReads).toBe(0);
       expect(unhandledHttp).toEqual([]);
     },
   );

@@ -66,6 +66,7 @@ export function createCliMachineResourceActionDeps(
     if (context.machineAdmission && context.machineAdmission.machineId !== machineId) return refused();
     const admission = context.machineAdmission ?? params.savedSecretOperationContext?.machineAdmission;
     if (admission) return permits(isCustodianMachineAdmission(admission), admission.role) ? null : refused();
+    if (context.executionRunWorkflowRunId && params.savedSecretOperationContext) return refused();
     const root = context.verifiedExternalActionRequester?.authorization.binding;
     const local = context.authenticatedLocalRootCustody ?? context.localActionContext?.authenticatedLocalRootCustody
       ?? context.inheritedLocalActionContext?.authenticatedLocalRootCustody;

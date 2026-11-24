@@ -3294,6 +3294,7 @@ model AutomationRunAssignment {
     run       AutomationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
     machineId String
     admittedMachineInstallationId String?
+    admittedMachineRole           String?
     priority  Int           @default(0)
 
     @@id([runId, machineId])

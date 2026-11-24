@@ -1175,8 +1175,8 @@ describe('production daemon detached Workflow admission', () => {
         ? { ...requesterWorkAttributionV1, installationId: 'different-installation' } : requesterWorkAttributionV1,
       boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: directory,
         getObservedServerIdentityId: async () => binding === 'missing-home' ? null : homeId },
-      machineAdmissionBoundary: { machineId, daemonToken: 'detached-daemon-token', isHomeCurrent: () => true,
-        readInstallation: () => installationIdentity, getObservedServerIdentityId: () => homeId },
+      machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
+        installationId: installationIdentity.installationId, role: 'manage', encryptionMode: 'plain' },
       isCurrent: async () => true,
       transport: { machineId, invoke: async (method, input, options) => {
         nativeRequests.push(method);
@@ -1410,11 +1410,10 @@ describe('production daemon scheduled service command operation', () => {
   let releaseHome = () => {};
   afterEach(() => { releaseHome(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-  it.each(['automatic', 'ask', 'foreign-use', 'foreign-manage', 'approved-trigger', 'changed-trigger'] as const)('keeps unattended service execution under the installed operation owner (%s)', async policy => {
+  it.each(['automatic', 'ask', 'foreign-use', 'foreign-manage', 'foreign-revoked', 'foreign-missing-role', 'approved-trigger', 'changed-trigger'] as const)('keeps unattended service execution under the installed operation owner (%s)', async policy => {
     const accountId = 'scheduled-service-owner', machineId = 'scheduled-worker';
-    const custodianAccountId = policy === 'foreign-use' || policy === 'foreign-manage' ? 'machine-custodian' : accountId;
+    const custodianAccountId = policy.startsWith('foreign-') ? 'machine-custodian' : accountId;
     const installationId = 'scheduled-service-installation';
-    const installationIdentity = { installationId, privateKey: nacl.sign.keyPair().secretKey };
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
     const home = 'http://127.0.0.1:43187', homeId = 'srv_scheduled_service';
     const serverId = configuration.activeServerId;
@@ -1424,10 +1423,10 @@ describe('production daemon scheduled service command operation', () => {
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`,
       encryption: null, credentialProvenance: 'stored_session' as const };
     const accountSettings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
-      ...(policy === 'automatic' || policy === 'foreign-use' || policy === 'foreign-manage'
+      ...(policy === 'automatic' || policy.startsWith('foreign-')
         ? { approvalWaivedSurfaces: { 'machines.services.exec': ['agent'] } } : {}) } });
-    // Home publishes the requester's admitted Machine access. The real requester
-    // admission reader must carry this role through the scheduled transport.
+    // A legacy grant re-read would observe this projection and strand a
+    // previously admitted requester when the grant has been withdrawn.
     const publishedMachine = MachinePublishedRowV1Schema.parse({ id: machineId, managedMachineRef: null,
       metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId,
@@ -1543,6 +1542,7 @@ describe('production daemon scheduled service command operation', () => {
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
       if (path === `/v1/machines/${machineId}`) {
         machineAccessReads++;
+        if (policy === 'foreign-revoked') return { status: 404, data: { error: 'Machine not found' } };
         return { status: 200, data: { machine: publishedMachine } };
       }
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -1590,10 +1590,10 @@ describe('production daemon scheduled service command operation', () => {
     const unavailable = async (): Promise<never> => { throw new Error('Scheduled local service must not re-enter Machine RPC'); };
     const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId };
     const transportInput = { runId, credentials, requesterWorkAttributionV1, isCurrent: async () => true,
+      machineAdmission: policy === 'foreign-missing-role' ? undefined : {
+        actorAccountId: accountId, custodianAccountId, machineId, installationId,
+        role: policy === 'foreign-use' ? 'use' as const : 'manage' as const, encryptionMode: 'plain' as const },
       boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: root, getObservedServerIdentityId: () => homeId },
-      machineAdmissionBoundary: { machineId, daemonToken: 'custodian-daemon-token', isHomeCurrent: () => true,
-        readInstallation: () => installationIdentity,
-        getObservedServerIdentityId: () => homeId },
       transport: { machineId, invoke: async (method: string, request: unknown,
         options?: Parameters<import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport['invoke']>[2]) => {
         if (method === 'actionOperation.get.v2') return operations.handlers.getV2(request, options?.rpcContext);
@@ -1615,7 +1615,7 @@ describe('production daemon scheduled service command operation', () => {
     const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, signal: abort.signal,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
     try {
-      if (policy === 'foreign-use') {
+      if (policy === 'foreign-use' || policy === 'foreign-missing-role') {
         await Promise.race([opened, coordinating]);
         expect(launches).toBe(0);
         expect(await coordinating).toMatchObject({ state: 'interrupted', reason: 'access_denied' });
@@ -1635,7 +1635,7 @@ describe('production daemon scheduled service command operation', () => {
         await Promise.race([opened, coordinating.then(outcome => {
           throw new Error(`Scheduled service never reached native execution: ${JSON.stringify({ outcome, rows: storage.rows() })}`);
         })]);
-        expect(machineAccessReads).toBe(1);
+        expect(machineAccessReads).toBe(0);
         expect(storage.run().state).toBe('running');
         expect(await workflowTransport.transport.invoke('actionOperation.get.v2', { operationId: 'scheduled-service-operation' })).toMatchObject({
           kind: 'found', operation: { actionId: 'machines.services.exec', state: 'running' } });
@@ -1659,9 +1659,9 @@ describe('production daemon scheduled service command operation', () => {
         expect((await operations.handlers.listV2({})).items).toEqual([]);
         if (policy === 'changed-trigger') expect(savedTriggerReads).toBeGreaterThan(0);
       }
-      // One admission per captured Run; operation execution and status reads
-      // consume it without requesting Machine permissions again.
-      expect(machineAccessReads).toBe(1);
+      // The assignment was admitted before this transport opened. Execution
+      // and observation never request Machine permissions again.
+      expect(machineAccessReads).toBe(0);
       expect(unhandledHttp).toEqual([]);
     } finally {
       releaseNative();
