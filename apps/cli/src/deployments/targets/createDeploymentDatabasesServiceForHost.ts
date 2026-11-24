@@ -92,9 +92,11 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         if ((!options.nativeMember && detail.environment.controllerMachineId !== host.machineId) || !host.installationId) return refuse('machine_unavailable');
         const placement: DatabaseDescriptorV1['placement'] = { serverId: host.serverId, accountId: host.credentialOwnerAccountId,
             machineId: host.machineId, installationId: host.installationId };
+        const environment = detail.environment.protection === 'production' ? 'production'
+            : detail.environment.previewTemplateEnvironmentId ? 'preview' : undefined;
         const origin: DatabaseDescriptorV1['origin'] = {
             label: detail.content.name,
-            ...(detail.environment.protection === 'production' ? { environment: 'production' } : {}),
+            ...(environment ? { environment } : {}),
         };
         return { host, detail, context: captured, placement, origin };
     };

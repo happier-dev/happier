@@ -52,10 +52,13 @@ describe('managed database attachment at the deployment owner', () => {
         } finally { await owners.dispose(); }
     });
 
-    it('lists the selected native service from the active deployment without provider credentials', async () => {
-        const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
+    it.each([
+        { protection: 'production', origin: 'production' },
+        { protection: 'nonProduction', origin: 'preview' },
+    ] as const)('lists the selected native service with $origin origin without provider credentials', async ({ protection, origin }) => {
+        const stored = createDeploymentTargetRoleAdmissionFixture('inspect', { preview: true });
         stored.state.environment.environment.controllerMachineId = 'other-controller';
-        stored.state.environment.environment.protection = 'production';
+        stored.state.environment.environment.protection = protection;
         const native = stored.state.environment.targetLinks[0]!;
         native.targetLink.targetKind = 'ownServer';
         native.targetLink.source = { kind: 'host', id: 'own-server' };
@@ -91,7 +94,7 @@ describe('managed database attachment at the deployment owner', () => {
         try {
             expect(await service.listTargets({ scope: { kind: 'environment', environment } })).toMatchObject({ targets: [{
                 target: { kind: 'deployment_service', environment, deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' },
-                engine: 'postgresql', origin: { environment: 'production' }, access: { canRead: true, canWrite: false },
+                engine: 'postgresql', origin: { environment: origin }, access: { canRead: true, canWrite: false },
                 automationSubject: { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                     target: { kind: 'environment', environmentId: environment.environmentId, service: 'db', database: 'deployed' } } },
             }], completeness: { complete: true } });
