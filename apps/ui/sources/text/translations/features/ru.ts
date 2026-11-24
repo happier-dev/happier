@@ -19281,7 +19281,7 @@ const widgetAddTranslations = { ru: {
         valueNotFound: ({ value }) => `Не удаётся найти: ${value}`,
         chooseAnother: ({ field }) => `Выбрать другое значение: ${field}`,
         chooseField: ({ field }) => `Выбрать: ${field}`,
-        widgetOptions: 'Параметры виджета',
+        widgetOptions: ({ title }) => `Параметры: ${title}`,
         moveTo: 'Переместить…',
     } } satisfies Pick<Readonly<Record<string, WidgetAddTranslation>>, "ru">;
 

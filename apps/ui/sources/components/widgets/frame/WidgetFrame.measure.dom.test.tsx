@@ -16,6 +16,7 @@ vi.mock('@/utils/web/reactDomCjs', async () => {
 import { WidgetFrame } from './WidgetFrame';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { buildWidgetFrameStyleActions } from './widgetFrameMenu';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,11 +33,36 @@ it('names widget options from each frame title and updates the name without remo
     try {
         await act(async () => root.render(frames('Daily usage')));
         const trigger = container.querySelector<HTMLElement>('[data-testid="named-options-0"]')!;
-        expect(trigger.getAttribute('aria-label')).toBe('Widget options: Daily usage');
-        expect(container.querySelector('[data-testid="named-options-1"]')?.getAttribute('aria-label')).toBe('Widget options: Costs');
+        expect(trigger.getAttribute('aria-label')).toBe('Options for Daily usage');
+        expect(container.querySelector('[data-testid="named-options-1"]')?.getAttribute('aria-label')).toBe('Options for Costs');
         await act(async () => root.render(frames('Daily budget')));
         expect(container.querySelector('[data-testid="named-options-0"]')).toBe(trigger);
-        expect(trigger.getAttribute('aria-label')).toBe('Widget options: Daily budget');
+        expect(trigger.getAttribute('aria-label')).toBe('Options for Daily budget');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('names two untitled cards for their distinct widget kinds', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const kinds = ['usage_daily', 'usage_capacity'] as const;
+    const descriptors = kinds.map(id => readWidgetDescriptor(null, { kind: 'builtin', id })!);
+    try {
+        await act(async () => root.render(<>
+            {descriptors.map(({ title }, index) => (
+                <WidgetFrame key={title} testID={`untitled-${index}`} title={null} placement="home" frameStyle="card"
+                    body={{ kind: 'content', children: 'Rows' }}
+                    menu={<ItemRowActions title={title} overflowOnly overflowTriggerTestID={`untitled-options-${index}`}
+                        actions={[{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: () => {} }]} />} />
+            ))}
+        </>));
+        const names = kinds.map((_, index) =>
+            container.querySelector(`[data-testid="untitled-options-${index}"]`)?.getAttribute('aria-label'));
+        expect(names).toEqual(descriptors.map(({ title }) => `Options for ${title}`));
+        expect(new Set(names).size).toBe(2);
     } finally {
         await act(async () => root.unmount());
         container.remove();

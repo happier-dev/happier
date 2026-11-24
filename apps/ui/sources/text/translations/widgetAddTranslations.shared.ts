@@ -134,7 +134,7 @@ export type WidgetAddTranslation = Readonly<{
     valueNotFound: (params: Readonly<{ value: string }>) => string;
     chooseAnother: (params: Readonly<{ field: string }>) => string;
     chooseField: (params: Readonly<{ field: string }>) => string;
-    widgetOptions: string;
+    widgetOptions: (params: Readonly<{ title: string }>) => string;
     moveTo: string;
 }>;
 
@@ -292,6 +292,6 @@ export const widgetAddTranslationsEnglish = { en: {
         valueNotFound: ({ value }) => `${value} can’t be found`,
         chooseAnother: ({ field }) => `Choose another ${inSentence(field)}`,
         chooseField: ({ field }) => `Choose the ${inSentence(field)}`,
-        widgetOptions: 'Widget options',
+        widgetOptions: ({ title }) => `Options for ${title}`,
         moveTo: 'Move…',
     } } satisfies Pick<Readonly<Record<string, WidgetAddTranslation>>, "en">;

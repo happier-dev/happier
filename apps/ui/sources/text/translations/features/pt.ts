@@ -19242,7 +19242,7 @@ const widgetAddTranslations = { pt: {
         valueNotFound: ({ value }) => `Não foi possível encontrar ${value}`,
         chooseAnother: ({ field }) => `Escolher outro valor para ${field}`,
         chooseField: ({ field }) => `Escolher ${field}`,
-        widgetOptions: 'Opções do widget',
+        widgetOptions: ({ title }) => `Opções para ${title}`,
         moveTo: 'Mover…',
     } } satisfies Pick<Readonly<Record<string, WidgetAddTranslation>>, "pt">;
 

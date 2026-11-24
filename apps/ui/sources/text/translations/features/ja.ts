@@ -19191,7 +19191,7 @@ const widgetAddTranslations = { ja: {
         valueNotFound: ({ value }) => `${value} が見つかりません`,
         chooseAnother: ({ field }) => `別の${field}を選択`,
         chooseField: ({ field }) => `${field}を選択`,
-        widgetOptions: 'ウィジェットのオプション',
+        widgetOptions: ({ title }) => `${title}のオプション`,
         moveTo: '移動…',
     } } satisfies Pick<Readonly<Record<string, WidgetAddTranslation>>, "ja">;
 

@@ -915,7 +915,6 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     actions={itemActions}
                     compactThreshold={Number.POSITIVE_INFINITY}
                     overflowTriggerTestID={`${testID}-actions`}
-                    overflowTriggerAccessibilityLabel={t('common.moreActions')}
                     onOverflowOpenChange={setMenuOpen}
                     onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
                     renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}

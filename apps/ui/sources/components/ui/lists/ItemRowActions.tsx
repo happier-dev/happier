@@ -15,8 +15,8 @@ import { resolveHappierFocusRingVisible, useHappierHitArea, useHappierItemOverfl
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
-/** The owning frame supplies its title; null uses the row's title while the frame has an editable title node. */
-export const ItemRowActionsTitleContext = React.createContext<string | null | undefined>(undefined);
+/** The owning frame names the options trigger, with the row title available as a fallback. */
+export const ItemRowActionsOverflowLabelContext = React.createContext<((rowTitle: string) => string) | null>(null);
 
 export interface ItemRowActionsProps {
     title: string;
@@ -128,7 +128,7 @@ function CurrentContextItemRowActions(props: ItemRowActionsContentProps) {
 }
 
 function ItemRowActionsContent(props: ItemRowActionsContentProps) {
-    const ownerTitle = React.useContext(ItemRowActionsTitleContext);
+    const nameFrameOptions = React.useContext(ItemRowActionsOverflowLabelContext);
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { width: windowWidth } = usePresentationWindowDimensions();
@@ -321,9 +321,9 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
 
     const renderOverflow = React.useCallback(() => {
         // The trigger names the row it acts on ("More actions for Work laptop"): among a list's many ⋯ buttons a
-        // bare "More actions" says nothing. A frame's own title wins over the row's (a widget's ⋯).
-        const accessibilityLabel = props.overflowTriggerAccessibilityLabel
-            ?? t('common.moreActionsFor', { title: ownerTitle ?? props.title });
+        // bare "More actions" says nothing. A frame supplies the name for its own trigger.
+        const accessibilityLabel = nameFrameOptions?.(props.title) ?? props.overflowTriggerAccessibilityLabel
+            ?? t('common.moreActionsFor', { title: props.title });
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
         const onRequestClose = () => setShowOverflow(false);
@@ -422,7 +422,7 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                 ) : null}
             </View>
         );
-    }, [actionControlFrame, actionHitArea, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowPlacement, overflowPortal, ownerTitle, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
+    }, [actionControlFrame, actionHitArea, iconSize, nameFrameOptions, onOverflowTriggerKeyDown, overflowActionSections, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>

@@ -98,7 +98,9 @@ export function HubSectionMenu(props: Readonly<{
                 // Every entry of a grouped widget's menu shows at once; nothing is cut at the menu's foot.
                 overflowMaxHeightCap={WIDGET_MENU_MAX_HEIGHT_PX}
                 overflowTriggerTestID={`home-hub.${section.id}.menuTrigger`}
-                overflowTriggerAccessibilityLabel={`${section.kind === 'widget' ? t('widgetAdd.widgetOptions') : t('settingsOverview.homeSectionOptions')}: ${title}`}
+                overflowTriggerAccessibilityLabel={section.kind === 'widget'
+                    ? t('widgetAdd.widgetOptions', { title })
+                    : `${t('settingsOverview.homeSectionOptions')}: ${title}`}
                 onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
                 renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `home-hub.${section.id}.size`)}
                 actions={orderWidgetMenu({

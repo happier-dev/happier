@@ -19131,7 +19131,7 @@ const widgetAddTranslations = { 'zh-Hans': {
         valueNotFound: ({ value }) => `找不到 ${value}`,
         chooseAnother: ({ field }) => `选择其他${field}`,
         chooseField: ({ field }) => `选择${field}`,
-        widgetOptions: '小组件选项',
+        widgetOptions: ({ title }) => `${title}的选项`,
         moveTo: '移动…',
     } } satisfies Pick<Readonly<Record<string, WidgetAddTranslation>>, "zh-Hans">;
 

@@ -483,15 +483,17 @@ describe('ItemRowActions', () => {
     });
 
     it('names its ⋯ trigger after the row it acts on, with or without an owning frame', async () => {
-        const { ItemRowActions, ItemRowActionsTitleContext } = await import('./ItemRowActions');
+        const { ItemRowActions, ItemRowActionsOverflowLabelContext } = await import('./ItemRowActions');
         const { t } = await import('@/text');
         const actions = [{ id: 'edit', title: 'Edit profile', icon: 'pencil-simple' as const, onPress: vi.fn() }];
         const bare = await renderScreen(React.createElement(ItemRowActions, { title: 'Work laptop', overflowOnly: true,
             overflowTriggerTestID: 'more', actions }));
         expect(bare.findByTestId('more')?.props.accessibilityLabel).toBe(t('common.moreActionsFor', { title: 'Work laptop' }));
-        const framed = await renderScreen(React.createElement(ItemRowActionsTitleContext.Provider, { value: 'Morning glance' },
-            React.createElement(ItemRowActions, { title: 'Widget', overflowOnly: true, overflowTriggerTestID: 'more', actions })));
-        expect(framed.findByTestId('more')?.props.accessibilityLabel).toBe(t('common.moreActionsFor', { title: 'Morning glance' }));
+        const framed = await renderScreen(React.createElement(ItemRowActionsOverflowLabelContext.Provider, {
+            value: rowTitle => t('widgetAdd.widgetOptions', { title: rowTitle }),
+        }, React.createElement(ItemRowActions, { title: 'Morning glance', overflowOnly: true, overflowTriggerTestID: 'more',
+            overflowTriggerAccessibilityLabel: 'Generic options', actions })));
+        expect(framed.findByTestId('more')?.props.accessibilityLabel).toBe(t('widgetAdd.widgetOptions', { title: 'Morning glance' }));
     });
 
     it('passes custom overflow placement and portal alignment through to the popover', async () => {
