@@ -37,8 +37,8 @@ import { WidgetGroupMenuButton } from '@/components/widgets/group/WidgetGroupMen
 import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { describeWidgetGroupContext, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
-import { useWidgetGroupFollowedValue } from '@/components/widgets/group/widgetGroupFollowedInputs';
+import { useWidgetGroupHeaderReading, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupCardSource } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
@@ -146,7 +146,7 @@ type HubGroupSection = Extract<HomeHubSection<WidgetCandidate>, { kind: 'group' 
 type HubWidgetSectionModel = Extract<HomeHubSection<WidgetCandidate>, { kind: 'widget' }>;
 
 /** A widget inside a group: where it sits there, and whether its cell has room for the full follow phrase. */
-type HubGroupChildPlacement = Readonly<{ group: HubGroupSection; index: number; wide: boolean; labels: WidgetBindingValueLabels }>;
+type HubGroupChildPlacement = Readonly<{ group: HubGroupSection; index: number; wide: boolean; labels: WidgetBindingValueLabels; header: WidgetGroupHeaderReading }>;
 
 /**
  * One home section with its hover-revealed "⋯" menu. Memoized on stable props, so a hub render
@@ -263,13 +263,14 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
     const openSlotAdd = React.useCallback(() => setSlotAddOpen(true), []);
     const closeSlotAdd = React.useCallback(() => setSlotAddOpen(false), []);
     const grip = props.widgetDrag && props.showGrips ? <SessionSurfaceEntityDragHandle drag={drop} title={name} testID={`${testID}.move`} /> : null;
-    const sourceValue = describeWidgetGroupContext(group.context, labels);
+    const title = props.customizing ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null;
+    const header = useWidgetGroupHeaderReading(title !== null, group.context, labels);
     const renderChild = React.useCallback((instanceId: string, placement: Readonly<{ wide: boolean }>) => {
         const index = section.children.findIndex(child => child.id === instanceId);
         const child = section.children[index];
         if (!child) return null;
-        return <HubWidgetSlot {...props} section={child} index={index} parent={{ group: section, index, wide: placement.wide, labels }} />;
-    }, [labels, props, section]);
+        return <HubWidgetSlot {...props} section={child} index={index} parent={{ group: section, index, wide: placement.wide, labels, header }} />;
+    }, [header, labels, props, section]);
     return (
         <View style={styles.card}>
             <WidgetGroupFrame
@@ -283,8 +284,8 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
                 {...(props.customizing ? { bar: <WidgetGroupBar input={menu.menuInput} serverId={props.homeSurface?.serverId} onRename={menu.commitName} anchorRef={menu.anchorRef} grip={grip} testID={`${testID}.bar`} /> } : {})}
                 onAddToGroup={openSlotAdd}
                 addAnchorRef={slotAnchorRef}
-                title={props.customizing ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
-                source={sourceValue ? widgetGroupPinnedSource(sourceValue) : undefined}
+                title={title}
+                source={header?.source}
                 menu={props.customizing ? null : <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} />}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
                 renderChild={renderChild}
@@ -326,7 +327,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
     const groupLabels = props.parent?.labels;
     const context = React.useMemo(() => widgetGroupSurfaceContext(HOME_CONTEXT, groupContext, groupLabels), [groupContext, groupLabels]);
     const edit = useWidgetInputsEditor({ instance, candidate: widget, scope, context, audience: 'personal', setInputs: saveInputs, testID });
-    const followed = useWidgetGroupFollowedValue(instance, widget, HOME_CONTEXT, scope?.owner, groupContext, groupLabels);
+    const followed = useWidgetGroupCardSource(instance, widget, HOME_CONTEXT, scope?.owner, groupContext, groupLabels, props.parent?.header);
     const childTitle = React.useMemo(() => homeChildTitle(props.layout.sections), [props.layout]);
     const groupActions = buildWidgetGroupMembershipActions({ instanceId: instance.id, size: props.section.size, items: props.layout.items, topLevelIds: props.topLevelIds,
         childTitle, operations: props.groupOperations });
@@ -385,7 +386,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
                 grouped={parent !== undefined}
                 showGrip={props.showGrips}
                 groupBindings={groupContext}
-                {...(followed ? { followSource: { value: followed, wide: parent?.wide ?? true, groupNamesValue: parent !== undefined && readWidgetGroupTitle(parent.group.group) !== undefined } } : {})}
+                {...(followed ? { followSource: { value: followed.value, wide: parent?.wide ?? true, groupNamesValue: followed.namedInHeader } } : {})}
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 {...(props.widgetDrag && props.homeSurface ? { entityDrag: { ...props.widgetDrag,
                     // The line between cards reorders here; inside a group, within that group (lab wgdnd B).

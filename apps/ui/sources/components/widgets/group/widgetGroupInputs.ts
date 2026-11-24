@@ -1,4 +1,4 @@
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { useMemo } from 'react';
 import type { InputFieldHint } from '@happier-dev/protocol/inputs/inputFields';
 import type {
   WidgetInputBindingsV1,
@@ -8,33 +8,38 @@ import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import type { HappierWidgetFrameSourceDescriptor } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
-import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
+import { describeWidgetBindingPinValue, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
 
-/** A value as people read it: text and numbers as they are, an object by its own name. */
-export function describeWidgetBindingValue(value: JsonValue): string | null {
-  if (typeof value === 'string') return value.length > 0 ? value : null;
-  if (typeof value === 'number') return String(value);
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const key of ['label', 'name', 'title'] as const) {
-      const named = (value as Readonly<Record<string, JsonValue>>)[key];
-      if (typeof named === 'string' && named.length > 0) return named;
+/** The group's own value for its header's source slot ("📁 happier"): its first chosen value. */
+export function readWidgetGroupHeaderBinding(
+  context: WidgetInputBindingsV1 | undefined,
+  labels: WidgetBindingValueLabels | undefined,
+): Readonly<{ slot: string; value: string }> | null {
+  for (const [slot, binding] of Object.entries(context ?? {})) {
+    if (binding.kind === 'value') {
+      const label = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false);
+      if (label) return { slot, value: label };
     }
   }
   return null;
 }
 
-/** The group's own value for its header's source slot ("📁 happier"): its first chosen value. */
-export function describeWidgetGroupContext(
+export type WidgetGroupHeaderReading = Readonly<{
+  binding: ReturnType<typeof readWidgetGroupHeaderBinding>;
+  source: HappierWidgetFrameSourceDescriptor | undefined;
+}> | null;
+
+/** The header gives its children the binding it actually draws. */
+export function useWidgetGroupHeaderReading(
+  titled: boolean,
   context: WidgetInputBindingsV1 | undefined,
-  labels?: WidgetBindingValueLabels,
-): string | null {
-  for (const [slot, binding] of Object.entries(context ?? {})) {
-    if (binding.kind === 'value') {
-      const label = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingValue(binding.value);
-      if (label) return label;
-    }
-  }
-  return null;
+  labels: WidgetBindingValueLabels,
+): WidgetGroupHeaderReading {
+  return useMemo(() => {
+    if (!titled) return null;
+    const binding = readWidgetGroupHeaderBinding(context, labels);
+    return { binding, source: binding ? widgetGroupPinnedSource(binding.value) : undefined };
+  }, [titled, context, labels]);
 }
 
 /**
@@ -48,7 +53,7 @@ export function describeWidgetGroupInputsBinding(
 ): string | null {
   for (const [slot, binding] of Object.entries(context ?? {})) {
     if (binding.kind !== 'value') continue;
-    const value = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingValue(binding.value);
+    const value = labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false);
     if (!value) continue;
     const field = fields.find((entry) => entry.path === slot);
     return field ? t('widgetFrame.groupInputsValue', { field: field.title, value }) : value;
@@ -134,7 +139,7 @@ export function widgetGroupSurfaceContext(
       label: t('widgetFrame.followingGroup'),
       value: {
         value: binding.value,
-        label: (labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingValue(binding.value)) ?? slot,
+        label: (labels && Object.hasOwn(labels, slot) ? labels[slot] : describeWidgetBindingPinValue(undefined, binding.value, false)) ?? slot,
       },
     };
   }

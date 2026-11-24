@@ -6,8 +6,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { isWidgetFollowingSurfaceSlot, useWidgetInstanceBindingLabel } from './useWidgetInstanceBindingLabel';
 import { useWidgetBindingValueLabels } from './useWidgetBindingValueLabels';
-import { describeWidgetGroupContext, widgetGroupSurfaceContext } from '../group/widgetGroupInputs';
-import { useWidgetGroupFollowedValue } from '../group/widgetGroupFollowedInputs';
+import { readWidgetGroupHeaderBinding, widgetGroupSurfaceContext } from '../group/widgetGroupInputs';
+import { useWidgetGroupCardSource } from '../group/widgetGroupFollowedInputs';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
@@ -68,17 +68,17 @@ it('names declared Session pins and group followers by their exact Home-qualifie
   const groupLabels = await renderHook(() => useWidgetBindingValueLabels(context, { inputs: { fields } }));
   const labels = groupLabels.getCurrent();
   expect(labels).toEqual({ session: 'Review invoices', checkout: 'happier' });
-  expect(describeWidgetGroupContext(context, labels)).toBe('Review invoices');
-  const follower = await renderHook(() => useWidgetGroupFollowedValue({
+  expect(readWidgetGroupHeaderBinding(context, labels)?.value).toBe('Review invoices');
+  const follower = await renderHook(() => useWidgetGroupCardSource({
     v: 1, id: 'child', definition: { kind: 'builtin', id: 'fixture' }, bindings: { session: { kind: 'context', slot: 'session' } },
   }, native, {}, { kind: 'home' }, context, labels));
-  expect(follower.getCurrent()).toBe('Review invoices');
+  expect(follower.getCurrent()?.value).toBe('Review invoices');
   expect(widgetGroupSurfaceContext({}, context, labels).slots?.checkout?.value?.label).toBe('happier');
   await act(async () => storage.setState({ sessions: { ...storage.getState().sessions, B: { ...session, serverId: 'other', metadata: { ...session.metadata!, name: 'Other Home' } } } }));
   await hook.rerender();
   expect(hook.getCurrent()).toBeNull();
   await groupLabels.rerender();
-  expect(describeWidgetGroupContext(context, groupLabels.getCurrent())).toBe('happier');
+  expect(readWidgetGroupHeaderBinding(context, groupLabels.getCurrent())?.value).toBe('happier');
 });
 
 it('retains an installed descriptor explicit Session target even without field hints', async () => {

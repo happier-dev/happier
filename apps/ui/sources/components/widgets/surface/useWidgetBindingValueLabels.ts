@@ -3,11 +3,10 @@ import { useShallow } from 'zustand/react/shallow';
 import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { MachineTargetV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import { readWidgetInputTargetV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import { describeWidgetBindingValue, readWidgetGroupInputCandidate } from '@/components/widgets/group/widgetGroupInputs';
+import { readWidgetGroupInputCandidate } from '@/components/widgets/group/widgetGroupInputs';
 import { storage, useSessionDisplayNameProjections, type SessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceDisplayPresentation } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
@@ -18,10 +17,9 @@ import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolve
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
-/** A typed location (absolute, home-relative or UNC path) says where, not what: it never names a copy. */
-const TYPED_LOCATION = /^(?:[\\/~]|[A-Za-z]:[\\/])/;
+import { describeWidgetBindingPinValue, type WidgetBindingValueLabel, type WidgetBindingValueLabels } from './widgetBindingValueLabel';
 
-export type WidgetBindingValueLabels = Readonly<Record<string, string | null>>;
+export type { WidgetBindingValueLabels } from './widgetBindingValueLabel';
 
 const sessionName = (source: SessionDisplayNameSource | null) => source ? getSessionName(source, source.serverId) : null;
 
@@ -44,14 +42,15 @@ export function useWidgetBindingValueLabels(
             const value = binding?.kind === 'value' ? binding.value : undefined;
             const declaring = fieldCandidates ? readWidgetGroupInputCandidate(fieldCandidates, path) : undefined;
             const fieldTarget = declaring ? readWidgetInputTargetV1(declaring) : target;
-            const session = value !== undefined && ((fieldTarget.kind === 'session' && fieldTarget.path === path)
+            const sessionTarget = fieldTarget.kind === 'session' && fieldTarget.path === path;
+            const session = value !== undefined && (sessionTarget
                 || (field?.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'session'))
                 ? VoiceTrackedSessionAddressV1Schema.safeParse(value) : null;
             const workspace = value !== undefined && field?.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'workspace'
                 ? WorkspaceRefV1Schema.safeParse(value) : null;
             const machine = value !== undefined && field?.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'machine'
                 ? MachineTargetV1Schema.safeParse(value) : null;
-            return { path, field, value, session: session?.success ? session.data : null, workspace: workspace?.success ? workspace.data : null,
+            return { path, field, value, sessionTarget, session: session?.success ? session.data : null, workspace: workspace?.success ? workspace.data : null,
                 machine: machine?.success ? machine.data : null };
         });
     }, [bindings, candidate, fieldCandidates]);
@@ -77,17 +76,11 @@ export function useWidgetBindingValueLabels(
         let sessionIndex = 0;
         return Object.fromEntries(entries.map((entry, index) => {
             const { field, value } = entry;
-            let label: string | null = null;
+            let label: WidgetBindingValueLabel;
             if (entry.session) label = isSessionVisible(entry.session) ? sessionNames[sessionIndex++] ?? null : null;
             else if (entry.workspace) label = workspaceNames[index] ?? null;
             else if (entry.machine) label = machineNames[index] ?? null;
-            else if (value !== undefined && field) {
-                const option = field.options?.find(option => isSameInputOptionValue(option.value, value));
-                if (option) label = option.label;
-                else if (!field.options && !field.optionsSourceId && !field.inputType) {
-                    label = typeof value === 'string' && TYPED_LOCATION.test(value) ? null : describeWidgetBindingValue(value);
-                }
-            }
+            else if (value !== undefined) label = describeWidgetBindingPinValue(field, value, entry.sessionTarget);
             return [entry.path, label];
         }));
     }, [entries, sessionNames, workspaceNames, machineNames, isSessionVisible]);

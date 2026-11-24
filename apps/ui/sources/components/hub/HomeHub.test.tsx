@@ -1003,6 +1003,24 @@ describe('HomeHub plugin widgets', () => {
         expect(hiddenAtRest(`home-hub.${plain.id}.menuTrigger`)).toBe(true);
     });
 
+    it('keeps the plugin source when the named Home group only supplies an alias', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app',
+                inputs: { fields: [{ path: 'repository', title: 'Repository', widget: 'text' }] } },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const copy: WidgetInstanceV1 = { v: 1, id: 'alias-child',
+            definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
+            bindings: { repository: { kind: 'context', slot: 'repository' } } };
+        settings.layout = { order: ['alias-group'], hidden: [], items: [{
+            kind: 'group', id: 'alias-group', title: 'Checks group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+            context: { repository: { kind: 'context', slot: 'pageRepository' } },
+            children: [{ kind: 'widget', instance: copy, size: 'small' }],
+        }] };
+        const screen = await renderHome();
+        await lay(screen, { [copy.id]: 300 });
+        expect(screen.findByTestId('home-hub.section.alias-child.frame.source')?.props.children).toBe('CI');
+    });
+
     it('draws a group as one frame around its widgets; a grouped widget offers group entries, never its own frame', async () => {
         widgets.projection = widgetProjectionOf([
             { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { InputFieldHint } from '@happier-dev/protocol/inputs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
@@ -31,7 +32,8 @@ import {
   buildWidgetGroupInputsCandidate,
   describeWidgetGroupInputsBinding,
 } from './widgetGroupInputs';
-import { createWidgetGroupFollowedInputReader, describeWidgetGroupFollowedInput, readWidgetGroupInputFollowers } from './widgetGroupFollowedInputs';
+import { describeWidgetGroupFollowedInput, type WidgetBindingValueLabel } from '../surface/widgetBindingValueLabel';
+import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers } from './widgetGroupFollowedInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 
 const NO_FIELDS: readonly never[] = [];
@@ -43,7 +45,8 @@ function createGroupInheritedReader(
   surfaceOwner: WidgetSurfaceRefV1['owner'] | undefined,
   context: WidgetSurfaceContext,
   labels: WidgetBindingValueLabels,
-  fields: WidgetSetup['fields'],
+  fields: readonly InputFieldHint[],
+  labelledBindings: WidgetInputBindingsV1 | undefined,
 ): NonNullable<WidgetSetup['readInherited']> {
   const children = group.children.flatMap(({ instance }, index) => {
     const descriptor = candidates[index];
@@ -54,9 +57,9 @@ function createGroupInheritedReader(
 
   return bindings => {
     const readChild = createWidgetGroupFollowedInputReader({
-      context, surfaceOwner, bindings, labelledBindings: group.context, labels,
+      context, surfaceOwner, bindings, labelledBindings, labels, fieldCandidates: candidates,
     });
-    const values = new Map<string, { kind: 'single'; value: JsonValue; slotLabel: string | null } | { kind: 'several' | 'missing' }>();
+    const values = new Map<string, { kind: 'single'; value: JsonValue; slotLabel: WidgetBindingValueLabel } | { kind: 'several' | 'missing' | 'withheld' }>();
     for (const { instance, descriptor, followers } of children) {
       const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
@@ -65,18 +68,21 @@ function createGroupInheritedReader(
         const { path } = field;
         const reading = read(field, slot);
         const previous = values.get(path);
-        if (!reading) values.set(path, { kind: 'missing' });
+        if (previous?.kind === 'withheld') continue;
+        if (reading?.slotLabel === null) values.set(path, { kind: 'withheld' });
+        else if (!reading) values.set(path, { kind: 'missing' });
         else if (!previous) values.set(path, { kind: 'single', ...reading });
         else if (previous.kind === 'single') {
           if (!sameStrictJsonValue(previous.value, reading.value)) values.set(path, { kind: 'several' });
-          else if (previous.slotLabel !== reading.slotLabel) values.set(path, { ...previous, slotLabel: null });
+          else if (previous.slotLabel !== reading.slotLabel) values.set(path, { ...previous, slotLabel: undefined });
         }
       }
     }
 
     const readings = new Map<string, WidgetSetupInheritedReading>();
-    for (const { field } of fields) {
+    for (const field of fields) {
       const result = values.get(field.path);
+      if (result?.kind === 'withheld') readings.set(field.path, { kind: 'single', valueLabel: field.title });
       if (result?.kind === 'several') readings.set(field.path, { kind: 'several' });
       if (result?.kind !== 'single') continue;
       const valueLabel = describeWidgetGroupFollowedInput(field, result);
@@ -115,7 +121,13 @@ export function useWidgetGroupInputsEditor(
   labels: WidgetBindingValueLabels;
 }> {
   const anchorRef = React.useRef<View | null>(null);
-  const [open, setOpen] = React.useState<Readonly<{ callerContext: ActionExecutorContext | undefined }> | null>(null);
+  const [open, setOpen] = React.useState<Readonly<{
+    callerContext: ActionExecutorContext | undefined;
+    context: WidgetSurfaceContext;
+    group: WidgetLayoutGroupV1;
+    candidates: readonly (WidgetCandidate | null)[];
+    fields: readonly InputFieldHint[];
+  }> | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const { group, scope, context, setInputs, testID } = input;
   // Built once when the step opens (the popover keeps its first setup); cheap to derive per render.
@@ -129,7 +141,10 @@ export function useWidgetGroupInputsEditor(
   const editable = candidate !== null && scope !== null && setInputs !== undefined;
   const commands = useCurrentUiContextLocalCommands(editable ? [
     { key: 'open', title: t('widgetFrame.groupInputsTitle', { group: input.title }), description: `${testID}.groupInputs.open`,
-      invoke: (_value, callerContext) => { setNotice(null); setOpen({ callerContext }); } },
+      invoke: (_value, callerContext) => {
+        setNotice(null);
+        setOpen({ callerContext, context, group, candidates: input.candidates, fields: candidate?.inputs?.fields ?? NO_FIELDS });
+      } },
     ...(open ? [{ key: 'close', title: `${t('common.close')}: ${input.title}`, description: `${testID}.groupInputs.close`,
       invoke: () => setOpen(null) }] : []),
   ] : [], { contextKey: `${testID}.groupInputs`, unbound: 'local' });
@@ -147,6 +162,10 @@ export function useWidgetGroupInputsEditor(
     [binding, editable, show],
   );
   const childTitle = input.childTitle;
+  // Preserve the opening page, while letting the existing label owner withdraw a name during the edit.
+  const readInherited = React.useMemo(() => open
+    ? createGroupInheritedReader(open.group, open.candidates, scope?.owner, open.context, labels, open.fields, group.context)
+    : undefined, [open, scope?.owner, labels, group.context]);
   const buildSetup = React.useCallback(() => {
     const bindings = group.context ?? {};
     const setup = buildWidgetCandidateSetup({
@@ -183,7 +202,7 @@ export function useWidgetGroupInputsEditor(
     });
     return {
       ...setup,
-      readInherited: createGroupInheritedReader(group, input.candidates, scope?.owner, context, labels, setup.fields),
+      ...(readInherited ? { readInherited } : {}),
       initial: { bindings },
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),
@@ -204,7 +223,7 @@ export function useWidgetGroupInputsEditor(
     group,
     input.title,
     input.candidates,
-    labels,
+    readInherited,
     scope,
     setInputs,
     testID,
@@ -216,6 +235,7 @@ export function useWidgetGroupInputsEditor(
         callerContext={open.callerContext}
         anchorRef={anchorRef}
         setup={buildSetup}
+        readInherited={readInherited}
         onRequestClose={close}
         onDone={done}
         notice={notice}

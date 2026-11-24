@@ -16,8 +16,8 @@ import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { describeWidgetGroupContext, widgetGroupFollowSource, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
-import { useWidgetGroupFollowedValue } from '@/components/widgets/group/widgetGroupFollowedInputs';
+import { useWidgetGroupHeaderReading, widgetGroupFollowSource, widgetGroupSurfaceContext, type WidgetGroupHeaderReading } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupCardSource } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget } from '@/components/widgets/group/widgetGroupDropTarget';
@@ -520,6 +520,7 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
     const retainGroupChild = (instanceId: string, source: WidgetPlacementV1, next: WidgetAreaGroupChild) => {
         const prior = groupChildren.current.get(instanceId);
         const parent = prior && prior.parent.group === next.group && prior.parent.index === next.index && prior.parent.wide === next.wide
+            && prior.parent.header === next.header
             && retainIfEqual(prior.parent.labels, next.labels) === prior.parent.labels ? prior.parent : next;
         if (prior && prior.source === source && prior.parent === parent) return prior;
         const retained = { source, placement: prior?.source === source ? prior.placement : { ...source, frameStyle: 'plain' as const }, parent };
@@ -565,9 +566,9 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
             descriptors={item.children.map(child => byId.get(child.instance.id)?.descriptor ?? null)}
             operations={operations}
             childTitle={childTitle}
-            renderChild={(instanceId, placement, labels) => {
+            renderChild={(instanceId, placement, labels, header) => {
                 const at = item.children.findIndex(child => child.instance.id === instanceId);
-                return renderWidget(instanceId, at, item.children.length, columns[index]!, { group: item, index: at, wide: placement.wide || phone, labels });
+                return renderWidget(instanceId, at, item.children.length, columns[index]!, { group: item, index: at, wide: placement.wide || phone, labels, header });
             }}
         />
     ));
@@ -613,7 +614,7 @@ export function projectWidgetAreaItems(items: readonly WidgetLayoutItemV1[], pla
 }
 
 /** A child's place in its group, and whether its cell spans the group (room for the full follow phrase). */
-type WidgetAreaGroupChild = Readonly<{ group: WidgetLayoutGroupV1; index: number; wide: boolean; labels: WidgetBindingValueLabels }>;
+type WidgetAreaGroupChild = Readonly<{ group: WidgetLayoutGroupV1; index: number; wide: boolean; labels: WidgetBindingValueLabels; header: WidgetGroupHeaderReading }>;
 
 /** The area's group operations, each one semantic operation through the area's port. */
 function useWidgetAreaGroupOperations(write: WidgetAreaWrite, area: 'main' | 'aside' | undefined): WidgetGroupOperations {
@@ -638,7 +639,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     descriptors: readonly (WidgetCandidate | null)[];
     operations: WidgetGroupOperations;
     childTitle: (instanceId: string) => string;
-    renderChild: (instanceId: string, placement: WidgetGroupChildPlacement, labels: WidgetBindingValueLabels) => React.ReactNode;
+    renderChild: (instanceId: string, placement: WidgetGroupChildPlacement, labels: WidgetBindingValueLabels, header: WidgetGroupHeaderReading) => React.ReactNode;
 }>) {
     const { group, write } = props;
     const phone = useDeviceType() === 'phone';
@@ -678,7 +679,8 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     const [slotAddOpen, setSlotAddOpen] = React.useState(false);
     const slotCommands = useCurrentUiContextLocalCommands(slotAddOpen ? [{ key: 'close', title: `${t('common.close')}: ${name}`,
         description: `${testID}.slotAdd.close`, invoke: () => setSlotAddOpen(false) }] : [], { contextKey: `${testID}.slotAdd`, unbound: 'local' });
-    const source = describeWidgetGroupContext(group.context, labels);
+    const title = props.organizing && props.canEdit ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null;
+    const header = useWidgetGroupHeaderReading(title !== null, group.context, labels);
     // What its widgets follow is named in the header once, and so is that subject's state (O2, WAVE-ACCEPT-1118D).
     const subject = useWidgetGroupSubjectState();
     return (
@@ -693,13 +695,13 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 customizing={props.organizing}
                 {...(props.organizing && props.canEdit ? { bar: <WidgetGroupBar input={menu.menuInput} serverId={props.surface.serverId} onRename={menu.commitName} anchorRef={menu.anchorRef} grip={grip} testID={`${testID}.bar`} /> } : {})}
                 {...(props.canEdit ? { onAddToGroup: () => setSlotAddOpen(true), addAnchorRef: slotAnchorRef } : {})}
-                title={props.organizing && props.canEdit ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
-                source={source ? widgetGroupPinnedSource(source) : undefined}
+                title={title}
+                source={header?.source}
                 // A phone header keeps the short form beside the title; the full words would truncate the title.
                 meta={subject.state === null ? null : phone ? subject.state.compactText ?? subject.state.text : subject.state.text}
                 menu={props.canEdit && !props.organizing ? <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} /> : null}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
-                renderChild={(instanceId, placement) => props.renderChild(instanceId, placement, labels)}
+                renderChild={(instanceId, placement) => props.renderChild(instanceId, placement, labels, header)}
                 dropRef={drop.ref}
                 carriedStyle={carriedStyle}
                 onDropLayout={drop.onLayout}
@@ -801,13 +803,11 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const shownTitle = resolveWidgetInstanceTitle(instance, candidate).trim().toLocaleLowerCase();
     const sourceName = namesOwnScope && instance.definition.kind === 'builtin' ? undefined
         : candidate?.pluginName && candidate.pluginName.trim().toLocaleLowerCase() === shownTitle ? undefined : candidate?.pluginName;
-    const followed = useWidgetGroupFollowedValue(instance, candidate, context, surface.owner, groupContext, groupLabels);
-    // A group with a header names the value it fills once; each widget that follows it does not say it again
-    // (nor does a binding label, which would read the same slot). An untitled group has no header to say it.
-    const groupNamesFollowed = followed !== null && parent !== undefined && readWidgetGroupTitle(parent.group) !== undefined;
+    const followed = useWidgetGroupCardSource(instance, candidate, context, surface.owner, groupContext, groupLabels, parent?.header);
+    const groupNamesFollowed = followed?.namedInHeader === true;
     const roomy = parent?.wide === true;
     const groupFollowSource = React.useMemo(
-        () => followed && !groupNamesFollowed ? widgetGroupFollowSource(followed, roomy) : undefined,
+        () => followed && !groupNamesFollowed ? widgetGroupFollowSource(followed.value, roomy) : undefined,
         [followed, groupNamesFollowed, roomy],
     );
     // The body may name what it shows; a followed group value still wins the source slot.

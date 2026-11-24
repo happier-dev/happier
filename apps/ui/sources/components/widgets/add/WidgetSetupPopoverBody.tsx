@@ -12,7 +12,10 @@ export function WidgetSetupPopoverBody(props: WidgetSetupPopoverProps): React.Re
 }
 
 function OpenWidgetSetupPopover(props: WidgetSetupPopoverProps & Readonly<{ phone: boolean }>): React.ReactElement {
-    const [setup] = React.useState(props.setup);
+    const [openingSetup] = React.useState(props.setup);
+    const { readInherited } = props;
+    const setup = React.useMemo(() => readInherited && readInherited !== openingSetup.readInherited
+        ? { ...openingSetup, readInherited } : openingSetup, [openingSetup, readInherited]);
     const step = (
         <WidgetSetupStep
             setup={setup}

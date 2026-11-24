@@ -12,6 +12,8 @@ export type WidgetSetupPopoverProps = Readonly<{
     placement?: 'top' | 'bottom';
     /** Built when it opens; nothing reads while it is closed. */
     setup: () => WidgetSetup;
+    /** Live display labels may be withdrawn while the configuration and its draft stay open. */
+    readInherited?: WidgetSetup['readInherited'];
     onRequestClose: () => void;
     onDone?: (result: Extract<WidgetSetupSubmitResult, { ok: true }>) => void;
     notice?: string | null;
