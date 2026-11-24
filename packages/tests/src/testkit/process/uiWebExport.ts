@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { runLoggedCommand } from './spawnProcess';
-import { applyUiWebExpoNodeHeapEnv, readPositiveEnvInt } from './uiWebEnv';
+import { buildUiWebExpoProcessEnv, readPositiveEnvInt } from './uiWebEnv';
 import type { StartedUiWeb } from './uiWebTypes';
 import { terminateProcessTreeByPid } from './processTree';
 import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
@@ -378,7 +378,7 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     .update(buildUiWebExportCacheKey(env))
     .digest('hex')
     .slice(0, 16);
-  return applyUiWebExpoNodeHeapEnv({
+  return buildUiWebExpoProcessEnv({
     ...process.env,
     ...env,
     CI: '1',

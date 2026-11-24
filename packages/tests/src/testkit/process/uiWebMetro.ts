@@ -14,7 +14,7 @@ import {
   sweepProcessOwnershipLeases,
 } from './processOwnershipLease';
 import { redactHarnessLogText } from './harnessLogRedaction';
-import { applyUiWebExpoNodeHeapEnv, readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv';
+import { buildUiWebExpoProcessEnv, readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { resolveUiWebSourceFingerprint } from './uiWebSourceFingerprint';
 import { spawnLoggedProcess } from './spawnProcess';
@@ -106,7 +106,7 @@ function resolveUiWebMetroSpawnEnv(params: Readonly<{
   // In "no-dev" mode we force `CI=1` to avoid Expo interactive prompts/noise and to
   // better match production behavior. When running with dev enabled, allow callers
   // to opt out of CI so React errors are not minified and debugging is practical.
-  const baseEnv: NodeJS.ProcessEnv = applyUiWebExpoNodeHeapEnv({
+  const baseEnv: NodeJS.ProcessEnv = buildUiWebExpoProcessEnv({
     ...params.env,
     EXPO_NO_TELEMETRY: '1',
     EXPO_NO_INTERACTIVE: '1',

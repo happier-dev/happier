@@ -1,3 +1,4 @@
+import { withoutWorkspaceSourceRuntime } from './tsxImportHook';
 import type { UiWebMode } from './uiWebTypes';
 import { applyExpoNodeHeapEnv } from '../../../../../scripts/expo/expoNodeHeapEnv.mjs';
 
@@ -23,14 +24,12 @@ export function resolveUiWebExportFallbackToMetro(env: NodeJS.ProcessEnv): boole
   return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
 }
 
-export function applyUiWebExpoNodeHeapEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...applyExpoNodeHeapEnv(env, {
-      envKey: UI_WEB_EXPO_HEAP_ENV_KEY,
-      defaultSizeMb: UI_WEB_EXPO_DEFAULT_MAX_OLD_SPACE_SIZE_MB,
-    }),
-    NODE_ENV: env.NODE_ENV,
-  };
+export function buildUiWebExpoProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // The suite needs the workspace loader. Expo owns its own config plugin loading.
+  return applyExpoNodeHeapEnv(withoutWorkspaceSourceRuntime(env), {
+    envKey: UI_WEB_EXPO_HEAP_ENV_KEY,
+    defaultSizeMb: UI_WEB_EXPO_DEFAULT_MAX_OLD_SPACE_SIZE_MB,
+  });
 }
 
 export function resolveUiWebExportSuiteTimeoutMs(env: NodeJS.ProcessEnv): number {

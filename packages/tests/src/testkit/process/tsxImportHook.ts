@@ -4,16 +4,32 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRootDir } from '../paths';
 
+function workspaceSourceRuntimeImportSpecifier(rootDir: string): string {
+  return pathToFileURL(resolve(rootDir, 'packages/cli-common/registerSourceRuntime.mjs')).href;
+}
+
 export function withWorkspaceSourceRuntime(
   env: NodeJS.ProcessEnv,
   rootDir = repoRootDir(),
 ): NodeJS.ProcessEnv & { NODE_OPTIONS: string } {
   return {
     ...env,
-    NODE_OPTIONS: [env.NODE_OPTIONS, '--import',
-      pathToFileURL(resolve(rootDir, 'packages/cli-common/registerSourceRuntime.mjs')).href]
+    NODE_OPTIONS: [env.NODE_OPTIONS, '--import', workspaceSourceRuntimeImportSpecifier(rootDir)]
       .filter(Boolean).join(' '),
   };
+}
+
+export function withoutWorkspaceSourceRuntime(
+  env: NodeJS.ProcessEnv,
+  rootDir = repoRootDir(),
+): NodeJS.ProcessEnv {
+  if (!env.NODE_OPTIONS) return env;
+  const specifier = workspaceSourceRuntimeImportSpecifier(rootDir);
+  const nodeOptions = env.NODE_OPTIONS.replace(
+    /(^|\s)--import(?:=|\s+)(?:"([^"]*)"|([^\s"]+))(?=\s|$)/g,
+    (option, prefix, quoted, bare) => (quoted ?? bare) === specifier ? prefix : option,
+  );
+  return { ...env, NODE_OPTIONS: nodeOptions.trim() };
 }
 
 export function resolveTsxImportHookPath(): string | null {
