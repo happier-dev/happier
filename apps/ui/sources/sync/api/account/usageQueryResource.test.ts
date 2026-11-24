@@ -9726,6 +9726,58 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it.each([
+    { first: 'read', second: 'read', state: 'partial', counts: undefined, links: 2, merged: 2 },
+    { first: 'read', second: 'offline', state: 'partial', counts: { machine_unavailable: 1 }, links: 1 },
+    { first: 'read', second: 'timeout', state: 'partial', counts: { timed_out: 1 }, links: 1 },
+    { first: 'offline', second: 'offline', state: 'unknown', counts: { machine_unavailable: 2 }, links: 0 },
+    { first: 'timeout', second: 'timeout', state: 'error', counts: { timed_out: 2 }, links: 0 },
+    { first: 'read', second: 'denied', state: 'partial', counts: { not_entitled: 1 }, links: 1 },
+    { first: 'read', second: 'backend', state: 'partial', counts: { failed: 1 }, links: 1 },
+  ])('delivers Work evidence through the mounted reader ($first, $second)', async ({ first, second, state, counts, links, merged }) => {
+    const sessions = [first, second].map((answer, index) => ({
+      answer, sessionId: `work-session-${index}`, machineId: `work-machine-${index}`, pr: index + 1,
+    }));
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+      ...value, contributions: sessions.map(target => ({ ...workContribution, id: `cost-${target.sessionId}`,
+        sessionId: target.sessionId, machineId: target.machineId, projectKey: 'project' })),
+    }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions(sessions.map(target => createSessionFixture({ id: target.sessionId, active: true,
+      serverId: scope.serverId, metadata: { machineId: target.machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    await publishMachineInventoryForTest(scope, sessions.map(target => createHydratedPlainMachineFixture({
+      id: target.machineId, accountId: 'account-a', machine: { active: target.answer !== 'offline',
+        activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })));
+    scmTransport.mockImplementation(async request => {
+      const target = sessions.find(candidate => candidate.machineId === request.machineId)!;
+      if (target.answer === 'timeout') throw createRpcCallError({ error: 'Deadline', errorCode: 'MACHINE_RPC_TIMEOUT' });
+      if (target.answer === 'denied') throw createRpcCallError({ error: 'Denied', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      if (target.answer === 'backend') return workBatch(request, { status: 'error', errorCode: 'BACKEND_UNAVAILABLE' });
+      const checkpoint = { sessionId: target.sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+      return workBatch(request, { status: 'partial', pullRequestsRead: true,
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }],
+        evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+          baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+          number: target.pr, title: 'Linked', url: `https://github.com/owner/repo/pull/${target.pr}`,
+          baseBranch: 'main', headBranch: 'feature', state: 'merged' } }],
+      });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true });
+    const slice = (await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]!;
+    const work = slice.sources.find(source => source.source === 'work');
+    expect.soft(work?.status).toBe(state);
+    expect.soft(work?.unreadSessions).toEqual(counts);
+    expect.soft(work?.errorCode === 'machine_offline').toBe(sessions.some(target => target.answer === 'offline'));
+    expect.soft(slice.work?.outcomes.length ?? 0).toBe(links);
+    expect.soft(slice.work?.branchAllocations.filter(allocation => allocation.branch !== null).length ?? 0).toBe(links);
+    expect.soft(slice.workSummary?.mergedPrCount).toBe(merged);
+    expect(scmTransport.mock.calls.map(([request]) => request.machineId).sort()).toEqual(
+      sessions.filter(target => target.answer !== 'offline').map(target => target.machineId));
+  });
+
   it('shares an unavailable Machine verdict across concurrent disjoint Work slices without reusing Session results', async () => {
     const sessionIds = ['cold-work-a', 'cold-work-b', 'cold-work-c'];
     const laterAccounting = createDeferred<void>();

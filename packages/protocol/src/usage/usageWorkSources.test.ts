@@ -165,6 +165,75 @@ describe('Usage Work repository admission', () => {
       unreadSessions: { failed: 1, not_entitled: 1 }, branchEvidence: [branch] });
     expect(work[0]?.errorCode).toBe('work_evidence_failed');
   });
+  it.each([
+    { reads: 2, offline: 0, slow: 0, denied: 0, backend: 0, state: 'partial', counts: undefined, merged: 2 },
+    { reads: 1, offline: 1, slow: 0, denied: 0, backend: 0, state: 'partial', counts: { machine_unavailable: 1 } },
+    { reads: 1, offline: 959, slow: 74, denied: 0, backend: 0, state: 'partial',
+      counts: { machine_unavailable: 959, timed_out: 74 } },
+    { reads: 0, offline: 2, slow: 0, denied: 0, backend: 0, state: 'unknown', counts: { machine_unavailable: 2 } },
+    { reads: 0, offline: 0, slow: 2, denied: 0, backend: 0, state: 'error', counts: { timed_out: 2 } },
+    { reads: 1, offline: 0, slow: 0, denied: 1, backend: 0, state: 'partial', counts: { not_entitled: 1 } },
+    { reads: 1, offline: 0, slow: 0, denied: 0, backend: 1, state: 'partial', counts: { failed: 1 } },
+  ])('composes $reads readable, $offline offline, $slow timed out, $denied refused and $backend backend failures',
+    async ({ reads, offline, slow, denied, backend, state, counts, merged }) => {
+      const groups = { read: reads, offline, slow, denied, backend };
+      const turns = Object.entries(groups).flatMap(([group, count]) => Array.from({ length: count },
+        (_, index) => ({ sessionId: `${group}-${index}`, turnId: 'turn', executions: ['happier' as const] })));
+      const accounting = [{ query, status: 'available' as const, value: { ...value,
+        contributions: turns.map(turn => ({ id: turn.sessionId, sessionId: turn.sessionId, turnId: turn.turnId,
+          observedAtMs: 1, agentId: 'codex', modelId: null, machineId: null, projectKey: 'project', workspaceId: null,
+          source: 'runtime' as const, tokens: value.totals.tokens, cost: value.totals.cost })),
+        sessionMembership: { turns },
+      } }];
+      const work = await collectUsageWorkSources({
+        queries: [query], accounting, assertCurrent: () => {},
+        resolveSession: async sessionId => ({ machineId: sessionId.split('-')[0]!, cwd: '/repo' }),
+        readMachine: async (machineId, request) => {
+          if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
+          if (machineId === 'slow') throw createRpcCallError({ error: 'Deadline', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+          if (machineId === 'denied') throw createRpcCallError({ error: 'Denied', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+          if (machineId === 'backend') return { sessions: request.sessions.map(({ sessionId }) => ({
+            sessionId, status: 'error', errorCode: 'BACKEND_UNAVAILABLE',
+          })) };
+          return { sessions: request.sessions.map(({ sessionId }, index) => {
+            const checkpoint = { sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+              checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' };
+            const number = index + 1;
+            return { sessionId, status: 'partial', pullRequestsRead: true,
+              branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }],
+              evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+                baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+                number, title: 'Linked', url: `https://github.com/owner/repo/pull/${number}`, baseBranch: 'main',
+                headBranch: 'feature', state: 'merged' } }],
+            };
+          }) };
+        },
+      });
+      const slice = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog).results[0]!;
+      const source = slice.sources.find(source => source.source === 'work');
+      expect(source?.status).toBe(state);
+      expect(source?.unreadSessions).toEqual(counts);
+      expect(slice.work?.outcomes.length ?? 0).toBe(reads);
+      expect(slice.work?.branchAllocations.filter(allocation => allocation.branch !== null).length ?? 0).toBe(reads);
+      expect(slice.workSummary?.mergedPrCount).toBe(merged);
+    });
+
+  it('retains earlier Work when offline and timed-out Sessions supplied no replacement', async () => {
+    const turns = ['offline', 'slow'].map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier' as const] }));
+    const work = await collectUsageWorkSources({ queries: [query],
+      accounting: [{ query, value: { ...value, sessionMembership: { turns } }, status: 'available' }], assertCurrent: () => {},
+      resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
+      readMachine: async machineId => {
+        if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
+        throw Object.assign(new Error('Timed out'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+      },
+    });
+    expect(work[0]).toMatchObject({ status: 'error', errorCode: 'work_evidence_failed',
+      unreadSessions: { machine_unavailable: 1, timed_out: 1 } });
+    expect(work[0]?.evidence).toBeUndefined();
+    expect(work[0]?.branchEvidence).toBeUndefined();
+  });
+
   it('acquires a newly admitted turn set while reusing the exact admitted read', async () => {
     let calls = 0;
     const sessionReads = new Map<string, Promise<SessionWorkSourceResult>>();

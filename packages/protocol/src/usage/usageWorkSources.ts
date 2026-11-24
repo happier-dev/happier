@@ -206,8 +206,10 @@ export async function collectUsageWorkSources(input: Readonly<{
             const reason = unreadReason === 'machine_offline' ? 'machine_unavailable' : unreadReason;
             unreadSessions[reason] = (unreadSessions[reason] ?? 0) + 1;
         }
-        const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
         const readFailed = selected.some(source => source.status === 'error');
+        // Offline Sessions supply no replacement either. Explicit empty evidence
+        // still supersedes prior facts after a refusal or an admitted read.
+        const failedReplacement = readFailed && selected.every(source => !('evidence' in source));
         const value = byQuery.get(key);
         const measuredEmpty = selected.length === 0 && value?.totals.eventCount === 0
             && value.coverage?.status === 'complete' && value.coverage.range.complete;

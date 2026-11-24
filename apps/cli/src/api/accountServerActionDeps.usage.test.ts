@@ -332,6 +332,90 @@ describe('CLI and MCP personal usage Account transport', () => {
     } finally { cleanup?.(); cleanup = undefined; await app.close(); }
   });
 
+  it.each([
+    { first: 'read', second: 'read', state: 'partial', counts: undefined, links: 2, merged: 2 },
+    { first: 'read', second: 'offline', state: 'partial', counts: { machine_unavailable: 1 }, links: 1 },
+    { first: 'read', second: 'timeout', state: 'partial', counts: { timed_out: 1 }, links: 1 },
+    { first: 'offline', second: 'offline', state: 'unknown', counts: { machine_unavailable: 2 }, links: 0 },
+    { first: 'timeout', second: 'timeout', state: 'error', counts: { timed_out: 2 }, links: 0 },
+    { first: 'read', second: 'denied', state: 'partial', counts: { not_entitled: 1 }, links: 1 },
+    { first: 'read', second: 'backend', state: 'partial', counts: { failed: 1 }, links: 1 },
+  ])('delivers Work evidence through the standalone Action ($first, $second)', async ({ first, second, state, counts, links, merged }) => {
+    const app = fastify();
+    const sessions = [first, second].map((answer, index) => ({
+      answer, sessionId: `work-session-${index}`, machineId: `work-machine-${index}`, pr: index + 1,
+    }));
+    const calls: string[] = [];
+    const accounting = { ...response, contributions: sessions.map(target => ({
+      id: `contribution-${target.sessionId}`, observedAtMs: 150, sessionId: target.sessionId,
+      turnId: 'turn', agentId: 'codex', modelId: null, machineId: target.machineId,
+      projectKey: 'project', workspaceId: null, source: 'session', tokens: response.totals.tokens, cost: response.totals.cost,
+    })) };
+    registerAccountingRoutes(app, async () => accounting);
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+    app.post(USAGE_SESSION_EVIDENCE_PATH, async request => {
+      const body = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return UsageSessionEvidenceResponseSchema.parse({ requests: body.requests.map(read => ({
+        query: read.query, sessionIds: read.sessionIds ?? sessions.map(target => target.sessionId),
+      })), results: sessions.map(target => ({ sessionId: target.sessionId,
+        detail: { status: 200, body: { session: createSessionRecordFixture({ id: target.sessionId, encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', machineId: target.machineId, agent: 'codex' }), share: null }) } },
+      })) });
+    });
+    app.get<{ Params: { id: string } }>('/v1/machines/:id', async request => {
+      const target = sessions.find(candidate => candidate.machineId === request.params.id)!;
+      return { machine: { ...createAvailableSessionSpawnMachineSnapshot(target.machineId), storageMode: 'plain',
+        active: target.answer !== 'offline', activeAt: Date.now(), presenceProtocolVersion: 1 } };
+    });
+    socketBoundary.mockImplementation(() => createApiSessionSocketStub({ emitWithAck: (event, payload) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected socket event');
+      const packet = z.object({ method: z.string() }).parse(payload);
+      const target = sessions.find(candidate => packet.method.startsWith(`${candidate.machineId}:`))!;
+      calls.push(target.machineId);
+      if (target.answer === 'offline') return { ok: false, error: 'No target', errorCode: 'target_unavailable' };
+      if (target.answer === 'timeout') return { ok: false, error: 'Deadline', errorCode: 'MACHINE_RPC_TIMEOUT' };
+      if (target.answer === 'denied') return { ok: false, error: 'Denied', errorCode: 'RPC_FORBIDDEN' };
+      if (target.answer === 'backend') return { ok: true, result: { sessions: [{
+        sessionId: target.sessionId, status: 'error', errorCode: 'BACKEND_UNAVAILABLE',
+      }] } };
+      const checkpoint = { sessionId: target.sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' };
+      return { ok: true, result: ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{
+        sessionId: target.sessionId, status: 'partial', pullRequestsRead: true,
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }],
+        evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+          baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+          number: target.pr, title: 'Linked', url: `https://github.com/owner/repo/pull/${target.pr}`, baseBranch: 'main',
+          headBranch: 'feature', state: 'merged' } }],
+      }] }) };
+    } }));
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-work.test' });
+    const credentials = { token: 'owner-token', encryption: null };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage-work.test' }) });
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeQuota: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true });
+    try {
+      const result = await executor.execute('usage.query', { queries: [query] }, { surface: 'cli', serverId: 'home' });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      const work = slice.sources.find(source => source.source === 'work');
+      expect.soft(work?.status).toBe(state);
+      expect.soft(work?.unreadSessions).toEqual(counts);
+      expect.soft(work?.errorCode === 'machine_offline').toBe(sessions.some(target => target.answer === 'offline'));
+      expect.soft(slice.work?.outcomes.length ?? 0).toBe(links);
+      expect.soft(slice.workSummary?.mergedPrCount).toBe(merged);
+      expect(calls.sort()).toEqual(sessions.filter(target => target.answer !== 'offline').map(target => target.machineId));
+    } finally {
+      cleanup?.();
+      cleanup = undefined;
+      await app.close();
+    }
+  });
+
   it('reads the captured Account public view without private Usage and refuses a retired result', async () => {
     const app = fastify();
     let current = true;

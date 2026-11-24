@@ -8,7 +8,7 @@ import { API_TOKEN_FULL_GRANT_V1, getActionSpec, ProjectWorkerActionInputSchemas
   encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import { decodeBase64, decrypt, encodeBase64, encrypt, getRandomBytes } from '@/api/encryption';
-import { createSocketIoManagerStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createSocketIoManagerStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const socketHandlers = new Map<string, () => void>();
 const socketListeners = new Map<string, Set<() => void>>();
@@ -479,6 +479,70 @@ describe('callMachineRpc', () => {
         },
       },
     });
+  });
+
+  it('does not send Usage Work evidence RPCs to Machines Home already answered offline', async () => {
+    const { collectUsageWorkSources } = await import('@happier-dev/protocol/usage/usageWorkSources');
+    const { normalizeUsageQuery } = await import('@happier-dev/protocol/inputs/usageQuery');
+    const query = normalizeUsageQuery({ includeWorkEvidence: true });
+    const machines = Array.from({ length: 53 }, (_, index) => ({
+      id: `work-machine-${index}`, active: index < 3, activeAt: Date.now(),
+      presenceProtocolVersion: 1, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    }));
+    const targets = new Map(machines.flatMap(machine => Array.from({ length: machine.active ? 2 : 20 },
+      (_, index) => [`${machine.id}-session-${index}`, machine] as const)));
+    const credentials = { token: 'work-presence-fixture', encryption: null };
+    const issued: { online: boolean; sessions: number }[] = [];
+    axiosGet.mockImplementation(async (url: string) => {
+      const machine = machines.find(value => url.endsWith(`/${value.id}`));
+      if (!machine) throw new Error('Unexpected Machine lookup');
+      return { data: { machine } };
+    });
+    const originalIo = vi.mocked(io).getMockImplementation()!;
+    vi.mocked(io).mockImplementation(() => createApiSessionSocketStub({ emitWithAck: (event, packet) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected socket event');
+      const { method, params } = packet as { method: string; params: { sessions: { sessionId: string }[] } };
+      const online = machines.find(machine => method === `${machine.id}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`)!.active;
+      issued.push({ online, sessions: params.sessions.length });
+      if (!online) return new Promise(() => {}); // The real CLI deadline settles the unanswered call.
+      return { ok: true, result: { sessions: params.sessions.map(({ sessionId }) => ({
+        sessionId, status: 'partial', evidence: [], pullRequestsRead: true,
+      })) } };
+    } }) as unknown as ReturnType<typeof io>);
+    vi.useFakeTimers();
+    try {
+      const start = Date.now();
+      let completedAt: number | undefined;
+      const pending = collectUsageWorkSources({
+        queries: [query], assertCurrent: () => {},
+        accounting: [{ query, status: 'available', value: { v: 1,
+          totals: { eventCount: targets.size, tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+          sessionMembership: { turns: [...targets.keys()].map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier'] })) },
+        } }],
+        resolveSession: async sessionId => ({ machineId: targets.get(sessionId)!.id, cwd: '/repo' }),
+        readMachine: (machineId, request) => callMachineRpc({
+          credentials, machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, request,
+          authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) },
+        }),
+      }).then(result => { completedAt = Date.now(); return result; });
+      await vi.advanceTimersByTimeAsync(0);
+      const firstWave = issued.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      const result = await pending;
+      expect.soft({
+        calls: issued.length, offline: issued.filter(call => !call.online).length, firstWave,
+        onlineBatchSizes: issued.filter(call => call.online).map(call => call.sessions),
+        elapsedMs: completedAt! - start,
+      }).toEqual({ calls: 3, offline: 0, firstWave: 3, onlineBatchSizes: [2, 2, 2], elapsedMs: 0 });
+      expect(result[0]).toMatchObject({
+        status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1000 },
+        pullRequestReadSessions: [...targets.keys()].slice(0, 6),
+      });
+    } finally {
+      vi.mocked(io).mockImplementation(originalIo);
+      vi.useRealTimers();
+    }
   });
 
   it.each(['unavailable', 'denied', 'unsupported'] as const)('preserves V3 handoff preflight failure meaning through real machine RPC (%s)', async failure => {
