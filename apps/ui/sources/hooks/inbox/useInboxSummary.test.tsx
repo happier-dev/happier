@@ -11,6 +11,8 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installVitestRnShim } from '@/dev/vitestRnShim';
 import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import { createDeferred } from '@/dev/testkit';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
@@ -366,6 +368,58 @@ describe('useInboxSummary workflow source', () => {
             { attention: 'required', projection: 'membership' },
         ]);
         expect(listRuns.mock.calls[1]?.[0].request).toMatchObject({ attention: 'required', limit: expect.any(Number) });
+    });
+
+    it('shows one Inbox update when both attention windows return the same failed trigger Run', async () => {
+        const occurrence = createAutomationRunFixture({
+            id: 'failed-trigger', state: 'failed', workflowRunState: 'failed',
+            triggerId: '73dbecb1-6b80-4a7f-8047-7ee6cb1219aa',
+            cause: {
+                kind: 'trigger', triggerKind: 'pluginEvent', triggerId: '73dbecb1-6b80-4a7f-8047-7ee6cb1219aa',
+                triggerRevision: 0, occurrenceKey: '0IOh28L_w40UwLLSnTFvsxJ3cCYhzcMw5wtLlTiupfs', occurredAt: 1,
+                evidence: { eventRef: { pluginId: 'happier.database', localId: 'finding-observed' },
+                    sourceSelectorId: '23024dc0-4df5-4618-88ae-83547a17f7ff' },
+            },
+        });
+        const workflowRun = createWorkflowRunSummaryFixture({
+            id: occurrence.id, state: 'failed', ownerAccountId: 'account-a', sourceArtifactId: null,
+            origin: { kind: 'automation', automationId: occurrence.automationId, cause: occurrence.cause },
+        });
+        const workflowDefinitionId = '10000000-0000-4000-8000-000000000001';
+        const title = 'Review database findings';
+        const header = { kind: 'workflow-definition.v1', title: null, metadata: { title } };
+        seedArtifacts({
+            [workflowDefinitionId]: {
+                id: workflowDefinitionId, ownerAccountId: 'account-a', access: 'owner',
+                isDecrypted: true, title: null, header, rawHeader: header, body: null,
+                headerVersion: 1, bodyVersion: 1, seq: 0, createdAt: 1, updatedAt: 1,
+            },
+        });
+        const automation = createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            id: occurrence.automationId, name: 'Workflow triggers', description: null, enabled: true, targetType: null,
+            workflowDefinitionId, existingSessionId: null, templateVersion: 1, lastRunAt: null,
+            createdAt: 1, updatedAt: 1, assignments: [], triggers: [],
+        }));
+        storage.setState({ automations: { [automation.id]: automation } });
+        listRuns.mockResolvedValue({ ...page([]), runs: [workflowRun] });
+        listAutomationRuns.mockResolvedValue({ runs: [occurrence], nextCursor: null });
+
+        let inbox: InboxModel | null = null;
+        const screen = await renderScreen(<InboxSummaryProvider><Probe /><InboxModelProvider>
+            <DirectInboxRows view="updates" observe={model => { inbox = model; }} />
+        </InboxModelProvider></InboxSummaryProvider>);
+        await waitForHomeGovernance(() => {
+            expect(inbox?.workflowAttention.phase).toBe('loaded');
+            expect(inbox?.automationAttention.phase).toBe('loaded');
+        });
+        expect(listRuns).toHaveBeenCalled();
+        expect(listAutomationRuns).toHaveBeenCalled();
+        expect(latest?.count).toBe(1);
+        expect(inbox!.items.filter(item => item.focus?.id === occurrence.id)).toEqual([
+            expect.objectContaining({ view: 'updates', title,
+                pageRoute: expect.stringContaining('target=occurrence'), context: expect.stringMatching(/finding observed/i) }),
+        ]);
+        expect(screen.findByTestId(`inbox.automation_run.${occurrence.id}`)).toBeTruthy();
     });
 
     it('does not read ordinary failures through the released alias when Workflows is disabled', async () => {

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { WorkflowRunListWindowId } from '@/sync/store/domains/workflowRuns';
 
 /**
@@ -34,6 +35,7 @@ export type WorkflowAttentionSource = Readonly<{
 }>;
 
 const EMPTY_RUN_IDS: readonly string[] = Object.freeze([]);
+const EMPTY_OCCURRENCES: ReadonlySet<string> = new Set();
 const NOOP = () => {};
 
 export const EMPTY_WORKFLOW_ATTENTION_SOURCE: WorkflowAttentionSource = Object.freeze({
@@ -64,14 +66,29 @@ function useAttentionSource(windowId: WorkflowRunListWindowId, available: boolea
 
 const WorkflowAttentionSourceContext = React.createContext<Readonly<{
     workflow: WorkflowAttentionSource; automation: WorkflowAttentionSource;
+    occurrenceRunIds: ReadonlySet<string>;
 }> | null>(null);
+
+function useWorkflowAttentionWithoutOccurrences(window: WorkflowAttentionSource, occurrenceRunIds: ReadonlySet<string>): WorkflowAttentionSource {
+    // The occurrence can open a failed trigger that never acquired an accepted Workflow snapshot.
+    const runIds = React.useMemo(() => {
+        if (occurrenceRunIds.size === 0) return window.runIds;
+        const filtered = window.runIds.filter(id => !occurrenceRunIds.has(id));
+        return filtered.length === window.runIds.length ? window.runIds : filtered;
+    }, [window.runIds, occurrenceRunIds]);
+    return React.useMemo(() => runIds === window.runIds ? window : { ...window, runIds }, [window, runIds]);
+}
 
 /** Mounted once by the app shell's Inbox summary owner. */
 export function WorkflowAttentionSourceProvider(props: Readonly<{ children: React.ReactNode }>) {
     const workflows = useWorkflowsAvailability();
-    const workflow = useAttentionSource('attention', workflows.available, 'membership');
+    const workflowWindow = useAttentionSource('attention', workflows.available, 'membership');
     const automation = useAttentionSource('automationAttention', workflows.available);
-    const source = React.useMemo(() => ({ workflow, automation }), [workflow, automation]);
+    const occurrenceRunIds = React.useMemo(() => automation.runIds.length > 0 && automation.serverId && workflowWindow.serverId
+        && areServerProfileIdentifiersEquivalent(automation.serverId, workflowWindow.serverId)
+        ? new Set(automation.runIds) : EMPTY_OCCURRENCES, [automation.runIds, automation.serverId, workflowWindow.serverId]);
+    const workflow = useWorkflowAttentionWithoutOccurrences(workflowWindow, occurrenceRunIds);
+    const source = React.useMemo(() => ({ workflow, automation, occurrenceRunIds }), [workflow, automation, occurrenceRunIds]);
     return (
         <WorkflowAttentionSourceContext.Provider value={source}>
             {props.children}
@@ -96,9 +113,14 @@ export function useWorkflowAttentionSource(): WorkflowAttentionSource {
 /** An open Inbox needs private rows; demand promotes the shell's same canonical window. */
 export function useFullWorkflowAttentionSource(): WorkflowAttentionSource {
     const source = useWorkflowAttentionSource();
-    return useAttentionSource('attention', source.available);
+    const full = useAttentionSource('attention', source.available);
+    return useWorkflowAttentionWithoutOccurrences(full, useInboxWorkflowOccurrenceRunIds());
 }
 
 export function useAutomationAttentionSource(): WorkflowAttentionSource {
     return React.useContext(WorkflowAttentionSourceContext)?.automation ?? EMPTY_WORKFLOW_ATTENTION_SOURCE;
+}
+
+export function useInboxWorkflowOccurrenceRunIds(): ReadonlySet<string> {
+    return React.useContext(WorkflowAttentionSourceContext)?.occurrenceRunIds ?? EMPTY_OCCURRENCES;
 }

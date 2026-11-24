@@ -3654,7 +3654,7 @@ export function useAllArtifacts(): DecryptedArtifact[] {
   );
 }
 
-function useAutomationCatalogRead(enabled: boolean, serverId?: string | null): void {
+export function useAutomationCatalogRead(enabled: boolean, serverId?: string | null): void {
   const lifetime = useActiveServerAccountScopeLifetime(enabled);
   React.useEffect(() => {
     if (!lifetime?.isCurrent() || (serverId !== undefined && !areServerProfileIdentifiersEquivalent(serverId ?? '', lifetime.scope.serverId))) return;

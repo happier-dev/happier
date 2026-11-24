@@ -11,7 +11,7 @@ import type {
     AutomationTriggerListItem,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { hasTranslation, t, tLoose, type TranslationKey } from '@/text';
-import { formatActionTriggerClause, formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatActionTriggerClause, formatTriggerSummary, type TriggerSummaryContext } from '@/components/workflows/triggers/formatTriggerSummary';
 import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -144,7 +144,7 @@ const AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS = {
     sourceUnavailable: 'automations.detail.trigger.status.sourceUnavailable',
 } as const satisfies Record<AutomationSessionLifecycleTriggerStatus['state'], TranslationKey>;
 
-export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string {
+export function formatAutomationRunCauseLabel(cause: AutomationRunCause, context?: TriggerSummaryContext): string {
     switch (cause.kind) {
         case 'manual':
             return t('automations.detail.runMeta.cause.manual');
@@ -155,7 +155,7 @@ export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string
                 case 'schedule':
                     return t('automations.detail.runMeta.cause.schedule');
                 case 'pluginEvent':
-                    return t('automations.list.event', { eventId: cause.evidence.eventRef.localId });
+                    return formatTriggerSummary({ kind: 'pluginEvent', eventRef: cause.evidence.eventRef }, context);
                 case 'sessionLifecycle':
                     return [
                         formatAutomationSessionLifecycleEventLabel(cause.evidence.event),

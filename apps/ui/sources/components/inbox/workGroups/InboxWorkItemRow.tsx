@@ -42,9 +42,9 @@ import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inbox
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
-import { formatAutomationRunCauseLabel, formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
-import { useAutomation } from '@/sync/domains/state/storage';
+import { formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { readInboxApprovalServerId, resolveInboxItemPageRoute } from '../inboxItemFocus';
+import type { InboxItem } from '../inboxItems';
 
 import type { InboxItemFocus } from '../inboxItemFocus';
 import { InboxSessionRowMenu } from './InboxSessionRowMenu';
@@ -152,22 +152,30 @@ function InboxWorkflowRunRow(props: Readonly<{
 function InboxAutomationRunRow(props: Readonly<{
     item: Extract<InboxWorkItem, { kind: 'automation_run' }>;
     navigate: RowProps['navigate'];
+    presentation?: InboxItem;
+    markItemOpened?: InboxModel['markItemOpened'];
     focused?: boolean;
     showDivider?: boolean;
     serverId?: string | null;
     onSelectItem?: (focus: InboxItemFocus) => void;
 }>) {
     const run = props.item.row.automation!;
-    const automation = useAutomation(run.automationId, { serverId: props.serverId });
     const state = formatAutomationRunStateLabel(run);
-    const cause = formatAutomationRunCauseLabel(run.cause);
+    const presentation = props.presentation;
+    const title = presentation?.source.displayName;
+    const open = () => {
+        if (props.onSelectItem && props.serverId) {
+            props.onSelectItem({ kind: 'automation_run', id: run.id, automationId: run.automationId, serverId: props.serverId });
+            return;
+        }
+        if (presentation?.source.onceDeliveries?.length) void props.markItemOpened?.(presentation);
+        props.navigate(createWorkflowRunRoute({ kind: 'occurrence', automationId: run.automationId, runId: run.id }, props.serverId));
+    };
     return <InboxWorkRow testID={`inbox.automation_run.${run.id}`} selected={props.focused === true} showDivider={props.showDivider}
-        title={automation?.name ?? state} facts={automation?.name ? [state, cause] : [cause]}
+        title={title ?? state} facts={[title ? state : null, presentation?.context]}
         time={<InboxRelativeTime timestamp={run.finishedAt ?? run.startedAt ?? run.createdAt} />}
         mark={<Icon name="timer" size={16} />}
-        onPress={() => props.onSelectItem && props.serverId
-            ? props.onSelectItem({ kind: 'automation_run', id: run.id, automationId: run.automationId, serverId: props.serverId })
-            : props.navigate(createWorkflowRunRoute({ kind: 'occurrence', automationId: run.automationId, runId: run.id }, props.serverId))} />;
+        onPress={open} />;
 }
 
 type RowProps = Readonly<{
@@ -175,6 +183,8 @@ type RowProps = Readonly<{
     spansHomes: boolean;
     workflowServerId: string | null;
     automationServerId?: string | null;
+    automationItem?: InboxItem;
+    markItemOpened?: InboxModel['markItemOpened'];
     settle: InboxModel['settle'];
     setReminder: InboxModel['setReminder'];
     identityDisplay: SessionListIdentityDisplay;
@@ -325,7 +335,8 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
         }
         case 'automation_run':
             return <InboxAutomationRunRow item={item} navigate={props.navigate} focused={props.focused} showDivider={props.showDivider}
-                serverId={props.automationServerId} onSelectItem={props.onSelectItem} />;
+                serverId={props.automationServerId} presentation={props.automationItem} markItemOpened={props.markItemOpened}
+                onSelectItem={props.onSelectItem} />;
         case 'approval': {
             const serverId = readInboxApprovalServerId(item.artifact.header as Readonly<Record<string, unknown>> | undefined);
             const open = () => props.onSelectItem

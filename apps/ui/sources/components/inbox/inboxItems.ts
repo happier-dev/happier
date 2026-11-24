@@ -8,6 +8,7 @@ import { projectAccountNoticeInboxItemV1, projectOpenUsageNoticeHeaderV1 } from 
 import { shallow } from 'zustand/shallow';
 import { readInboxApprovalServerId, resolveInboxItemPageRoute, type InboxItemFocus } from './inboxItemFocus';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { reviewSubjectLabel } from '@/components/reviews/list/reviewSubjectLabel';
 import type { SessionQuestionContextV1 } from '@happier-dev/protocol/sessions/permissions/questionV1';
 import type { PersonalFollowOnceOccurrenceV1, PersonalRunFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -120,6 +121,7 @@ export type InboxItemsInput = Readonly<{
     executionRuns?: readonly InboxExecutionRun[];
     machineDeletionEntries?: ReturnType<typeof useManagedMachineDeletionAttention>;
     workflowRunOnceDeliveries?: ReadonlyMap<string, readonly PersonalRunFollowOnceOccurrenceV1[]>;
+    automationPresentation?: ReadonlyMap<string, { title?: string; causeLabel?: string }>;
     /** Already resolved package names from the app's Account-scoped plugin projection. */
     pluginDisplayNames?: ReadonlyMap<string, string>;
     /** Loaded exact-Home requester names, keyed by their owning approval Artifact. */
@@ -216,9 +218,13 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             const serverId = group.root.kind === 'automation' ? group.root.serverId : null;
             if (!run || !serverId) continue;
             const focus = { kind: 'automation_run', id: run.id, automationId: run.automationId, serverId } as const;
-            rows.push({ key: item.key, producer: 'live', type: 'update', view: 'updates', title: run.automationId,
-                context: null, createdAt: item.row.updatedAt, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
-                source: { kind: 'automation_run', id: run.id, serverId, displayName: null } });
+            const presentation = input.automationPresentation?.get(item.key);
+            const onceDeliveries = input.workflowRunOnceDeliveries?.get(run.id)?.filter(delivery => delivery.event.kind !== 'needs_you');
+            rows.push({ key: item.key, producer: 'live', type: 'update', view: 'updates',
+                title: presentation?.title ?? formatAutomationRunStateLabel(run),
+                context: presentation?.causeLabel ?? null, createdAt: item.row.updatedAt, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
+                source: { kind: 'automation_run', id: run.id, serverId, displayName: presentation?.title ?? null,
+                    ...(onceDeliveries?.length ? { onceDeliveries } : {}) } });
         } else if (item.kind === 'approval') {
             const focus = { kind: 'approval', id: item.artifact.id,
                 serverId: readInboxApprovalServerId(item.approval.source) || input.accountServerId || '' } as const;

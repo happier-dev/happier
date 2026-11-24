@@ -160,7 +160,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     }
     for (const item of inbox.automationAttentionItems) {
         if (!item.title?.trim()) continue;
-        const subtitle = joinHappierFacts(formatAutomationRunStateLabel(item.run), formatAutomationRunCauseLabel(item.run.cause));
+        const subtitle = joinHappierFacts(formatAutomationRunStateLabel(item.run), item.causeLabel ?? formatAutomationRunCauseLabel(item.run.cause));
         const category = needsYou('automation_run', inbox.automationAttention.serverId, item.run.id) ? 'needs_you'
             : automationRunTone(item.run.workflowRunState ?? item.run.state) === 'failed' ? 'failed' : null;
         if (!category) continue;

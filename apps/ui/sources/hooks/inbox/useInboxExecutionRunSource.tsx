@@ -17,7 +17,7 @@ import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction'
 import type { OtherFollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { exactWorkflowRunWindowId } from '@/sync/domains/workflows/workflowRunListActions';
-import { useWorkflowAttentionSource } from './useWorkflowAttentionSource';
+import { useInboxWorkflowOccurrenceRunIds, useWorkflowAttentionSource } from './useWorkflowAttentionSource';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 type RunWorkNotificationSource = Extract<OtherFollowSourceRefV1, { kind: 'execution_run' | 'workflow_run' }>;
@@ -48,6 +48,7 @@ function useCreateSource(detailsDemanded: boolean): Source {
     const scope = lifetime?.scope;
     const enabled = useFeatureEnabled('sessions.following', { scopeKind: 'spawn', serverId: scope?.serverId ?? '' });
     const workflowAttention = useWorkflowAttentionSource();
+    const occurrenceRunIds = useInboxWorkflowOccurrenceRunIds();
     const [census, setCensus] = React.useState<Readonly<{
         lifetime: typeof lifetime; follows: readonly RunFollow[]; loading: boolean; failed: boolean;
     }> | null>(null);
@@ -223,13 +224,14 @@ function useCreateSource(detailsDemanded: boolean): Source {
             } else if (workflowFailed(follow.source.runId)) continue;
             if (follow.source.kind === 'execution_run' && follow.onceDeliveries?.some(delivery => delivery.event.kind !== 'needs_you')) countable.add(sourceKey(follow.source));
             if (workflowAttention.available && follow.source.kind === 'workflow_run' && !workflowAttention.runIds.includes(follow.source.runId)
+                && !occurrenceRunIds.has(follow.source.runId)
                 && follow.onceDeliveries?.some(delivery => delivery.event.kind !== 'needs_you')) countable.add(sourceKey(follow.source));
         }
         const availableWorkflowFollows = workflowFollows.filter(follow => !workflowFailed(follow.source.runId));
         return { entries, workflowFollows: availableWorkflowFollows, count: countable.size, markOpened, retry,
             loading: census?.lifetime !== lifetime || census.loading || Boolean(follows && (projection?.follows !== follows || projection.loading)),
             failed: census?.lifetime === lifetime && (census.failed || Boolean(projection?.follows === follows && projection.failed)) };
-    }, [enabled, lifetime, follows, projection, census, workflowFollows, workflowAttention.available, workflowAttention.runIds, markOpened, retry, headerReads, workflowFailed]);
+    }, [enabled, lifetime, follows, projection, census, workflowFollows, workflowAttention.available, workflowAttention.runIds, occurrenceRunIds, markOpened, retry, headerReads, workflowFailed]);
 }
 
 function SourceProvider(props: Readonly<{ children: React.ReactNode }>) {

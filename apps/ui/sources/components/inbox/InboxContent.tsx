@@ -297,6 +297,8 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                     spansHomes={model.spansHomes}
                     workflowServerId={model.workflowAttention.serverId}
                     automationServerId={work.automationServerId}
+                    automationItem={work.item.kind === 'automation_run' ? item : undefined}
+                    markItemOpened={work.item.kind === 'automation_run' ? model.markItemOpened : undefined}
                     settle={model.settle}
                     setReminder={model.setReminder}
                     identityDisplay={identityDisplay}

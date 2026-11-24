@@ -25,7 +25,7 @@ import { useInboxPluginSessionRows } from './useInboxPluginSessionRows';
 import { InboxPluginDeclarationDemand } from './InboxPluginDeclarationDemand';
 import { InboxExecutionRunSourceBoundary, useInboxExecutionRunSource } from './useInboxExecutionRunSource';
 import { InboxArtifactSourceBoundary, useInboxArtifactRowDemand, useInboxArtifactSource } from './useInboxArtifactSource';
-import { useFullWorkflowAttentionSource, useAutomationAttentionSource, WorkflowAttentionSourceBoundary } from './useWorkflowAttentionSource';
+import { useFullWorkflowAttentionSource, useAutomationAttentionSource, useInboxWorkflowOccurrenceRunIds, WorkflowAttentionSourceBoundary } from './useWorkflowAttentionSource';
 
 /**
  * The server origin link of a step session (ORC §3.1: awareness `origin?: {kind, runId?}`). U4 has
@@ -61,10 +61,12 @@ function useCreateInboxWorkProjection() {
     const pluginSessionInbox = useInboxPluginSessionRows();
     const executionRuns = useInboxExecutionRunSource();
     const workflowAttention = useFullWorkflowAttentionSource();
+    const occurrenceRunIds = useInboxWorkflowOccurrenceRunIds();
     const workflowRunOnceDeliveries = React.useMemo(() => new Map(executionRuns.workflowFollows.map(follow =>
         [follow.source.runId, follow.onceDeliveries ?? []] as const)), [executionRuns.workflowFollows]);
-    const workflowRunIds = React.useMemo(() => [...new Set([...workflowAttention.runIds, ...workflowRunOnceDeliveries.keys()])],
-        [workflowAttention.runIds, workflowRunOnceDeliveries]);
+    const workflowRunIds = React.useMemo(() => [...new Set([
+        ...workflowAttention.runIds, ...[...workflowRunOnceDeliveries.keys()].filter(id => !occurrenceRunIds.has(id)),
+    ])], [workflowAttention.runIds, workflowRunOnceDeliveries, occurrenceRunIds]);
     const loadedWorkflowRuns = useWorkflowRunRows(workflowRunIds);
     const workflowRuns = React.useMemo(() => loadedWorkflowRuns.filter(row => workflowAttention.runIds.includes(row.id)
         || workflowRunOnceDeliveries.get(row.id)?.some(delivery => delivery.event.kind !== 'needs_you')

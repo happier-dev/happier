@@ -14,6 +14,10 @@ import { readAccountNoticeArtifactHeader, isOpenAccountNotice,
     type AccountNoticeArtifact, type OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { buildInboxItems, selectInboxItemsForView, type InboxItem, type InboxItemView } from '@/components/inbox/inboxItems';
+import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
+import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
     type SessionBulkActionTarget,
 } from '@/components/sessions/actions/sessionBulkActionTypes';
@@ -28,7 +32,7 @@ import {
 import type { InboxActionOperationEntry } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
-import { useFriendsLoaded, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime, useAutomationCatalogRead, useFriendsLoaded, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 
 import type { InboxWorkGroup } from '@/activity/presentation/buildInboxWorkGroups';
 
@@ -71,8 +75,9 @@ import { WorkflowAttentionSourceBoundary, type WorkflowAttentionSource } from '.
 /** Public summary only. ORC renders the item and opens the exact existing Run route. */
 export type AutomationInboxItem = Readonly<{
     key: string;
-    /** The same Account-scoped definition name the Inbox row displays, when known. */
+    /** The same localized title and event label the Inbox row displays. */
     title?: string;
+    causeLabel?: string;
     run: AutomationDefinitionRun;
     route: ReturnType<typeof createWorkflowRunRoute>;
 }>;
@@ -140,6 +145,10 @@ async function runInboxAction(actionId: 'session.attention.set' | 'session.read_
 }
 
 const InboxModelContext = React.createContext<InboxModel | null>(null);
+type AutomationEventProjection = Readonly<{
+    lifetime: NonNullable<ReturnType<typeof useActiveServerAccountScopeLifetime>>;
+    inputs: DaemonMergedProjectionInputs;
+}>;
 
 /**
  * The mounted Inbox controller shared by every Inbox surface.
@@ -148,7 +157,10 @@ const InboxModelContext = React.createContext<InboxModel | null>(null);
  * exact-address pending ledger. Surfaces only compose layout and navigation;
  * they cannot independently reinterpret attention or mark-read progress.
  */
-function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxWorkProjection>>): InboxModel {
+function useCreateInboxModel(
+    projection: NonNullable<ReturnType<typeof useInboxWorkProjection>>,
+    eventProjections: ReadonlyMap<string, AutomationEventProjection>,
+): InboxModel {
     const isRecordingVisible = useSessionRecordingVisibility();
     const { source, overview, openApprovalEntries, artifactSource, profileScope, pluginSessionInbox,
         executionRuns, workflowAttention, workflowRunOnceDeliveries, automationAttention, automationRuns,
@@ -190,14 +202,38 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
         [approvalSourceAddresses, approvalSourceTitles, isRecordingVisible]);
     const automations = storage((state) => state.automations);
     const automationDefinitionsAreCurrent = selectActiveServerAccountScopeForServer(profileScope, automationAttention.serverId) !== null;
-    const automationAttentionItems = React.useMemo(() => automationRuns.flatMap((row): AutomationInboxItem[] => row.automation ? [{
-        key: `automation-run:${row.id}`, title: automationDefinitionsAreCurrent ? automations[row.automation.automationId]?.name : undefined, run: row.automation,
-        route: createWorkflowRunRoute({ kind: 'occurrence', automationId: row.automation.automationId, runId: row.id }, automationAttention.serverId),
-    }] : []), [automationRuns, automations, automationAttention.serverId, automationDefinitionsAreCurrent]);
+    useAutomationCatalogRead(automationDefinitionsAreCurrent && automationRuns.length > 0, automationAttention.serverId);
+    const workflowRefs = React.useMemo(() => automationDefinitionsAreCurrent
+        ? [...new Set(automationRuns.flatMap(row => {
+            const ref = row.automation && automations[row.automation.automationId]?.workflowDefinitionId;
+            return ref ? [ref] : [];
+        }))]
+        : [], [automationRuns, automations, automationDefinitionsAreCurrent]);
+    const workflowTitle = useWorkflowReferenceTitles(workflowRefs, workflowRefs.length > 0);
+    const automationAttentionItems = React.useMemo(() => automationRuns.flatMap((row): AutomationInboxItem[] => {
+        const run = row.automation;
+        if (!run) return [];
+        const definition = automationDefinitionsAreCurrent ? automations[run.automationId] : undefined;
+        const ref = definition?.workflowDefinitionId;
+        const eventProjection = run.claimedByMachineId ? eventProjections.get(run.claimedByMachineId) : undefined;
+        return [{
+            key: `automation-run:${row.id}`,
+            title: ref ? workflowTitle(ref) ?? t('workflows.triggers.row.workflowUnavailable') : definition?.name,
+            causeLabel: formatAutomationRunCauseLabel(run.cause, {
+                machineId: run.claimedByMachineId, serverId: automationAttention.serverId,
+                projection: automationDefinitionsAreCurrent && eventProjection?.lifetime.isCurrent()
+                    ? eventProjection.inputs : null,
+            }),
+            run,
+            route: createWorkflowRunRoute({ kind: 'occurrence', automationId: run.automationId, runId: row.id }, automationAttention.serverId),
+        }];
+    }), [automationRuns, automations, automationAttention.serverId, automationDefinitionsAreCurrent, eventProjections, workflowTitle]);
+    const automationPresentation = React.useMemo(() => new Map(automationAttentionItems.map(item => [item.key, item])),
+        [automationAttentionItems]);
     const previousItems = React.useRef<readonly InboxItem[]>([]);
     const items = React.useMemo(() => {
         const next = buildInboxItems({ workGroups, sessionPresentation, isRecordingVisible, workflowServerId: workflowAttention.serverId,
-            workflowRunOnceDeliveries,
+            workflowRunOnceDeliveries, automationPresentation,
             accountServerId: profileScope?.serverId ?? null, notices: openAccountNotices,
             executionRuns: executionRuns.entries,
             machineDeletionEntries,
@@ -207,7 +243,7 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
             discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames }, previousItems.current);
         previousItems.current = next;
         return next;
-    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
+    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, automationPresentation, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
 
     const spansHomes = React.useMemo(
         () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,
@@ -323,8 +359,8 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
                 if (entry) await updateNotice(entry, 'read');
             } else if (item.source.kind === 'discussion') {
                 await discussionAttention.markOpened(item);
-            } else if (item.source.onceDeliveries?.length && (item.focus.kind === 'execution_run' || item.focus.kind === 'workflow_run')) {
-                const source = item.focus.kind === 'workflow_run' ? { kind: 'workflow_run' as const, runId: item.focus.id }
+            } else if (item.source.onceDeliveries?.length && (item.focus.kind === 'execution_run' || item.focus.kind === 'workflow_run' || item.focus.kind === 'automation_run')) {
+                const source = item.focus.kind !== 'execution_run' ? { kind: 'workflow_run' as const, runId: item.focus.id }
                     : item.focus.machineId !== undefined ? { kind: 'execution_run' as const, machineId: item.focus.machineId, runId: item.focus.id }
                         : { kind: 'execution_run' as const, sessionId: item.focus.sessionId, runId: item.focus.id };
                 if (!profileScope || !areServerProfileIdentifiersEquivalent(item.focus.serverId, profileScope.serverId)) throw new Error('action_account_scope_changed');
@@ -458,15 +494,51 @@ function InboxModelReady(props: Readonly<{ children: React.ReactNode }>) {
 }
 
 function InboxModelContextProvider(props: Readonly<{ children: React.ReactNode; projection: NonNullable<ReturnType<typeof useInboxWorkProjection>> }>) {
-    const model = useCreateInboxModel(props.projection);
+    const [eventProjections, setEventProjections] = React.useState<ReadonlyMap<string, AutomationEventProjection>>(() => new Map());
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const { automationRuns, automationAttention } = props.projection;
+    const machineIds = React.useMemo(() => [...new Set(automationRuns.flatMap(({ automation: run }) =>
+        run?.claimedByMachineId && run.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
+            ? [run.claimedByMachineId] : []))], [automationRuns]);
+    const publishEventProjection = React.useCallback((machineId: string, entry: AutomationEventProjection | null) => {
+        setEventProjections(previous => {
+            if (entry ? previous.get(machineId)?.inputs === entry.inputs && previous.get(machineId)?.lifetime === entry.lifetime
+                : !previous.has(machineId)) return previous;
+            const next = new Map(previous);
+            if (entry) next.set(machineId, entry);
+            else next.delete(machineId);
+            return next;
+        });
+    }, []);
+    const model = useCreateInboxModel(props.projection, eventProjections);
     return (
         <InboxModelContext.Provider value={model}>
+            {lifetime?.isCurrent() && automationAttention.serverId
+                && areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, automationAttention.serverId)
+                ? machineIds.map(machineId => <InboxAutomationEventProjection key={machineId} machineId={machineId}
+                    lifetime={lifetime} publish={publishEventProjection} />) : null}
             {model.sessionPresentation.pendingRequestHydrationTargets.map(address => (
                 <InboxPendingRequestHydration key={sessionAddressKey(address)} address={address} />
             ))}
             {props.children}
         </InboxModelContext.Provider>
     );
+}
+
+/** A mounted Inbox shares one event-catalog read per Machine represented in the Updates window. */
+function InboxAutomationEventProjection({ machineId, lifetime, publish }: Readonly<{
+    machineId: string;
+    lifetime: AutomationEventProjection['lifetime'];
+    publish: (machineId: string, entry: AutomationEventProjection | null) => void;
+}>): null {
+    const { inputs } = useDaemonMergedProjectionInputs({
+        machineId, serverId: lifetime.scope.serverId, accountLifetime: lifetime, sections: ['automationEligibleEvents'],
+    });
+    React.useEffect(() => {
+        if (inputs) publish(machineId, { lifetime, inputs });
+        return () => publish(machineId, null);
+    }, [machineId, lifetime, inputs, publish]);
+    return null;
 }
 
 /** Summary rows use the dock's existing exact-Home hydration and retry lifecycle. */

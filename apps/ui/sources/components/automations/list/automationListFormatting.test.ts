@@ -197,7 +197,7 @@ describe('immutable Run cause presentation', () => {
                 eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
                 sourceSelectorId: '11111111-1111-4111-8111-111111111111',
             },
-        }))).toBe('Event: pull-request-opened-v1');
+        }))).toMatch(/\bPull request opened\b/i);
     });
 
     it.each(['before', 'after'] as const)('names an immutable %s Action cause without inventing its wait policy', phase => {
