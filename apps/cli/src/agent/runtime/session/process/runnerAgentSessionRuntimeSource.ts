@@ -654,6 +654,7 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
                         expectedSessionId: canonicalSessionId,
                         occurrenceId: descriptor.occurrenceId,
                         runtimeAuthority: descriptor.runtimeAuthority,
+                        bootstrapAgentDeclaration: descriptor.agentDeclaration,
                     });
                 if (!source) {
                     throw createRunnerSourceUnavailableError(
@@ -787,6 +788,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
     expectedSessionId?: string;
     occurrenceId?: string;
     runtimeAuthority?: PluginRuntimeAuthoritySnapshotV1;
+    bootstrapAgentDeclaration?: z.infer<typeof AgentRuntimeDaemonSessionDescriptorV1Schema>['agentDeclaration'];
     executionRunSnapshot?: import('./executionRunSnapshotProtocol').RunnerExecutionRunSnapshotV1;
 }>): Promise<RunnerAgentSessionRuntimeSource | null> {
     const authority =
@@ -809,6 +811,13 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
     };
 
     const binding = input.executionRunSnapshot?.agent?.binding ?? authority.retainedAgent;
+    const admittedAgentDeclaration = input.executionRunSnapshot?.agent?.descriptor.agentDeclaration
+        ?? input.bootstrapAgentDeclaration;
+    const admittedBundledDevelopmentAgent = binding.sourceCustody.kind === 'development'
+        && authority.runner.snapshotIdentity.startsWith('path:')
+        && admittedAgentDeclaration?.provenance === 'first_party'
+        ? admittedAgentDeclaration.definition
+        : undefined;
     if (
         binding.sourceCustody.kind === 'development'
         && !input.occurrenceId?.trim()
@@ -842,6 +851,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             paths: storePaths,
             authority: expectedAuthority,
             retainedAgent: binding,
+            ...(admittedBundledDevelopmentAgent ? { admittedBundledDevelopmentAgent } : {}),
             ...(binding.sourceCustody.kind === 'development'
                 ? { developmentOccurrenceId: runnerOccurrenceId }
                 : {}),
@@ -946,6 +956,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             loadRetainedAgentRuntimeLeaf({
                 paths: storePaths,
                 binding,
+                ...(admittedBundledDevelopmentAgent ? { admittedBundledDevelopmentAgent } : {}),
                 ...(binding.sourceCustody.kind === 'development'
                     ? { developmentOccurrenceId: runnerOccurrenceId }
                     : {}),

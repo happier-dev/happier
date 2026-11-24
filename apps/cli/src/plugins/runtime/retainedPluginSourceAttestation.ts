@@ -91,6 +91,21 @@ function resolveRunnerPathSourceRoot(runnerSnapshotIdentity: string): string | n
     return dirname(dirname(runtimeRoot));
 }
 
+async function attestFirstPartyDevelopmentRoot(
+    pluginId: string,
+    registeredRootId: string,
+    runnerSourceRoot: string | null,
+): Promise<string> {
+    const developmentRoot = await realpath(registeredRootId);
+    const canonicalRunnerSourceRoot = runnerSourceRoot ? await realpath(runnerSourceRoot) : null;
+    if (!canonicalRunnerSourceRoot
+        || await resolveRetainedFirstPartyDevelopmentRoot({ pluginId, repoRoot: canonicalRunnerSourceRoot }) !== developmentRoot
+        || !isCanonicalAbsolutePathInsideRoot(canonicalRunnerSourceRoot, developmentRoot)) {
+        throw new Error('Retained first-party development source does not belong to the runner path');
+    }
+    return developmentRoot;
+}
+
 /** Only bundled development leaves execute from the runner's source publication. */
 export function isRunnerPinnedDevelopmentAgentSource(
     binding: Pick<AgentSessionRunnerBindingV1, 'pluginId' | 'sourceCustody'>,
@@ -121,7 +136,7 @@ export function selectRunnerManagedDependencySourceCustody(
         : registeredCustody;
 }
 
-/** The runner's retained publication owns its first-party Agent declaration and version. */
+/** Source-path runners keep the admitted binding. Packaged runners select their retained publication. */
 export async function attestFreshRunnerAgentBinding(params: Readonly<{
     binding: AgentSessionRunnerBindingV1;
     paths: PluginStorePaths;
@@ -132,43 +147,23 @@ export async function attestFreshRunnerAgentBinding(params: Readonly<{
     const snapshotId = params.runnerSnapshotIdentity.startsWith('snapshot:')
         ? params.runnerSnapshotIdentity.slice('snapshot:'.length)
         : '';
-    const isBundledFirstPartyDevelopmentSource = isRunnerPinnedDevelopmentAgentSource(params.binding);
+    const developmentCustody = custody.kind === 'development' && isRunnerPinnedDevelopmentAgentSource(params.binding)
+        ? custody
+        : null;
     const isPinnedBundledSource = custody.kind === 'bundled_first_party'
         && custody.packagedRuntime.kind === 'pinned_runner_snapshot';
-    if (!isBundledFirstPartyDevelopmentSource && !isPinnedBundledSource) {
+    if (!developmentCustody && !isPinnedBundledSource) {
         return params.binding;
     }
     if (!snapshotId || snapshotId.includes('/') || snapshotId.includes('\\')) {
-        if (isBundledFirstPartyDevelopmentSource) {
+        if (developmentCustody) {
             if (!params.runnerSnapshotIdentity.startsWith('path:')) return params.binding;
-            const source = await attestRetainedPluginSource({
-                paths: params.paths,
-                pluginId: params.binding.pluginId,
-                custody,
-                manifestAuthority: 'bundled_first_party',
-                runnerSnapshotIdentity: params.runnerSnapshotIdentity,
-            });
-            if (!source.manifest.contributes.agents.some(
-                (agent) => agent.id === params.binding.localAgentId,
-            )) {
-                throw new Error('Runner Agent development source has no admitted Agent declaration');
-            }
-            if ('kind' in params.binding) {
-                return Object.freeze({ ...params.binding, pluginVersion: source.manifest.version });
-            }
-            // A development leaf runs the checkout's current source, exactly as the
-            // daemon resolved it. The manifest's published factory locates the packed
-            // `.happier-plugin-build` layout, which only a build refreshes; it names
-            // the declared factory here and never the module this runner loads.
-            const factory = readRetainedBundledAgentFactory(source.manifest, params.binding.localAgentId);
-            if (factory.locator.module !== params.binding.locator.module) {
-                throw new Error('Runner Agent development source factory differs from its admitted declaration');
-            }
-            return createAgentSessionRunnerFactoryBinding({
-                ...params.binding,
-                pluginVersion: source.manifest.version,
-                locator: factory.locator,
-            });
+            await attestFirstPartyDevelopmentRoot(
+                params.binding.pluginId,
+                developmentCustody.registeredRootId,
+                resolveRunnerPathSourceRoot(params.runnerSnapshotIdentity),
+            );
+            return params.binding;
         }
         throw new Error('Runner Agent bundled source has no pinned snapshot identity');
     }
@@ -355,22 +350,15 @@ export async function attestRetainedPluginSource(params: Readonly<{
             custody: custody,
         })
         : null;
-    const developmentRoot = custody.kind === 'development'
-        ? await realpath(custody.registeredRootId)
-        : null;
     const runnerSourceRoot = custody.kind === 'development'
         ? resolveRunnerPathSourceRoot(params.runnerSnapshotIdentity ?? '')
         : null;
-    if (developmentRoot) {
-        const canonicalRunnerSourceRoot = runnerSourceRoot ? await realpath(runnerSourceRoot) : null;
-        const expectedPluginRoot = canonicalRunnerSourceRoot
-            ? await resolveRetainedFirstPartyDevelopmentRoot({ pluginId: params.pluginId, repoRoot: canonicalRunnerSourceRoot }) : null;
-        if (!canonicalRunnerSourceRoot
-            || params.manifestAuthority !== 'bundled_first_party'
-            || expectedPluginRoot !== developmentRoot
-            || !isCanonicalAbsolutePathInsideRoot(canonicalRunnerSourceRoot, developmentRoot)) {
+    let developmentRoot: string | null = null;
+    if (custody.kind === 'development') {
+        if (params.manifestAuthority !== 'bundled_first_party') {
             throw new Error('Retained first-party development source does not belong to the runner path');
         }
+        developmentRoot = await attestFirstPartyDevelopmentRoot(params.pluginId, custody.registeredRootId, runnerSourceRoot);
     }
     if (generation) {
         await assertContainedRegularGenerationFile(

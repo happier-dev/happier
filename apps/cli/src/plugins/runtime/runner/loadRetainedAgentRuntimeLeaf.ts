@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginAgentContributionV2 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import type {
     AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -93,6 +94,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     binding: unknown;
     developmentOccurrenceId?: string;
     developmentRunnerSnapshotIdentity?: string;
+    admittedBundledDevelopmentAgent?: PluginAgentContributionV2;
     resolveBundledPluginRoot?: typeof resolveRetainedBundledPluginRoot;
     onPreparationComplete?: (preparation: RetainedAgentRuntimePreparation) => void;
 }>): Promise<RetainedAgentRuntimeLeaf> {
@@ -351,6 +353,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         binding: unknown;
         developmentOccurrenceId?: string;
         developmentRunnerSnapshotIdentity?: string;
+        admittedBundledDevelopmentAgent?: PluginAgentContributionV2;
         resolveBundledPluginRoot?: typeof resolveRetainedBundledPluginRoot;
     }>,
 ): Promise<Readonly<{
@@ -458,12 +461,19 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         ?? (developmentLocator && manifestAuthority === 'bundled_first_party'
             ? readRetainedFirstPartyDevelopmentManifest({ pluginId: binding.pluginId })
             : null);
-    const declaredAgent = manifest?.contributes.agents.find((candidate) => candidate.id === binding.localAgentId);
+    // An exact first-party source root can have a newer declaration on disk.
+    // The protected launch descriptor already carries the Agent selected for
+    // this occurrence. The manifest still supplies the source's host services.
+    const admittedAgent = developmentLocator && manifestAuthority === 'bundled_first_party'
+        ? params.admittedBundledDevelopmentAgent
+        : undefined;
+    const declaredAgent = admittedAgent
+        ?? manifest?.contributes.agents.find((candidate) => candidate.id === binding.localAgentId);
     if (
         !manifest
         || manifest.id !== binding.pluginId
         || manifest.version !== binding.pluginVersion
-        || !declaredAgent
+        || declaredAgent?.id !== binding.localAgentId
     ) {
         throw new Error(
             'Runner Agent binding immutable declaration source mismatch',

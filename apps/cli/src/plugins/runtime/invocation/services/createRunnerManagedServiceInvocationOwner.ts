@@ -839,6 +839,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
     authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
     retainedAgent: AgentSessionRunnerBindingV1;
     developmentOccurrenceId?: string;
+    admittedBundledDevelopmentAgent?: PluginAgentContributionV2;
 }>): Promise<Readonly<{
     owners: RunnerLocalPluginInvocationServiceOwners;
     verifiedAgentDeclaration: Readonly<{
@@ -923,6 +924,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
         paths: input.paths,
         binding: input.retainedAgent,
         developmentOccurrenceId: input.developmentOccurrenceId,
+        admittedBundledDevelopmentAgent: input.admittedBundledDevelopmentAgent,
     });
     const verifiedAgentDeclaration = Object.freeze({
         definition: attested.declaredAgent,

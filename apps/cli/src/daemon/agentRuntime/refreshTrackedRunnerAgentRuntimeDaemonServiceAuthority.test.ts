@@ -71,7 +71,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
       );
       await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), declaration);
       await writeFile(declarationPath, declaration);
-      return { runtimeRoot, pluginRoot };
+      return { runtimeRoot, pluginRoot, declarationPath, declaration };
     };
     try {
       const runner = await publishSourceBundle('runner-a');
@@ -91,6 +91,12 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
         normalizedModulePath: 'agent-daemon-b.mjs', loadMode: 'immutable-js',
       });
       const runnerIdentity = `path:${runner.runtimeRoot}`;
+      await expect(attestFreshRunnerAgentBinding({
+        binding, paths: resolvePluginStorePaths({ happyHomeDir }), runnerSnapshotIdentity: runnerIdentity,
+      })).resolves.toEqual(binding);
+      // A regenerated projection can name a different export even while the
+      // daemon and this source tree still provide the originally admitted one.
+      await writeFile(runner.declarationPath, runner.declaration.replace('createRunnerA', 'createUnadmittedRuntime'));
       await expect(attestFreshRunnerAgentBinding({
         binding, paths: resolvePluginStorePaths({ happyHomeDir }), runnerSnapshotIdentity: runnerIdentity,
       })).resolves.toEqual(binding);

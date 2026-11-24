@@ -2199,6 +2199,13 @@ Managed-runtime publication may remove an unavailable provider facet from that
 admitted declaration; locator identity, entrypoint agreement and contribution-graph
 reference resolution remain enforced by their existing owners.
 
+For a bundled Agent launched from development source, the daemon's admitted
+registry lease supplies the factory binding and the Agent declaration in the
+protected runner bootstrap. Publication verifies checkout custody. Once the
+runner claims the Session authority, its service and factory readers use that
+Agent declaration even if a generated projection changed after admission.
+The packaged runner continues to read its pinned publication.
+
 Every process admits all bundled file declarations as a summary. The bundled-plugin
 publisher derives three assets from each serialized manifest
 (`assets/bundled-plugin-manifests/declarations/<id>.summary.json`,
