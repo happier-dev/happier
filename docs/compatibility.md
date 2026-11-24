@@ -932,8 +932,8 @@ Session. Its result enters the Session sender as automation, so a person-Stop
 hold parks admitted input and returns `held` / `held_by_person`. A Session-owned
 replay checks the admitted Session before claiming the Action and can settle
 `approval_stale` / `session_changed` before the effect.
-The approval Artifact stores the definite unavailable or held delivery
-receipt separately from execution. `approval.request.get` exposes it as
+The approval Artifact stores the accepted, held, rejected, or outcome-unknown
+delivery receipt separately from execution. `approval.request.get` exposes it as
 `request.delivery`. Earlier records can omit this field. Strict 0.3 development
 readers require matching source for records carrying it. The released 0.2
 ApprovalRequest V1 has no V2 execution origin for this delivery path.

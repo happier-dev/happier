@@ -37,7 +37,8 @@ async function askAndDecide(
   let stored: ApprovalRequest | null = null;
   const effects: string[] = [];
   const deliveries: DeliveryArgs[] = [];
-  const executor = createActionExecutor({
+  const updates: ApprovalRequest['status'][] = [];
+  const deps = {
     ...(options.checkFailsWith ? { actionAutomations: {
       select: async () => ({ status: 'ready' as const, subjects: [], after: [], before: [{
         automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow',
@@ -61,7 +62,8 @@ async function askAndDecide(
     },
     approvalsGet: async () => stored,
     approvalsUpdate: async ({ request }) => {
-      stored = ApprovalRequestV2Schema.parse(request);
+      updates.push(request.status);
+      stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
       return { ok: true };
     },
     isApprovalExecutionOriginCurrent: async () => true,
@@ -80,7 +82,8 @@ async function askAndDecide(
       deliveries.push(input);
       return await options.deliver(input);
     },
-  });
+  } satisfies Partial<ActionExecutorDeps>;
+  const executor = createActionExecutor(deps);
   expect(
     await executor.execute(
       'session.title.set',
@@ -127,7 +130,12 @@ async function askAndDecide(
         defaultSessionId: 'other-focused-session',
       },
     );
-  return { decide, effects, deliveries, read: () => stored };
+  const refresh = () => createActionExecutor(deps).execute(
+    'approval.request.get',
+    { artifactId: 'title-proposal' },
+    { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' },
+  );
+  return { decide, effects, deliveries, updates, refresh, read: () => stored };
 }
 
 describe('approval result delivery is a receipt beside the run record', () => {
@@ -138,15 +146,20 @@ describe('approval result delivery is a receipt beside the run record', () => {
       errorCode: null,
       httpStatus: null,
     };
+    let attempts = 0;
     const flow = await askAndDecide({
-      deliver: async () => ({
-        ok: false,
-        errorCode: 'session_input_target_unavailable',
-        error: 'session_input_target_unavailable',
-        failureCause: refusal,
-      }),
+      deliver: async () => {
+        if (++attempts > 1) throw new Error('socket closed on replay');
+        return {
+          ok: false,
+          errorCode: 'session_input_target_unavailable',
+          error: 'session_input_target_unavailable',
+          failureCause: refusal,
+        };
+      },
     });
-    expect(await flow.decide()).toMatchObject({
+    const settled = await flow.decide();
+    expect(settled).toMatchObject({
       ok: true,
       result: {
         status: 'executed',
@@ -163,18 +176,19 @@ describe('approval result delivery is a receipt beside the run record', () => {
       status: 'executed',
       execution: { ok: true },
     });
-    // A later approve only re-offers the same result under its retry identity; the effect never runs again.
-    expect(await flow.decide()).toMatchObject({
-      ok: true,
-      result: { status: 'executed', delivery: { status: 'rejected' } },
-    });
+    expect(await flow.decide()).toEqual(settled);
+    expect(await flow.refresh()).toMatchObject({ ok: true, result: { request: {
+      status: 'executed',
+      delivery: {
+        status: 'rejected',
+        code: 'session_input_target_unavailable',
+        failureCause: { phase: 'session.message.input_schema' },
+      },
+    } } });
     expect(flow.effects).toEqual(['origin-session']);
-    expect(
-      flow.deliveries.map((delivery) => [delivery.sessionId, delivery.localId]),
-    ).toEqual([
-      ['origin-session', 'approval-result:title-proposal'],
-      ['origin-session', 'approval-result:title-proposal'],
-    ]);
+    expect(flow.deliveries.map(({ sessionId, localId }) => [sessionId, localId]))
+      .toEqual([['origin-session', 'approval-result:title-proposal']]);
+    expect(flow.updates).toEqual(['approved', 'executing', 'executed', 'executed']);
   });
 
   it('keeps an unknown Session-sender code as a refused receipt with its cause, and a lost acknowledgement as unknown', async () => {
@@ -212,6 +226,15 @@ describe('approval result delivery is a receipt beside the run record', () => {
         },
       },
     });
+    expect(await lost.refresh()).toMatchObject({ ok: true, result: { request: {
+      status: 'executed',
+      delivery: {
+        status: 'outcomeUnknown',
+        localId: 'approval-result:title-proposal',
+        code: 'session_input_settlement_outcome_unknown',
+      },
+    } } });
+    expect(lost.updates).toEqual(['approved', 'executing', 'executed', 'executed']);
     expect(lost.effects).toEqual(['origin-session']);
     // A sender that throws its typed refusal keeps it as the refused receipt.
     const thrownRefusal = await askAndDecide({ deliver: async () => {
@@ -235,7 +258,7 @@ describe('approval result delivery is a receipt beside the run record', () => {
       },
     ],
   ] as const)(
-    'answers a %s delivery with its receipt',
+    'answers and retains a %s delivery with one receipt update',
     async (_label, receipt) => {
       const flow = await askAndDecide({ deliver: async () => receipt });
       expect(await flow.decide()).toMatchObject({
@@ -246,6 +269,8 @@ describe('approval result delivery is a receipt beside the run record', () => {
           delivery: receipt,
         },
       });
+      expect(await flow.refresh()).toMatchObject({ ok: true, result: { request: { status: 'executed', delivery: receipt } } });
+      expect(flow.updates).toEqual(['approved', 'executing', 'executed', 'executed']);
     },
   );
 
@@ -285,8 +310,8 @@ describe('approval result delivery is a receipt beside the run record', () => {
       }
       expect(flow.effects).toEqual([]);
       expect(flow.deliveries.map(({ sessionId, localId, message }) => ({ sessionId, localId, payload: JSON.parse(message) })))
-        .toEqual(Array.from({ length: 2 }, () => ({ sessionId: 'origin-session', localId: 'approval-result:title-proposal',
-          payload: { artifactId: 'title-proposal', actionId: 'session.title.set', ok: true, status } })));
+        .toEqual([{ sessionId: 'origin-session', localId: 'approval-result:title-proposal',
+          payload: { artifactId: 'title-proposal', actionId: 'session.title.set', ok: true, status } }]);
     });
 
   it.each([['refuse', 'failed'], ['ask', 'rejected']] as const)(

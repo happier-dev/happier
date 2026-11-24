@@ -1585,9 +1585,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (request.delivery) return { delivery: request.delivery };
         const recordDelivery = async (delivery: SessionInputAdmissionResultV1) => {
-          if (deps.approvalsUpdate && (delivery.status === 'held'
-            || (delivery.status === 'rejected' && delivery.code === 'session_input_target_unavailable'
-              && delivery.effectAttempted === false))) {
+          if (deps.approvalsUpdate) {
             try {
               await deps.approvalsUpdate({ artifactId, request: { ...request, delivery },
                 serverId: context.serverId ?? origin.serverId, expectedStatus: request.status });
@@ -1602,7 +1600,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         try {
           publication = await deps.approvalRequestOutcomePublication?.({ artifactId, request, context });
         } catch (error) {
-          return { delivery: projectThrownApprovalResultDeliveryV1(error, localId) };
+          return await recordDelivery(projectThrownApprovalResultDeliveryV1(error, localId));
         }
         if (publication != null) {
           const outcome = readApprovalReplayResult(publication);
@@ -1646,7 +1644,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           });
         } catch (error) {
           // A typed refusal stays refused; a lost acknowledgement leaves only the delivery uncertain.
-          return { delivery: projectThrownApprovalResultDeliveryV1(error, localId) };
+          return await recordDelivery(projectThrownApprovalResultDeliveryV1(error, localId));
         }
         // Accepted, held on the Machine path, refused with its cause, or unknown:
         // each is the Session sender's receipt, beside the unchanged run record.
