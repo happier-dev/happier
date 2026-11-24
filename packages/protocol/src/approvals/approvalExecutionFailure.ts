@@ -1,3 +1,4 @@
+import { DeploymentBackupReceiverFailureDetailsV1Schema } from '../deployments/deploymentBackupAnotherMachineV1.js';
 import { readActionFailurePresentationV1 } from '../actions/actionFailurePresentation.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ApprovalRequestConflictFailureDetailsV1Schema, ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
@@ -59,7 +60,7 @@ import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFai
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentDomainFailureStorageDetailsV1 } from '../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
@@ -137,6 +138,18 @@ function parseStrictApprovalFailure(input: Readonly<{
       const schema = getActionSpec(input.request.actionId).inputSchema;
       const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
       return args.success ? { ...input.failure, details: workflow.data.details } : null;
+    }
+  }
+  if (input.request.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
+    const schema = DeploymentActionInputSchemasV1[DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1];
+    const raw = input.failure.details;
+    const details = (storedRead ? createStoredReadSchema(DeploymentBackupReceiverFailureDetailsV1Schema)
+      : DeploymentBackupReceiverFailureDetailsV1Schema)
+      .safeParse(raw && typeof raw === 'object' && 'receiver' in raw ? { receiver: raw.receiver } : null);
+    if (details.success) {
+      const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+      return args.success && 'destinationSetup' in args.data && args.data.destinationSetup?.machineId === details.data.receiver.machineId
+        ? { ...input.failure, details: details.data } : null;
     }
   }
   if (isDeploymentBackupActionIdV1(input.request.actionId)) {

@@ -4187,6 +4187,9 @@ references remain on the canonical `deployments.bindings.set` writer with purpos
 receives prepared Artifact references and public metadata for the Environment
 revision CAS, never credential values. A partial save or binding failure reports
 the actual retained references and revisions without claiming readiness.
+A refused Another Machine Setup names the reviewed receiver and Setup phase.
+A lost acknowledgement preserves the existing incomplete Setup result so the
+next reviewed attempt can reconcile the outcome.
 `markNotNeeded` requires no configured destination or enabled backup Automation;
 it does not remove remote repository data. Retention changes preserve capture
 `configRevision`, so existing snapshot verification remains valid.

@@ -51,7 +51,9 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { DeploymentBackupConfigureInputV1, DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
-import { DeploymentBackupAnotherMachineSetupV1Schema, type DeploymentBackupAnotherMachineSetupV1 } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineTargetUnavailableReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { DeploymentBackupReceiverFailureDetailsV1Schema, DeploymentBackupAnotherMachineSetupV1Schema, type DeploymentBackupAnotherMachineSetupV1 } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
 import { sourceWord } from './DeploymentCreationDefaultsRows';
 import { formatAutomationScheduleLabel } from '@/components/automations/list/automationListFormatting';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
@@ -717,6 +719,15 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
   const configFields = resolveEffectiveInputFields({ inputHints }, fields);
   const refused = change.outcome?.kind === 'refused' ? change.outcome : null;
+  const failureDetails = refused?.failure?.details;
+  const receiverFailure = failureDetails && typeof failureDetails === 'object' && 'receiver' in failureDetails
+    ? DeploymentBackupReceiverFailureDetailsV1Schema.safeParse({ receiver: failureDetails.receiver }).data?.receiver : undefined;
+  const failedReceiver = receiverMachines.find(machine => machine.id === receiverFailure?.machineId);
+  const receiverReason = refused ? resolveMachineTargetUnavailableReasonCopy(receiverFailure?.diagnostic)
+    ?? presentActionFailureOutcome({ ...(refused.failure ?? { errorCode: refused.code, error: refused.code }),
+      ...(receiverFailure?.workflowReason ? { details: { code: refused.code, reason: receiverFailure.workflowReason } } : {}),
+    }, 'deployment', deploymentActionRefusalRemedy(refused.code)).reason : null;
+  const failedReceiverLabel = failedReceiver ? getMachineDisplayName(failedReceiver, receiverMachines) : receiverFailure?.machineId;
   return <ListPresentationProvider value="page" pageInsets="contained"><View testID={id} style={deploymentSheetStyles.body}>
     <Text style={deploymentSheetStyles.lead}>{intent ? t('projects.deployments.settingsSections.previewEditor.backupIntentBody')
       : t('projects.deployments.settingsSections.setupSheetLead', { machine: props.machine })}</Text>
@@ -787,7 +798,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     <DeploymentBackupConfigurationResult result={result} machine={pathCapacity.machineName || props.machine} testID={id}
       capacity={result?.review?.capacity ? pathCapacity.capacity : undefined} />
     {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
-      reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : null}
+      reason={failedReceiverLabel ? [failedReceiverLabel, receiverReason].filter(Boolean).join(' · ') : receiverReason ?? undefined} diagnosticCode={refused.code} /> : null}
     {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner controller={scheduleChange.banner}
       machine={props.machine} copy="setting" /> : null}
     {setChrome ? null : footer}

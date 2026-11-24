@@ -1,3 +1,5 @@
+import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -56,9 +58,17 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
 }>, host: BackupAnotherMachineHost): Promise<BackupAnotherMachinePreparation> {
     let senderIdentity = input.setup.senderIdentity;
     let setupOperation: DeploymentBackupReceiverSetupOperationV1 | undefined;
-    const partial = (failure: string | ActionExecuteFailure): BackupAnotherMachinePreparation => {
+    const partial = (failure: string | ActionExecuteFailure, step?: 'read' | 'plan' | 'apply'): BackupAnotherMachinePreparation => {
         if (typeof failure !== 'string' && !isActionOutcomeUnknownErrorCodeV1(failure.errorCode)) {
-            throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: failure.errorCode, error: failure.errorCode }), { cause: failure });
+            const rawDetails = isRecord(failure.details) ? failure.details : {};
+            const diagnostic = MachineAvailabilityDiagnosticV1Schema.safeParse(rawDetails.diagnostic ?? rawDetails);
+            const workflow = WorkflowTargetUnavailableDetailsV1Schema.safeParse(rawDetails);
+            const details = step === undefined ? failure.details : { ...rawDetails, receiver: {
+                machineId: input.setup.machineId, step, ...(diagnostic.success ? { diagnostic: diagnostic.data } : {}),
+                ...(workflow.success ? { workflowReason: workflow.data.reason } : {}),
+            } };
+            throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: failure.errorCode, error: failure.errorCode }),
+                { cause: { ...failure, details } });
         }
         return { status: 'partial', errorCode: typeof failure === 'string' ? failure : failure.errorCode,
             ...(senderIdentity ? { senderIdentity } : {}), ...(setupOperation ? { setupOperation } : {}) };
@@ -78,7 +88,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
             repositoryPassword: identity.repositoryPassword };
         const target = { homeId: input.serverId, machineId: input.setup.machineId };
         const read = await invoke({ ...BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan, input: target });
-        if (!read.ok) return partial(read);
+        if (!read.ok) return partial(read, 'read');
         const current = MachineSetupPlanResultV1Schema.safeParse(read.result);
         if (!current.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.current', undefined, current.error));
         const item: MachinePresetItemV1 = { kind: 'setupRecipe', selection: { ref: BACKUP_RECEIVER_RECIPE_REF_V1,
@@ -88,7 +98,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
         const exclusions = current.data.exclusions.filter(exclusion => readMachineSetupRecipeIdentityV1(exclusion.ref) !== identityKey);
         const planned = await invoke({ ...BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan,
             input: projectNativeJsonValueForTransport({ ...target, sources, exclusions, mode: 'effects' }) });
-        if (!planned.ok) return partial(planned);
+        if (!planned.ok) return partial(planned, 'plan');
         const plan = MachineSetupPlanResultV1Schema.safeParse(planned.result);
         if (!plan.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.plan', undefined, plan.error));
         const witness = plan.data.backupReceivers?.find(entry => entry.machineId === input.setup.machineId);
@@ -100,7 +110,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
             const operation = isRecord(applied.details)
                 ? DeploymentBackupReceiverSetupOperationV1Schema.safeParse(applied.details.setupOperation) : null;
             if (operation?.success) setupOperation = operation.data;
-            return partial(applied);
+            return partial(applied, 'apply');
         }
         const settled = MachineSetupApplyResultV1Schema.safeParse(applied.result);
         if (!settled.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.settled', undefined, settled.error));

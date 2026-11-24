@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
+import { projectDeploymentException } from '../deploymentFailure';
 import { MachineSetupApplyInputV1Schema, MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -117,7 +121,42 @@ describe('Another Machine configuration through existing Setup children', () => 
         };
         await expect(prepareBackupAnotherMachineForHost({ serverId: 'home', setup,
             context: { surface: 'agent', hostReviewedChild: { invoke } } }, host)).rejects.toMatchObject({
-                code: refusal.errorCode, cause: { ...refusal, details: { ...refusal.details, destinationSetup: setup } } });
+                code: refusal.errorCode, cause: { ...refusal, details: { ...refusal.details, destinationSetup: setup,
+                    receiver: { machineId: setup.machineId, step: failedStep } } } });
+    });
+
+    it('keeps the selected destination and its offline reason when reviewed Backup cannot start receiver Setup', async () => {
+        const requests: Parameters<HostReviewedChildPortV1['invoke']>[0][] = [];
+        const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        const invoke: HostReviewedChildPortV1['invoke'] = async child => {
+            requests.push(child);
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+                requestId: 'receiver-setup-refusal', details: diagnostic };
+        };
+        const actionId = 'deployments.backups.configure';
+        const actionArgs = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, intent: 'test', destinationSetup: setup,
+            configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'sftp' },
+                occurrenceId: 'reviewed', config: {}, credentialBindings: [], ownership: { environmentId: 'environment', prefix: 'owned' },
+                sources: [{ kind: 'dump', sourceId: 'data', service: 'database', consistency: 'logical' }] } };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs, summary: 'Test Backup destination',
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                serverId: 'home', accountId: 'owner', machineId: 'sender', actionId, requestId: 'backup-test' } });
+        const failure = await prepareBackupAnotherMachineForHost({ serverId: 'home', setup,
+            context: { surface: 'ui', hostReviewedChild: { invoke } } }, host)
+            .then(() => { throw new Error('Expected receiver refusal'); }, projectDeploymentException);
+        const settled = projectSettledApprovalExecution({ request, actionId, exec: failure, dispatchEffectAttempted: true, executedAtMs: 3 });
+        expect(readApprovalExecutionFailure(settled.request)).toMatchObject({ errorCode: 'target_unavailable',
+            details: { receiver: { machineId: 'receiver', step: 'read', diagnostic } } });
+        const mismatchedRequest = { ...request, actionArgs: { ...actionArgs,
+            destinationSetup: { ...setup, machineId: 'different-reviewed-machine' } } };
+        const mismatched = projectSettledApprovalExecution({
+            request: mismatchedRequest, actionId, exec: failure, dispatchEffectAttempted: true, executedAtMs: 3,
+        });
+        expect(readApprovalExecutionFailure(mismatched.request)?.details).toBeUndefined();
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.input).toMatchObject({ machineId: 'receiver' });
     });
 
     it('retains setup continuation when its acknowledgement is genuinely unknown', async () => {
