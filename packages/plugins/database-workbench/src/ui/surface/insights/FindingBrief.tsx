@@ -62,6 +62,12 @@ export function FindingBrief({ target, recordKey }: Readonly<{ target: DatabaseT
     kind: 'existing',
     session: surface.accountScope ? { selector: 'sessions', addresses: [{ serverId: surface.accountScope.serverId, sessionId: currentSession }] } : currentSession,
   } : null;
+  const workspace = target.kind === 'worktree' ? target.workspace : undefined;
+  const newSession: SessionInputHandoffInputV1['newSession'] = { kind: 'new',
+    seed: workspace ? { placement: {
+      kind: 'exactTarget', serverId: workspace.serverId, machineId: workspace.machineId, directory: workspace.rootPath,
+    } } : {},
+  };
   return <Stack gap="small">
     {brief ? <>
       <Markdown value={brief.text} />
@@ -69,7 +75,7 @@ export function FindingBrief({ target, recordKey }: Readonly<{ target: DatabaseT
         {sessionChoice ? <Action.Control
           {...openDraft(brief, { v: 1, sessionChoice, delivery: 'compose' })}
           title={t('plugins.database.insights.sendBrief', 'Send brief')} variant="secondary" /> : null}
-        <Action.Control {...openDraft(brief, { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession: { kind: 'new', seed: {} } })}
+        <Action.Control {...openDraft(brief, { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession })}
           title={t('plugins.database.insights.askInvestigation', 'Ask for investigation')} variant="secondary" />
       </Row>
     </> : <Button size="small" variant="secondary" busy={build.execution.status === 'pending'}

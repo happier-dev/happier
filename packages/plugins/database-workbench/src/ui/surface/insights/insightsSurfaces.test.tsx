@@ -517,6 +517,10 @@ describe('Database Insights surfaces', () => {
       expect(handoff).toHaveBeenLastCalledWith(expect.objectContaining({
         action: 'session.input.handoff',
         input: expect.objectContaining({ delivery: 'compose', sessionChoice: { kind: 'new' },
+          newSession: { kind: 'new', seed: { placement: {
+            kind: 'exactTarget', serverId: scope.workspace.serverId, machineId: scope.workspace.machineId,
+            directory: scope.workspace.rootPath,
+          } } },
           input: expect.objectContaining({ text: 'Investigate the selected statement', forgeEvidence: expect.any(Object) }) }),
       }));
       await act(async () => { await details.press(await details.getByRole('button', { name: 'Open in Console' })); });
