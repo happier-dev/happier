@@ -780,6 +780,70 @@ describe('usePluginUiProjectionCurrentness', () => {
         } finally { await rendered.unmount(); }
     });
 
+    it('keeps the scoped Machine capture Resource when the Account also supplies Telemetry', async () => {
+        const { DATABASE_CAPTURE_RESOURCE_REF_V1 } = await import('@happier-dev/database-protocol');
+        const { useScopedPluginUiProjection } = await import('@/components/plugins/projection/useScopedPluginUiProjection');
+        const { readPluginUiResourceProjection } = await import('./projection');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { createPackageAssetArchiveV1, readDeclaredPackageAssetsV1, PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema } =
+            await import('@happier-dev/protocol/plugins/availability');
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { pluginId, contributionId: localId } = DATABASE_CAPTURE_RESOURCE_REF_V1;
+        const features = createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
+            ui: { enabled: true, hostedWeb: { enabled: false }, reactNativeBundles: { enabled: true } } } },
+            capabilities: { serverIdentity: { serverIdentityId } } });
+        harness.answer(homeId, '/v1/features', { body: features });
+        harness.answer(homeId, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId: serverIdentityId, snapshot: { status: 'ready', features } });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const issueResource = { pluginId, localId: 'environment-open-issues' };
+        const accountManifest = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Telemetry',
+            resources: { [issueResource.localId]: { source: 'dynamic', kind: 'config', contentType: 'application/json',
+                scope: 'surface', execution: { target: 'account', account: { artifactId: 'telemetry-account', exportName: 'activate' } },
+                runtime: { async read() { return '{}'; }, observe: () => ({ dispose() {} }) } } } }).manifest;
+        const declaredAssets = readDeclaredPackageAssetsV1(accountManifest);
+        if (!declaredAssets) throw new Error('Expected declared Telemetry assets');
+        const archive = createPackageAssetArchiveV1({ manifest: accountManifest,
+            files: declaredAssets.map(asset => ({ path: asset.path, bytes: new Uint8Array([1]) })) });
+        if (!archive) throw new Error('Expected packaged Telemetry declarations');
+        const release = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            availabilityCursor: 1, hostingCapability: { enabled: false },
+            intent: { pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled',
+                writableCollections: [], revision: 'telemetry-fixture' },
+            release: { ref: { pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                normalizedManifest: PluginPortableReleaseManifestV1Schema.parse(accountManifest), collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor },
+            uiArtifacts: [], packageAssets: [],
+        });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 1, intentReads: [{ pluginId, response: release }], materializations: [], snapshots: [],
+        } });
+        const reader = readPluginAccountAvailability(scope);
+        expect(await reader.ensureCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
+
+        const occurrenceId = 'telemetry-current-occurrence';
+        const sourceCustody = { kind: 'development', registeredRootId: 'qa-telemetry' };
+        const executionOrigin = { serverIdentityId, sourceRef: { pluginId, machineId: 'machine-1', sourceCustody } };
+        const capture = { id: localId, pluginId, occurrenceId, executionOrigin, resourceKind: 'config',
+            scope: 'surface', contentType: 'application/json', execution: { target: 'daemon' } };
+        projectionRuntime.describe.mockResolvedValue(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection: { v: 2, generation: 12,
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Telemetry', version: '1.0.0',
+                    enabled: true, source: { kind: 'localPath', locator: 'qa-telemetry' }, occurrenceId, sourceCustody, executionOrigin } },
+                resourcesById: { [`${pluginId}/${localId}`]: capture,
+                    [`${pluginId}/retired`]: { ...capture, id: 'retired', occurrenceId: 'telemetry-retired' } },
+            },
+        }));
+        const rendered = await renderHook(() => useScopedPluginUiProjection({ machineId: 'machine-1', serverId: serverIdentityId }));
+        try {
+            await waitForHomeGovernance(() => {
+                const resources = rendered.getCurrent().pluginUiProjection?.resourcesById;
+                expect(readPluginUiResourceProjection(resources, issueResource)).toMatchObject({ execution: { target: 'account' } });
+                expect(readPluginUiResourceProjection(resources, { pluginId, localId })).toMatchObject({ occurrenceId, executionOrigin });
+                expect(readPluginUiResourceProjection(resources, { pluginId, localId: 'retired' })).toBeNull();
+            });
+        } finally { await rendered.unmount(); }
+    });
+
     it.each(['hetzner', 'cua'] as const)('resolves the real %s provisioner purpose after merging Account declarations', async provider => {
         const { PLUGIN_MANIFEST } = provider === 'cua'
             ? await import('@happier-dev/plugins-machine-cua/manifest')

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -43,11 +44,22 @@ export function useScopedPluginUiProjection(params: Readonly<{
     // Stamp the exact Machine's retained/current rows before introducing an
     // independently current Account catalog. The aggregate interaction bit
     // cannot turn an offline Machine contribution into executable authority.
+    // This surface already addresses a Machine. Its admitted occurrences
+    // supply that Machine's Resources when portable Account UI is merged in.
+    const packages = accountUiProjection && machine.machineId ? machine.pluginUiProjection?.installedPackagesById : undefined;
+    const machineOrigins = React.useMemo(() => {
+        if (!packages) return undefined;
+        const origins = new Map<string, PluginMachineExecutionOriginV1>();
+        for (const [pluginId, { executionOrigin }] of Object.entries(packages)) {
+            if (executionOrigin) origins.set(pluginId, executionOrigin);
+        }
+        return origins;
+    }, [packages]);
     const stampedMachine = machineUnion.publish(accountUiProjection && machine.machineId ? [{
         machineId: machine.machineId, serverId: machine.serverId,
         projection: machine.pluginUiProjection, phase: machine.phase,
         interactionEnabled: machine.interactionEnabled, unavailableReasonCode: machine.unavailableReasonCode,
-    }] : []);
+    }] : [], machineOrigins);
     const pluginUiProjection = accountMerge.publish(accountUiProjection ? [accountUiProjection] : [],
         accountUiProjection ? stampedMachine.pluginUiProjection : machine.pluginUiProjection);
     const { phase, interactionEnabled, unavailableReasonCode } = projectPluginUiProjectionAvailability(machine, accountUiProjection);
