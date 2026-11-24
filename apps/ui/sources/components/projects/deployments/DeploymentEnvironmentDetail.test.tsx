@@ -549,7 +549,7 @@ it('leads the deployed Overview with what runs, then one Definition with one Com
 
 it('waits for the serving receipt to confirm delivery of managed telemetry before asking for first data', async () => {
   const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
-  const { TelemetryCaptureInvokeContext } = await import('./telemetryCaptureReads');
+  const { TelemetryCaptureFixtureProvider } = await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
   const { createDeferred } = await import('@/dev/testkit');
   const { t } = await import('@/text');
   const collectorId = 'collector';
@@ -564,11 +564,11 @@ it('waits for the serving receipt to confirm delivery of managed telemetry befor
   const invoke = vi.fn(async ({ actionId }: { actionId: string }) => actionId.endsWith('/capture/status')
     ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, lastReceivedAt: null }
     : { ok: true, source, items: [] });
-  const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryCaptureInvokeContext.Provider value={invoke}>
+  const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryCaptureFixtureProvider invoke={invoke}>
     <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
       accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} review={noReview}
       onOpenReceipt={() => {}} lifetime={lifetime} />
-    </TelemetryCaptureInvokeContext.Provider></AppPresentationPlatformProvider>);
+    </TelemetryCaptureFixtureProvider></AppPresentationPlatformProvider>);
   try {
     await selectEnvironmentTab(screen, 'telemetry');
     await waitForContent(screen, 'project-deployments.telemetry.collector');

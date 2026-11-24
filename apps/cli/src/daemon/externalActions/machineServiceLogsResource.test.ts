@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { sameMachineServiceLogsResourceInput } from './machineServiceLogsResource';
 
 describe('deployment current edge Resource continuation', () => {
@@ -27,5 +30,25 @@ describe('deployment current edge Resource continuation', () => {
       'deployments.logs.read')).toBe(false);
     expect(sameMachineServiceLogsResourceInput({ ...input, machineId: 'other' }, continuation('controller'), 'controller',
       'deployments.logs.read')).toBe(false);
+  });
+});
+
+
+describe('selected capture Resource continuation', () => {
+  it('binds the finite capture list input and Machine and refuses the Clear Action', () => {
+    const source = { kind: 'environment', serverId: 'home', environmentId: 'dev' };
+    const input = { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)!,
+      input: { source, page: { limit: 20 } } };
+    const continuation = (value: typeof input, machineId = 'collector') => ({ resourceContinuation: {
+      method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+      params: { machineId, resource: { hostRead: 'telemetry.capture', input: value, windowMs: 60_000 } },
+    } }) as const;
+    const validate = (value: typeof input, operands = continuation(input), machineId = 'collector') =>
+      sameMachineServiceLogsResourceInput(value, operands, machineId, ACTION_INVOKE_ACTION_ID_V1);
+    expect(validate(input)).toBe(true);
+    expect(validate(input, continuation(input, 'other'))).toBe(false);
+    expect(validate({ ...input, input: { ...input.input, source: { ...source, environmentId: 'prod' } } })).toBe(false);
+    const clear = { ...input, action: parseQualifiedPluginActionId(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1)! };
+    expect(validate(clear, continuation(clear))).toBe(false);
   });
 });

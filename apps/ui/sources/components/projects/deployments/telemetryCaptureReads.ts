@@ -5,6 +5,7 @@ import {
   DatabaseCaptureClearResultV1Schema,
   DatabaseCaptureConfigureResultV1Schema,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+  DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1,
   DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
@@ -14,6 +15,7 @@ import {
   DatabaseCaptureEndpointsListResultV1Schema,
   DatabaseCaptureLogsListResultV1Schema,
   DatabaseCaptureQueriesListResultV1Schema,
+  DatabaseCaptureResourceSnapshotV1Schema,
   DatabaseCaptureQueryGetResultV1Schema,
   DatabaseCaptureStatusResultV1Schema,
   DatabaseCaptureTraceGetResultV1Schema,
@@ -22,10 +24,13 @@ import {
   type DatabaseCaptureEndpointV1,
   type DatabaseCaptureCursorV1,
   type DatabaseCaptureSummaryV1,
+  type DatabaseCaptureSourceV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import type { MachineResourceClientFactory } from '@/components/machines/resources/useMachineServiceResource';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
@@ -77,8 +82,10 @@ const invokeThroughFrontDoor: TelemetryCaptureInvoke = (request) =>
   );
 
 /** Dev specimens and tests supply fixture collector answers here, as other collector reads do. */
-export const TelemetryCaptureInvokeContext =
-  React.createContext<TelemetryCaptureInvoke>(invokeThroughFrontDoor);
+export const TelemetryCaptureTransportContext = React.createContext<Readonly<{
+  invoke: TelemetryCaptureInvoke;
+  createResourceClient?: MachineResourceClientFactory;
+}>>({ invoke: invokeThroughFrontDoor });
 
 export function telemetryCaptureFailureCode(error: unknown): string {
   return (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
@@ -89,8 +96,7 @@ function settle<T extends { ok: boolean }>(
   parsed: { success: true; data: T } | { success: false },
 ): Extract<T, { ok: true }> {
   if (!parsed.success) {
-    const code = 'telemetry_unreadable';
-    throw new HappyError(code, false, { code });
+    throw unreadableCapture();
   }
   const data = parsed.data as T & { code?: unknown };
   if (!data.ok) {
@@ -100,16 +106,49 @@ function settle<T extends { ok: boolean }>(
   return data as Extract<T, { ok: true }>;
 }
 
+
 /** Turn on/off settles, or the person's approval policy holds it as an approval request. */
 export type TelemetryCaptureConfigureOutcome =
   | Readonly<{ kind: 'configured'; enabled: boolean }>
   | Readonly<{ kind: 'approval_pending'; artifactId: string }>;
 
-export type TelemetryCaptureList = 'endpoints' | 'traces' | 'logs' | 'queries';
+export type TelemetryCaptureList = keyof typeof DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1;
 export type TelemetryCapturePage<Item, Cursor> = Readonly<{
   items: readonly Item[];
   nextCursor: Cursor | null;
 }>;
+export type TelemetryCaptureListPage =
+  | (Readonly<{ list: 'endpoints' }> & TelemetryCapturePage<DatabaseCaptureEndpointV1, DatabaseCaptureEndpointCursorV1>)
+  | (Readonly<{ list: Exclude<TelemetryCaptureList, 'endpoints'> }> & TelemetryCapturePage<DatabaseCaptureSummaryV1, DatabaseCaptureCursorV1>);
+export type TelemetryCaptureListSnapshot = Readonly<{
+  page: TelemetryCaptureListPage;
+  window: Readonly<{ since: number; until: number }>;
+}>;
+
+function unreadableCapture() {
+  const code = 'telemetry_unreadable';
+  return new HappyError(code, false, { code });
+}
+
+export function readTelemetryCaptureListSnapshot(list: TelemetryCaptureList, bytes: Uint8Array): TelemetryCaptureListSnapshot {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw unreadableCapture();
+  }
+  const parsed = DatabaseCaptureResourceSnapshotV1Schema.safeParse(raw);
+  if (!parsed.success || parsed.data.view !== list) throw unreadableCapture();
+  const snapshot = parsed.data;
+  if (snapshot.view === 'endpoints') {
+    const { items, nextCursor } = settle({ success: true, data: snapshot.result });
+    if (!snapshot.window) throw unreadableCapture();
+    return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window: snapshot.window };
+  }
+  const { items, nextCursor } = settle({ success: true, data: snapshot.result });
+  if (!snapshot.window) throw unreadableCapture();
+  return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window: snapshot.window };
+}
 
 /** The place whose capture is read: an Environment on its collector, or one worktree checkout on its own Machine. */
 export type TelemetryCaptureEnvironment = Readonly<{
@@ -123,7 +162,7 @@ export type TelemetryCaptureEnvironment = Readonly<{
 /** The host's own result-row bound for one read; the collector pages beneath it. */
 const PAGE_LIMIT = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
 
-function source(environment: TelemetryCaptureEnvironment) {
+function source(environment: TelemetryCaptureEnvironment): DatabaseCaptureSourceV1 {
   if (environment.worktree) {
     return {
       kind: 'worktree' as const,
@@ -159,6 +198,17 @@ export function createTelemetryCaptureReads(
     });
   const window = (since: number, until: number) => ({ since, until });
   return {
+    targetMachineId: environment.collectorMachineId,
+    listReference(list: TelemetryCaptureList, windowMs: number): PluginUiTelemetryCaptureReadReferenceV1 {
+      return {
+        hostRead: 'telemetry.capture',
+        input: {
+          action: parseQualifiedPluginActionId(DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[list])!,
+          input: { source: source(environment), page: { limit: PAGE_LIMIT } },
+        },
+        windowMs,
+      };
+    },
     async clear() {
       return settle(DatabaseCaptureClearResultV1Schema.safeParse(
         await call(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, { source: source(environment) }),
@@ -229,11 +279,7 @@ export function createTelemetryCaptureReads(
         ...window(since, until),
       };
       const raw = await call(
-        list === 'traces'
-          ? DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1
-          : list === 'logs'
-            ? DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1
-            : DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+        DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[list],
         input,
         signal,
       );

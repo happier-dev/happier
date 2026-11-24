@@ -1551,7 +1551,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 const producer = await createProducer.call(resource.runtime, {
                     signal: controller.signal, context: context.context,
                     ...(params.bindDynamicResourceActions?.(binding) ?? unavailableResourceActions),
-                    ...(custody?.secrets && accountId ? { ...custody,
+                    ...custody,
+                    ...(custody?.secrets && accountId ? {
                         ...(context.requesterContext?.agentCaller === undefined ? {} : { agentCaller: context.requesterContext.agentCaller }),
                         ...(context.requesterContext?.authority ? { authority: context.requesterContext.authority } : {}),
                         requesterAccount: Object.freeze({ accountId }) } : {}),

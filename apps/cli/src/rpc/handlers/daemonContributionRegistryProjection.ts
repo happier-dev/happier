@@ -1,6 +1,10 @@
 import { readDaemonSourceDeclarations } from './daemonSourceDeclarations';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
+import { projectTelemetryCaptureResourceDemandV1,
+    type PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { readFile } from 'node:fs/promises';
 import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol/daemon/pluginCaptureSources';
 import type { MachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
@@ -299,6 +303,22 @@ function isExpectedPluginOccurrenceCurrent(
     } catch {
         return false;
     }
+}
+
+function bindNativeCaptureResource(registry: ResolvedExecutablePluginRuntimeRegistry,
+    reference: PluginUiTelemetryCaptureReadReferenceV1, accountId: string | undefined) {
+    if (!accountId) throw new PluginError({ code: 'requester_credentials_unavailable' });
+    const callerPluginId = DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId;
+    const occurrence = registry.readPluginOccurrenceId?.(callerPluginId)
+        ?? registry.contributes.occurrenceIdsByPluginId?.[callerPluginId];
+    const launchInput = projectTelemetryCaptureResourceDemandV1(reference);
+    if (!launchInput || !occurrence) throw new PluginError({ code: 'plugin_resource_not_found' });
+    return { callerPluginId, expectedCallerOccurrenceId: occurrence,
+        resource: { pluginId: callerPluginId, localId: DATABASE_CAPTURE_RESOURCE_REF_V1.contributionId },
+        context: { kind: 'surface' as const, launchInput,
+            // The exact Account, operands and window share one producer between watch and read.
+            mountInstanceKey: `telemetry-capture:${createHash('sha256').update(createCanonicalJsonSigningInput([accountId, launchInput])).digest('hex')}` },
+    };
 }
 
 async function resolveProjectionServerFeaturesSnapshot(
@@ -2613,13 +2633,16 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
         const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
             ? request.data.resource : null;
-        const requesterAccountId = databaseReference
-            ? await hostResources.accountId(context, databaseReference)
+        const captureReference = !('callerPluginId' in request.data) && 'resource' in request.data && request.data.resource.hostRead === 'telemetry.capture'
+            ? request.data.resource : null;
+        const declaredReference = databaseReference ?? captureReference;
+        const requesterAccountId = declaredReference
+            ? await hostResources.accountId(context, declaredReference)
             : context?.machineAdmission?.actorAccountId;
         if (databaseReference) request = { success: true, data: {
             machineId: request.data.machineId, ...databaseReference.binding,
         } };
-        if (!('callerPluginId' in request.data)) {
+        if (!captureReference && !('callerPluginId' in request.data)) {
             try {
                 const value = await hostResources.read(request.data.resource, request.data.machineId, context);
                 return DaemonPluginUiResourceReadResponseSchema.parse({ ok: true, resource: request.data.resource,
@@ -2629,23 +2652,31 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 return { ok: false, code: isPluginError(error) ? error.code : 'service_unavailable', reason: 'unavailable' };
             }
         }
-        const declaredRequest = request.data;
         const refuse = (failure: Extract<ReturnType<typeof DaemonPluginUiResourceReadResponseSchema.parse>, { ok: false }>, generation?: number) => {
-            // Identity only: never include Resource bytes, contextual input or error text.
-            logger.infoFile('[PLUGIN RESOURCE] Read refused', {
-                stage: 'plugin_resources.read',
-                ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
-                callerPluginId: declaredRequest.callerPluginId,
-                resourcePluginId: declaredRequest.resource.pluginId,
-                resourceId: declaredRequest.resource.localId,
-                expectedCallerOccurrenceId: declaredRequest.expectedCallerOccurrenceId,
-                ...(generation === undefined ? {} : { generation }),
-                code: failure.code, reason: failure.reason,
-            });
+            if (request.success && 'callerPluginId' in request.data) {
+                const declaredRequest = request.data;
+                // Identity only: never include Resource bytes, contextual input or error text.
+                logger.infoFile('[PLUGIN RESOURCE] Read refused', {
+                    stage: 'plugin_resources.read',
+                    ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
+                    callerPluginId: declaredRequest.callerPluginId,
+                    resourcePluginId: declaredRequest.resource.pluginId,
+                    resourceId: declaredRequest.resource.localId,
+                    expectedCallerOccurrenceId: declaredRequest.expectedCallerOccurrenceId,
+                    ...(generation === undefined ? {} : { generation }),
+                    code: failure.code, reason: failure.reason,
+                });
+            }
             return DaemonPluginUiResourceReadResponseSchema.parse(failure);
         };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if (captureReference) {
+                const machineId = request.data.machineId;
+                const binding = bindNativeCaptureResource(lease.registry, captureReference, requesterAccountId);
+                request = { success: true, data: { machineId, ...binding } };
+            }
+            if (!('callerPluginId' in request.data)) throw new PluginError({ code: 'plugin_resource_not_found' });
             if (!isExpectedPluginOccurrenceCurrent(
                 lease.registry,
                 request.data.callerPluginId,
@@ -2825,14 +2856,23 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
         const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
             ? request.data.resource : null;
-        const requesterAccountId = databaseReference
-            ? await hostResources.accountId(context, databaseReference)
+        const captureReference = !('callerPluginId' in request.data) && 'resource' in request.data && request.data.resource.hostRead === 'telemetry.capture'
+            ? request.data.resource : null;
+        const declaredReference = databaseReference ?? captureReference;
+        const requesterAccountId = declaredReference
+            ? await hostResources.accountId(context, declaredReference)
             : context?.machineAdmission?.actorAccountId;
         if (databaseReference) request = { success: true, data: {
             machineId: request.data.machineId, ...databaseReference.binding, subscriptionId: request.data.subscriptionId,
         } };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if (captureReference) {
+                const machineId = request.data.machineId;
+                const binding = bindNativeCaptureResource(lease.registry, captureReference, requesterAccountId);
+                request = { success: true, data: { machineId, ...binding,
+                    subscriptionId: request.data.subscriptionId } };
+            }
             if (!('callerPluginId' in request.data)) {
                 const requestData = request.data;
                 const owner = lease.registry.uiResourceWatches;
@@ -2897,6 +2937,9 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
+                ...(captureReference ? { selectedHostResource: captureReference } : {}),
+                ...(captureReference && context?.followHostResource
+                    ? { followHost: { ...context.followHostResource, signal: context.signal } } : {}),
                 ...('readAuthority' in request.data.resource ? { readAuthority: request.data.resource.readAuthority }
                     : { resourceId: request.data.resource.localId }),
                 ...(request.data.context === undefined ? {} : { context: request.data.context }),

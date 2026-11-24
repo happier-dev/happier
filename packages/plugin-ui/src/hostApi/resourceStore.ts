@@ -219,7 +219,8 @@ export function pluginUiResourceReferenceKey(
     ? `bare:${normalized}`
     : 'hostRead' in normalized
       ? `host:${normalized.hostRead}\u0000${createCanonicalJsonSigningInput(
-        normalized.hostRead === 'machines.services.logs' || normalized.hostRead === 'deployments.logs' ? normalized : normalized.input)}`
+        normalized.hostRead === 'machines.services.logs' || normalized.hostRead === 'deployments.logs'
+          || normalized.hostRead === 'telemetry.capture' ? normalized : normalized.input)}`
       : `qualified:${normalized.pluginId}\u0000${normalized.localId}`;
 }
 

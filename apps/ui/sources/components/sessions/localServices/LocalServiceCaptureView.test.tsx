@@ -24,8 +24,8 @@ vi.mock('@/modal', () => modal.module);
 afterEach(standardCleanup);
 
 const { LocalServiceCaptureView } = await import('./LocalServiceCaptureView');
-const { TelemetryCaptureInvokeContext } =
-  await import('@/components/projects/deployments/telemetryCaptureReads');
+const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
+  await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
 const { ModalProvider } = await import('@/modal');
 const { AppPresentationPlatformProvider } =
   await import('@/components/ui/presentation/AppPresentationPlatformProvider');
@@ -77,27 +77,62 @@ async function settle() {
 function view(
   invoke: ReturnType<typeof machine>['invoke'],
   which: 'endpoints' | 'logs' = 'endpoints',
+  transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>,
+  active = true,
 ) {
   return (
     <AppPresentationPlatformProvider>
       <ModalProvider>
-        <TelemetryCaptureInvokeContext.Provider value={invoke}>
+        <TelemetryCaptureFixtureProvider invoke={invoke} transport={transport}>
           <LocalServiceCaptureView
             lifetime={lifetime}
             worktree={worktree}
             view={which}
-            active
+            active={active}
             machineName="MacBook Pro"
             onShowServers={() => {}}
             testID="capture"
           />
-        </TelemetryCaptureInvokeContext.Provider>
+        </TelemetryCaptureFixtureProvider>
       </ModalProvider>
     </AppPresentationPlatformProvider>
   );
 }
 
 describe('LocalServiceCaptureView', () => {
+  it('does not use finite first-page reads while following collector capture', async () => {
+    const finite = machine(call => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true }
+      : { ok: true, source, items: [] });
+    let route = '/invoices/:id';
+    const capture = machine(() => ({ ok: true, source, items: [{
+      serviceName: 'web', method: 'GET', route, requestCount: 1, errorCount: 0,
+      errorRate: 0, totalDurationMs: 50, databaseTimeMs: 20,
+    }] }));
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const screen = await renderScreen(view(finite.invoke, 'endpoints', transport));
+    try {
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.GET /invoices/:id')).not.toBeNull();
+      expect(capture.calls).toEqual([expect.objectContaining({ collectorMachineId: 'laptop', input: expect.objectContaining({ source }) })]);
+      expect(transport.watchers).toBe(1);
+      route = '/payments';
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.GET /payments')).not.toBeNull();
+      expect(capture.calls).toHaveLength(2);
+
+      await settle();
+      expect(capture.calls).toHaveLength(2);
+      await screen.update(view(finite.invoke, 'endpoints', transport, false));
+      expect(transport.watchers).toBe(0);
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(capture.calls).toHaveLength(2);
+      expect(finite.calls.filter(call => call.actionId.endsWith('/capture/endpoints/list'))).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+
   it('reads this checkout on its own Machine and shows its endpoints', async () => {
     const { invoke, calls } = machine((call) =>
       call.actionId.endsWith('/capture/status')

@@ -7,6 +7,7 @@ import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFiel
 import * as database from '@happier-dev/database-protocol';
 import type { createCaptureBackgroundOwner } from './background.js';
 import { captureSourcePartition } from './partition.js';
+import { createCaptureSelectedSourceReaders, type AdmittedCaptureSource } from './actions.js';
 import { telemetryPartition } from './telemetry/assignments.js';
 
 type ResourceContext = Parameters<NonNullable<PluginDynamicResourceRuntime['createProducer']>>[0];
@@ -74,11 +75,28 @@ async function readCaptureResourceSnapshot(context: ResourceContext, demand: dat
     }
 }
 
+type RollingCaptureDemand = Extract<database.DatabaseCaptureResourceInputV1,
+    { view: keyof typeof database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1 }>;
+
+async function readRollingCapturePage(demand: RollingCaptureDemand,
+    readers: ReturnType<typeof createCaptureSelectedSourceReaders>, windowMs: number): Promise<database.DatabaseCaptureResourceSnapshotV1> {
+    const until = Date.now();
+    const window = { since: Math.max(0, until - windowMs), until };
+    switch (demand.view) {
+        case 'endpoints': return { view: demand.view, window, result: await readers.listCapturedEndpoints({ ...demand.input, ...window }) };
+        case 'logs': return { view: demand.view, window, result: await readers.listCapturedLogs({ ...demand.input, ...window }) };
+        case 'traces': return { view: demand.view, window, result: await readers.listCapturedTraces({ ...demand.input, ...window }) };
+        case 'queries': return { view: demand.view, window, result: await readers.listCapturedQueries({ ...demand.input, ...window }) };
+    }
+}
+
 function unavailable(): never { throw new PluginError({ code: 'plugin_resource_producer_placement_unavailable' }); }
 
 /** The Resource host owns bytes, refresh and disposal. No database service or second source admission is needed. */
 export function createCaptureResourceRuntime(options: Readonly<{
     subscribe: ReturnType<typeof createCaptureBackgroundOwner>['subscribe'];
+    acquireSelection?(source: database.DatabaseCaptureSourceV1, context: ResourceContext, actionId: database.DatabaseActionIdV1):
+        Promise<AdmittedCaptureSource & Readonly<{ release(): Promise<void> }>>;
 }>): PluginDynamicResourceRuntime {
     return {
         read: unavailable,
@@ -88,6 +106,48 @@ export function createCaptureResourceRuntime(options: Readonly<{
             const serviceInput = PluginServiceListFieldResourceInputV1Schema.safeParse(context.context.launchInput);
             const demand = serviceInput.success ? { kind: 'service' as const, input: serviceInput.data }
                 : { kind: 'capture' as const, input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
+            if (demand.kind === 'capture' && 'windowMs' in demand.input && demand.input.windowMs !== undefined) {
+                const selected = demand.input;
+                const windowMs = demand.input.windowMs;
+                const acquire = options.acquireSelection;
+                if (!acquire) return unavailable();
+                let invalidate: (() => void) | undefined;
+                let stop: (() => void) | undefined;
+                let disposed = false;
+                // Authority and the database lease are captured once for this demand. The subscription is
+                // installed after admission and before the first snapshot so a concurrent commit is visible.
+                const binding = acquire(selected.input.source, context, database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[selected.view])
+                    .then(async admission => {
+                        if (disposed || context.signal.aborted) {
+                            await admission.release();
+                            throw new PluginError({ code: 'plugin_resource_aborted' });
+                        }
+                        stop = options.subscribe([admission.partition], () => invalidate?.());
+                        return { readers: createCaptureSelectedSourceReaders(admission), release: admission.release };
+                    });
+                // The host calls observe before its baseline read. Keep the first typed failure for that read.
+                void binding.catch(() => {});
+                return {
+                    async read(invocation) {
+                        invocation.signal.throwIfAborted();
+                        const { readers } = await binding;
+                        invocation.signal.throwIfAborted();
+                        return JSON.stringify(await readRollingCapturePage(selected, readers, windowMs));
+                    },
+                    observe(callback) {
+                        invalidate = callback;
+                        return { dispose() { if (invalidate === callback) invalidate = undefined; } };
+                    },
+                    async dispose() {
+                        if (disposed) return;
+                        disposed = true;
+                        invalidate = undefined;
+                        stop?.();
+                        const held = await binding.catch(() => null);
+                        await held?.release();
+                    },
+                };
+            }
             let invalidate: (() => void) | undefined;
             let stop: (() => void) | undefined;
             const unsubscribe = () => { stop?.(); stop = undefined; };

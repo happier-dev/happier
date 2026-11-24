@@ -23,7 +23,7 @@ import {
   useTelemetryCaptureList,
 } from '@/components/projects/deployments/DeploymentTelemetryPanel';
 import {
-  TelemetryCaptureInvokeContext,
+  TelemetryCaptureTransportContext,
   createTelemetryCaptureReads,
   telemetryCaptureFailureCode,
   type TelemetryCaptureReads,
@@ -79,7 +79,7 @@ export function LocalServiceCaptureView(
   const { lifetime, worktree, view, active, testID } = props;
   const styles = stylesheet;
   const locale = getPreferredLanguage();
-  const invoke = React.useContext(TelemetryCaptureInvokeContext);
+  const { invoke } = React.useContext(TelemetryCaptureTransportContext);
   const { machineId, projectId, workspaceId } = worktree;
   const reads = React.useMemo(
     () =>
@@ -94,7 +94,6 @@ export function LocalServiceCaptureView(
   );
   const [windowId, setWindowId] = React.useState<WindowId>('hour');
   const [attempt, setAttempt] = React.useState(0);
-  const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
   const [statusRead, setStatusRead] = React.useState<StatusRead | null>(null);
   React.useEffect(() => {
     if (!active || !reads) return;
@@ -118,17 +117,22 @@ export function LocalServiceCaptureView(
   const status = statusRead?.reads === reads ? statusRead : null;
   const enabled =
     status?.kind === 'ready' ? status.status.enabled !== false : null;
-  const { state, more } = useTelemetryCaptureList(
-    reads,
-    active && enabled === true,
-    view,
-    WINDOW_MS[windowId],
-    attempt,
-  );
   const [openTrace, setOpenTrace] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     request: DatabaseCaptureSummaryV1;
   }> | null>(null);
+  const trace = view === 'traces' && openTrace?.reads === reads ? openTrace : null;
+  const { state, more, refresh } = useTelemetryCaptureList(
+    lifetime,
+    reads,
+    active && enabled === true && !trace,
+    view,
+    WINDOW_MS[windowId],
+  );
+  const retry = React.useCallback(() => {
+    setAttempt(value => value + 1);
+    void refresh?.();
+  }, [refresh]);
   const openRequest = React.useCallback(
     (request: DatabaseCaptureSummaryV1) => {
       if (reads) setOpenTrace({ reads, request });
@@ -238,12 +242,12 @@ export function LocalServiceCaptureView(
           testID: `${testID}-retry`,
         }}
       />
-    ) : view === 'traces' && openTrace && openTrace.reads === reads ? (
+    ) : trace ? (
       <TelemetryRequestDetail
-        reads={openTrace.reads}
+        reads={trace.reads}
         lifetime={lifetime}
         active={active}
-        request={openTrace.request}
+        request={trace.request}
         locale={locale}
         onBack={() => setOpenTrace(null)}
       />

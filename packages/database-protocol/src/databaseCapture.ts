@@ -1,4 +1,4 @@
-import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+export { DATABASE_CAPTURE_RESOURCE_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
 
 /** The local capture launch producer and setup guidance share these names. */
 export const LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES = ['DATABASE_URL'] as const;
@@ -10,13 +10,6 @@ export const LOCAL_CAPTURE_ENVIRONMENT_NAMES = [...LOCAL_CAPTURE_DATABASE_ENVIRO
     ...LOCAL_CAPTURE_OTLP_PROTOCOL_ENVIRONMENT_NAMES,
     'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
 ] as const;
-
-export const DATABASE_CAPTURE_RESOURCE_ID_V1 = 'capture-view' as const;
-/** Qualified identity derives from the one Action catalogue's capture owner. */
-export const DATABASE_CAPTURE_RESOURCE_REF_V1 = {
-    pluginId: DATABASE_CAPTURE_STATUS_ACTION_ID_V1.split('/actions/')[0]!,
-    contributionId: DATABASE_CAPTURE_RESOURCE_ID_V1,
-} as const;
 
 export {
     DatabaseCaptureCursorV1Schema,

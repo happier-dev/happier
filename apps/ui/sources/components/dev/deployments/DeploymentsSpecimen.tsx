@@ -13,8 +13,7 @@ import {
 
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectDeploymentsView } from '@/components/projects/deployments/ProjectDeploymentsBody';
-import { TelemetryCaptureInvokeContext } from '@/components/projects/deployments/telemetryCaptureReads';
-import { createTelemetryCaptureFixtureInvoke } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
+import { createTelemetryCaptureFixtureInvoke, TelemetryCaptureFixtureProvider } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
@@ -851,6 +850,6 @@ export function DeploymentsSpecimen(
   );
   // The collector's answers stand in for the Action front door; the tab's own reads and views are the real ones.
   return telemetryInvoke
-    ? <TelemetryCaptureInvokeContext.Provider value={telemetryInvoke}>{view}</TelemetryCaptureInvokeContext.Provider>
+    ? <TelemetryCaptureFixtureProvider invoke={telemetryInvoke}>{view}</TelemetryCaptureFixtureProvider>
     : view;
 }

@@ -21,6 +21,7 @@ export type {
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef, PluginJsonSchema } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
+import type { DaemonDatabaseService } from '../storage/database.js';
 import type { PluginAccountStorageScope, StorageScopeService } from '../storage.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { ActionExecuteResult } from '../actions/service.js';
@@ -78,8 +79,8 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     chosenMachine?: PluginInvocationContext['chosenMachine'];
     agentCaller?: PluginInvocationContext['agentCaller'];
     authority?: PluginInvocationContext['authority'];
-    /** Existing plugin-scoped daemon KV, captured with own-Account custody. */
-    daemonStorage?: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'>;
+    /** Existing plugin-scoped daemon storage, captured with the admitted Resource custody. */
+    daemonStorage?: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'> & Partial<Pick<DaemonDatabaseService, 'database'>>;
     /** Existing deployment-role attachment captured for this admitted own-Account demand. */
     databaseEngines?: DatabaseEnginesServiceV1;
     worktreeEnvironment?: PluginServices['worktreeEnvironment'];

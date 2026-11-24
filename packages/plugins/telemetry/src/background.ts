@@ -18,7 +18,7 @@ type LocalCaptureBinding = CaptureProjectScope & {
  restartRequired?: true;
 };
 type PartitionListener = () => void;
-type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: DaemonDatabaseService; account?: PluginAccountStorageScope } } };
+type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: Pick<DaemonDatabaseService, 'database'>; account?: PluginAccountStorageScope } } };
 type RunningCapture = {
  runtime: CaptureRuntime;
  signal: AbortSignal;

@@ -124,7 +124,7 @@ export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, si
 export type PluginContextualResourceBinding = PluginSurfaceResourceBinding | Readonly<
     Omit<PluginSurfaceResourceBinding, 'expectedCallerOccurrenceId' | 'read'> & {
         expectedCallerOccurrenceId?: never;
-        hostResource: Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
+        hostResource: Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' | 'telemetry.capture' }>;
         read?: typeof machinePluginUiResourceRead;
     }
 >;

@@ -206,7 +206,7 @@ export type AdmittedCaptureSource = Readonly<{
     runtime: CaptureRuntime;
     collectorMachineId?: string;
 }>;
-export type AdmittedCaptureScope = Pick<AdmittedCaptureSource, 'source' | 'partition'>;
+export type AdmittedCaptureScope = Omit<AdmittedCaptureSource, 'runtime'>;
 export type CaptureSourceAdmission = (input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
     actionId: database.DatabaseActionIdV1) => Promise<AdmittedCaptureScope>;
 
@@ -293,7 +293,7 @@ export function createCapturePublicActionProducers(options: Readonly<{
         const lease = await options.acquireRuntime(context);
         try {
             return await read(createCaptureSelectedSourceReaders({
-                ...scope, runtime: lease.runtime, collectorMachineId: context.chosenMachine?.machineId,
+                ...scope, runtime: lease.runtime,
             }), scope.partition);
         }
         finally { await lease.release(); }

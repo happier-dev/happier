@@ -2,7 +2,7 @@ import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAME
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
-import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1, type DatabaseActionIdV1, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
@@ -20,25 +20,35 @@ import { TELEMETRY_WIDGET_RENDERERS, TELEMETRY_WIDGET_VIEWS } from './widgets.js
 /** Local sources (the requester's own Machine and worktrees) are admitted for the Account that
  * recorded them: the source must be on this executing Machine, and the requester's Account selects
  * its own partition. Environment telemetry uses host admission for the selected action. */
-function localCaptureOwner(machineId: string, context: PluginInvocationContext): string {
+type CapturePlacement = Pick<PluginInvocationContext, 'requesterAccount' | 'chosenMachine'>;
+
+function localCaptureOwner(machineId: string, context: CapturePlacement): string {
  const accountId = context.requesterAccount?.accountId;
  if (!accountId || context.chosenMachine?.machineId !== machineId) throw new PluginError({ code: 'capture_source_unavailable' });
  return accountId;
 }
 
+async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: CapturePlacement,
+ deployments: PluginInvocationContext['services']['deploymentDatabases'], actionId: DatabaseActionIdV1) {
+ if (source.kind === 'worktree') {
+  return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };
+ }
+ const environment = { serverId: source.serverId, environmentId: source.environmentId };
+ const partition = captureSourcePartition(source, undefined);
+ if (actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) {
+  if (!deployments?.admitTelemetryClear) throw new PluginError({ code: 'deployment_target_role_unavailable' });
+  await deployments.admitTelemetryClear(environment);
+  return { source, partition };
+ }
+ if (!deployments?.admitTelemetryRead) throw new PluginError({ code: 'deployment_target_role_unavailable' });
+ const { collectorMachineId } = await deployments.admitTelemetryRead(environment);
+ return { source, partition, collectorMachineId };
+}
+
 const capture = createCapturePublicActionProducers({
  acquireRuntime: localCaptureBackground.acquireRuntime,
  readWorktreeLaunchStatus: localCaptureBackground.readWorktreeLaunchStatus,
- async admitSource({ source }, context, actionId) {
-  if (source.kind === 'worktree') {
-   return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };
-  }
-  const deployments = context.services.deploymentDatabases;
-  const admit = actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 ? deployments?.admitTelemetryClear : deployments?.admitTelemetryRead;
-  if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
-  await admit({ serverId: source.serverId, environmentId: source.environmentId });
-  return { source, partition: captureSourcePartition(source, undefined) };
- },
+ admitSource: ({ source }, context, actionId) => admitCaptureSource(source, context, context.services.deploymentDatabases, actionId),
  async configureCapture({ project, enabled, retry }, context) {
   const ownerAccountId = localCaptureOwner(project.machineId, context);
   const lease = await localCaptureBackground.acquireRuntime(context);
@@ -64,7 +74,16 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  daemonDatabases: { capture: localCaptureBackground.databaseDefinition },
  resources: { ...TELEMETRY_ACCOUNT_DEFINITION.resources, [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
   source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
-  runtime: createCaptureResourceRuntime({ subscribe: localCaptureBackground.subscribe }),
+  runtime: createCaptureResourceRuntime({
+   subscribe: localCaptureBackground.subscribe,
+   async acquireSelection(source, context, actionId) {
+    const scope = await admitCaptureSource(source, context, context.deploymentDatabases, actionId);
+    const database = context.daemonStorage?.database;
+    if (!database) throw new PluginError({ code: 'plugin_service_unavailable' });
+    const lease = await localCaptureBackground.acquireRuntime({ signal: context.signal, services: { storage: { daemon: { database } } } });
+    return { ...scope, ...lease };
+   },
+  }),
  } },
  actions: { ...createCaptureActions(capture), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions },
  accountCollections: telemetryExceptionManifestParts.accountCollections,

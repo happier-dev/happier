@@ -1,9 +1,15 @@
-import type { TelemetryCaptureInvoke } from '@/components/projects/deployments/telemetryCaptureReads';
+import * as React from 'react';
+import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { projectTelemetryCaptureResourceDemandV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { MachineResourceClientFactory } from '@/components/machines/resources/useMachineServiceResource';
+import { TelemetryCaptureTransportContext, type TelemetryCaptureActionId, type TelemetryCaptureInvoke } from '@/components/projects/deployments/telemetryCaptureReads';
 
 /**
  * A collector's answers for one Environment's Telemetry tab (lab p7Flows-mark / p7AddNow-trace): billing-api's routes,
  * a failed checkout request with its steps and logs, recent log lines and statements. Specimens hand this to
- * `TelemetryCaptureInvokeContext` in place of the Action front door; `offline` answers the first Endpoints read, then
+ * `TelemetryCaptureFixtureProvider` in place of the Action front door; `offline` answers the first Endpoints read, then
  * nothing.
  */
 const NOW = Date.UTC(2026, 10, 17, 19, 48, 12);
@@ -262,4 +268,56 @@ export function createTelemetryCaptureFixtureInvoke(
       };
     throw new Error(`Unexpected collector read ${actionId}`);
   };
+}
+
+/** A fixture collector implements the real store's transport contract, including explicit change delivery. */
+export function createTelemetryCaptureFixtureTransport(invoke: TelemetryCaptureInvoke) {
+  type Listener = Parameters<NonNullable<PluginUiResourceClient['watchResource']>>[1];
+  const listeners = new Set<Listener>();
+  const createResourceClient: MachineResourceClientFactory = ({ machineId: collectorMachineId, scope }) => {
+    let digest: string | undefined;
+    let reading: ReturnType<PluginUiResourceClient['readResource']> | undefined;
+    return {
+      readResource(reference, options) {
+        if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'telemetry.capture') {
+          throw new Error('Expected a capture Resource');
+        }
+        const selected = projectTelemetryCaptureResourceDemandV1(reference);
+        if (!selected || typeof selected.input !== 'object' || selected.input === null || Array.isArray(selected.input)) {
+          throw new Error('Expected a capture list');
+        }
+        const until = Date.now();
+        const window = { since: Math.max(0, until - reference.windowMs), until };
+        reading = invoke({ scope, collectorMachineId, actionId: formatQualifiedPluginActionId(reference.input.action) as TelemetryCaptureActionId,
+          input: { ...selected.input, ...window }, ...(options?.signal ? { signal: options.signal } : {}) }).then(result => {
+          const bytes = new TextEncoder().encode(JSON.stringify({ view: selected.view, result, window }));
+          digest = `sha256:${computeSha256HexDigest(bytes)}`;
+          return { contentType: 'application/json', digest, bytes };
+        });
+        return reading;
+      },
+      async watchResource(_reference, listener, options) {
+        // Open starts before the baseline read. The collector admits those same bytes.
+        await Promise.resolve();
+        await reading;
+        if (!options?.signal?.aborted) listeners.add(listener);
+        return { ...(digest ? { admittedDigest: digest } : {}), dispose() { listeners.delete(listener); } };
+      },
+    };
+  };
+  return {
+    createResourceClient,
+    invalidate() { for (const listener of listeners) listener({ kind: 'invalidated' }); },
+    get watchers() { return listeners.size; },
+  };
+}
+
+
+export function TelemetryCaptureFixtureProvider({ invoke, transport, children }: Readonly<{
+  invoke: TelemetryCaptureInvoke;
+  transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>;
+  children: React.ReactNode;
+}>) {
+  const value = React.useMemo(() => ({ invoke, ...(transport ?? createTelemetryCaptureFixtureTransport(invoke)) }), [invoke, transport]);
+  return React.createElement(TelemetryCaptureTransportContext.Provider, { value }, children);
 }

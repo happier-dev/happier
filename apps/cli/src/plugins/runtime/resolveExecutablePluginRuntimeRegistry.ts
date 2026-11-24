@@ -43,6 +43,7 @@ import type { ManagedServicesInvocationOwner } from './invocation/services/manag
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import {
     createPluginRuntimeOccurrenceId,
     type PluginRuntimeOccurrenceId,
@@ -217,6 +218,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DATABASE_ACCESS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
 import { DatabaseAccessReadResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createPluginSessionsInventory } from '@/session/services/pluginSessionsInventory';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
@@ -1437,9 +1439,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 && getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKey(sessionCredentials)
                 ? readAccountIdFromToken(sessionCredentials.token) : null,
             bindDynamicResourceCustody: async binding => {
-                const authorization = binding.approvalContext?.externalActionExecutionAuthorization;
+                const approvalContext = binding.approvalContext;
+                const authorization = approvalContext?.externalActionExecutionAuthorization;
                 if (authorization && authorization.binding.accountId !== binding.requesterAccountId) {
                     throw new PluginError({ code: 'plugin_resource_demand_unavailable', message: 'Resource demand belongs to another requester' });
+                }
+                if (approvalContext && authorization?.binding.telemetryCollectorCodec === true
+                    && binding.pluginId === DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId
+                    && binding.resourceId === DATABASE_CAPTURE_RESOURCE_REF_V1.contributionId
+                    && readRetainedVerifiedExternalActionRequester(authorization)) {
+                    // The collector codec carries Home's admitted Environment facts without requester credentials.
+                    const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal,
+                        approvalContext: { ...approvalContext, signal: binding.signal } });
+                    if (services?.availability('storage').status !== 'available') return undefined;
+                    return Object.freeze({ daemonStorage: services.storage.daemon, deploymentDatabases: services.deploymentDatabases });
                 }
                 const requester = readRequesterAccountActionContext(authorization);
                 if (authorization && !requester?.retainForOperation) return undefined;
@@ -8284,6 +8297,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 subscriptionId: watchParams.subscriptionId,
                 ...(watchParams.resourceId === undefined ? {} : { resourceId: watchParams.resourceId }),
                 ...(watchParams.readAuthority === undefined ? {} : { readAuthority: watchParams.readAuthority }),
+                ...(watchParams.selectedHostResource ? { selectedHostResource: watchParams.selectedHostResource } : {}),
+                ...(watchParams.followHost ? { followHost: watchParams.followHost } : {}),
                 ...(watchParams.context === undefined ? {} : { context: watchParams.context }),
             });
         },

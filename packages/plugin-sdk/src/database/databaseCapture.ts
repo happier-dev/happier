@@ -99,22 +99,23 @@ export const DatabaseCaptureConfigureResultV1Schema = z.union([DatabaseFailureV1
 export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view', [
     z.strictObject({ view: z.literal('costs'), input: DatabaseCaptureCostsReadInputV1Schema }),
     z.strictObject({ view: z.literal('status'), input: DatabaseCaptureStatusInputV1Schema }),
-    z.strictObject({ view: z.literal('queries'), input: DatabaseCaptureQueriesListInputV1Schema }),
+    z.strictObject({ view: z.literal('queries'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureQueriesListInputV1Schema }),
     z.strictObject({ view: z.literal('query'), input: DatabaseCaptureQueryGetInputV1Schema }),
-    z.strictObject({ view: z.literal('traces'), input: DatabaseCaptureTracesListInputV1Schema }),
+    z.strictObject({ view: z.literal('traces'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureTracesListInputV1Schema }),
     z.strictObject({ view: z.literal('trace'), input: DatabaseCaptureTraceGetInputV1Schema }),
-    z.strictObject({ view: z.literal('logs'), input: DatabaseCaptureLogsListInputV1Schema }),
-    z.strictObject({ view: z.literal('endpoints'), input: DatabaseCaptureEndpointsListInputV1Schema }),
+    z.strictObject({ view: z.literal('logs'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureLogsListInputV1Schema }),
+    z.strictObject({ view: z.literal('endpoints'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureEndpointsListInputV1Schema }),
 ]);
+const captureResourceWindow = z.strictObject({ since: time, until: time });
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
     z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
-    z.strictObject({ view: z.literal('queries'), result: DatabaseCaptureQueriesListResultV1Schema }),
+    z.strictObject({ view: z.literal('queries'), window: z.optional(captureResourceWindow), result: DatabaseCaptureQueriesListResultV1Schema }),
     z.strictObject({ view: z.literal('query'), result: DatabaseCaptureQueryGetResultV1Schema }),
-    z.strictObject({ view: z.literal('traces'), result: DatabaseCaptureTracesListResultV1Schema }),
+    z.strictObject({ view: z.literal('traces'), window: z.optional(captureResourceWindow), result: DatabaseCaptureTracesListResultV1Schema }),
     z.strictObject({ view: z.literal('trace'), result: DatabaseCaptureTraceGetResultV1Schema }),
-    z.strictObject({ view: z.literal('logs'), result: DatabaseCaptureLogsListResultV1Schema }),
-    z.strictObject({ view: z.literal('endpoints'), result: DatabaseCaptureEndpointsListResultV1Schema }),
+    z.strictObject({ view: z.literal('logs'), window: z.optional(captureResourceWindow), result: DatabaseCaptureLogsListResultV1Schema }),
+    z.strictObject({ view: z.literal('endpoints'), window: z.optional(captureResourceWindow), result: DatabaseCaptureEndpointsListResultV1Schema }),
 ]);
 export type DatabaseCaptureResourceInputV1 = z.infer<typeof DatabaseCaptureResourceInputV1Schema>;
 export const DatabaseCaptureResourceInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureResourceInputV1Schema>, DatabaseCaptureResourceInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureResourceInputV1Schema);

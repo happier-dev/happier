@@ -146,6 +146,62 @@ describe('capture demanded Resource through real public Actions', () => {
         } finally { vi.useRealTimers(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
     });
 
+    it.each(['environment', 'worktree'] as const)('keeps one admitted rolling capture list live for %s', async kind => {
+        const fixture = createCaptureSqliteFixture();
+        const lifetime = new AbortController();
+        const consumer = new AbortController();
+        const selected = kind === 'worktree' ? source : { kind, serverId: 'home', environmentId: 'app' };
+        const partition = captureSourcePartition(selected, 'requester');
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const daemonStorage = { database: async () => fixture.db };
+        const lease = await localCaptureBackground.acquireRuntime({ signal: lifetime.signal, services: { storage: { daemon: daemonStorage } } });
+        const admitTelemetryRead = vi.fn(async ({ environmentId }: { environmentId: string }) => {
+            expect(environmentId).toBe('app');
+            return { environment: { serverId: 'home', environmentId, revision: 1 }, collectorMachineId: 'machine',
+                capabilities: { logs: true } };
+        });
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN });
+        const options = { signal: consumer.signal, requesterAccount: { accountId: 'requester' },
+            chosenMachine: { machineId: 'machine', installationId: 'installation' }, daemonStorage, deploymentDatabases,
+            context: { kind: 'surface' as const, mountInstanceKey: 'rolling-logs', launchInput: { view: 'logs', windowMs: 100,
+                input: { source: selected, page: { limit: 10 } } } },
+            resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
+            observeAction: unavailable, readAction: unavailable,
+        };
+        try {
+            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(1_000);
+            const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
+            if (!resource?.createProducer) throw new Error('Capture Resource is missing');
+            const log = (id: string, at: number, worktree = partition) => ({ id, at, worktree, kind: 'log' as const, source: 'otlp' as const });
+            await lease.runtime.store.write([log('old-window', 925)]);
+            const producer = await resource.createProducer(options);
+            const snapshots: Promise<unknown>[] = [];
+            const read = async () => database.DatabaseCaptureResourceSnapshotV1Schema.parse(JSON.parse(String(await producer.read(options))));
+            const observation = await producer.observe(() => { snapshots.push(read()); }, options);
+            try {
+                expect(await read()).toMatchObject({ view: 'logs', window: { since: 900, until: 1_000 },
+                    result: { source: selected, items: [{ id: 'old-window' }] } });
+                const queryCount = fixture.queryRows.length;
+                vi.setSystemTime(1_050);
+                await Promise.resolve();
+                expect(snapshots).toHaveLength(0);
+                expect(fixture.queryRows).toHaveLength(queryCount);
+                await lease.runtime.store.write([log('other', 1_028, 'environment:unrelated')]);
+                expect(snapshots).toHaveLength(0);
+                await lease.runtime.store.write([log('new', 1_025)]);
+                expect(await Promise.all(snapshots)).toMatchObject([{ view: 'logs', window: { since: 950, until: 1_050 },
+                    result: { source: selected, items: [{ id: 'new' }] } }]);
+                expect(fixture.queryRows).toHaveLength(queryCount + 1);
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(kind === 'environment' ? 1 : 0);
+                await observation.dispose(); await producer.dispose();
+                await lease.runtime.store.write([log('after-close', 1_040)]);
+                expect(snapshots).toHaveLength(1);
+            } finally { await observation.dispose(); await producer.dispose(); }
+        } finally { vi.useRealTimers(); consumer.abort(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
+
     it('pushes selected cost operands through the existing demanded Resource and stops its subscription on disposal', async () => {
         const fixture = createCaptureSqliteFixture(), owner = localCaptureBackground;
         const lifetime = new AbortController(), consumer = new AbortController();

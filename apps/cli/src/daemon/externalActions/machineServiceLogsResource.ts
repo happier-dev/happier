@@ -9,6 +9,7 @@ import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
+import { projectTelemetryCaptureResourceDemandV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 
 type Operands = Pick<ExternalActionRequestEnvelopeV1, 'resourceContinuation' | 'machineServiceLogsGeneration'>;
 
@@ -18,12 +19,15 @@ export function sameMachineServiceLogsResourceInput(input: unknown, operands: Op
   if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
     const continuation = operands.resourceContinuation;
     const resource = continuation?.params.resource;
-    if (!continuation || resource?.hostRead !== 'database.connection' || continuation.params.machineId !== machineId
+    if (!continuation || !resource || continuation.params.machineId !== machineId
       || operands.machineServiceLogsGeneration !== undefined) return false;
+    if (resource.hostRead !== 'database.connection' && resource.hostRead !== 'telemetry.capture') return false;
     const parsed = ActionInvokeInputSchema.safeParse(input);
+    if (!parsed.success || !sameStrictJsonValue(parsed.data, resource.input)) return false;
+    if (resource.hostRead === 'telemetry.capture') return projectTelemetryCaptureResourceDemandV1(resource) !== null;
     const binding = resource.binding;
-    return parsed.success && formatQualifiedPluginActionId(parsed.data.action) === DATABASE_DESCRIBE_ACTION_ID_V1
-      && sameStrictJsonValue(parsed.data, resource.input) && binding.callerPluginId === DATABASE_PLUGIN_ID_V1
+    return formatQualifiedPluginActionId(parsed.data.action) === DATABASE_DESCRIBE_ACTION_ID_V1
+      && binding.callerPluginId === DATABASE_PLUGIN_ID_V1
       && binding.resource.pluginId === binding.callerPluginId && binding.resource.localId === DATABASE_CONNECTION_RESOURCE_ID_V1
       && binding.context?.kind === 'surface' && sameStrictJsonValue(binding.context.launchInput, parsed.data.input);
   }

@@ -7,8 +7,8 @@ import { DeploymentHealthCurrentInputV1Schema, DeploymentStageLogsReadInputV1Sch
 import { ActionInvokeInputSchema, type ActionInvokeInput } from '../actions/actionInvokeInput.js';
 import { PluginUiDeclaredResourceBindingV1Schema } from '../plugins/ui/resourceBinding.js';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '../databases/databaseResourceIdentityV1.js';
-import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
-import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
+import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 
 /** Protected operands of the original semantic describe invocation and mounted Resource. */
 export type PluginUiDatabaseConnectionReadReferenceV1 = {
@@ -35,6 +35,21 @@ export function projectDatabaseConnectionResourceReadV1(binding: z.infer<typeof 
   const action = parseQualifiedPluginActionId(DATABASE_DESCRIBE_ACTION_ID_V1);
   if (!action) throw new TypeError('The canonical database describe Action must have a qualified identity');
   return { hostRead: 'database.connection', input: { action, input: binding.context.launchInput }, binding };
+}
+
+export const PluginUiTelemetryCaptureReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  hostRead: z.literal('telemetry.capture'), input: ActionInvokeInputSchema,
+  windowMs: z.number().check(z.int(), z.positive()),
+}));
+export type PluginUiTelemetryCaptureReadReferenceV1 = z.output<typeof PluginUiTelemetryCaptureReadReferenceV1Schema>;
+
+/** Only the existing semantic list Actions may be carried into this read-only Resource. */
+export function projectTelemetryCaptureResourceDemandV1(reference: PluginUiTelemetryCaptureReadReferenceV1) {
+  const action = formatQualifiedPluginActionId(reference.input.action);
+  const entry = Object.entries(DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1).find(([, id]) => id === action);
+  return entry && reference.input.input !== undefined
+    ? { view: entry[0], input: reference.input.input, windowMs: reference.windowMs }
+    : null;
 }
 
 /** Native identity only. The original logs Action remains the admission owner. */
@@ -67,6 +82,7 @@ export const PluginUiMachineServiceReadReferenceV1Schema = lazyZodSchema(() => z
   PluginUiDeploymentStageLogsReadReferenceV1Schema,
   PluginUiDeploymentEdgeHealthReadReferenceV1Schema,
   PluginUiDatabaseConnectionReadReferenceV1Schema,
+  PluginUiTelemetryCaptureReadReferenceV1Schema,
 ]));
 const target = () => ({ machineId: z.string().check(z.trim(), z.minLength(1)),
   resource: PluginUiMachineServiceReadReferenceV1Schema });

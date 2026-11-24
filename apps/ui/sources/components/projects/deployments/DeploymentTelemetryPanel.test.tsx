@@ -48,8 +48,8 @@ vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
 afterEach(standardCleanup);
 
 const { DeploymentTelemetryPanel } = await import('./DeploymentTelemetryPanel');
-const { TelemetryCaptureInvokeContext } =
-  await import('./telemetryCaptureReads');
+const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
+  await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
 const { ModalProvider } = await import('@/modal');
 // The app root's shared presentation theme, which the capture views draw with.
 const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
@@ -140,10 +140,11 @@ function panel(
   invoke: ReturnType<typeof collector>['invoke'],
   detail: ReturnType<typeof setUpDetail>,
   demand?: { telemetryApplied?: boolean; active?: boolean; lifetime?: typeof lifetime },
+  transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>,
 ) {
   return (
     <AppPresentationPlatformProvider><ModalProvider>
-      <TelemetryCaptureInvokeContext.Provider value={invoke}>
+      <TelemetryCaptureFixtureProvider invoke={invoke} transport={transport}>
         <DeploymentTelemetryPanel
           detail={detail}
           lifetime={lifetime}
@@ -151,7 +152,7 @@ function panel(
           onChanged={() => {}}
           {...demand}
         />
-      </TelemetryCaptureInvokeContext.Provider>
+      </TelemetryCaptureFixtureProvider>
     </ModalProvider></AppPresentationPlatformProvider>
   );
 }
@@ -232,6 +233,47 @@ const answers = (call: Call, admittedSource: Readonly<{ kind: 'environment'; ser
 };
 
 describe('Environment Telemetry tabs', () => {
+  it('does not use finite first-page reads while following collector capture', async () => {
+    let route = '/checkout';
+    const before = { serviceName: checkout.serviceName, method: checkout.method, route };
+    const finite = collector(() => ({ ok: true, source, items: [{ ...checkout, route: '/older' }] }));
+    const capture = collector(() => ({ ok: true, source, items: [{ ...checkout, route }],
+      ...(route === '/checkout' ? { nextCursor: before } : {}) }));
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const detail = setUpDetail();
+    const screen = await renderScreen(panel(finite.invoke, detail, { active: true }, transport));
+    try {
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
+      expect(capture.calls).toEqual([expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source }) })]);
+      expect(transport.watchers).toBe(1);
+      expect(finite.calls).toHaveLength(0);
+      const initial = DatabaseCaptureEndpointsListInputV1Schema.parse(capture.calls[0]?.input);
+      await screen.pressByTestIdAsync('telemetry.capture.endpoints.older');
+      await settle();
+      expect(finite.calls).toEqual([expect.objectContaining({ actionId: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+        input: expect.objectContaining({ source, since: initial.since, until: initial.until,
+          page: expect.objectContaining({ before }) }) })]);
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /older')).not.toBeNull();
+
+      route = '/payment';
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /payment')).not.toBeNull();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /older')).toBeNull();
+      expect(capture.calls).toHaveLength(2);
+
+      await settle();
+      expect(capture.calls).toHaveLength(2);
+      await screen.update(panel(finite.invoke, detail, { active: false }, transport));
+      expect(transport.watchers).toBe(0);
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(capture.calls).toHaveLength(2);
+      expect(finite.calls).toHaveLength(1);
+    } finally { await screen.unmount(); }
+  });
+
   it('distinguishes deployment settlement from accepted data and reads only while presented', async () => {
     let lastReceivedAt: number | null = null;
     const { invoke, calls } = collector(call => call.actionId.endsWith('/capture/status')
@@ -264,7 +306,7 @@ describe('Environment Telemetry tabs', () => {
       await settle();
       expect(status()).toContain('Receiving');
       expect(calls.slice(whileHidden).map(call => call.actionId).sort()).toEqual([
-        'happier.telemetry/actions/capture/endpoints/list', 'happier.telemetry/actions/capture/status',
+        'happier.telemetry/actions/capture/status',
       ]);
     } finally {
       await screen.unmount();
@@ -653,6 +695,7 @@ describe('Environment Telemetry tabs', () => {
     const { invoke, calls } = collector(call => {
       if (call.actionId === clearId) {
         cleared = true;
+        transport.invalidate();
         return { ok: true };
       }
       if (cleared && call.actionId.endsWith('/capture/endpoints/list')) {
@@ -661,7 +704,9 @@ describe('Environment Telemetry tabs', () => {
       }
       return answers(call);
     });
-    const screen = await mount(invoke);
+    const transport = createTelemetryCaptureFixtureTransport(invoke);
+    const screen = await renderScreen(panel(invoke, setUpDetail(), undefined, transport));
+    await settle();
     try {
       await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });

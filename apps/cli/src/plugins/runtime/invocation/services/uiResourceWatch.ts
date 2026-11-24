@@ -93,6 +93,9 @@ export type PluginUiResourceWatchOwner = Readonly<{
         callerPluginId: string;
         resourceId?: string;
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
+        /** The exact verified native selection carried into this declared Resource subscription. */
+        selectedHostResource?: PluginUiHostReadReferenceV1;
+        followHost?: HostWatchContinuation;
         /** Host-private binding admitted through the same Action ingress as a finite read. */
         bindRead?(signal: AbortSignal, invalidate: () => void, retire: () => void): Promise<Disposable>;
         /** Host-stamped only; required by contextual dynamic Resources. */
@@ -276,7 +279,8 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
     }
 
     function isWatchCurrent(watch: UiResourceWatch): boolean {
-        return !retired && !watch.closed && (watch.hostAccountId !== undefined || watch.pluginId !== undefined && params.isPluginConsumerCurrent(watch.pluginId));
+        return !retired && !watch.closed && (watch.pluginId !== undefined
+            ? params.isPluginConsumerCurrent(watch.pluginId) : watch.hostAccountId !== undefined);
     }
 
     /**
@@ -415,6 +419,22 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
         return result;
     }
 
+    async function deliverHostWatch(watch: UiResourceWatch, digest: string, continuation: HostWatchContinuation) {
+        try {
+            continuation.signal.throwIfAborted();
+            await continuation.onOpen({ subscriptionId: watch.subscriptionId, digest });
+            while (!continuation.signal.aborted) {
+                const result = await receive(watch, continuation.signal, null);
+                if (result.status === 'idle') return;
+                await continuation.onEvent(result.event);
+                if (result.event.kind === 'error') return;
+            }
+        } finally {
+            releaseWatch(watch, { status: 'idle' });
+            await watch.cleanup;
+        }
+    }
+
     return Object.freeze({
         async invokeDemand(input) {
             const watch = watches.get(watchKey(input.callerPluginId, input.subscriptionId, input.requesterAccountId));
@@ -433,19 +453,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
         },
         async followHost(openParams) {
             const { watch, digest } = await bindHost(openParams, openParams.signal);
-            try {
-                openParams.signal.throwIfAborted();
-                await openParams.onOpen({ subscriptionId: watch.subscriptionId, digest });
-                while (!openParams.signal.aborted) {
-                    const result = await receive(watch, openParams.signal, null);
-                    if (result.status === 'idle') return;
-                    await openParams.onEvent(result.event);
-                    if (result.event.kind === 'error') return;
-                }
-            } finally {
-                releaseWatch(watch, { status: 'idle' });
-                await watch.cleanup;
-            }
+            await deliverHostWatch(watch, digest, openParams);
         },
         async open(openParams) {
             if (retired) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
@@ -502,7 +510,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             if (!params.isPluginConsumerCurrent(pluginId) || !resources?.hasPlugin(pluginId)) {
                 fail('plugin_resource_service_unavailable', 'Committed plugin resources are unavailable');
             }
-            const key = watchKey(pluginId, subscriptionId, openParams.requesterAccountId);
+            const hostAccountId = openParams.selectedHostResource ? openParams.requesterAccountId : undefined;
+            if (openParams.selectedHostResource && !hostAccountId) fail('requester_credentials_unavailable', 'Resource requester is unavailable');
+            const key = hostAccountId ? requestedWatchKey({ hostAccountId }, subscriptionId)
+                : watchKey(pluginId, subscriptionId, openParams.requesterAccountId);
             const existing = watches.get(key);
             // Re-opening the same id is the reconnect path, not a conflict: the
             // predecessor is retired before its replacement is established so a
@@ -510,9 +521,11 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             if (existing) releaseWatch(existing, { status: 'idle' });
 
             const bindingController = new AbortController();
+            const follow = openParams.followHost;
+            const bindingSignal = follow ? AbortSignal.any([bindingController.signal, follow.signal]) : bindingController.signal;
             const isBindingCurrent = () => !retired && params.isPluginConsumerCurrent(pluginId);
             const assertBindingCurrent = (): void => {
-                if (bindingController.signal.aborted) {
+                if (bindingSignal.aborted) {
                     fail('plugin_resource_aborted', 'Resource watch binding was aborted');
                 }
                 if (!isBindingCurrent()) {
@@ -546,7 +559,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     resourceId,
                     ...(openParams.requesterAccountId ? { requesterAccountId: openParams.requesterAccountId } : {}),
                     ...(openParams.requesterContext ? { requesterContext: openParams.requesterContext } : {}),
-                    signal: bindingController.signal,
+                    signal: bindingSignal,
                     isOccurrenceCurrent: isBindingCurrent,
                     onReadAuthorityRetired: endExpiredResourceWatch,
                     ...(openParams.context === undefined ? {} : { context: openParams.context }),
@@ -569,6 +582,8 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 key,
                 subscriptionId,
                 pluginId,
+                ...(openParams.selectedHostResource ? { hostResource: openParams.selectedHostResource, hostAccountId: hostAccountId! } : {}),
+                ...(follow ? { continuous: true as const } : {}),
                 resourceId,
                 bindingController,
                 producer: null,
@@ -647,6 +662,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     releaseWatch(watch, null);
                     return fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
                 }
+                if (follow) await deliverHostWatch(watch, baseline.digest, follow);
                 return Object.freeze({ subscriptionId, digest: baseline.digest });
             } catch (error) {
                 releaseWatch(watch, null);

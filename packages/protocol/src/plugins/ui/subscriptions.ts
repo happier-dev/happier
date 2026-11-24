@@ -49,7 +49,8 @@ export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferen
 /** Host Resource aliases borrow the original Action's admission in every host. */
 export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadReferenceV1['hostRead']): ActionId {
   switch (hostRead) {
-    case 'database.connection': return ACTION_INVOKE_ACTION_ID_V1;
+    case 'database.connection':
+    case 'telemetry.capture': return ACTION_INVOKE_ACTION_ID_V1;
     case 'machines.services.logs': return 'machines.services.logs.read';
     case 'deployments.logs': return 'deployments.logs.read';
     case 'deployments.health.edge': return 'deployments.health.current';
