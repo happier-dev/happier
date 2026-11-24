@@ -5,7 +5,6 @@ import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { storage } from '@/sync/domains/state/storage';
 import {
   useActiveServerAccountScope,
-  useMachineCliDetectionTarget,
   useMachineCliDetectionTargets,
 } from '@/sync/store/hooks';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -35,7 +34,6 @@ export function useVoiceDiagnosticsRuntimeSync(rawVoiceSettings: unknown): void 
   const selectDiagnostics = useShallow((settings: typeof parsed) => settings.diagnostics);
   const diagnostics = selectDiagnostics(parsed);
   const machineId = useVoiceExecutionMachineId();
-  const { isOnline } = useMachineCliDetectionTarget(machineId);
   const persistenceScope = useActiveServerAccountScope();
   const runtimeStatus = useVoiceDiagnosticsRuntimeStatus();
   const formerMachineRevocations = React.useMemo(() => (
@@ -68,7 +66,6 @@ export function useVoiceDiagnosticsRuntimeSync(rawVoiceSettings: unknown): void 
   const previousRuntimeTargetRef = React.useRef<Readonly<{
     machineId: string | null;
     startedAt: number | null;
-    isOnline: boolean;
   }> | null>(null);
   // This is only the mounted-hook cancellation/currentness book-keeping for
   // rendered exact targets. The policy intent, request serialization, and
@@ -170,16 +167,14 @@ export function useVoiceDiagnosticsRuntimeSync(rawVoiceSettings: unknown): void 
     const generation = ++generationRef.current;
     const controller = new AbortController();
     const previousRuntimeTarget = previousRuntimeTargetRef.current;
+    // Execution Machine selection already reflects reachability. The daemon's
+    // own start marker distinguishes a replacement runtime on that Machine.
     const reconnectedCurrentMachine = Boolean(
       machineId
-      && isOnline
       && previousRuntimeTarget?.machineId === machineId
-      && (
-        !previousRuntimeTarget.isOnline
-        || startedAt !== previousRuntimeTarget.startedAt
-      ),
+      && startedAt !== previousRuntimeTarget.startedAt
     );
-    previousRuntimeTargetRef.current = { machineId, startedAt, isOnline };
+    previousRuntimeTargetRef.current = { machineId, startedAt };
     const previousSelection = previousSelectionRef.current;
     previousSelectionRef.current = { machineId, persistenceScope };
     const selectionScopeChanged = previousSelection.persistenceScope === null && persistenceScope === null
@@ -271,5 +266,5 @@ export function useVoiceDiagnosticsRuntimeSync(rawVoiceSettings: unknown): void 
     };
     transitionTailRef.current = transitionTailRef.current.then(transition, transition);
     return () => controller.abort();
-  }, [startedAt, diagnostics, isOnline, machineId, persistenceScope]);
+  }, [startedAt, diagnostics, machineId, persistenceScope]);
 }
