@@ -979,9 +979,11 @@ describe('Environment → Database → Workbench', () => {
     const principal = { kind: 'account' as const, accountId: 'owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } };
+    const resourceName = 'Shop orders';
     const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
       targetLinks: [{ targetLink, content: { ...(origin ? { providerResourceOrigin: origin } : {}), credentialPrincipal: principal,
-        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'shop-orders', providerEnvironment: 'main' },
+        preparedNative: { projectName: resourceName },
+        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project-123', providerEnvironment: 'main' },
         providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } } }] });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
       environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
@@ -1008,9 +1010,11 @@ describe('Environment → Database → Workbench', () => {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findByTestId(`project-deployments.disposition.choice:${starts}`)?.props.accessibilityState).toMatchObject({ selected: true }); });
       if (starts === 'detach') await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
-      expect(screen.getTextContent()).toContain('Delete this Postgres project and all of its data?');
+      const resourceConfirmation = screen.findByTestId('project-deployments.disposition.resourceConfirmation');
+      expect(resourceConfirmation).not.toBeNull();
+      await act(async () => resourceConfirmation!.props.onChangeText('project-123'));
       expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
-      await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('shop-orders'));
+      await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText(resourceName));
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false); });
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
@@ -1353,7 +1357,8 @@ describe('Environment → Data → Add (P10)', () => {
     const serverUrl = `https://database-add-${outcome}.test`;
     const catalogUrl = `${serverUrl}/apps.json`;
     const sourceId = deriveMarketplaceSourceId(catalogUrl);
-    const serverId = await homes.addHome({ name: 'Database Add', serverUrl, serverIdentityId: 'srv_database_add',
+    const serverIdentityId = 'srv_database_add';
+    const serverId = await homes.addHome({ name: 'Database Add', serverUrl, serverIdentityId,
       accountId: 'account-owner', currentAccount: true });
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
       sources: [{ id: sourceId, title: 'Apps', url: catalogUrl, format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1 }],
@@ -1440,7 +1445,9 @@ describe('Environment → Data → Add (P10)', () => {
     };
     const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
     const { resolveActionsSettingsV1FromState } = await import('@/sync/domains/settings/actionsSettings');
+    const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+      actionAutomations: createUiActionAutomationPortV1(account),
       resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope,
       // Installed host preparation/effects are the system boundary. Protocol policy and confirmation stay real.
       prepareDeploymentTemplateInstantiation: async ({ input }) => {
@@ -1501,7 +1508,8 @@ describe('Environment → Data → Add (P10)', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
         await screen.pressByTestIdAsync(rowId);
       }
-      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled,
+        screen.getTextContent()).toBe(false));
       if (choices) {
         const prefix = 'project-deployments.add.choices';
         const before = previews.length;
@@ -1558,7 +1566,7 @@ describe('Environment → Data → Add (P10)', () => {
         volumeBindings: [{ templateVolumeId: 'postgres-data', source: 'chosen-data' }] });
       if (update || repository) expect(applied[0]).not.toHaveProperty('deploy');
       if (repository) {
-        expect(applied[0]).toMatchObject({ destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+        expect(applied[0]).toMatchObject({ destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId: serverIdentityId, id: 'checkout' },
           composePath: 'deploy/compose.yaml', baseCommit: 'a'.repeat(40), sourceRevision: 2 } });
         expect(screen.getTextContent()).toContain(outcome === 'partial' ? 'add-database' : 'github.com/acme/app/pull/42');
       }
@@ -1580,7 +1588,7 @@ describe('Environment → Data → Add (P10)', () => {
           savedSecrets: [{ name: 'DB_PASSWORD', source: { resourceRevision: 7 } }],
         });
         await screen.pressByTestIdAsync('project-deployments.add.done');
-        expect(navigate).toHaveBeenCalledWith({ tab: 'overview' });
+        expect(navigate).toHaveBeenCalledExactlyOnceWith({ tab: 'overview', section: null });
         expect(applied).toHaveLength(1);
       } else {
         const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
@@ -1891,7 +1899,7 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.connect.confirm')).toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.connect.openSettings');
-      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'sharing' });
     } finally { await view.dispose(); }
   });
 
@@ -1912,21 +1920,26 @@ describe('Environment → Data → Database page (P9)', () => {
     try {
       expect(await view.settle(`${page}.connection.private.share`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.connection.private.share`);
-      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'sharing' });
     } finally { await view.dispose(); }
   });
 
-  it('says why a database defined in its repository cannot be shared here, with no Share that leads nowhere', async () => {
-    const view = await renderDatabase({ setBindings: async input => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
+  it('leads repository-defined database sharing to its Settings editor from both entry points', async () => {
+    const setBindings = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentDatabasePage>['setBindings']>>(async input =>
+      DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
       ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
-    }) });
+    }));
+    const view = await renderDatabase({ setBindings });
     try {
-      expect(await view.settle(`${page}.connection.private`)).not.toBeNull();
-      expect(view.screen.findByTestId(`${page}.connection.private.share`)).toBeNull();
-      expect(view.screen.getTextContent()).toContain('repository’s Compose file');
+      expect(await view.settle(`${page}.connection.private.share`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.connection.private.share`);
+      expect(view.navigate).toHaveBeenNthCalledWith(1, { tab: 'settings', section: 'sharing' });
       await view.screen.pressByTestIdAsync(`${page}.connect`);
       expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.connect.openSettings')).toBeNull();
+      expect(view.screen.findByTestId('project-deployments.connect.confirm')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.connect.openSettings');
+      expect(view.navigate).toHaveBeenNthCalledWith(2, { tab: 'settings', section: 'sharing' });
+      expect(setBindings).not.toHaveBeenCalled();
     } finally { await view.dispose(); }
   });
 
@@ -1956,7 +1969,6 @@ describe('Environment → Data → Database page (P9)', () => {
 
   it('restores the kept backup from the page and shows each step the running restore pushes', async () => {
     let releaseConfirm!: () => void;
-    let confirmation: Promise<void> | undefined;
     const confirmGate = new Promise<void>((resolve) => {
       releaseConfirm = resolve;
     });
@@ -2083,14 +2095,11 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(
         await view.settle('project-deployments.restore.confirm'),
       ).not.toBeNull();
-      confirmation = view.screen.pressByTestIdAsync(
-        'project-deployments.restore.confirm',
-      );
+      await act(async () => { view.screen.pressByTestId('project-deployments.restore.confirm'); });
       expect(
         await view.settle('project-deployments.restore.step.stop'),
       ).not.toBeNull();
-      releaseConfirm();
-      await confirmation;
+      await act(async () => { releaseConfirm(); });
       expect(
         await view.settle('project-deployments.restore.result.restored'),
       ).not.toBeNull();
@@ -2109,8 +2118,7 @@ describe('Environment → Data → Database page (P9)', () => {
         });
       }
     } finally {
-      releaseConfirm();
-      try { await confirmation; } finally { await view.dispose(); }
+      try { await act(async () => { releaseConfirm(); }); } finally { await view.dispose(); }
     }
   });
 });
