@@ -406,6 +406,19 @@ describe('LocalServiceCaptureView', () => {
     } finally { await screen.unmount(); }
   });
 
+  // DBW R6 (specimen finding): a needed restart says what to do, not only why.
+  it('says to restart the dev servers when capture changed while they ran', async () => {
+    const { invoke } = machine((call) => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true, restartRequired: true }
+      : { ok: true, source, items: [] });
+    const screen = await renderScreen(view(invoke, 'endpoints'));
+    try {
+      await settle();
+      expect(screen.findByTestId('capture-restart')).not.toBeNull();
+      expect(screen.getTextContent()).toMatch(/Restart the dev servers to capture their requests\..*Capture changed while they were running/);
+    } finally { await screen.unmount(); }
+  });
+
   // DBW review R4 #7: gaps are said once, in the person's terms, with Retry beside them.
   it('says capture has gaps once, without the store code, and retries from that line', async () => {
     const { invoke, calls } = machine((call) => {

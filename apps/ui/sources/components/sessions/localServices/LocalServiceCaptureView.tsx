@@ -390,7 +390,8 @@ export function LocalServiceCaptureView(
             testID={`${testID}-restart`}
             tone="warning"
             emphasis={t('deploymentTelemetry.local.restart')}
-            reason={t('deploymentTelemetry.local.restartReason')}
+            // The line's owner draws `emphasis` inside `reason`: what to do, then why.
+            reason={`${t('deploymentTelemetry.local.restart')} ${t('deploymentTelemetry.local.restartReason')}`}
             action={{
               label: t('deploymentTelemetry.local.servers'),
               onPress: props.onShowServers,
@@ -412,7 +413,7 @@ export function LocalServiceCaptureView(
             testID={`${testID}-stale`}
             tone="warning"
             asOf={state.readAt}
-            reason={`${t('deploymentTelemetry.unavailable.title')} · ${t('deploymentTelemetry.unavailable.reason')}`}
+            reason={t('deploymentTelemetry.local.stale')}
             action={{ label: t('common.retry'), onPress: retry }}
           />
         ) : null}

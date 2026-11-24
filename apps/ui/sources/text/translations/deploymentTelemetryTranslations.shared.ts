@@ -97,6 +97,7 @@ export type Copy = Readonly<{
     gaps: string;
     unavailableTitle: string;
     unavailableBody: string;
+    stale: string;
     restart: string;
     restartReason: string;
     waitingTitle: string;
@@ -254,6 +255,7 @@ const en: Copy = {
     gaps: 'Capture on with gaps',
     unavailableTitle: 'Capture isn’t answering right now',
     unavailableBody: 'Capture keeps each request’s route, time, database queries and logs on this Machine. Try again in a moment.',
+    stale: 'Capture isn’t answering · showing what it last read',
     restart: 'Restart the dev servers to capture their requests.',
     restartReason: 'Capture changed while they were running.',
     waitingTitle: 'Waiting for the first request',
