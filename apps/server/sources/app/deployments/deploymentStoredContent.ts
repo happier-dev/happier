@@ -164,6 +164,7 @@ export function readPlainDeploymentTargetLinkContentInTx(tx: Tx, actorAccountId:
 export async function updateDeploymentStoredContentInTx(tx: Tx, actorAccountId: string,
     custody: Pick<DeploymentSourceAdmission, 'owner' | 'source'>,
     reference: DeploymentContentReference, input: ArtifactJsonUpdateHttpInputV1, expectedStoredKind: string,
+    otherPublicationAccountIds: readonly string[] = [],
 ) {
     const failure = await admitDeploymentStoredContentInTx(tx, actorAccountId, custody.owner, reference, expectedStoredKind);
     if (failure) return failure;
@@ -175,11 +176,11 @@ export async function updateDeploymentStoredContentInTx(tx: Tx, actorAccountId: 
         || (input.expectedBodyVersion !== undefined && input.expectedBodyVersion !== reference.contentBodyVersion)) {
         return deploymentFailure('deployment_conflict');
     }
-    // A private content Artifact can have fewer readers than its Source. Admit
-    // their complete publication cohort before the Artifact writer takes locks.
+    // Admit the Artifact, Source, and any other affected audiences before taking Account publication locks.
     await acquireAccountChangePublicationLocksInTx(tx, [
         ...await resolveArtifactAudienceInTx(tx, reference.contentArtifactId),
         ...await resolveProjectSourceAudienceInTx(tx, [custody.source]),
+        ...otherPublicationAccountIds,
     ], { includeSingleAccount: true, intent: resolveArtifactPublicationAdmissionIntent() });
     const result = await updateArtifactTx(tx, {
         actorUserId: actorAccountId, artifactId: reference.contentArtifactId,

@@ -16,7 +16,7 @@ import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvi
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx, deploymentContentReference, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx } from './deploymentPublication';
 import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 import { readDeploymentDomainInventoryInTx, prepareDeploymentTeardownDomainsInTx } from './deploymentDomainService';
 import { admitDeploymentPendingInTx } from './deploymentPendingService';
@@ -446,8 +446,16 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         ...(removeEnvironment ? { environmentRemoval: { telemetryMachineId: loaded.row.telemetryMachineId,
             savedSecretResourceIds: (readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId) } } : {}),
     }) : undefined;
+    // Only a successful serving activation publishes the token actually delivered by its admitted executor.
+    const deliveredTelemetry = input.kind === 'settle' && row.operation !== 'teardown'
+        && (input.state === 'succeeded' || input.state === 'running_unverified')
+        && input.telemetryMachineId && input.telemetryMachineId === loaded.row.telemetryMachineId
+        && input.telemetryTokenHash && input.telemetryTokenHash !== loaded.row.telemetryTokenHash
+        ? { machineId: input.telemetryMachineId, tokenHash: input.telemetryTokenHash } : null;
     if (input.contentUpdate) {
-        const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, nextContent, input.contentUpdate, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
+        const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, nextContent, input.contentUpdate,
+            DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, deliveredTelemetry
+                ? await readDeploymentTelemetryPublicationAccountIdsInTx(tx, [deliveredTelemetry.machineId]) : []);
         if (!updated.ok) return updated;
         nextContent = updated.reference;
     }
@@ -461,13 +469,9 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         ...(resumedTeardown ? { settledAt: null } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
-    // Only a successful serving activation publishes the token actually delivered by its admitted executor.
-    if (input.kind === 'settle' && row.operation !== 'teardown'
-        && (input.state === 'succeeded' || input.state === 'running_unverified')
-        && input.telemetryMachineId && input.telemetryMachineId === loaded.row.telemetryMachineId
-        && input.telemetryTokenHash && input.telemetryTokenHash !== loaded.row.telemetryTokenHash) {
-        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { telemetryTokenHash: input.telemetryTokenHash } });
-        await publishDeploymentTelemetryMachinesInTx(tx, [input.telemetryMachineId]);
+    if (deliveredTelemetry) {
+        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { telemetryTokenHash: deliveredTelemetry.tokenHash } });
+        await publishDeploymentTelemetryMachinesInTx(tx, [deliveredTelemetry.machineId]);
     }
     if (input.expectedTargetLinkRevision !== undefined) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: input.servingDeploymentId ?? row.id, state: 'deployed', revision: { increment: 1 } } });

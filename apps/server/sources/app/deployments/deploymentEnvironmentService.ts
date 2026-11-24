@@ -30,7 +30,7 @@ import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, 
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
@@ -653,6 +653,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const telemetryCapabilities = input.telemetryCapabilities === undefined ? previousTelemetryCapabilities
         : resolveDeploymentTelemetryCapabilitiesV1(input.telemetryCapabilities);
     const telemetryCapabilitiesChanged = !isDeepStrictEqual(previousTelemetryCapabilities, telemetryCapabilities);
+    const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged
+        ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
     if (input.telemetryMachineId) {
         const admitted = executionBinding?.deploymentNativeAdmission;
         const alreadyAdmitted = admitted && isDeploymentTelemetryNativeAdmissionV1(admitted)
@@ -669,7 +671,10 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     ].map(capture => capture.resourceId))];
     if (resourceIds.length > 0) {
         await acquireSavedSecretReferencePublicationAccountsInTx(tx, { accountId: actorAccountId, resourceIds,
-            publicationAccountIds: await resolveProjectSourceAudienceInTx(tx, [loaded.admission.source]) });
+            publicationAccountIds: [
+                ...await resolveProjectSourceAudienceInTx(tx, [loaded.admission.source]),
+                ...await readDeploymentTelemetryPublicationAccountIdsInTx(tx, telemetryPublicationMachineIds),
+            ] });
     }
     const link = loaded.row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
@@ -943,8 +948,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
         ]);
     }
-    if (telemetryChanged || telemetryCapabilitiesChanged)
-        await publishDeploymentTelemetryMachinesInTx(tx, [loaded.row.telemetryMachineId, telemetryMachineId]);
+    if (telemetryPublicationMachineIds.length > 0)
+        await publishDeploymentTelemetryMachinesInTx(tx, telemetryPublicationMachineIds);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
     return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision + 1 };
 }

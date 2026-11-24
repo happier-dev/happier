@@ -5,7 +5,8 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
     createPluginInstallationManifestPublisherSigningInputV1, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-    stringifyPluginInstallationManifestCanonicalJsonV1, computeDeploymentTransitionRequestDigestV1 } from '@happier-dev/protocol';
+    stringifyPluginInstallationManifestCanonicalJsonV1, computeDeploymentTransitionRequestDigestV1,
+    formatSharedSavedSecretRefV1 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRequestV1,
@@ -22,6 +23,7 @@ import { inTx } from '@/storage/inTx';
 import { initEncrypt } from '@/modules/encrypt';
 import { auth } from '@/app/auth/auth';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -82,8 +84,10 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Telemetry' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(value) })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
-        const createContentArtifact = (artifactId: string, telemetry?: { metrics: boolean; appLlmCost: boolean; exceptions: boolean }) =>
-            createPlainArtifact(artifactId, 'deployment-environment.v1', { ...definition.v, ...(telemetry ? { telemetry } : {}) });
+        const createContentArtifact = (artifactId: string, telemetry?: { metrics: boolean; appLlmCost: boolean; exceptions: boolean },
+            bindings = definition.v.bindings) => createPlainArtifact(artifactId, 'deployment-environment.v1', {
+            ...definition.v, bindings, ...(telemetry ? { telemetry } : {}),
+        });
         const createReference = async (kind: 'deployment-target-link.v1' | 'deployment-receipt.v1') => {
             const content = kind === 'deployment-target-link.v1' ? createDeploymentTargetLinkV1().content : createDeploymentV1().content;
             if (content.t !== 'plain') throw new Error('Expected plain fixture');
@@ -146,6 +150,40 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             expect(disabled.find(change => change.entityId === f.newCollector.id)!.cursor)
                 .toBeGreaterThan(moved.find(change => change.entityId === f.newCollector.id)!.cursor);
         }, { authentication: 'real' });
+    });
+
+    it('commits a private telemetry binding and publishes to the separate collector Account', async () => {
+        const f = await fixture();
+        const resourceId = randomUUID();
+        const secret = { v: 1 as const, name: 'Telemetry binding', kind: 'token' as const, value: 'synthetic-test-value' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.owner.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain', storedContent: { t: 'plain', v: secret },
+        }))).toMatchObject({ ok: true });
+        const link = await db.deploymentTargetLink.create({ data: { environmentId: f.environment.id,
+            role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured',
+            createdByAccountId: f.owner.id, ...await f.createReference('deployment-target-link.v1'),
+            machines: { create: [{ machineId: f.controller.id, installationId: f.controller.installationId!, position: 0, state: 'active' }] },
+        } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: link.id } });
+        const artifact = await f.createContentArtifact(randomUUID(), undefined, [{ purpose: 'variable', phase: 'runtime',
+            name: 'OTEL_EXPORTER_OTLP_HEADERS', managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }]);
+        if (!artifact.ok) throw new Error(artifact.error);
+        const ownerBearer = await auth.createToken(f.owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${f.environment.id}/bindings`,
+                headers: { authorization: `Bearer ${ownerBearer}` }, payload: {
+                    serverId, environmentId: f.environment.id, expectedRevision: 1, telemetryMachineId: f.oldCollector.id,
+                    contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+                    referencedSavedSecretRevisions: [{ resourceId, revision: 1 }],
+                    grants: [{ v: 1, kind: 'secret', environmentId: f.environment.id, machineId: f.controller.id,
+                        installationId: f.controller.installationId!, resourceId, resourceRevision: 1, sealedContent: 'synthetic-seal' }],
+                } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, revision: 2 });
+        }, { authentication: 'real' });
+        expect(await db.accountChange.findFirst({ where: { accountId: f.custodian.id, kind: 'machine', entityId: f.oldCollector.id } }))
+            .not.toBeNull();
     });
 
     it('spends explicit collector admission after withdrawal while refusing new direct and default selection', async () => {
@@ -278,7 +316,12 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             const body = { kind: 'settle' as const, serverId, environmentId: f.environment.id, deploymentId: receipt.id,
                 actionOperationId: receipt.actionOperationId, expectedRevision: 1, machineId: f.controller.id,
                 installationId: f.controller.installationId!, state: 'succeeded' as const,
-                expectedTargetLinkRevision: 1, telemetryMachineId: f.oldCollector.id, telemetryTokenHash: hash };
+                expectedTargetLinkRevision: 1, telemetryMachineId: f.oldCollector.id, telemetryTokenHash: hash,
+                contentArtifactId: receipt.contentArtifactId, contentHeaderVersion: receipt.contentHeaderVersion,
+                contentBodyVersion: receipt.contentBodyVersion, contentUpdate: {
+                    body: encodePlainArtifactStoredContent({ body: JSON.stringify({ steps: ['collector activation'] }) }),
+                    expectedBodyVersion: receipt.contentBodyVersion,
+                } };
             const proof = signMachineInstallationProof({ payload: { version: 1, machineId: f.controller.id,
                 installationId: f.controller.installationId!, accountId: f.owner.id, deploymentTransition: {
                     serverId, environmentId: f.environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
@@ -288,6 +331,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 url: `/v1/deployments/environments/${f.environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { ...body, proof } });
             expect(settle.statusCode, settle.body).toBe(200);
+            expect((await db.artifact.findUniqueOrThrow({ where: { id: receipt.contentArtifactId } })).bodyVersion)
+                .toBe(receipt.contentBodyVersion + 1);
             expect((await assignments()).json()).toEqual({ ok: true,
                 assignments: [{ environmentId: f.environment.id, tokenHash: hash, capabilities: selected }] });
             const publication = await db.accountChange.findFirstOrThrow({ where: { accountId: f.custodian.id,
@@ -302,7 +347,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 requestedByAccountId: f.owner.id, requestKey: randomUUID(), actionOperationId: randomUUID(),
                 operation: 'deploy', state: 'running', acceptedControllerMachineId: f.controller.id,
                 acceptedControllerInstallationId: f.controller.installationId, ...await f.createReference('deployment-receipt.v1') } });
-            const { expectedTargetLinkRevision: _linkRevision, ...terminalBody } = body;
+            const { expectedTargetLinkRevision: _linkRevision, contentArtifactId: _artifactId,
+                contentHeaderVersion: _headerVersion, contentBodyVersion: _bodyVersion, contentUpdate: _update, ...terminalBody } = body;
             const failedBody = { ...terminalBody, deploymentId: failed.id, actionOperationId: failed.actionOperationId,
                 state: 'failed' as const, telemetryTokenHash: 'c'.repeat(64) };
             const failedProof = signMachineInstallationProof({ payload: { version: 1, machineId: f.controller.id,
@@ -336,7 +382,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 requestedByAccountId: f.owner.id, requestKey: randomUUID(), actionOperationId: randomUUID(),
                 operation: 'deploy', state: 'running', acceptedControllerMachineId: f.controller.id,
                 acceptedControllerInstallationId: f.controller.installationId, ...await f.createReference('deployment-receipt.v1') } });
-            const lateBody = { ...body, deploymentId: late.id, actionOperationId: late.actionOperationId,
+            const lateBody = { ...terminalBody, deploymentId: late.id, actionOperationId: late.actionOperationId,
                 expectedTargetLinkRevision: 2, telemetryTokenHash: 'b'.repeat(64) };
             const lateProof = signMachineInstallationProof({ payload: { version: 1, machineId: f.controller.id,
                 installationId: f.controller.installationId!, accountId: f.owner.id, deploymentTransition: {

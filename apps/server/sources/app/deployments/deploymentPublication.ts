@@ -6,12 +6,19 @@ import { buildDeploymentReceiptCompletionWakeV1, type DeploymentReceiptCompletio
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readMachineAudienceAccountIdsForMachinesInTx } from '@/app/machines/machineRecipientWork';
 
+function readDeploymentTelemetryMachineAudiencesInTx(tx: Tx, machineIds: readonly (string | null)[]) {
+    return readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds.filter((id): id is string => id !== null));
+}
+
+export async function readDeploymentTelemetryPublicationAccountIdsInTx(tx: Tx, machineIds: readonly (string | null)[]): Promise<string[]> {
+    const audiences = await readDeploymentTelemetryMachineAudiencesInTx(tx, machineIds);
+    return [...audiences.values()].flat();
+}
+
 /** Assignment changes invalidate the existing Machine projection for every affected collector audience. */
 export async function publishDeploymentTelemetryMachinesInTx(tx: Tx, machineIds: readonly (string | null)[]): Promise<void> {
-    const ids = [...new Set(machineIds.filter((id): id is string => id !== null))];
-    const audiences = await readMachineAudienceAccountIdsForMachinesInTx(tx, ids);
-    for (const id of ids) {
-        await markAccountsChanged(tx, { accountIds: audiences.get(id) ?? [], kind: 'machine', entityId: id });
+    for (const [id, accountIds] of await readDeploymentTelemetryMachineAudiencesInTx(tx, machineIds)) {
+        await markAccountsChanged(tx, { accountIds, kind: 'machine', entityId: id });
     }
 }
 
