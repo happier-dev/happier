@@ -114,6 +114,43 @@ async function mountConsumers(selectedHomes: SessionListQueryHomeInput[], initia
 }
 
 describe('useSessionListQuerySourceState committed controller lifecycle', () => {
+    it('makes zero idle Session queries after the first page fails and reads once on a Home change', async () => {
+        const home = boundary.serverIds[0]!;
+        boundary.failQueries(home, 'all');
+        const screen = await mount(homes(home));
+        const readCount = () => boundary.queryRequests.filter(request => request.serverId === home).length;
+        try {
+            await waitForSessionListQueryState(() => {
+                expect(screen.state.current?.statesByServerId[home]?.phase).toBe('error');
+            });
+            const afterFirstAttempt = readCount();
+            expect(afterFirstAttempt).toBeGreaterThan(0);
+
+            vi.useFakeTimers();
+            try {
+                // Unrelated shell renders reapply the same mounted list inputs.
+                for (let elapsed = 0; elapsed < 60_000; elapsed += 15_000) {
+                    await screen.render(homes(home));
+                    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+                }
+            } finally {
+                vi.useRealTimers();
+            }
+            expect(readCount() - afterFirstAttempt, 'Home Session queries in the idle minute').toBe(0);
+
+            boundary.failQueries(home, null);
+            boundary.setRows(home, ['newly-accessible-session']);
+            await act(async () => publishHomeAccountChange(home));
+            await screen.ready(home);
+            expect(screen.state.current?.statesByServerId[home]?.addresses).toEqual([
+                { serverId: home, sessionId: 'newly-accessible-session' },
+            ]);
+            expect(readCount() - afterFirstAttempt).toBe(1);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('keeps paged Session membership through Artifact socket receipts but re-reads for an unknown Account change', async () => {
         const [homeA, homeB] = boundary.serverIds as [string, string, string];
         const screen = await mount(homes(homeA, homeB));

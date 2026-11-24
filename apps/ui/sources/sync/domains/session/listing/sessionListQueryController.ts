@@ -706,14 +706,16 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 publishPhase(nextQueryKey, state.appliedQueryKey === nextQueryKey ? 'refreshing' : 'loading');
                 return;
             }
-            const queryChanged = previousQueryKey !== nextQueryKey
-                || state.appliedQueryKey !== nextQueryKey;
+            // An unapplied query may already have settled with a visible failure.
+            // Reapplying the same input is not a recovery trigger.
+            const queryChanged = previousQueryKey !== nextQueryKey;
             const previousPlan = resolvePageRequestPlan(previousInput);
             const nextPlan = resolvePageRequestPlan(input);
             const hold = offlineHold;
             offlineHold = null;
             if (hold && previousInput?.online === false && !hold.missed && !queryChanged && !readModeChanged
-                && hold.queryKey === nextQueryKey && nextPlan?.membership === hold.membership) {
+                && state.appliedQueryKey === nextQueryKey && hold.queryKey === nextQueryKey
+                && nextPlan?.membership === hold.membership) {
                 publishPhase(nextQueryKey, 'ready');
                 return;
             }
