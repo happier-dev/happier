@@ -6,7 +6,8 @@ import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { happierPageRowDividerWidth } from '@happier-dev/plugin-ui/presentation';
+import { happierPageRowDividerWidth, resolveHappierItemBehavior } from '@happier-dev/plugin-ui/presentation';
+import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useSectionLeadingColumn } from '@/components/ui/lists/sectionLeadingColumn';
 import type { PageRowShape } from '@/components/ui/lists/pageRowMetrics';
@@ -121,15 +122,16 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     state: ItemLoadState;
     /** How many rows to reserve: the expected (or last known) count, at most a screenful. */
     rows?: number;
-    /** Whether the rows being reserved carry a second line (a description or status). */
+    /** Whether the rows being reserved carry a second line (a description or status). Defaults to two. */
     lines?: 1 | 2;
+    /** The arriving rows include a leading mark, even if no marked sibling is mounted yet. */
+    hasLeadingMark?: boolean;
     /** The rows' shape: `list` for a compact list's rows (`ItemGroup density="compact"`). */
     shape?: PageRowShape;
     /** Names what is loading for assistive technology ("Loading machine pools"). */
     accessibilityLabel?: string;
     /**
-     * Whether the rows that arrive draw their hairline after the last one, as an `Item` does unless it is its
-     * section's last row (`ItemGroup` passes `false` there). Defaults to `true`, as `Item`'s does.
+     * Whether the reserved block's last two-line row keeps its hairline. The section's last row omits it.
      */
     showDivider?: boolean;
     testID?: string;
@@ -138,17 +140,25 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     const testID = props.testID;
     // The reserved rows take the real rows' box at the user's density, so nothing moves when they arrive.
     const rowMetrics = usePageRowMetrics(props.shape);
-    const divided = React.useContext(ItemLoadStateRowDividersContext);
+    const sectionDividers = React.useContext(ItemLoadStateRowDividersContext);
+    const rowPosition = useItemGroupRowPosition();
     const bleedStyle = useSectionRowBleedStyle();
-    const reservesLeadingColumn = useSectionLeadingColumn(false);
+    const hasLeadingMark = props.state.kind === 'loading' && props.hasLeadingMark === true;
+    const reservesLeadingColumn = useSectionLeadingColumn(hasLeadingMark) || hasLeadingMark;
     const rowBox = React.useMemo(
         () => ({ minHeight: rowMetrics.minHeightPx, paddingVertical: rowMetrics.paddingVerticalPx }),
         [rowMetrics],
     );
     const lines = props.lines ?? 2;
+    const divided = resolveHappierItemBehavior({
+        role: 'button',
+        hasPrimaryAction: false,
+        showDivider: sectionDividers,
+        multiline: lines === 2,
+    }).dividerVisible;
     // A page row's hairline stands in its flow, under the row: each reserved row keeps that room, and the last one
     // keeps it, with its hairline, when the arriving last row will draw one.
-    const trailingDivider = divided && props.showDivider !== false;
+    const trailingDivider = divided && props.showDivider !== false && rowPosition?.isLast !== true;
     const ruleRoom = React.useMemo(() => {
         const hairline = happierPageRowDividerWidth();
         return divided ? { rowGap: hairline, paddingBottom: trailingDivider ? hairline : 0 } : undefined;

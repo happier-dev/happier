@@ -483,6 +483,8 @@ function TeamOverviewLoading() {
         <ItemLoadStateRows
           state={{ kind: 'loading' }}
           rows={8}
+          lines={1}
+          hasLeadingMark
           accessibilityLabel={t('teams.loading')}
         />
       </ItemGroup>
@@ -491,6 +493,8 @@ function TeamOverviewLoading() {
           testID="team-loading"
           state={{ kind: 'loading' }}
           rows={5}
+          lines={2}
+          hasLeadingMark
           accessibilityLabel={t('teams.loading')}
         />
       </ItemGroup>

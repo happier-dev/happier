@@ -132,6 +132,8 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
             testID="team-overview-shared-loading"
             state={{ kind: 'loading' }}
             rows={LOADING_ROWS}
+            lines={1}
+            hasLeadingMark
           />
         ) : null}
         {failedWithNothing ? (

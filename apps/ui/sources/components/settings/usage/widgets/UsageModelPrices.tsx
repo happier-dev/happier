@@ -90,7 +90,7 @@ export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResult
           testID={`${props.testID}.model.${row.modelId}`} />)}
         {/* Below the fold until the deferred render lands: the rows' room is held so the sheet never resizes. */}
         {mounted < rows.length ? <ItemLoadStateRows testID={`${props.testID}.rowsBelowFold`} state={{ kind: 'loading' }}
-          rows={rows.length - mounted} lines={2} accessibilityLabel={t('usage.board.page.pricesTitle')} /> : null}
+          rows={rows.length - mounted} lines={2} showDivider={false} accessibilityLabel={t('usage.board.page.pricesTitle')} /> : null}
       </View>
     </View>
   );

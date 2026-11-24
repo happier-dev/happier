@@ -175,6 +175,113 @@ describe('ItemLoadStateRows', () => {
         expect(rowBox(marked, 'ids-skeleton:0').textStart).toBe(
             PAGE_LIST_METRICS.rowPaddingHorizontalPx + PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx,
         );
+        await marked.unmount();
+
+        // A section can be completely empty until its read finishes. Its bars still start at
+        // the titles' edge when the arriving items carry marks.
+        const pending = await renderScreen(
+            <SectionLeadingColumnProvider>
+                <ItemLoadStateRows hasLeadingMark testID="ids" state={{ kind: 'loading' }} rows={1} lines={1} showDivider={false} />
+            </SectionLeadingColumnProvider>,
+        );
+        expect(rowBox(pending, 'ids-skeleton:0')).toEqual({
+            height: Math.max(m.minHeightPx, 2 * m.paddingVerticalPx + m.title.lineHeight),
+            textStart: PAGE_LIST_METRICS.rowPaddingHorizontalPx + PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx,
+        });
+        expect(trailingRoom(pending)).toBe(0);
+    });
+
+    it.each([
+        { lines: 1, marked: false, last: true },
+        { lines: 1, marked: true, last: false },
+        { lines: 2, marked: true, last: true },
+        { lines: 2, marked: false, last: false },
+    ] as const)('matches an Item with $lines line(s), marked=$marked, last=$last', async ({ lines, marked, last }) => {
+        const { HappierDivider } = await import('@happier-dev/plugin-ui/presentation');
+        const { StyleSheet, View } = await import('react-native');
+        const { Item } = await import('./Item');
+        const { ItemGroup } = await import('./ItemGroup');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        function WrappedRow({ children }: Readonly<{ children: React.ReactNode }>) {
+            return children;
+        }
+        const present = (row: React.ReactNode) => (
+            <ListPresentationProvider value="page">
+                <ItemGroup virtualizedSegment={{ first: true, last }}>{row}</ItemGroup>
+            </ListPresentationProvider>
+        );
+        const ready = await renderScreen(present(['first', 'second'].map(id => (
+            <WrappedRow key={id}>
+                <Item testID={id} title="Title" subtitle={lines === 2 ? 'Description' : undefined}
+                    subtitleTestID={`${id}-description`} icon={marked ? <View testID={`${id}-mark`} /> : undefined} />
+            </WrappedRow>
+        ))));
+        const title = ready.findAll(node => typeof node.type === 'string' && node.children.includes('Title'))[0]!;
+        let row = title.parent;
+        while (row && StyleSheet.flatten(row.props.style)?.minHeight == null) row = row.parent;
+        const style = StyleSheet.flatten(row!.props.style);
+        const titleStyle = StyleSheet.flatten(title.props.style);
+        const description = StyleSheet.flatten(ready.findHostByTestId('first-description')?.props.style);
+        const mark = ready.findHostByTestId('first-mark');
+        let leading = mark?.parent;
+        while (leading && StyleSheet.flatten(leading.props.style)?.marginRight == null) leading = leading.parent;
+        const leadingStyle = StyleSheet.flatten(leading?.props.style);
+        const dividerHeight = (id: string) => {
+            const row = ready.findHostByTestId(id)!;
+            return StyleSheet.flatten(row.findAllByType(HappierDivider)[0]?.props.style)?.height ?? 0;
+        };
+        const expected = {
+            height: Math.max(style.minHeight, 2 * style.paddingVertical + titleStyle.lineHeight
+                + (description?.marginTop ?? 0) + (description?.lineHeight ?? 0)),
+            textStart: (style.paddingLeft ?? style.paddingHorizontal) + (leadingStyle?.width ?? leadingStyle?.minWidth ?? 0)
+                + (leadingStyle?.marginLeft ?? 0) + (leadingStyle?.marginRight ?? 0),
+            betweenRows: dividerHeight('first'),
+            afterLast: dividerHeight('second'),
+        };
+        await ready.unmount();
+
+        const waiting = await renderScreen(present(
+            <WrappedRow>
+                <ItemLoadStateRows testID="waiting" state={{ kind: 'loading' }} rows={2} lines={lines} hasLeadingMark={marked} />
+            </WrappedRow>,
+        ));
+        const rowHost = waiting.findHostByTestId('waiting-skeleton:0')!;
+        const placeholder = StyleSheet.flatten(rowHost.props.style);
+        const column = rowHost.children.at(-1);
+        if (!column || typeof column === 'string') throw new Error('Missing placeholder text column');
+        const textHeight = column.children.reduce((height, line) => typeof line === 'string'
+            ? height : height + (StyleSheet.flatten(line.props.style)?.height ?? 0), 0);
+        const block = StyleSheet.flatten(waiting.findHostByTestId('waiting')?.props.style);
+        expect({
+            height: Math.max(placeholder.minHeight, placeholder.paddingTop + placeholder.paddingBottom + textHeight),
+            textStart: placeholder.paddingLeft,
+            betweenRows: block?.rowGap ?? 0,
+            afterLast: block?.paddingBottom ?? 0,
+        }).toEqual(expected);
+    });
+
+    it('reserves the one-line count rows that arrive in the Team shared-resources section', async () => {
+        const { TeamSharedResourcesView } = await import('@/components/settings/teams/TeamSharedResourcesSection');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        const { resolvePageRowMetrics } = await import('./pageRowMetrics');
+        const { StyleSheet } = await import('react-native');
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <TeamSharedResourcesView teamName="Design" serverId="srv_studio"
+                    summary={{ status: 'loading', kinds: [], error: null, reload: async () => {} }}
+                    destinationOf={() => null} onOpen={() => {}} />
+            </ListPresentationProvider>,
+        );
+        const row = screen.findHostByTestId('team-overview-shared-loading-skeleton:0')!;
+        const style = StyleSheet.flatten(row.props.style);
+        const textColumn = row.children.at(-1);
+        if (!textColumn || typeof textColumn === 'string') throw new Error('Missing placeholder text column');
+        const lineHeight = textColumn.children.reduce((height, line) => typeof line === 'string'
+            ? height : height + (StyleSheet.flatten(line.props.style)?.height ?? 0), 0);
+        const metrics = resolvePageRowMetrics({ density: storage.getState().localSettings.uiItemDensity, shape: 'standard' });
+        expect(Math.max(style.minHeight, style.paddingTop + style.paddingBottom + lineHeight)).toBe(
+            Math.max(metrics.minHeightPx, 2 * metrics.paddingVerticalPx + metrics.title.lineHeight),
+        );
     });
 
     it('offers no Retry when the failure cannot be retried from here', async () => {
