@@ -81,6 +81,8 @@ export function useWorkbenchMount(
 ): WorkbenchInstance | null {
   const { hostApi } = context;
   const databaseHost = useHostDatabaseWorkbench();
+  const activityResource = databaseHost?.activityResource;
+  const lastLook = databaseHost?.lastLook;
   const accountScope = context.surface.accountScope;
   const scopeKey = launch ? JSON.stringify(launch.scope) : null;
   const instance = React.useMemo(() => {
@@ -94,12 +96,12 @@ export function useWorkbenchMount(
       consoleStorage: (descriptor) =>
         createConsoleDeviceStorage(hostApi, descriptor),
       statementRanges: databaseStatementRangesV1,
-      activityResource: databaseHost?.activityResource,
-      lastLook: databaseHost && accountScope ? target => databaseHost.lastLook(accountScope, target) : undefined,
+      activityResource,
+      lastLook: lastLook && accountScope ? target => lastLook(accountScope, target) : undefined,
     });
     // A new scope is a different workbench; location changes go through the instance's navigation owner.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostApi, scopeKey, linkedClient, options.pageLocation, databaseHost, accountScope?.serverId, accountScope?.accountId]);
+  }, [hostApi, scopeKey, linkedClient, options.pageLocation, activityResource, lastLook, accountScope?.serverId, accountScope?.accountId]);
   const attached = React.useRef<WorkbenchInstance | null>(null);
   React.useEffect(() => {
     if (!instance) return;

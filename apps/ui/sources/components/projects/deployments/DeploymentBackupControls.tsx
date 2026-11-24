@@ -233,7 +233,7 @@ export { useDeploymentBackupFacts, deploymentBackupAttention, type DeploymentBac
 type ActionsFactory = ReturnType<typeof createDeploymentActions>;
 
 /** The exact capture target the finite backup Actions address, or null before anything runs on a Machine. */
-function backupTargetInput(detail: DeploymentEnvironmentReadDetailV1, configuration: DeploymentBackupConfigurationV1) {
+export function backupTargetInput(detail: DeploymentEnvironmentReadDetailV1, configuration: DeploymentBackupConfigurationV1) {
   const target = deploymentDataTargetOperands(detail);
   const deploymentId = detail.runtimeTargetLink?.activeDeploymentId;
   return target && deploymentId ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;

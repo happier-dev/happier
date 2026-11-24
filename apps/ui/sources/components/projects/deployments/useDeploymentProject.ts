@@ -19,6 +19,17 @@ type ProjectOwner = Readonly<{
 }>;
 const projects = new WeakMap<ServerAccountScopeLifetime, Map<string | undefined, ProjectOwner>>();
 
+/** One routing projection from Home socket wakes to deployment reads. */
+export function readDeploymentHomeWake(event: HomeAccountChangeEvent) {
+    if (event.changeKinds && !event.changeKinds.includes('account')) return null;
+    if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
+        || id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return 'all';
+    return event.entityIds.flatMap(entityId => {
+        const hint = readDeploymentAccountChangeV1({ kind: 'account', entityId });
+        return hint ? [hint] : [];
+    });
+}
+
 function findProjectOwner(lifetime: ServerAccountScopeLifetime | null, sourceId: string | undefined) {
     return lifetime?.isCurrent() ? projects.get(lifetime)?.get(sourceId) ?? null : null;
 }
@@ -59,17 +70,9 @@ export function readDeploymentProjectOwner(lifetime: ServerAccountScopeLifetime,
     const onChange = (event: HomeAccountChangeEvent) => {
         if (retired || !lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
         if (event.changeKinds?.includes('savedSecretResource')) controller.invalidateSavedSecrets(event.entityIds);
-        if (event.changeKinds && !event.changeKinds.includes('account')) return;
-        if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
-            || id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
-            void controller.refreshDemanded();
-            return;
-        }
-        const changes = event.entityIds.flatMap(entityId => {
-            const hint = readDeploymentAccountChangeV1({ kind: 'account', entityId });
-            return hint ? [hint] : [];
-        });
-        controller.invalidate(changes);
+        const wake = readDeploymentHomeWake(event);
+        if (wake === 'all') void controller.refreshDemanded();
+        else if (wake) controller.invalidate(wake);
     };
     // The focused Home's changes feed carries Deploy revisions and grant changes.
     // Runtime health has its own Machine watch and recovery.

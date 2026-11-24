@@ -17,6 +17,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
+import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import { useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
@@ -77,6 +78,7 @@ function outcomeLine(
       return {
         text:
           outcome.message ??
+          (outcome.failure && 'reason' in outcome.failure ? outcome.failure.reason : undefined) ??
           (outcome.constraint
             ? translate(
                 'plugins.database.apply.constraint',
@@ -255,9 +257,13 @@ export function StagedReview(
     [draft],
   );
   const descriptor = instance.target(props.targetKey);
+  const host = useHostDatabaseWorkbench();
+  const target = descriptor.target.kind === 'deployment_service' || descriptor.target.kind === 'managed_deployment'
+    ? descriptor.target : null;
   const production = descriptor.origin.environment === 'production';
   const apply = draft.apply(props.relation);
   const outcome = outcomeLine(draft.outcome, translate);
+  const refusal = draft.outcome?.kind === 'refused' ? draft.outcome.code ?? draft.outcome.failure?.code : undefined;
   const engineIsMysql = descriptor.engine === 'mysql';
   // Close on this review's own Apply, never on an earlier receipt still held for the relation.
   const openedWith = React.useRef(draft.outcome);
@@ -290,6 +296,7 @@ export function StagedReview(
         }
         onClose={props.onClose}
       />
+      {production && target ? host?.renderProductionBackup?.(target) : null}
       {review.map((group) => (
         <ReviewGroup
           key={`${group.relation.schema}.${group.relation.name}`}
@@ -316,8 +323,10 @@ export function StagedReview(
         />
       ) : null}
       {outcome && outcome.tone !== 'success' ? (
-        <ErrorState layout="line" kind="error" title={outcome.text} />
+        <ErrorState layout="line" kind="error" title={outcome.text} details={refusal} />
       ) : null}
+      {target && (refusal === 'write_role_setup_required' || refusal === 'write_connection_setup_required')
+        ? host?.renderWriteSetup?.({ target, code: refusal }) : null}
       <ModalCardFooterActions cancel={{ onPress: props.onClose }}>
         <Action.Control
           {...apply}

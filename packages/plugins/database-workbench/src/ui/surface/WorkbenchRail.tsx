@@ -2,7 +2,7 @@ import * as React from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { DATABASE_ACCESS_SET_ACTION_ID_V1, DatabaseAccessSetResultV1Schema, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
-import type { DatabaseAgentAccessV1, DatabaseDescriptorV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseAccessSummaryV1, DatabaseAgentAccessV1, DatabaseDescriptorV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -18,7 +18,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import {
   useDatabaseAccess,
   useDatabaseRelations,
@@ -47,19 +47,31 @@ export function AccessWord(
   props: Readonly<{ descriptor: DatabaseDescriptorV1 }>,
 ) {
   const translate = usePluginTranslation();
-  const instance = useWorkbenchInstance();
+  const host = useHostDatabaseWorkbench();
   const [open, setOpen] = React.useState(false);
-  const targetKey = workbenchTargetKey(props.descriptor.target);
-  const access = props.descriptor.access;
+  const { target, origin } = props.descriptor;
+  const targetKey = workbenchTargetKey(target);
+  const selected = useDatabaseAccess(targetKey, open);
+  const policy = selected.value?.setBy === 'environment' ? selected.value : null;
+  const environmentTarget = target.kind === 'managed_deployment' || target.kind === 'deployment_service' ? target : null;
+  const access = selected.value?.access ?? props.descriptor.access;
   if (!access) return null;
-  const word = access.canWrite
+  const unavailable = selected.status === 'unavailable' || selected.status === 'stale';
+  const failureCode = isPluginError(selected.error) ? selected.error.code : undefined;
+  const word = unavailable
+    ? translate('plugins.database.access.unavailable', 'Access unavailable')
+    : access.canWrite
     ? translate('plugins.database.access.canEdit', 'Can edit')
     : translate('plugins.database.access.readOnly', 'Read only');
-  return (
+  return <>
+    {environmentTarget ? host?.renderEnvironmentAccessObserver?.({
+      target: environmentTarget, environment: origin.environment,
+      policyEnvironmentId: policy?.environmentId, onChanged: selected.refresh,
+    }) : null}
     <Popover
       open={open}
       onOpenChange={next => {
-        if (next) instance.access(targetKey).invalidate();
+        if (next && !environmentTarget && selected.status !== 'loading') selected.refresh();
         setOpen(next);
       }}
       trigger={word}
@@ -69,37 +81,41 @@ export function AccessWord(
       triggerDisclosure
     >
       <Stack gap="small">
-        <Text
-          value={
-            access.canWrite
-              ? translate(
-                  'plugins.database.access.canEditLine',
-                  'You can edit rows here. Every change is reviewed before it’s applied.',
-                )
-              : translate(
-                  'plugins.database.access.readOnlyLine',
-                  'You can browse tables and run read-only SQL. Editing is off for this database.',
-                )
-          }
-        />
-        {open ? <AgentAccess targetKey={targetKey} /> : null}
+        {unavailable ? <ErrorState layout="line" kind="unavailable"
+          title={failureCode === 'machine_unavailable' && !environmentTarget
+            ? translate('plugins.database.access.machineUnavailable', 'Access is stored on the Machine, which is unavailable.')
+            : translate('plugins.database.access.readUnavailable', 'Database access could not be read')}
+          details={failureCode}
+          onRetry={selected.refresh} retryLabel={translate('plugins.database.retry', 'Try again')} /> :
+          <Text value={databaseAccessLine(translate, access)} />}
+        {open && selected.status === 'loading' ? <LoadingState layout="line" rows={1} /> : null}
+        {open && !unavailable && selected.value?.setBy === 'machine'
+          ? <MachineAgentAccess key={targetKey} targetKey={targetKey} level={selected.value.agentAccess} /> : null}
+        {open && !unavailable && policy && environmentTarget ? host?.renderEnvironmentAccessSettings?.({
+          target: environmentTarget, policy,
+        }) ?? <Text tone="secondary" variant="meta"
+          value={translate('plugins.database.access.setByEnvironment', 'Agent access is managed by the Environment.')} /> : null}
       </Stack>
     </Popover>
-  );
+  </>;
 }
 
-function AgentAccess({ targetKey }: Readonly<{ targetKey: string }>) {
-  const t = usePluginTranslation();
-  const { status, value, error } = useDatabaseAccess(targetKey);
-  if (status === 'loading') return <LoadingState layout="line" rows={1} />;
-  if (status !== 'ready' || value === undefined) {
-    return <ErrorState layout="line" kind="unavailable"
-      title={t('plugins.database.access.readUnavailable', 'Database access could not be read')}
-      details={isPluginError(error) ? error.code : error instanceof Error ? error.message : undefined} />;
+function databaseAccessLine(t: PluginTranslate, access: DatabaseAccessSummaryV1): string {
+  if (access.canWrite) {
+    return t('plugins.database.access.canEditLine', 'You can edit rows here. Every change is reviewed before it’s applied.');
   }
-  return value.setBy === 'machine'
-    ? <MachineAgentAccess key={targetKey} targetKey={targetKey} level={value.agentAccess} />
-    : <Text tone="secondary" variant="meta" value={t('plugins.database.access.setByEnvironment', 'Agent access is managed by the Environment.')} />;
+  switch (access.reason) {
+    case 'database_editing_off':
+      return t('plugins.database.access.editingOff', 'Database editing is off for this Environment.');
+    case 'database_not_an_editor':
+      return t('plugins.database.access.notEditor', 'You aren’t in this Environment’s database editors.');
+    case 'database_agent_access_none':
+      return t('plugins.database.access.agentsOff', 'Agents can’t use this database.');
+    case 'database_agent_access_read_only':
+      return t('plugins.database.access.agentsRead', 'Agents can read this database.');
+    default:
+      return t('plugins.database.access.readOnlyLine', 'You can browse tables and run read-only SQL.');
+  }
 }
 
 const setAgentAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);

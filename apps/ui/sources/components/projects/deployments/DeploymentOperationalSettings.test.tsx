@@ -93,6 +93,145 @@ it('saves Environment database editing and agent access in one reviewed revision
   } finally { controller.retire(); context.dispose(); }
 });
 
+it.each(['single link', 'multiple links', 'retired mount'] as const)('sets up a managed database writer from staged review with %s', async links => {
+  let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+  const writes: unknown[] = [];
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+  const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+  const { PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/advanced');
+  const { projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+  const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+  const { ModalProvider } = await import('@/modal');
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings, token: authoringToken,
+    serverIdentityId: `srv_${({ 'single link': '6', 'multiple links': '7', 'retired mount': '8' }[links]).repeat(32)}`,
+    handleRequest: async (path, init) => path.startsWith('/v1/deployments/environments/')
+      ? Response.json({ ok: true, environment, targetLinks })
+      : boundary?.handle(new URL(path, context.endpointUrl), init) ?? null });
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const environment = createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId!,
+    owner: { kind: 'account', accountId: context.accountId }, runtimeTargetLinkId: undefined });
+  const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'data-link', environmentId: environment.id, role: 'data',
+    source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
+    targetKind: 'neon', machines: [], members: [], activeDeploymentId: undefined });
+  const single = links !== 'multiple links';
+  const targetLinks = single ? [targetLink] : [targetLink, { ...targetLink, id: 'other-data-link', contentArtifactId: 'other-artifact' }];
+  try {
+    const { entry: chosen } = await home.addOwnerResource();
+    const installedRef = single ? chosen.ref : 'happier:shared-secret:v1:other-database';
+    const { content } = createDeploymentEnvironmentDetailV1();
+    await context.createArtifactDocument({ artifactId: environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name },
+      body: JSON.stringify({ ...content, bindings: [{ purpose: 'variable', name: 'DIRECT_URL', phase: 'runtime',
+        source: { kind: 'secret', ref: installedRef, resourceRevision: chosen.revision } }] }) });
+    boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
+      serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: environment.controllerMachineId,
+      actionId: 'deployments.bindings.set', tokenEpoch: 0, execute: raw => {
+        const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(raw);
+        if (!('set' in input)) throw new Error('Expected a binding patch');
+        writes.push({ environmentId: input.environmentId, expectedRevision: input.expectedRevision, set: input.set, remove: input.remove });
+        return { ok: true, environmentId: environment.id, revision: environment.revision + 1 };
+      } });
+    let mountCurrent = true;
+    const presentationHost = createPluginUiPrivatePresentationHost(undefined, { automations: {
+      accountLifetime: context.accountLifetime, target: { kind: 'app' }, isCurrent: () => mountCurrent,
+    } });
+    const setup = presentationHost.databaseWorkbench?.renderWriteSetup?.({
+      code: 'write_connection_setup_required', target: {
+        kind: 'managed_deployment', environment: { serverId: environment.serverId,
+          environmentId: environment.id, projectSourceId: environment.projectSourceId },
+        targetLinkId: targetLink.id, contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'main', database: 'shop',
+      },
+    });
+    const screen = await renderScreen(<ModalProvider><PluginUiHostPresentationScope
+      environment={projectHappierUiEnvironment(createSurfaceContextFixture())} presentationHost={presentationHost}>
+      {setup}
+    </PluginUiHostPresentationScope></ModalProvider>);
+    const setupId = 'database-workbench.write-setup';
+    await vi.waitFor(() => expect(screen.findByTestId(`${setupId}.save`)?.props.disabled).toBe(!single));
+    expect(writes).toHaveLength(0);
+    if (!single) {
+      await screen.pressByTestIdAsync(`${setupId}.secret`);
+      await act(async () => refreshSavedSecretCatalog(context.accountLifetime.scope, { includeMaterial: false }));
+      await measureMountedCollections(screen);
+      await screen.pressByTestIdAsync(`saved-secret-picker:saved:${chosen.ref}`);
+      expect(writes).toHaveLength(0);
+    }
+    if (links === 'retired mount') {
+      // The already-rendered callback must honor the captured mount's retirement.
+      mountCurrent = false;
+      await screen.pressByTestIdAsync(`${setupId}.save`);
+      expect(writes).toHaveLength(0);
+      return;
+    }
+    await screen.pressByTestIdAsync(`${setupId}.save`);
+    await vi.waitFor(() => expect(writes).toEqual([{ environmentId: environment.id, expectedRevision: environment.revision,
+      set: [{ purpose: 'dataRole', targetLinkId: targetLink.id, role: 'write',
+        source: { kind: 'secret', ref: chosen.ref, resourceRevision: chosen.revision } }], remove: [] }]));
+    expect(home.request.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith('/resources/materials'))).toHaveLength(0);
+  } finally { context.dispose(); }
+});
+
+it('creates and binds an own-server writer from staged review', async () => {
+  let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+  const writes: unknown[] = [];
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+  const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+  const { PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/advanced');
+  const { projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+  const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+  const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings, token: authoringToken,
+    serverIdentityId: `srv_${'9'.repeat(32)}`,
+    handleRequest: async (path, init) => path.startsWith('/v1/deployments/environments/')
+      ? Response.json({ ok: true, environment, targetLinks: [targetLink] })
+      : boundary?.handle(new URL(path, context.endpointUrl), init) ?? null });
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const environment = createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId!,
+    owner: { kind: 'account', accountId: context.accountId }, runtimeTargetLinkId: 'runtime-link' });
+  const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'runtime-link', environmentId: environment.id,
+    activeDeploymentId: 'deployment' });
+  const { content } = createDeploymentEnvironmentDetailV1({ environment });
+  try {
+    await context.createArtifactDocument({ artifactId: environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }, body: JSON.stringify(content) });
+    boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
+      serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: environment.controllerMachineId,
+      actionId: 'deployments.bindings.set', tokenEpoch: 0, execute: raw => {
+        const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(raw);
+        if (!('set' in input)) throw new Error('Expected a binding patch');
+        writes.push({ environmentId: input.environmentId, expectedRevision: input.expectedRevision, set: input.set, remove: input.remove });
+        return { ok: true, environmentId: environment.id, revision: environment.revision + 1 };
+      } });
+    const presentationHost = createPluginUiPrivatePresentationHost(undefined, { automations: {
+      accountLifetime: context.accountLifetime, target: { kind: 'app' }, isCurrent: () => true,
+    } });
+    const setup = presentationHost.databaseWorkbench?.renderWriteSetup?.({ code: 'write_role_setup_required', target: {
+      kind: 'deployment_service', environment: { serverId: environment.serverId,
+        environmentId: environment.id, projectSourceId: environment.projectSourceId },
+      targetLinkId: targetLink.id, deploymentId: 'deployment', serviceId: 'database', database: 'shop',
+    } });
+    const screen = await renderScreen(<PluginUiHostPresentationScope
+      environment={projectHappierUiEnvironment(createSurfaceContextFixture())} presentationHost={presentationHost}>
+      {setup}
+    </PluginUiHostPresentationScope>);
+    const save = 'database-workbench.write-setup.save';
+    await vi.waitFor(() => expect(screen.findByTestId(save)?.props.disabled).toBe(false));
+    expect(home.creations).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    await screen.pressByTestIdAsync(save);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(home.creations).toHaveLength(1);
+    expect(writes).toEqual([{ environmentId: environment.id, expectedRevision: environment.revision,
+      set: [{ purpose: 'dataRole', service: 'database', role: 'write',
+        source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(home.creations[0]!.resourceId), resourceRevision: 1 } }], remove: [] }]);
+  } finally { context.dispose(); }
+});
+
 it.each(['plain', 'e2ee'] as const)('saves and removes a literal candidate migration through Environment Settings and its real Action (%s)', async mode => {
   let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
   const writes: unknown[] = [];

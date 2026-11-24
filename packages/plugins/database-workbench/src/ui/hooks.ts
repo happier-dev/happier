@@ -128,13 +128,15 @@ export function useRelationPage(location: WorkbenchLocation) {
     const instance = useWorkbenchInstance();
     const resource = instance.page(location);
     const snapshot = useResource(resource);
+    const access = useDatabaseAccess(location.targetKey, false);
+    const denied = access.value?.setBy === 'environment' && !access.value.access.canWrite;
     return useMemo(() => ({ ...snapshot.data, columns: snapshot.data?.columns ?? emptyColumns, rows: snapshot.data?.rows ?? emptyRows,
         page: snapshot.data?.page ?? { offset: location.page.offset, limit: location.page.rows, approxTotal: null, hasNext: false },
         sort: location.sort, conditions: location.conditions,
-        capabilities: snapshot.data?.capabilities ?? { edit: false, insert: false, delete: false },
+        capabilities: denied || !snapshot.data ? { edit: false, insert: false, delete: false } : snapshot.data.capabilities,
         status: projectWorkbenchStatus(snapshot, snapshot.data?.rows.length === 0), error: snapshot.error,
         cellValue: snapshot.data?.cellValue, inspectJson: snapshot.data?.inspectJson, foreignKey: snapshot.data?.foreignKey,
-        exportInput: snapshot.data?.exportInput, refresh: () => resource.invalidate() }), [snapshot, resource, location]);
+        exportInput: snapshot.data?.exportInput, refresh: () => resource.invalidate() }), [snapshot, resource, location, denied]);
 }
 export function useStructure(relation: DatabaseRelationV1) {
     const instance = useWorkbenchInstance();
@@ -171,11 +173,13 @@ export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
     }, [instance, key]);
     return useMemo(() => ({ widths: value, commit }), [value, commit]);
 }
-export function useDatabaseAccess(targetKey: string) {
+export function useDatabaseAccess(targetKey: string, demand = true) {
     const instance = useWorkbenchInstance();
     const resource = instance.access(targetKey);
-    const snapshot = useResource(resource);
-    return useMemo(() => ({ value: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error }), [snapshot]);
+    const snapshot = useSyncExternalStore(resource.subscribe, resource.get, resource.get);
+    useEffect(() => { if (demand) void resource.demand(); }, [demand, resource]);
+    return useMemo(() => ({ value: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error,
+        refresh: resource.invalidate }), [resource, snapshot]);
 }
 export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<{ targetKey: string; relation: DatabaseRelationV1 }>) {
     const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);

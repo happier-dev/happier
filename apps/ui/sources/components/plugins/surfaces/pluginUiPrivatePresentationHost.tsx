@@ -29,7 +29,9 @@ import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmF
 import { usePluginUiPeopleDirectory } from './usePluginUiPeopleDirectory';
 import { createDatabaseActivityController } from '@/hooks/databases/activityController';
 import { createDatabaseStatsLastLook } from '@/sync/domains/databases/lastLook';
-import type { HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
+import type { HostDatabaseWorkbench, HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
+import { DeploymentWorkbenchAccessObserver, DeploymentWorkbenchAccessSettings } from '@/components/projects/deployments/DeploymentWorkbenchAccess';
+import { DeploymentWorkbenchProductionBackup, DeploymentWorkbenchWriteSetup } from '@/components/projects/deployments/DeploymentWorkbenchReview';
 import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
 import { PluginUiMenuPresentation } from './pluginUiMenuPresentation';
 import type { PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
@@ -417,7 +419,7 @@ const DATABASE_WORKBENCH_HOST = Object.freeze({
     },
     activityResource: createDatabaseActivityController,
     lastLook: createDatabaseStatsLastLook,
-});
+} satisfies HostDatabaseWorkbench);
 
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
@@ -801,6 +803,13 @@ export function createPluginUiPrivatePresentationHost(
     return Object.freeze({
         ...presentationRenderers,
         ...(automations ? {
+            databaseWorkbench: {
+                ...DATABASE_WORKBENCH_HOST,
+                renderEnvironmentAccessObserver: input => <DeploymentWorkbenchAccessObserver {...input} scope={automations} />,
+                renderEnvironmentAccessSettings: input => <DeploymentWorkbenchAccessSettings {...input} scope={automations} />,
+                renderProductionBackup: target => <DeploymentWorkbenchProductionBackup target={target} scope={automations} />,
+                renderWriteSetup: input => <DeploymentWorkbenchWriteSetup {...input} scope={automations} />,
+            } satisfies HostDatabaseWorkbench,
             renderAutomationsSection(input: import('@happier-dev/plugin-ui/components').AutomationsSectionProps) {
                 const target = automations.context?.externalActionTarget;
                 return <SubjectTriggersSection machineId={target?.kind === 'machine' ? target.machineId : undefined} subject={input.subject} subjectName={input.subjectName ?? ''} testID={input.testID}

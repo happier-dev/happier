@@ -23,7 +23,7 @@ import {
   type CodeEditorHandle,
 } from '@happier-dev/plugin-ui/components';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
-import { useDatabaseConsole, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
+import { useDatabaseAccess, useDatabaseConsole, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchLaunchInput } from './mount.js';
 import { projectColumn } from '../projections.js';
 import { CellText } from './cells.js';
@@ -248,8 +248,10 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
       message: positionedError.message }]);
   }, [editor, positionedError]);
   const descriptor = instance.target(props.targetKey);
+  const access = useDatabaseAccess(props.targetKey, false);
   const machineLabel = useDatabaseTargets(props.scope).targets.find((candidate) => candidate.targetKey === props.targetKey)?.machineLabel ?? null;
-  const canWrite = descriptor.access?.canWrite === true;
+  const canWrite = access.status !== 'unavailable' && access.status !== 'stale'
+    && (access.value?.access ?? descriptor.access)?.canWrite === true;
   const run = sql.run();
   const explain = sql.explain();
   const modes = React.useMemo(

@@ -2371,6 +2371,10 @@ owner as the page controls. Draft Read admits Access Read for the selected
 database under the invoking principal before reading either the current SQL
 draft or SQL-only History from the answering device.
 
+When a deployment is missing its writer, the Workbench keeps the staged edits.
+The manager configures the writer through `deployments.bindings.set` with the
+selected service or managed data target, then applies the same review again.
+
 In 0.3 development source, the Database Workbench's Prepare brief control
 invokes `happier.database/actions/insights/brief/build` for the selected
 finding. The build reads the selection once and takes its initial baseline

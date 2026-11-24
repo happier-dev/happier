@@ -162,8 +162,25 @@ When the database has an **Automations** section, it shows automations for that
 target.
 
 In the full workbench, open **Read only** or **Can edit** to view the agent
-access level for a worktree or manually connected database. Agent access to a
-deployed database follows its Environment's policy.
+access level. For worktree and manually connected databases, choose a level and
+select **Save**. The Machine that runs the Workbench stores that setting.
+
+For a deployed database, choose **Open Environment settings**, then find
+**Database access**. An Environment manager can turn editing off, allow editing
+by Project managers or by Project members who can deploy, or choose people,
+groups, and Teams from the Project audience. Preview Environments inherit the template's
+policy. Agent levels are **None**, **Read**, **Read and write (asks first)**, and
+**Read and write (no approval)**. Acting as an agent never expands the person's
+access. A person's stricter approval settings still apply.
+
+Stage changes in the Workbench and review them before choosing **Apply**. A
+production review names the destination Environment and shows available backup
+controls. Choose **Back up now** to run a configured backup before applying.
+If a writer is missing, an Environment manager can use **Set up write login**
+on their own server. For a managed database, select **Save write connection**
+to use the Environment's direct writer connection. Choose its Saved Secret first
+if the Environment does not already identify it.
+After setup succeeds, apply the same staged changes again.
 
 - In a table, open a row and use **Referenced by** to jump to rows in another
   table that point to it. The destination opens with the selected row's key

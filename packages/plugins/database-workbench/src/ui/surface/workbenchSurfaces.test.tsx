@@ -413,6 +413,63 @@ describe('Database workbench surfaces', () => {
     }
   });
 
+  it('refreshes the open Environment access word on publication without polling', async () => {
+    const target = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+      deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing_dev' } as const;
+    const connected = { ...descriptor, target, access: { canRead: true, canWrite: true } };
+    const digest = `sha256:${computeSha256HexDigest(JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] }))}`;
+    const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
+    const daemon = daemonAnswers([connected]);
+    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
+      if (request.action !== readAccess) return daemon(request);
+      expect(request.input).toEqual({ target });
+      return { setBy: 'environment', serverId: 'home', environmentId: 'template', expectedRevision: 2,
+        access: { canRead: true, canWrite: false, reason: 'database_not_an_editor' } };
+    });
+    let publish: (() => void) | undefined;
+    const databaseWorkbench = {
+      activityResource: () => { throw new Error('Unexpected Activity demand'); },
+      lastLook: () => { throw new Error('Unexpected Last Look demand'); },
+      renderEnvironmentAccessObserver: ({ onChanged }: { onChanged: () => void }) => {
+        publish = onChanged;
+        return null;
+      },
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'environment-access', mountNonce: 'environment-access' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)} presentationHost={{
+          renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
+          renderPopover: input => input.content({ presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose }),
+        }}>{renderPage(context)}</PluginUiHostPresentationScope>,
+      subPath: encodeWorkbenchRootSubPath(target),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction,
+        async watchResource() { return { digest }; },
+        async readResource() {
+          const body = { descriptor: connected, ownWriteRevision: 0, relationRevisions: [] };
+          return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(JSON.stringify(body)) };
+        },
+      },
+    });
+    try {
+      expect(await fixture.getByRole('button', { name: 'Can edit' })).toBeTruthy();
+      const reads = () => executeAction.mock.calls.filter(([request]) => request.action === readAccess);
+      expect(reads()).toHaveLength(0);
+      expect(publish).toBeTypeOf('function');
+      await act(async () => { publish?.(); });
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Read only' }));
+      expect(await fixture.getByText('You aren’t in this Environment’s database editors.')).toBeTruthy();
+      expect(reads()).toHaveLength(1);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('reopens a saved database when the person retries its failed connection read', async () => {
     const connection = connectionResourceHandlers();
     const watchResource = vi.fn(connection.watchResource)
@@ -749,6 +806,71 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByText('New row')).toBeTruthy();
       expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
       expect(executeAction).not.toHaveBeenCalled();
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each(['deployment_service', 'managed_deployment'] as const)('keeps the reviewed production draft when %s write setup is required', async kind => {
+    const environment = { serverId: 'home', environmentId: 'env', projectSourceId: 'source' } as const;
+    const link = { environment, targetLinkId: 'link', database: 'billing_dev' };
+    const target = kind === 'deployment_service'
+      ? { ...link, kind, deploymentId: 'deployment', serviceId: 'postgres' }
+      : { ...link, kind, contribution: { pluginId: 'fixture.database', contributionId: 'postgres' }, platformProjectId: 'project', branchId: 'branch' };
+    const connected = { ...descriptor, target, origin: { label: 'Customer production', environment: 'production' as const },
+      access: { canRead: true, canWrite: true } };
+    const body = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
+    const digest = `sha256:${computeSha256HexDigest(body)}`;
+    const code = kind === 'deployment_service' ? 'write_role_setup_required' : 'write_connection_setup_required';
+    let configured = false;
+    const write = vi.fn(async (_request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => configured
+      ? { ok: true as const, result: { ok: true, operation: 'edits.apply', status: 'committed', inserted: '1', updated: '0', deleted: '0' } }
+      : { ok: false as const, errorCode: code, error: code });
+    const control = createPluginUiActionControlTestHost(write);
+    const databaseWorkbench = {
+      activityResource: () => { throw new Error('Unexpected Activity demand'); },
+      lastLook: () => { throw new Error('Unexpected Last Look demand'); },
+      renderProductionBackup: () => <Button title="Back up now" onPress={() => {}} />,
+      renderWriteSetup: (input: unknown) => {
+        expect(input).toEqual({ target, code });
+        return <Button title="Set up database writes" onPress={() => { configured = true; }} />;
+      },
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: kind, mountNonce: kind },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{
+          renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
+          renderPopover: input => input.open ? input.content({
+            presentation: 'sheet', maxHeight: 10_000, requestClose: input.onRequestClose,
+          }) : null,
+        }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: connected }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([connected], true), actionControl: control.handler,
+        async watchResource() { return { digest }; },
+        async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(body) }; },
+      },
+    });
+    try {
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'New row' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+      await act(async () => control.press('Apply to Production'));
+      const setup = await fixture.getByRole('button', { name: 'Set up database writes' });
+      expect(await fixture.getByRole('button', { name: 'Back up now' })).toBeTruthy();
+      expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
+      expect(write).toHaveBeenCalledTimes(1);
+      await fixture.press(setup);
+      expect(write).toHaveBeenCalledTimes(1);
+      await act(async () => control.press('Apply to Production'));
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1]?.[0].input).toEqual(write.mock.calls[0]?.[0].input);
     } finally { await fixture.dispose(); }
   });
 
