@@ -48,13 +48,15 @@ describe('ensureUiWebWorkspacePrebuild', () => {
     expect(evalSource).not.toContain('ensureWorkspacePackagesBuiltForComponent');
   });
 
-  it('runs the prebuild module in Node with the workspace TypeScript loader', async () => {
+  it('selects source preparation in Node with the workspace TypeScript loader', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-prebuild-source-'));
     testDirs.push(testDir);
     const modulePath = join(testDir, 'ensureWorkspacePackagesBuilt.mjs');
     await writeFile(modulePath, `
       import { definition } from './definition.js';
-      export async function ensureUiWorkspacePackagesBuilt() { return definition; }
+      export async function ensureUiWorkspacePackagesBuilt({ source = false }) {
+        return { ...definition, source };
+      }
     `);
     await writeFile(join(testDir, 'definition.ts'), `
       type DefinitionLifetime = { value: string };
@@ -82,6 +84,6 @@ describe('ensureUiWebWorkspacePrebuild', () => {
     });
 
     expect(JSON.parse(await readFile(join(testDir, 'ui.web.prebuild.stdout.log'), 'utf8')))
-      .toEqual({ value: 'staged-source' });
+      .toEqual({ value: 'staged-source', source: true });
   });
 });

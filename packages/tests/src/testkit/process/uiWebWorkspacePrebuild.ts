@@ -58,7 +58,7 @@ export async function ensureUiWebWorkspacePrebuild(params: {
             'const { ensureUiWorkspacePackagesBuilt } = await import(uiWorkspaceBuildModuleUrl);',
             'const uiPackageDir = process.argv[1];',
             "if (!uiPackageDir) throw new Error('missing uiPackageDir');",
-            'const res = await ensureUiWorkspacePackagesBuilt({ uiPackageDir, env: process.env });',
+            'const res = await ensureUiWorkspacePackagesBuilt({ uiPackageDir, env: process.env, source: true });',
             'process.stdout.write(`${JSON.stringify(res)}\\n`);',
           ].join('\n'),
           params.workspaceRootDir,
