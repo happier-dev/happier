@@ -51,7 +51,8 @@ import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArti
     computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
-import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
+    type DeploymentBindingsSetStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowListRequestV1Schema, ProjectAccountRowMutationRequestV1Schema,
     PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -1127,7 +1128,8 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     }
     if (domainRead) return false;
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId },
-        select: { id: true, projectSourceId: true, contentArtifactId: true } });
+        select: { id: true, projectSourceId: true, contentArtifactId: true,
+            runtimeTargetLink: { select: { contentArtifactId: true } } } });
     if (!environment) return false;
     if (method === 'GET' && proof.body === undefined) {
         if (!bindings && await isDeploymentPreparationMachineReadHttpPurposeInTx(tx,
@@ -1139,6 +1141,10 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
             if (proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') return matches({});
             if (proof.path === `/v1/artifacts/${encodeURIComponent(environment.contentArtifactId)}`) return matches({ id: environment.contentArtifactId });
         }
+        // The telemetry bindings writer opens the current runtime Link it rewrites.
+        const runtimeLinkArtifactId = telemetry && bindings ? environment.runtimeTargetLink?.contentArtifactId : undefined;
+        if (runtimeLinkArtifactId && proof.path === `/v1/artifacts/${encodeURIComponent(runtimeLinkArtifactId)}`)
+            return matches({ id: runtimeLinkArtifactId });
         if (bindings) return false;
         if (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
             const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
@@ -1158,8 +1164,12 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     if (!telemetry && admission.intent === 'test' || effectActionId !== admission.actionId && !bindings) return false;
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId,
         actionId: bindings ? DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 : DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 });
-    const publication = await readDeploymentPrivateCandidatePublicationHttpPurpose(tx, admission.environmentId, proof, id,
-        DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+    // Telemetry bindings on a platform runtime Link also publish that Link's candidate.
+    const linkCandidateId = telemetry && bindings ? readDeploymentBindingsCandidateIds(binding, admission.environmentId).link : undefined;
+    const publication = linkCandidateId
+        ? await readDeploymentBindingsCandidatePublicationHttpPurpose(tx, binding, admission.environmentId, proof)
+        : await readDeploymentPrivateCandidatePublicationHttpPurpose(tx, admission.environmentId, proof, id,
+            DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
     if (publication !== null) return publication;
     if (method !== 'POST') return false;
     const base = `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}`;
@@ -1180,7 +1190,21 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
         && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
         && (!telemetry || 'telemetryMachineId' in parsed.data
             && (admission.collector === undefined || parsed.data.telemetryMachineId === (admission.collector?.machineId ?? null)))
+        && (!telemetry || await isAdmittedBindingsLinkCandidateInTx(tx, binding,
+            'targetLinkContent' in parsed.data ? parsed.data.targetLinkContent : undefined, linkCandidateId))
         && matches(parsed.data);
+}
+
+/**
+ * A bindings write may carry only its own published Link candidate for a Link of the
+ * admitted Environment. The bindings writer pins the runtime Link and its current revision.
+ */
+async function isAdmittedBindingsLinkCandidateInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    candidate: DeploymentBindingsSetStorageInputV1['targetLinkContent'], linkCandidateId: string | undefined): Promise<boolean> {
+    if (candidate === undefined) return true;
+    return linkCandidateId !== undefined && candidate.contentArtifactId === linkCandidateId
+        && candidate.contentHeaderVersion === 1 && candidate.contentBodyVersion === 1
+        && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, { targetLinkId: candidate.targetLinkId }) === true;
 }
 
 
@@ -1269,14 +1293,7 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
     }
     if (effectActionId !== binding.actionId) return null;
     if (effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && binding.environmentId) {
-        const environmentId = binding.environmentId;
-        const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId });
-        const linkId = createDeploymentLinkContentArtifactIdV1({ ...binding, deploymentLinkAdmission: { environmentId } });
-        const publishesLink = proof.path === '/v1/artifacts'
-            ? typeof proof.body === 'object' && proof.body !== null && 'id' in proof.body && proof.body.id === linkId
-            : proof.path.startsWith(`/v1/artifacts/${encodeURIComponent(linkId)}/access/`);
-        return readDeploymentPrivateCandidatePublicationHttpPurpose(tx, environmentId, proof,
-            publishesLink ? linkId : id, publishesLink ? DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 : DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+        return readDeploymentBindingsCandidatePublicationHttpPurpose(tx, binding, binding.environmentId, proof);
     }
     const admission = binding.deploymentNativeAdmission;
     if (effectActionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1) return null;
@@ -1301,6 +1318,25 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
     }
     return readDeploymentPrivateCandidatePublicationHttpPurpose(tx, admission.environmentId, proof, id,
         DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+}
+
+/** The deterministic private candidates one bindings write publishes: its Environment and its runtime Link. */
+function readDeploymentBindingsCandidateIds(binding: ExternalActionExecutionAuthorizationBindingV1, environmentId: string) {
+    // A reviewed bindings child (telemetry) names its candidates as the bindings write it performs.
+    const signed = { ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 };
+    return { environment: createDeploymentEnvironmentContentArtifactIdV1({ ...signed, environmentId }),
+        link: createDeploymentLinkContentArtifactIdV1({ ...signed, deploymentLinkAdmission: { environmentId } }) };
+}
+
+async function readDeploymentBindingsCandidatePublicationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    environmentId: string, proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): Promise<boolean | null> {
+    const ids = readDeploymentBindingsCandidateIds(binding, environmentId);
+    const publishesLink = proof.path === '/v1/artifacts'
+        ? typeof proof.body === 'object' && proof.body !== null && 'id' in proof.body && proof.body.id === ids.link
+        : proof.path.startsWith(`/v1/artifacts/${encodeURIComponent(ids.link)}/access/`);
+    return readDeploymentPrivateCandidatePublicationHttpPurpose(tx, environmentId, proof, publishesLink ? ids.link : ids.environment,
+        publishesLink ? DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 : DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
 }
 
 async function readDeploymentPrivateCandidatePublicationHttpPurpose(tx: Tx, environmentId: string,

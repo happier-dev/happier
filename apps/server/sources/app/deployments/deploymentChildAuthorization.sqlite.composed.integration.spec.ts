@@ -82,7 +82,8 @@ import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_
     encodePlainMachineStoredContent, encodePlainArtifactStoredContent, type DeploymentChildRpcV1, projectDeploymentChildRoutingV1,
     computeDeploymentTransitionRequestDigestV1, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptResultV1Schema, DeploymentReceiptListInputV1Schema,
     DeploymentChildRpcV1Schema, DeploymentTeardownReviewChildRpcV1Schema, DeploymentTransitionInputV1Schema, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
-import { DeploymentDomainMutationResultV1Schema, DeploymentDomainCapturedPlacementsV1Schema, deploymentDomainObservationProofPayloadV1 } from '@happier-dev/protocol';
+import { DeploymentDomainMutationResultV1Schema, DeploymentDomainCapturedPlacementsV1Schema, deploymentDomainObservationProofPayloadV1,
+    DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0,
     openSessionDataKeyBundleV0, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -103,7 +104,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, EXTERNAL_ACTION_EF
     EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, projectDeploymentPreparationAdmissionV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1, projectDeploymentNativeAdmissionV1, projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectDeploymentReadAdmissionV1,
     projectRegistryAppUpdateAdmissionV1, createDeploymentDomainContentArtifactIdV1,
-    createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
+    createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
     type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import * as machineHttpProof from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -6798,6 +6799,88 @@ describe('deployment children retain their controller Action authority', () => {
         expect.soft(await inTx(tx => readProjectDeploymentDefaultsInTx(tx, f.account.id,
             { serverId, projectSourceId: sourceId }, {}, authorization.binding))).toMatchObject({ ok: true });
         await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('publishes and stores only the %s runtime Link candidate of the telemetry bindings child', async mode => {
+        // A platform runtime Link carries the provider-owned variables, so its bindings write
+        // publishes a Link candidate and CASes that Link (prepareDeploymentBindingsForHost).
+        const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true, platformTarget: 'vercel' });
+        const foreign = await fixture('account', 'account', { contentMode: mode, platformTarget: 'vercel' });
+        const actionId = 'deployments.environments.telemetry.set';
+        const bindingAction = 'deployments.bindings.set';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const original = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            collector: { machineId: f.controller.id } };
+        const requestId = crypto.randomUUID();
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding: { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target }, input: original,
+            material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+            : { v: 1 as const, requestId, target, input: original };
+        const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+            authentication, actionId, machineId: f.controller.id, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+            { input: mode === 'e2ee' ? native : original, deploymentNativeAdmission: native });
+        const bindingInput = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            set: [], remove: [], telemetryMachineId: f.controller.id };
+        const reviewedChild = { actionId: bindingAction, role: 'telemetry.bindings',
+            inputDigest: computeActionInputApprovalDigestV1(bindingAction, bindingInput) };
+        const verify = (method: string, path: string, body?: unknown, routeInput?: unknown) => verifyExternalActionDomainExecutionRequest({
+            authorizationToken: authorization.token, effectActionId: bindingAction, encodedTarget: encodeExternalActionResolvedTargetV1(target),
+            method, path, body, routeInput, reviewedChild,
+            machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: bindingAction,
+                target, installationId: f.controller.installationId, requestId: authorization.binding.requestId,
+                method, path, body, reviewedChild, privateKey: f.controller.keys.secretKey }),
+        });
+        const environmentCandidate = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding,
+            actionId: bindingAction, environmentId: f.environment.id });
+        // The same deterministic Link candidate identity the ordinary bindings root publishes.
+        const linkCandidate = createDeploymentLinkContentArtifactIdV1({ ...authorization.binding, actionId: bindingAction,
+            deploymentLinkAdmission: { environmentId: f.environment.id } });
+        const publish = (id: string, kind: string) => verify('POST', '/v1/artifacts',
+            { id, kind, header: 'sealed-header', body: 'sealed-body', dataEncryptionKey: 'sealed-key' });
+        if (mode === 'plain') {
+            // The ordinary bindings root publishes the same deterministic Link candidate through the same owner.
+            const ordinaryRequestId = crypto.randomUUID();
+            const ordinaryEnvelope = { v: 1 as const, requestId: ordinaryRequestId, target, input: bindingInput };
+            const ordinary = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+                authentication, actionId: bindingAction, machineId: f.controller.id, target, requestId: ordinaryRequestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(ordinaryEnvelope) }, { input: bindingInput });
+            const ordinaryLink = createDeploymentLinkContentArtifactIdV1({ ...ordinary.binding,
+                deploymentLinkAdmission: { environmentId: f.environment.id } });
+            const body = { id: ordinaryLink, kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, header: 'sealed-header',
+                body: 'sealed-body', dataEncryptionKey: 'sealed-key' };
+            expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: ordinary.token, effectActionId: bindingAction,
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'POST', path: '/v1/artifacts', body,
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: ordinary.token, effectActionId: bindingAction,
+                    target, installationId: f.controller.installationId, requestId: ordinaryRequestId,
+                    method: 'POST', path: '/v1/artifacts', body, privateKey: f.controller.keys.secretKey }) })).not.toBeNull();
+        }
+        expect(await publish(environmentCandidate, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1)).not.toBeNull();
+        expect(await publish(linkCandidate, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1)).not.toBeNull();
+        // The writer first opens the current runtime Link it rewrites, and no other Link.
+        expect(await verify('GET', `/v1/artifacts/${f.link.contentArtifactId}`, undefined, { id: f.link.contentArtifactId })).not.toBeNull();
+        expect(await verify('GET', `/v1/artifacts/${foreign.link.contentArtifactId}`, undefined,
+            { id: foreign.link.contentArtifactId })).toBeNull();
+        for (const [id, kind] of [[crypto.randomUUID(), DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1],
+            [linkCandidate, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1],
+            [environmentCandidate, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1]] as const) expect(await publish(id, kind)).toBeNull();
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        const linkContent = { targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+            contentArtifactId: linkCandidate, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const storage = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, contentArtifactId: environmentCandidate, contentHeaderVersion: 1,
+            contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [], telemetryMachineId: f.controller.id,
+            targetLinkContent: linkContent });
+        expect(await verify('POST', path, storage, storage)).not.toBeNull();
+        // Only this root's own Link candidate, as the first version, of a Link in the admitted Environment.
+        // The bindings writer still pins the runtime Link and its current revision.
+        for (const patch of [{ contentArtifactId: crypto.randomUUID() }, { contentArtifactId: environmentCandidate },
+            { contentHeaderVersion: 2 }, { targetLinkId: foreign.link.id }]) {
+            const changed = { ...storage, targetLinkContent: { ...linkContent, ...patch } };
+            expect(await verify('POST', path, changed, changed)).toBeNull();
+        }
     });
 
     it.each(['plain', 'e2ee'] as const)('admits a %s reviewed public collector Domain read only for its enrolled collector App', async mode => {
