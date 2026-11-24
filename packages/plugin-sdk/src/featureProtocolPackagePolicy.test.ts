@@ -524,8 +524,6 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'TelemetryEnvironmentMetricsReadInputV1Schema',
         'TelemetryEnvironmentMetricsReadResultV1',
         'TelemetryEnvironmentMetricsReadResultV1Schema',
-        'TelemetryEnvironmentMetricsResourceInputV1',
-        'TelemetryEnvironmentMetricsResourceInputV1Schema',
         'TelemetryKeyFlowConfigV1',
         'TelemetryKeyFlowConfigV1Schema',
         'TelemetryKeyFlowMeasureV1',

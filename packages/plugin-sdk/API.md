@@ -1979,8 +1979,6 @@
 | `./database` | `TelemetryEnvironmentMetricsReadInputV1Schema` | value | any |
 | `./database` | `TelemetryEnvironmentMetricsReadResultV1` | type | any |
 | `./database` | `TelemetryEnvironmentMetricsReadResultV1Schema` | value | any |
-| `./database` | `TelemetryEnvironmentMetricsResourceInputV1` | type | any |
-| `./database` | `TelemetryEnvironmentMetricsResourceInputV1Schema` | value | any |
 | `./database` | `TelemetryKeyFlowConfigV1` | type | any |
 | `./database` | `TelemetryKeyFlowConfigV1Schema` | value | any |
 | `./database` | `TelemetryKeyFlowMeasureV1` | type | any |

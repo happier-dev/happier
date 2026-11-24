@@ -5,6 +5,7 @@ import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plu
 import { createListExtensionSource, createServiceColumnSource } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { createPluginRegistrationScope } from '@/sync/domains/plugins/registrationScope';
+import { resolveCollectionColumns } from '@/components/ui/lists/collection/collectionColumns';
 import { admitPluginListFilterFieldV1, compileEntityListFilterV1, createPluginListFilterFieldRegistryV1,
     type PluginListFilterFactsV1, type PluginListFilterSelectionV1 } from '@happier-dev/plugin-sdk/ui';
 import { normalizePluginInstalledUiDeclarations } from './projection';
@@ -14,8 +15,8 @@ import * as fieldOwner from '@happier-dev/protocol/collections/filter/pluginList
 it('addresses public service Resource values by row before applying the existing scalar ingress', () => {
     expect(fieldOwner).toHaveProperty('PluginServiceListFieldResourceInputV1Schema');
     expect(fieldOwner).toHaveProperty('PluginServiceListFieldResourceResultV1Schema');
-    expect(fieldOwner.PluginServiceListFieldResourceInputV1Schema.parse({ entity: 'service', environmentIds: ['zero', 'busy', 'missing'] }))
-        .toEqual({ entity: 'service', environmentIds: ['zero', 'busy', 'missing'] });
+    const input = { entity: 'service', serverId: 'home', environmentIds: ['zero', 'busy', 'missing'] };
+    expect(fieldOwner.PluginServiceListFieldResourceInputV1Schema.parse(input)).toEqual(input);
     const result = fieldOwner.PluginServiceListFieldResourceResultV1Schema.parse({ items: [
         { environmentId: 'zero', value: 0 }, { environmentId: 'busy', value: 7 },
     ] });
@@ -63,11 +64,13 @@ it('publishes external list declarations to the held-fact consumer and withdraws
     const retiredRuntime = union.publish([{ ...members[0]!, projection: withdrawn }], new Map()).pluginUiProjection;
     const retired = installed.publish([withdrawn], retiredRuntime);
     expect(retired?.listExtensionsById).toEqual({});
-    expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([]), selected)({})).toBe('unavailable');
+    const retiredFields = createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>([]);
+    expect(compileEntityListFilterV1(retiredFields, selected)({})).toBe('match');
+    expect(compileEntityListFilterV1(retiredFields, selected, 'daemonRule')({})).toBe('unavailable');
     expect(reads).toBe(0);
 });
 
-it('publishes default-off numeric service column metadata without acquiring its Resource and retires its qualified identity', () => {
+it('restores a retired public service column in the Collection that saved its placement without acquiring its Resource', () => {
     let reads = 0;
     const plugin = createServiceColumnSource(() => reads++);
     const parsed = parsePluginManifest(plugin.manifest);
@@ -76,8 +79,10 @@ it('publishes default-off numeric service column metadata without acquiring its 
     const manifest = PluginManifestV2Schema.parse(parsed.manifest);
     const declarations = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest));
     const installed = createInstalledPluginUiProjectionPublication();
-    const held = installed.publish([declarations], undefined);
-    const extension = held?.listExtensionsById['listExtension:com.acme.requests:traffic'];
+    const publication = () => installed.publish([declarations], undefined);
+    const held = publication();
+    const id = 'listExtension:com.acme.requests:traffic';
+    const extension = held?.listExtensionsById[id];
     expect(extension?.listExtension.entity).toBe('service');
     const admitted = admitPluginListFilterFieldV1({ pluginId: manifest.id,
         field: extension?.listExtension.filterFields?.[0], factKeys: new Set() });
@@ -85,8 +90,17 @@ it('publishes default-off numeric service column metadata without acquiring its 
     if (admitted.kind !== 'admitted') throw new Error('Expected service field admission');
     expect(admitted.field.id).toBe('com.acme.requests/requests');
     expect(admitted.field.declaration.value).toEqual({ kind: 'number', unit: '{request}' });
-    expect(admitted.field.declaration.column).toEqual({ title: 'Requests', width: 112,
+    expect(admitted.field.declaration.column).toEqual({ title: 'Requests', qualifier: '24 h', width: 112,
         align: 'end', priority: 20, defaultHidden: true });
-    expect(installed.publish([normalizePluginInstalledUiDeclarations({})], undefined)?.listExtensionsById).toEqual({});
+    const field = { id: admitted.field.id, title: 'Requests', defaultHidden: true };
+    const identity = { id: 'name', title: 'Name', primary: true };
+    const saved = { orderedIds: [field.id], placements: { [field.id]: 'pinned' as const } };
+    const columns = (current: typeof held) => current?.listExtensionsById[id] ? [identity, field] : [identity];
+    expect(resolveCollectionColumns(columns(held), saved).visibleIds).toEqual(['name', field.id]);
+    const retired = installed.publish([normalizePluginInstalledUiDeclarations({})], undefined);
+    expect(resolveCollectionColumns(columns(retired), saved).visibleIds).toEqual(['name']);
+    const restored = publication();
+    expect(resolveCollectionColumns(columns(restored), saved).visibleIds).toEqual(['name', field.id]);
+    expect(resolveCollectionColumns(columns(restored)).visibleIds).toEqual(['name']);
     expect(reads).toBe(0);
 });

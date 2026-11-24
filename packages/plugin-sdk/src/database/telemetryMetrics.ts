@@ -34,9 +34,6 @@ export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
 const environmentBatch = { serverId: text, environmentIds: z.array(text).check(z.minLength(1)) };
 export const TelemetryEnvironmentMetricsReadInputV1Schema = z.strictObject({ ...environmentBatch, since: time, until: time,
     measure: z.strictObject({ kind: z.literal('http'), statistic: z.literal('requests') }) });
-/** The live Resource advances this duration only when mounted demand reads or the collector pushes. */
-export const TelemetryEnvironmentMetricsResourceInputV1Schema = z.strictObject({ ...environmentBatch,
-    windowMs: z.number().check(z.int(), z.positive()) });
 export const TelemetryEnvironmentMetricsReadResultV1Schema = z.strictObject({ items: z.array(z.strictObject({
     environmentId: text, ...TelemetryMetricsReadResultV1Schema.shape,
 })) });
@@ -61,7 +58,6 @@ export function projectTelemetryMetricsActionReadResultV1(input: z.input<typeof 
 }
 export type TelemetryEnvironmentMetricsReadInputV1 = z.infer<typeof TelemetryEnvironmentMetricsReadInputV1Schema>;
 export type TelemetryEnvironmentMetricsReadResultV1 = z.infer<typeof TelemetryEnvironmentMetricsReadResultV1Schema>;
-export type TelemetryEnvironmentMetricsResourceInputV1 = z.infer<typeof TelemetryEnvironmentMetricsResourceInputV1Schema>;
 export const TelemetryMetricsReadResultV1ProtocolSchema: ProtocolComposableSchema<
     z.input<typeof TelemetryMetricsReadResultV1Schema>, TelemetryMetricsReadResultV1 & ProtocolJsonValue
 > = projectZodProtocolSchema(TelemetryMetricsReadResultV1Schema);
@@ -83,9 +79,6 @@ export const TelemetryEnvironmentMetricsReadInputV1ProtocolSchema: ProtocolCompo
     z.input<typeof TelemetryEnvironmentMetricsReadInputV1Schema>, TelemetryEnvironmentMetricsReadInputV1 & ProtocolJsonValue
 > = projectZodProtocolSchema(TelemetryEnvironmentMetricsReadInputV1Schema);
 
-export const TelemetryEnvironmentMetricsResourceInputV1ProtocolSchema: ProtocolComposableSchema<
-    z.input<typeof TelemetryEnvironmentMetricsResourceInputV1Schema>, TelemetryEnvironmentMetricsResourceInputV1 & ProtocolJsonValue
-> = projectZodProtocolSchema(TelemetryEnvironmentMetricsResourceInputV1Schema);
 
 export const TelemetryEnvironmentMetricsReadResultV1ProtocolSchema: ProtocolComposableSchema<
     z.input<typeof TelemetryEnvironmentMetricsReadResultV1Schema>, TelemetryEnvironmentMetricsReadResultV1 & ProtocolJsonValue

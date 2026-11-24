@@ -11,7 +11,6 @@ export {
     TelemetryMetricsReadInputV1Schema,
     TelemetryMetricsReadResultV1Schema,
     TelemetryEnvironmentMetricsReadInputV1Schema,
-    TelemetryEnvironmentMetricsResourceInputV1Schema,
     TelemetryEnvironmentMetricsReadResultV1Schema,
     TelemetryMetricsActionReadInputV1ProtocolSchema,
     TelemetryMetricsActionReadResultV1ProtocolSchema,
@@ -23,7 +22,6 @@ export {
 export type {
     TelemetryEnvironmentMetricsReadInputV1,
     TelemetryEnvironmentMetricsReadResultV1,
-    TelemetryEnvironmentMetricsResourceInputV1,
     TelemetryMetricsReadResultV1,
     TelemetryMetricsReadInputV1,
     TelemetryKeyFlowConfigV1,

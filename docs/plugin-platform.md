@@ -1842,10 +1842,11 @@ and Resources only. The same field declaration supports service-entity numeric
 columns with units and optional presentation metadata; number fields remain
 display-only. The declaration path adds no Resource demand or runtime binding.
 The Services fact adapter binds Resource columns to the public closed
-`{entity:'service', environmentIds:[...]}` launch input and reads
-`{items:[{environmentId,value}]}`. The existing field ingress admits each row's
-scalar value; absent rows stay unknown. These input/result schemas are exported
-from `@happier-dev/plugin-sdk/ui`, without a public trend schema.
+`{entity:'service', serverId, environmentIds:[...]}` launch input. Each result
+row supplies `environmentId`, `value`, and optional `provenance` and `trend`.
+The existing field ingress admits each scalar. A null value or absent row stays
+unknown, and producers can explain a null measurement through its provenance.
+The schemas are exported from `@happier-dev/plugin-sdk/ui`.
 Services' default-off Requests field consumes the existing `capture-view`
 Resource with one mounted Environment batch per collector. The metric Action
 retains its individual-service read and also accepts selected Environment ids;

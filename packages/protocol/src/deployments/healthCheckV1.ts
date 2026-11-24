@@ -42,9 +42,8 @@ const finiteCause = lazyZodSchema(() => z.strictObject({
     remedy: z.optional(z.string()),
 }));
 
-/** Finite numeric observations only. Raw telemetry and trends stay at their producer. */
-const measured = lazyZodSchema(() => z.strictObject({
-    measure: z.string(), value: z.optional(z.number()), unit: z.string(),
+/** The producer and coverage of a finite measurement, independent of the presentation consuming it. */
+export const MeasurementProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
     basis: z.enum(['metric_points', 'sampled_spans', 'mixed_telemetry', 'catalog_estimate', 'provider_reported']),
     producers: z.array(z.strictObject({ serviceName: z.optional(z.string()),
         serviceVersion: z.optional(z.string()), serviceInstanceId: z.optional(z.string()) })),
@@ -53,6 +52,12 @@ const measured = lazyZodSchema(() => z.strictObject({
     observedWindow: z.optional(z.strictObject({ since: z.number().check(z.nonnegative()), until: z.number().check(z.nonnegative()) })),
     completeness: z.enum(['complete', 'partial', 'unknown']),
     reasons: z.array(z.string()),
+}));
+
+/** Finite numeric observations only. Raw telemetry and trends stay at their producer. */
+const measured = lazyZodSchema(() => z.strictObject({
+    measure: z.string(), value: z.optional(z.number()), unit: z.string(),
+    ...MeasurementProvenanceV1Schema.shape,
     p50Ms: z.optional(z.number().check(z.nonnegative())),
     p95Ms: z.optional(z.number().check(z.nonnegative())),
     errorRate: z.optional(z.number().check(z.minimum(0), z.maximum(1))),

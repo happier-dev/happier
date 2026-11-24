@@ -27,13 +27,14 @@ mounted consuming cells demand the existing Resource, in Environment batches
 per collector; discovering choices performs no read.
 
 A service field Resource receives
-`launchInput: { entity: 'service', environmentIds: ['...'] }` and returns
+`launchInput: { entity: 'service', serverId, environmentIds: ['...'] }` and returns
 `{ items: [{ environmentId: '...', value: 0 }] }`. Import
 `PluginServiceListFieldResourceInputV1Schema` and
 `PluginServiceListFieldResourceResultV1Schema` from
-`@happier-dev/plugin-sdk/ui` to parse this boundary. Each addressed value uses
-the field's existing scalar/set/time/boolean admission; omitted rows remain
-unknown. This public envelope does not define a trend format.
+`@happier-dev/plugin-sdk/ui` to parse this boundary. Each row may include
+`provenance` with producer identities, requested and observed windows, and
+coverage. A `trend` contains ordered `{ at, value }` points in the field's unit.
+Use null for a gap or an unknown scalar. Omitted rows also remain unknown.
 Matching development hosts are required; an older strict reader can reject the
 added declaration. See the maintained
 [external-author fixture](https://github.com/happier-dev/happier/blob/main/packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source.ts).

@@ -168,13 +168,14 @@ known zero and rejects missing or non-finite values. Numeric fields do not gain
 time-filter operators or numeric sorting.
 
 For a service field whose source is a Resource, the Services fact adapter binds
-`launchInput: { entity: 'service', environmentIds: [...] }` for the mounted rows.
-The public Resource result is `{ items: [{ environmentId, value }] }`, admitted
-by `PluginServiceListFieldResourceResultV1Schema`; each addressed value then
-passes the existing field-specific scalar/set/time/boolean ingress. An omitted
-row remains unknown. The public SDK exports both input and result schemas from
-`@happier-dev/plugin-sdk/ui`. This envelope adds row addressing, not a trend
-grammar or a second field identity.
+`launchInput: { entity: 'service', serverId, environmentIds: [...] }` for the
+mounted rows. `PluginServiceListFieldResourceResultV1Schema` admits the batch.
+Each row's scalar then passes the existing field-specific admission. A numeric
+null or omitted row remains unknown. Optional provenance describes the emitted
+producer identities, requested window, observed window when available, coverage,
+and its reasons. An optional ordered trend gives `{ at, value }` points in the
+declared unit, with null points representing gaps. The public SDK exports the
+input and result schemas from `@happier-dev/plugin-sdk/ui`.
 
 Services Apps' optional **Requests · 24 h** field uses this declaration and is
 off by default. Its row is an Environment: the existing telemetry metric owner

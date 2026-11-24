@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { definePlugin, PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
+import { PluginServiceListFieldResourceResultV1Schema } from '@happier-dev/plugin-sdk/ui';
 import * as database from '@happier-dev/database-protocol';
 import { createCaptureActions, createCaptureSelectedSourceReaders } from './actions.js';
 import { createCaptureResourceRuntime } from './resources.js';
@@ -30,15 +31,16 @@ describe('capture demanded Resource through real public Actions', () => {
             services: { storage, deploymentDatabases } });
         let reads = 0;
         const options: PluginDynamicResourceInvocationOptionsV1 = { signal: lifetime.signal,
-            context: { kind: 'surface', mountInstanceKey: 'requests', launchInput: { view: 'metrics', input: {
-                serverId: 'home', environmentIds: ['app', 'empty'], windowMs: 1000,
-            } } },
+            context: { kind: 'surface', mountInstanceKey: 'requests', launchInput: {
+                entity: 'service', serverId: 'home', environmentIds: ['app', 'empty'],
+            } },
             resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
             observeAction: unavailable,
             async readAction(ref, input) { reads++; return { ok: true, result: await host.invokeAction(ref.localId, input) }; },
         };
         try {
-            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(2000);
+            const until = database.TELEMETRY_REQUESTS_WINDOW_MS_V1 + 1000;
+            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(until);
             await lease.runtime.store.write(['web', 'worker'].map((serviceName, index) => ({ id: serviceName,
                 kind: 'span' as const, spanKind: 2, source: 'otlp' as const, worktree: 'environment:app', at: 1500 + index,
                 serviceName, durationMs: 1 })));
@@ -48,10 +50,11 @@ describe('capture demanded Resource through real public Actions', () => {
             let invalidations = 0;
             const observation = await producer.observe(() => { invalidations++; }, options);
             try {
-                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ view: 'metrics', result: { items: [
-                    { environmentId: 'app', result: { measurements: { value: 2, basis: 'sampled_spans', window: { since: 1000, until: 2000 } } } },
-                    { environmentId: 'empty', result: { status: 'unknown' }, trend: [] },
-                ] } });
+                const first = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(await producer.read(options))));
+                expect(first).toMatchObject({ items: [
+                    { environmentId: 'app', value: 2, provenance: { basis: 'sampled_spans', window: { since: 1000, until } } },
+                    { environmentId: 'empty', value: null, provenance: { completeness: 'unknown' }, trend: [] },
+                ] });
                 expect(reads).toBe(1);
                 await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
                 expect(invalidations).toBe(0);
@@ -61,11 +64,11 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(invalidations).toBe(1);
                 await lease.runtime.store.write(batch);
                 expect(invalidations).toBe(1);
-                vi.setSystemTime(2200);
-                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ result: { items: [
-                    { environmentId: 'app', result: { measurements: { value: 3, window: { since: 1200, until: 2200 } } } },
-                    { environmentId: 'empty', result: { measurements: { value: 1 } } },
-                ] } });
+                vi.setSystemTime(until + 200);
+                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ items: [
+                    { environmentId: 'app', value: 3, provenance: { window: { since: 1200, until: until + 200 } } },
+                    { environmentId: 'empty', value: 1 },
+                ] });
                 expect(reads).toBe(2);
                 await observation.dispose(); await producer.dispose();
                 await lease.runtime.clear('environment:app');

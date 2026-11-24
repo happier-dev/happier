@@ -4,7 +4,6 @@ import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/
 import { DatabaseFailureV1Schema } from './schemas/databaseOperations.js';
 import { DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
-import { TelemetryEnvironmentMetricsResourceInputV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema } from './telemetryMetrics.js';
 
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 
@@ -93,7 +92,6 @@ export const DatabaseCaptureConfigureInputV1Schema = z.strictObject({
 export const DatabaseCaptureConfigureResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), enabled: z.boolean() })]);
 
 export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view', [
-    z.strictObject({ view: z.literal('metrics'), input: TelemetryEnvironmentMetricsResourceInputV1Schema }),
     z.strictObject({ view: z.literal('costs'), input: DatabaseCaptureCostsReadInputV1Schema }),
     z.strictObject({ view: z.literal('status'), input: DatabaseCaptureStatusInputV1Schema }),
     z.strictObject({ view: z.literal('queries'), input: DatabaseCaptureQueriesListInputV1Schema }),
@@ -104,7 +102,6 @@ export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view',
     z.strictObject({ view: z.literal('endpoints'), input: DatabaseCaptureEndpointsListInputV1Schema }),
 ]);
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
-    z.strictObject({ view: z.literal('metrics'), result: TelemetryEnvironmentMetricsReadResultV1Schema }),
     z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
     z.strictObject({ view: z.literal('queries'), result: DatabaseCaptureQueriesListResultV1Schema }),

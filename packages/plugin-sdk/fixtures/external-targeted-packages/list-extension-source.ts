@@ -35,7 +35,19 @@ export function createServiceColumnSource(onResourceRead: () => void = () => {},
                 const input = PluginServiceListFieldResourceInputV1Schema.parse(context.context.launchInput);
                 return JSON.stringify(PluginServiceListFieldResourceResultV1Schema.parse({ items: input.environmentIds
                     .filter(environmentId => Object.hasOwn(values, environmentId))
-                    .map(environmentId => ({ environmentId, value: values[environmentId] })) }));
+                    .map(environmentId => ({
+                        environmentId,
+                        value: values[environmentId],
+                        provenance: {
+                            basis: 'metric_points',
+                            producers: [{ serviceName: 'acme-web', serviceVersion: '1.0.0' }],
+                            window: { since: 0, until: 100 },
+                            observedWindow: { since: 10, until: 90 },
+                            completeness: 'partial',
+                            reasons: ['missing_intervals'],
+                        },
+                        trend: [{ at: 50, value: null }, { at: 100, value: values[environmentId] }],
+                    })) }));
             }, observe: () => ({ dispose() {} }) } } },
         ui: { listExtensions: { traffic: {
             entity: 'service',

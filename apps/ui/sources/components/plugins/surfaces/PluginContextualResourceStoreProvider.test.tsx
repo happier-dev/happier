@@ -137,7 +137,7 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
         collectorMachineId: 'machine-1', field: admitted.field, resource: { pluginId: fixture.manifest.id, localId: producer.localId } }));
     const releases = demands.map(demand => owner.mount(demand.key, demand));
     const exact = { ...binding(account.lifetime), pluginId: fixture.manifest.id, context: { kind: 'surface' as const, mountInstanceKey: 'services',
-        launchInput: { entity: 'service', environmentIds: demands.map(demand => demand.environmentId) } } };
+        launchInput: { entity: 'service', serverId: account.lifetime.scope.serverId, environmentIds: demands.map(demand => demand.environmentId) } } };
     let unavailable = false;
     machineResourceRpc.read.mockImplementation(async () => {
         if (unavailable) return { supported: true, result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } };
@@ -150,6 +150,18 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
     try {
         await vi.waitFor(() => expect(owner.read('busy')?.value).toBe(7));
         expect(owner.read('zero')?.value).toBe(0);
+        expect(owner.read('zero')).toEqual({
+            value: 0,
+            provenance: {
+                basis: 'metric_points',
+                producers: [{ serviceName: 'acme-web', serviceVersion: '1.0.0' }],
+                window: { since: 0, until: 100 },
+                observedWindow: { since: 10, until: 90 },
+                completeness: 'partial',
+                reasons: ['missing_intervals'],
+            },
+            trend: [{ at: 50, value: null }, { at: 100, value: 0 }],
+        });
         expect(owner.read('missing')?.value).toBeNull();
         expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
         expect(fixtureReads).toBe(1);

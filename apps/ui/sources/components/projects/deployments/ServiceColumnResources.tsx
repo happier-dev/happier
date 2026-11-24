@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { TELEMETRY_REQUESTS_WINDOW_MS_V1 } from '@happier-dev/database-protocol';
-import type { AdmittedPluginListFilterFieldV1 } from '@happier-dev/plugin-sdk/ui';
+import { PluginServiceListFieldResourceResultV1Schema, type AdmittedPluginListFilterFieldV1 } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { createPluginMountedResourceDemand } from '@/components/plugins/surfaces/pluginMountedResourceDemand';
 import { PluginContextualResourceState, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
@@ -14,7 +13,7 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
-import { isTelemetryServiceColumnResource, projectServiceColumnResourceValues, type ServiceColumnValue } from './serviceColumnResourceValues';
+import { projectServiceColumnResourceValues, type ServiceColumnValue } from './serviceColumnResourceValues';
 export type { ServiceColumnValue } from './serviceColumnResourceValues';
 
 type Resource = Readonly<{ pluginId: string; localId: string }>;
@@ -77,9 +76,7 @@ function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly Se
   const declaration = readPluginUiResourceProjection(projection?.resourcesById, first.resource);
   const environmentIds = [...new Set(props.demands.map(demand => demand.environmentId))].sort();
   const context = { kind: 'surface' as const, mountInstanceKey: `services:${JSON.stringify([first.resource, first.collectorMachineId])}`,
-    launchInput: isTelemetryServiceColumnResource(first.resource)
-      ? { view: 'metrics', input: { serverId: props.lifetime.scope.serverId, environmentIds, windowMs: TELEMETRY_REQUESTS_WINDOW_MS_V1 } }
-      : { entity: 'service', environmentIds } };
+    launchInput: { entity: 'service', serverId: props.lifetime.scope.serverId, environmentIds } };
   const binding = declaration && resolvePluginContextualResourceBinding({ projection, accountLifetime: props.lifetime,
     machineId: first.collectorMachineId, serverId: props.lifetime.scope.serverId, requireReadAuthority: true,
     isCurrent: () => account || current.interactionEnabled }, declaration, context);
@@ -107,13 +104,15 @@ function ServiceColumnResourcePublication(props: Readonly<{ owner: Owner; demand
     if (props.snapshot?.value?.contentType === 'application/json') {
       try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(props.snapshot.value.bytes)); } catch { input = undefined; }
     }
+    const parsed = PluginServiceListFieldResourceResultV1Schema.safeParse(input);
+    const rows = parsed.success ? parsed.data.items : [];
     const fields = new Map<string, ReadonlyMap<string, ServiceColumnValue>>();
     for (const demand of props.demands) {
       let values = fields.get(demand.field.id);
-      if (!values) { values = projectServiceColumnResourceValues(props.resource, demand.field, input); fields.set(demand.field.id, values); }
+      if (!values) { values = projectServiceColumnResourceValues(demand.field, rows); fields.set(demand.field.id, values); }
       props.owner.publish(demand.key, values.get(demand.environmentId) ?? { value: null });
     }
-  }, [props.owner, props.demands, props.resource, props.snapshot]);
+  }, [props.owner, props.demands, props.snapshot]);
   return props.snapshot?.error || props.snapshot?.freshness === 'stale' ? <View><SurfaceFreshnessLine
     testID={`services.columns.${props.resource.pluginId}.${props.resource.localId}.${props.demands[0]?.collectorMachineId ?? 'account'}.freshness`}
     reason={props.snapshot?.error?.message ?? t('common.unavailable')}

@@ -1,6 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { MeasurementProvenanceV1Schema } from '../../deployments/healthCheckV1.js';
 import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { PluginContributionReferenceV2Schema, PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { PluginUiIconTokenV1Schema } from '../../plugins/contributions/ui/tokens.js';
@@ -41,14 +42,20 @@ export type PluginListFilterFactsV1 = Readonly<{ extensions?: Readonly<Record<st
 /** The Services fact adapter binds one Resource read to its mounted Environment rows. */
 export const PluginServiceListFieldResourceInputV1Schema = lazyZodSchema(() => z.strictObject({
     entity: z.literal('service'),
+    serverId: z.string().check(z.minLength(1)),
     environmentIds: z.array(z.string().check(z.minLength(1))),
 }));
 export type PluginServiceListFieldResourceInputV1 = z.infer<typeof PluginServiceListFieldResourceInputV1Schema>;
-/** Row addressing only; field-specific value semantics remain at the existing scalar ingress. */
+/** Facts and their optional presentation evidence. The existing scalar ingress owns field value semantics. */
 export const PluginServiceListFieldResourceResultV1Schema = lazyZodSchema(() => z.strictObject({
     items: z.array(z.strictObject({
         environmentId: z.string().check(z.minLength(1)),
         value: EntityFilterFactValueV1Schema,
+        provenance: z.optional(MeasurementProvenanceV1Schema),
+        trend: z.optional(z.array(z.strictObject({
+            at: z.number().check(z.nonnegative()),
+            value: z.nullable(z.number()),
+        }))),
     })),
 }));
 export type PluginServiceListFieldResourceResultV1 = z.infer<typeof PluginServiceListFieldResourceResultV1Schema>;
