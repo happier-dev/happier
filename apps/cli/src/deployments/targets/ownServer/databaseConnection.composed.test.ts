@@ -13,6 +13,7 @@ import { DatabaseStatsEnableInputV1Schema } from '@happier-dev/plugin-sdk/databa
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as workbenchPlugin from '@happier-dev/plugins-database-workbench';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -445,6 +446,12 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                             expect(await Promise.all([opened.connection.execute(statistics), opened.connection.execute(statistics)]))
                                 .toMatchObject([unavailable, unavailable]);
                             expect((await pg.execute('SELECT note FROM native_items WHERE id = 1')).stdout).toContain('held-reader');
+                            detail.content.bindings = bindings;
+                            const refused = await openWriter('native-writer-role-removed').then(
+                                async connection => { await connection.close(); return null; },
+                                (error: unknown) => readPluginActionError(error),
+                            );
+                            expect(refused).toMatchObject({ code: 'write_role_setup_required' });
                         } finally {
                             activeRoot = root;
                             detail.content.bindings = bindings;
@@ -457,7 +464,7 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                         detail.content.bindings = bindings.filter(binding => binding.purpose !== 'dataRole');
                         if (neighboringRole) detail.content.bindings.push({ ...use, service: 'neighboring-database' });
                         await expect(service.resolve({ operation: 'describe', target }, 'read'))
-                            .rejects.toMatchObject({ errorCode: 'read_role_setup_required' });
+                            .rejects.toMatchObject({ code: 'read_role_setup_required' });
                         expect(secretReads).toBe(readsBeforeMissingRole);
                     }
                     detail.content.bindings = bindings;

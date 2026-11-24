@@ -1,4 +1,3 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -10,7 +9,7 @@ import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { assertOwnServerDataQuerySupportedEngine } from './dataRoleGuard';
 
-const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
+const refuse = (code: string): never => { throw new PluginError({ code }); };
 
 function refuseUnconfirmedNativeDataService(observation: 'service' | 'container'): never {
     const code = 'service_unavailable';

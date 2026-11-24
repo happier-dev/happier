@@ -1277,8 +1277,9 @@ PUBLIC privileges. Ordinary queries consume the admitted sealed read-role
 credential and retain the read-only transaction on every fresh native session.
 
 Own Server PostgreSQL edits use the separate `happier_rw` binding. If it is
-missing, the Workbench offers **Set up write login** through the same reviewed
-bindings Action. For an eligible non-superuser database owner, bootstrap
+missing, Apply returns `write_role_setup_required` and the Workbench offers
+**Set up write login** through the same reviewed bindings Action. For an
+eligible non-superuser database owner, bootstrap
 configures a `NOINHERIT` login and the write transaction sets the owner role
 locally. With a superuser owner, bootstrap grants access to existing relations
 and sequences and sets default privileges for future objects owned by that
