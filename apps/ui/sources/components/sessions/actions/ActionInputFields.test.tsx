@@ -74,6 +74,22 @@ describe('ActionInputFields', () => {
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'workflows.start.choicesFailed')).toBeFalsy();
     });
 
+    it('explains an unavailable Notify channel source and lets the person retry', async () => {
+        const field = effectiveField({ path: 'channels', title: 'Send to', widget: 'multiselect',
+            optionsSourceId: 'notifications.channels.available' });
+        const retry = vi.fn();
+        const resolveFieldOptions = Object.assign(() => [], {
+            state: () => ({ status: 'failed' as const, options: [], errorCode: 'target_unavailable' }), retry,
+        });
+        const screen = await renderScreen(<ActionInputFields fields={[field]} input={{}} editable
+            resolveFieldOptions={resolveFieldOptions} onPatch={vi.fn()} />);
+        expect(screen.getTextContent()).toContain('workflows.problem.targetUnavailable');
+        const action = screen.findAllByType('Pressable').find(node => node.props.accessibilityLabel === 'common.retry');
+        expect(action).toBeDefined();
+        await pressTestInstanceAsync(action);
+        expect(retry).toHaveBeenCalledOnce();
+    });
+
     it('opens an empty options destination through the enclosing surface without writing the draft', async () => {
         const { PluginSurfaceDestinationNavigationBindingProvider } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
         const field = effectiveField({ path: 'source', title: 'Source', widget: 'select',

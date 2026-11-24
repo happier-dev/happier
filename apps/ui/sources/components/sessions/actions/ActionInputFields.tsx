@@ -27,7 +27,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { InputFieldOptionsState } from './inputFieldOptionsStore';
-import { SurfaceStateCard } from '@/components/ui/surfaces';
+import { ActionInputOptionsNotice } from './ActionInputOptionsNotice';
 import { t } from '@/text';
 import type { ResolveSessionActionFieldOptions } from './sessionActionFieldOptions';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -179,10 +179,8 @@ export function ActionInputFields(props: Readonly<{
                         options={options}
                         {...(optionState === undefined ? {} : { optionsStatus: waitingReading === undefined ? optionState.status : 'loading' })}
                         {...(waitingReading === undefined ? {} : { valueLabel: waitingReading })}
-                        optionsNotice={optionState?.status === 'failed' && waitingReading === undefined ? <SurfaceStateCard kind="error" size="line" title={t('workflows.start.choicesFailed')}
-                            diagnosticCode={optionState.errorCode}
-                            diagnosticDetail={optionState.requestId}
-                            action={props.resolveFieldOptions.retry ? { label: t('common.retry'), onPress: props.resolveFieldOptions.retry } : undefined} /> : null}
+                        optionsNotice={optionState?.status === 'failed' && waitingReading === undefined
+                            ? <ActionInputOptionsNotice state={optionState} retry={props.resolveFieldOptions.retry} /> : null}
                         optionsEmptyAction={optionState?.emptyAction && inputTypePluginId && !props.busy
                             ? <OptionsEmptyAction action={optionState.emptyAction} pluginId={inputTypePluginId}
                                 pickerContext={props.resolveFieldOptions.pickerContext} /> : undefined}

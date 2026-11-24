@@ -37,11 +37,11 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
+import { ActionInputOptionsNotice } from '@/components/sessions/actions/ActionInputOptionsNotice';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { useExecutableParticipantLabel, useExecutableParticipantLabels } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { useInlineExecutableParticipantPicker } from '@/components/sessions/authoring/useInlineExecutableParticipantPicker';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { SurfaceStateCard } from '@/components/ui/surfaces';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -1395,18 +1395,7 @@ export function WorkflowRunInputs(
                         selection={selected}
                         options={options}
                         optionsStatus={optionState.status}
-                        optionsNotice={
-                          <SurfaceStateCard
-                            kind="error"
-                            size="line"
-                            title={t('workflows.start.choicesFailed')}
-                            diagnosticCode={optionState.errorCode}
-                            action={{
-                              label: t('common.retry'),
-                              onPress: () => retry(),
-                            }}
-                          />
-                        }
+                        optionsNotice={<ActionInputOptionsNotice state={optionState} retry={() => retry()} />}
                         isEqual={isSameActionInputOptionValue}
                         keyForOption={(option) =>
                           actionInputOptionValueKey(option.value)

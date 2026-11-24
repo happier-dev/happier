@@ -296,6 +296,7 @@ describe('Workflow inputs through real Action option resolution', () => {
         await waitForHomeGovernance(() => expect(panel.findAllByType(SurfaceStateCard)[0]?.props.diagnosticCode).toBe('target_unavailable'));
         const error = panel.findAllByType(SurfaceStateCard)[0]!;
         expect(error.props.diagnosticCode).toBe('target_unavailable');
+        expect(error.props.reason).toBe('workflows.problem.targetUnavailable');
         rpc.failure.mockReturnValue(null);
         const { act } = await import('react-test-renderer');
         await act(async () => { error.props.action.onPress(); });
