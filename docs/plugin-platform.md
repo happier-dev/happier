@@ -14700,6 +14700,13 @@ readers consume the extended closed error envelope together; no wire epoch or
 new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
 
+`Action.Failure` accepts a Plugin UI execution from `useExecutePluginAction` or
+`projectPluginActionControlExecutionV1`. It uses the host presenter for the
+reason and safe details. While that presentation is pending or unavailable,
+the execution's localized message and exact refusal code are available in the
+compact error line and its Details disclosure. `authoredMessage` carries the
+producer's sentence separately from Plugin UI's synchronous fallback copy.
+
 
 ### Review profile options and finding extensions (0.3 development)
 

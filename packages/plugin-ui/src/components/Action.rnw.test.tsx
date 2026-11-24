@@ -656,6 +656,48 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     mount.unmount();
   });
 
+  it.each([
+    { authorMessage: undefined, hostReason: undefined, title: 'Something went wrong' },
+    { authorMessage: 'Choose a different deployment.', hostReason: undefined, title: 'Choose a different deployment.' },
+    { authorMessage: undefined, hostReason: 'The deployment has no read role.', title: 'The deployment has no read role.' },
+  ])('discloses an unknown refusal code with $title', async ({ authorMessage, hostReason, title }) => {
+    const code = 'deployment_target_role_unavailable';
+    const details = { providerStatus: 403, privatePayload: 'opaque diagnostic' };
+    const context = createSurfaceContext();
+    const executeAction = vi.fn(async () => { throw new PluginError({ code, message: authorMessage, details }); });
+    const presentActionFailure = vi.fn<NonNullable<PluginUiHostApi['presentActionFailure']>>(async () => ({
+      reason: hostReason ?? title, nextStep: null, technicalDetails: [
+        { key: 'code', label: 'Code', value: code },
+        { key: 'providerStatus', label: 'Provider status', value: '403' },
+      ],
+    }));
+    const host = createHostApiStub(context, {
+      executeAction,
+      ...(hostReason === undefined ? {} : {
+        version: () => ({ apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, wireVersion: 1, methods: ['presentActionFailure'] }),
+        presentActionFailure,
+      }),
+    });
+    function Surface() {
+      const { execution, execute } = useExecutePluginAction('review.refresh');
+      return <><button onClick={() => void execute()}>Run review</button>
+        <Action.Failure execution={execution} /></>;
+    }
+    const mount = mountSurface(<Surface />, host, context);
+    try {
+      await press(mount.container.querySelector('button')!);
+      expect(mount.container.textContent).toContain(title);
+      expect(mount.container.textContent).not.toContain(code);
+      await press(pressableByLabel(mount.container, 'Details'));
+      expect(mount.container.textContent).toContain(code);
+      if (hostReason !== undefined) {
+        expect(presentActionFailure.mock.calls[0]?.[0]).toMatchObject({ errorCode: code, details });
+        expect(mount.container.textContent).toContain('403');
+      }
+      expect(mount.container.textContent).not.toContain(details.privatePayload);
+    } finally { mount.unmount(); }
+  });
+
   it.each(['invalid_response_method', 'transport_unavailable'])('keeps a code-only %s rejection outcome-neutral without replay', async (code) => {
     const executeAction = vi.fn(async () => { throw { code }; });
     const onSettled = vi.fn();

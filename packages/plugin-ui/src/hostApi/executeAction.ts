@@ -38,8 +38,8 @@ export type PluginActionExecution<Result = unknown> =
   | Readonly<{ status: 'idle' }>
   | Readonly<{ status: 'pending' }>
   | Readonly<{ status: 'success'; result: Result; requestId?: string }>
-  | Readonly<Omit<PluginActionFailureAuthorPayloadV1, 'diagnostics'> & { effectAttempted?: boolean; status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
-  | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
+  | Readonly<Omit<PluginActionFailureAuthorPayloadV1, 'diagnostics'> & { effectAttempted?: boolean; status: 'error'; code: string; message: string; authoredMessage?: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
+  | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'outcomeUnknown'; code: string; message: string; authoredMessage?: string; requestId?: string }>;
 
 /**
  * The rejection codes that mean "the request reached the host and we stopped
@@ -83,7 +83,7 @@ function readErrorCode(error: unknown): string {
 }
 
 /**
- * The sentence a refusal stands for when nobody wrote one.
+ * Synchronous fallback sentences for callers that read `execution.message`.
  *
  * Host API refusals cross the mount as a bare `{ code }`, so the client error's
  * `message` is the code itself (`unavailable`). A page that shows
@@ -102,11 +102,14 @@ const FAILED_SENTENCE = ['happier.plugin-ui.state.error', 'Something went wrong'
 
 type Translate = (key: string, fallback?: string) => string;
 
-function readErrorMessage(error: unknown, code: string, translate: Translate): string {
-  const message = (error as { message?: unknown } | null)?.message;
-  const written = typeof message === 'string' ? message.trim() : '';
-  if (written !== '' && written !== code) return written;
-  const [key, fallback] = REFUSAL_SENTENCES[code] ?? FAILED_SENTENCE;
+function readAuthoredMessage(message: unknown, code: string): string | undefined {
+  if (typeof message !== 'string') return undefined;
+  const normalized = message.trim();
+  return normalized === '' || normalized === code ? undefined : message;
+}
+
+function translateRefusal(code: string, translate: Translate): string {
+  const [key, fallback] = Object.hasOwn(REFUSAL_SENTENCES, code) ? REFUSAL_SENTENCES[code]! : FAILED_SENTENCE;
   return translate(key, fallback);
 }
 
@@ -124,14 +127,19 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
       ? diagnostic === CONFIRMATION_DECLINED_CODE
       : diagnostic !== null && typeof diagnostic === 'object'
         && Reflect.get(diagnostic, 'code') === CONFIRMATION_DECLINED_CODE);
-  const message = readErrorMessage(error, code, translate);
   const details = (error as { details?: unknown } | null)?.details;
   const requestId = readPluginErrorRequestIdV1(error);
-  const authored = isPluginError(error) ? { success: true as const, data: error.data } : StrictJsonValueSchema.safeParse(error);
+  const pluginError = isPluginError(error) ? error : undefined;
+  const authoredMessage = readAuthoredMessage(pluginError?.data.message ?? (error as { message?: unknown } | null)?.message, code);
+  const message = authoredMessage ?? translateRefusal(code, translate);
+  const authored = pluginError ? { success: true as const, data: pluginError.data } : StrictJsonValueSchema.safeParse(error);
   const author = readPluginActionFailureAuthorPayload(authored.success ? authored.data : undefined);
   const effectAttempted = (error as { effectAttempted?: unknown } | null)?.effectAttempted
     ?? (details && typeof details === 'object' ? Reflect.get(details, 'effectAttempted') : undefined);
-  const metadata = { ...author, ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}) };
+  const metadata = { ...author,
+    ...(authoredMessage === undefined ? {} : { authoredMessage }),
+    ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
+  };
   const receiptLost = details !== null && typeof details === 'object' && !Array.isArray(details)
     && Reflect.get(details, 'layer') === 'transport'
     && Reflect.get(details, 'phase') === 'settlement';

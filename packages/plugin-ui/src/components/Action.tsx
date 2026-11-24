@@ -21,6 +21,7 @@ import { Button, type ButtonVariant } from './Button.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { ActionControl } from './ActionControl.js';
+import { ActionFailure } from './ActionFailure.js';
 export type { ActionControlProps } from './ActionControl.js';
 
 /**
@@ -274,6 +275,7 @@ ActionRefresh.happierInlineControl = true as const;
 export const Action = Object.freeze({
   Control: ActionControl,
   Execute: ActionExecute,
+  Failure: ActionFailure,
   Copy: ActionCopy,
   OpenExternal: ActionOpenExternal,
   OpenSurface: ActionOpenSurface,
