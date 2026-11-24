@@ -2618,13 +2618,19 @@ describe('createActionExecutor (approvals)', () => {
 
   it('requires an Artifact owner for durable Session approvals instead of a Session-local confirmation', async () => {
     const sessionActionConfirmation = vi.fn(async () => ({ decision: 'approve' as const, isCurrent: () => true }));
-    const sessionActivityGet = vi.fn();
-    const executor = createExecutor({ sessionActionConfirmation, sessionActivityGet, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
-    expect(await executor.execute('session.activity.get', { sessionId: 's1', windowSeconds: 10 }, {
+    const sessionWorkStateGet = vi.fn();
+    const executor = createExecutor({
+      sessionActionConfirmation,
+      sessionWorkStateGet,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'session.work_state.get': { approvalRequiredSurfaces: ['agent'] },
+      } }),
+    });
+    expect(await executor.execute('session.work_state.get', { sessionId: 's1' }, {
       surface: 'agent', authority: 'account_automation', defaultSessionId: 's1',
     })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(sessionActionConfirmation).not.toHaveBeenCalled();
-    expect(sessionActivityGet).not.toHaveBeenCalled();
+    expect(sessionWorkStateGet).not.toHaveBeenCalled();
   });
 
   it('routes plugin dev-loop actions through one executor dependency on the agent surface', async () => {
