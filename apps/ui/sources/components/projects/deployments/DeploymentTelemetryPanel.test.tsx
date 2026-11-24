@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DatabaseCaptureEndpointsListInputV1Schema } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureEndpointsListInputV1Schema, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
@@ -49,6 +49,7 @@ afterEach(standardCleanup);
 
 const { DeploymentTelemetryPanel, TelemetryRequestDetail } = await import('./DeploymentTelemetryPanel');
 const { createTelemetryCaptureReads } = await import('./telemetryCaptureReads');
+const { LocalServiceCaptureView } = await import('@/components/sessions/localServices/LocalServiceCaptureView');
 const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
   await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
 const { ModalProvider } = await import('@/modal');
@@ -168,8 +169,10 @@ async function mount(
   return screen;
 }
 
-const answers = (call: Call, admittedSource: Readonly<{ kind: 'environment'; serverId: string; environmentId: string }> = source) => {
+const answers = (call: Call, admittedSource: DatabaseCaptureSourceV1 = source) => {
   const source = admittedSource;
+  if (call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1)
+    return { ok: true, source, enabled: true, coverage: { lostObservations: 0, reason: null } };
   if (call.actionId.endsWith('/capture/endpoints/list'))
     return { ok: true, source, items: [checkout] };
   if (call.actionId.endsWith('/capture/traces/list'))
@@ -182,7 +185,7 @@ const answers = (call: Call, admittedSource: Readonly<{ kind: 'environment'; ser
       findings: [{
         v: 1,
         sourceRef: { pluginId: 'happier.telemetry', localId: 'capture-findings' },
-        sourceScope: { serverId: source.serverId, machineId: 'collector' },
+        sourceScope: { serverId: source.serverId, machineId: source.kind === 'worktree' ? source.machineId : 'collector' },
         evidenceIdentity: 'retained-request-failure',
         kind: 'failing_endpoint',
         title: 'Endpoint request failed',
@@ -467,7 +470,7 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it.each(['request', 'endpoint', 'setup'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
+  it.each(['request', 'endpoint', 'setup', 'Worktree request'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
     await prepareSessionDraftPersistenceStorage();
     const homes = createHomeGovernanceHarness();
     installHomeGovernanceBoundaries(homes);
@@ -482,7 +485,9 @@ describe('Environment Telemetry tabs', () => {
     modal.spies.confirm.mockResolvedValue(true);
     const actualModal = await vi.importActual<typeof import('@/modal')>('@/modal');
     const confirm = vi.spyOn(actualModal.Modal, 'confirm').mockImplementation(modal.spies.confirm);
-    const admittedSource = { ...source, serverId };
+    const worktree = { machineId: 'running-machine', projectId: 'billing-api', workspaceId: 'checkout' };
+    const admittedSource: DatabaseCaptureSourceV1 = feature === 'Worktree request'
+      ? { kind: 'worktree', serverId, ...worktree } : { ...source, serverId };
     const { invoke, calls } = collector(call => {
       if (call.actionId !== DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1) return answers(call, admittedSource);
       const input = DatabaseCaptureEndpointsListInputV1Schema.parse(call.input);
@@ -499,12 +504,22 @@ describe('Environment Telemetry tabs', () => {
       } };
     });
     const detail = setUpDetail(feature === 'setup' ? 'manager' : 'reader');
-    const screen = await renderScreen(panel(invoke, detail, { lifetime: { ...lifetime, scope } }));
+    const selectedLifetime = { ...lifetime, scope };
+    const screen = await renderScreen(feature === 'Worktree request'
+      ? <AppPresentationPlatformProvider><ModalProvider>
+          <TelemetryCaptureFixtureProvider invoke={invoke} transport={createTelemetryCaptureFixtureTransport(invoke)}>
+            <LocalServiceCaptureView lifetime={selectedLifetime} worktree={worktree} view="traces" active
+              machineName="Running machine" onShowServers={() => {}} testID="worktree-capture" />
+          </TelemetryCaptureFixtureProvider>
+        </ModalProvider></AppPresentationPlatformProvider>
+      : panel(invoke, detail, { lifetime: selectedLifetime }));
     try {
       await settle();
-      if (feature === 'request') {
-        await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
-        await settle();
+      if (feature === 'request' || feature === 'Worktree request') {
+        if (feature === 'request') {
+          await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+          await settle();
+        }
         await reportCollectionLayout(screen, 'telemetry.capture.traces');
         await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
         await settle();
@@ -553,9 +568,17 @@ describe('Environment Telemetry tabs', () => {
         }).replaceAll('"', '\\"'));
         expect(evidence).toContain('browserSetup');
       } else {
-        expect(draft?.input).toContain(feature === 'request' ? 'Endpoint request failed' : 'Endpoint latency');
-        expect(evidence).toContain(feature === 'request' ? 'retained-request-failure' : 'retained-endpoint-latency');
-        expect(evidence).toContain(feature === 'request' ? 'happier.telemetry/actions/capture/trace/get' : DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1);
+        const requestBrief = feature === 'request' || feature === 'Worktree request';
+        expect(draft?.input).toContain(requestBrief ? 'Endpoint request failed' : 'Endpoint latency');
+        expect(evidence).toContain(requestBrief ? 'retained-request-failure' : 'retained-endpoint-latency');
+        expect(evidence).toContain(requestBrief ? DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 : DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1);
+        if (feature === 'Worktree request') {
+          expect(calls.filter(call => call.actionId === DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1)).toEqual([
+            expect.objectContaining({ collectorMachineId: worktree.machineId,
+              input: expect.objectContaining({ source: admittedSource, traceId: request.traceId }) }),
+          ]);
+          expect(evidence).toContain(JSON.stringify(JSON.stringify(admittedSource)).slice(1, -1));
+        }
       }
     } finally {
       await screen.unmount();
