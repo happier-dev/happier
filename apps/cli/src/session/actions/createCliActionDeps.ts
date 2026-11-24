@@ -132,7 +132,7 @@ import type { updateAccountSettingsV2OnceAgainstLatest } from '@/settings/accoun
 import { MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 
 
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { resolveProjectContextSourceV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
 
@@ -328,6 +328,13 @@ export function projectCliAccountCallerContext(context: ActionExecutorContext, h
     && binding.credentialId === credential.credentialId ? binding.accountId : null;
   const accountId = admittedPatAccountId ?? homeAccountId;
   return { ...context, ...(accountId ? { runtimeAccountId: accountId } : {}) };
+}
+
+function readDeploymentBackupRelayControl(actionId: keyof typeof DeploymentBackupActionResultSchemasV1 | typeof DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, result: unknown) {
+  const ask = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+  if (ask.success && ask.data.actionId === actionId) return ask.data;
+  const operation = getActionSpec(actionId).operation ? ActionOperationAcceptedResultSchema.safeParse(result) : null;
+  return operation?.success ? operation.data : null;
 }
 
 export function createCliActionDeps(params: CliActionDepsParams,
@@ -1388,6 +1395,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     deploymentBackupAction: async (actionId, input, context) => {
       const execution = await dispatchDeploymentBackupTarget(actionId, input, context);
       if (!execution.ok) return execution;
+      const control = readDeploymentBackupRelayControl(actionId, execution.result);
+      if (control) return control;
       const output = DeploymentBackupActionResultSchemasV1[actionId].safeParse(execution.result);
       return output.success ? output.data as DeploymentBackupActionResultV1<typeof actionId>
         : executionRunActionFailure('invalid_action_output');
@@ -1395,6 +1404,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     deploymentRestore: async (input, context) => {
       const execution = await dispatchDeploymentBackupTarget(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, input, context);
       if (!execution.ok) return execution;
+      const control = readDeploymentBackupRelayControl(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, execution.result);
+      if (control) return control;
       const output = DeploymentBackupRestoreResultV1Schema.safeParse(execution.result);
       return output.success ? output.data : executionRunActionFailure('invalid_action_output');
     },

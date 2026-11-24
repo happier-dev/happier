@@ -6,8 +6,41 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInvocationRecoveryObservation } from './recovery';
 import { isWorkflowJsonObject } from './input';
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isApprovalRequestExecutionApproved } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
+import { resolveApprovalRequestExecutionInput } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 type ActionExecution = Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }>;
+
+/** The coordinator claimed execution of this Ask. The installed receiver may spend only that same invocation. */
+export function matchesExecutingWorkflowStepApproval(input: Readonly<{
+  binding: ExternalActionExecutionAuthorizationBindingV1;
+  operand: unknown;
+  receipt: unknown;
+}>): boolean {
+  const { binding } = input;
+  const workflow = binding.workflowActionOrigin;
+  const receipt = ApprovalRequestV2Schema.safeParse(input.receipt);
+  if (!workflow?.stepApprovalArtifactId || !receipt.success || receipt.data.status !== 'executing'
+    || !isApprovalRequestExecutionApproved(receipt.data)) return false;
+  const origin = receipt.data.executionOriginV1;
+  if (origin.caller.kind !== 'workflowRun' || origin.caller.runId !== workflow.runId
+    || origin.surface !== 'agent' || origin.authority !== 'account_automation'
+    || origin.accountId !== binding.accountId || origin.serverIdentityId !== binding.serverIdentityId
+    || origin.requestId !== binding.requestId || origin.actionId !== binding.actionId
+    || receipt.data.actionId !== binding.actionId) return false;
+
+  const admitted = resolveApprovalRequestExecutionInput(receipt.data);
+  if (!admitted.ok) return false;
+  const approved = readRecord(admitted.input);
+  // The relay already resolves the selected Home to its stable identity. The
+  // approval origin owns the only local profile alias we may translate here.
+  return sameStrictJsonValue(approved.serverId === origin.serverId
+    ? { ...approved, serverId: binding.serverIdentityId } : approved, input.operand);
+}
 
 /** The retained envelope identifies custody; only the approval owner can settle its effect. */
 export async function readWorkflowActionApprovalSettlement(params: Readonly<{

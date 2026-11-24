@@ -128,7 +128,7 @@ import type {
   NotificationsNotifyMeInputV1,
   NotificationsNotifyMeResultV1,
 } from '../../account/notifications/notifyMeV1.js';
-import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
+import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult, ActionOperationAcceptedResult } from '../actionExecutionResult.js';
 import type { PrivateSecretContinuationV1 } from '../../approvals/privateSecretContinuationV1.js';
 import type { SecretFillSettlementV1 } from '../../computer/v1.js';
 import type { WorkflowWebhookInputV1Schema, WorkflowWebhookOutputV1Schema,
@@ -2358,7 +2358,8 @@ export type ActionExecutorDeps = Readonly<{
     Promise<DeploymentPrepareResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   /** Target-daemon semantic owner; no generic storage or approval bypass. */
   deploymentRestore?: (input: import('../../deployments/deploymentActionsV1.js').DeploymentBackupRestoreInputV1,
-    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentBackupRestoreResultV1 | ActionExecuteFailure>;
+    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentBackupRestoreResultV1
+      | ActionApprovalRequestCreatedResult | ActionOperationAcceptedResult | ActionExecuteFailure>;
   prepareDeploymentRestore?: (request: Readonly<{
     input: import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreInputV1; context: ActionExecutorContext;
   }>) => Promise<Readonly<{ input: import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreInputV1;
@@ -2370,7 +2371,8 @@ export type ActionExecutorDeps = Readonly<{
   /** The installed target host owns configured backup reads/effects and their existing operation receipts. */
   deploymentBackupAction?: <TId extends import('../../deployments/deploymentActionsV1.js').DeploymentBackupActionIdV1>(
     actionId: TId, input: import('../../deployments/deploymentActionsV1.js').DeploymentBackupActionInputV1<TId>,
-    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentBackupActionResultV1<TId> | ActionExecuteFailure>;
+    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentBackupActionResultV1<TId>
+    | ActionApprovalRequestCreatedResult | ActionOperationAcceptedResult | ActionExecuteFailure>;
   deploymentTemplateInstantiate?: (input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
     review?: import('../../deployments/deploymentTemplateInstantiationV1.js').DeploymentTemplateInstantiationReviewV1) =>
     Promise<DeploymentTemplateInstantiateResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;

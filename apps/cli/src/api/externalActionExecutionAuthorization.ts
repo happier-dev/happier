@@ -149,7 +149,7 @@ import { buildDiscussionModelSessionCreationProofPayloadV1, type SessionCreation
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentBackupActionIdV1, isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentBackupEvidenceActionIdV1, isDeploymentBackupActionIdV1, isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1, type DeploymentChildRpcV1, doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import type { DeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
@@ -1363,8 +1363,13 @@ async function prepareOriginalAccountAction(
     foreign = selected.foreign;
   }
   let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined = workflowMaterial;
+  const stepReplay = workflow?.context.approvedActionReplay;
   const workflowActionOrigin = workflow && workflowCaller?.kind === 'workflowRun'
     ? { runId: workflowCaller.runId, requestId: input.requestId,
+      ...(isDeploymentBackupEvidenceActionIdV1(input.actionId) && stepReplay?.artifactId
+        && stepReplay.origin?.surface === 'agent' && stepReplay.origin.accountId === accountId
+        && stepReplay.origin.caller.kind === 'workflowRun' && stepReplay.origin.caller.runId === workflowCaller.runId
+        ? { stepApprovalArtifactId: stepReplay.artifactId } : {}),
       ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) }
     : undefined;
   const controllerCodec = Boolean(telemetryRead || foreign && isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })

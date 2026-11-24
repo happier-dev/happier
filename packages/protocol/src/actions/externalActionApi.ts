@@ -1455,6 +1455,8 @@ export const ExternalActionSessionAccountServerPrincipalV1Schema = lazyZodSchema
 /** The installed FIN executor proves this retained Run at Home. */
 export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strictObject({
   runId: ExternalActionTargetIdV1Schema, requestId: ExternalActionRequestIdV1Schema,
+  /** Exact executing step Ask, signed with this Run origin. The receiver opens its private receipt. */
+  stepApprovalArtifactId: z.optional(ExternalActionTargetIdV1Schema),
   reviewedChild: z.optional(z.lazy((): typeof ReviewedActionChildHttpProofV1Schema => ReviewedActionChildHttpProofV1Schema)),
   sessionLeaf: z.optional(ExternalActionWorkflowSessionLeafV1Schema),
   /** Accepted host facts only; Role content stays in the Session content envelope. */

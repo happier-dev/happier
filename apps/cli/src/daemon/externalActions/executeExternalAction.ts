@@ -53,12 +53,16 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody,
   isOriginalSessionInputAccountActionCustody, readWorkflowSetupRequesterRunId } from '../sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { matchesExecutingWorkflowStepApproval } from '@/daemon/workflows/actionApproval';
+import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
 import { AccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { parseActionExecuteFailure, projectActionFailureCauseV1, projectUnexpectedActionFailureV1,
   type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readRequesterHomeActionFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
+import { readRequesterHomeActionFailure, rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { logger } from '@/ui/logger';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -1026,6 +1030,44 @@ async function executeExternalActionRequest(input: Readonly<{
   // scope. The requesting client owns Action policy, confirmation and automation admission.
   const admittedRequesterOperationCancellation = managedControllerCodec && originalRootCurrentness !== undefined
     && actionId.data === ACTION_OPERATION_CANCEL_ACTION_ID_V1 && admittedAuthorization?.binding.requesterOperationRead === true;
+  const workflowStepApprovalId = admittedAuthorization?.binding.workflowActionOrigin?.stepApprovalArtifactId;
+  if (admittedAuthorization && workflowStepApprovalId) {
+    // Use only the requester whose private credentials this installation just opened.
+    const requester = readRequesterAccountActionContext(admittedAuthorization);
+    const binding = admittedAuthorization.binding;
+    const refuse = (failure: ActionExecuteFailure) => prepare({
+      v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+      execution: { ...failure, effectAttempted: false },
+    });
+    if (!isDeploymentBackupEvidenceActionIdV1(actionId.data) || !requester || !originalRootCurrentness) {
+      return refuse({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+    }
+    const read = await runExternalActionPhase('workflow_step_approval', input.currentMachineId, async () => {
+      const store = createCliApprovalsArtifactStore({ credentials: requester.credentials,
+        serverHttpBaseUrl: requester.serverHttpBaseUrl,
+        getAccountEncryptionMode: async () => requester.accountEncryptionCurrentness.mode });
+      try {
+        const receipt = await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => store.approvalsGet({
+          artifactId: workflowStepApprovalId, serverId: binding.serverIdentityId,
+        }));
+        return { receipt };
+      } catch (error) {
+        rethrowRequesterHomeReadFailure(error);
+        const failure = parseActionExecuteFailure(error);
+        if (!failure) throw error;
+        return { failure: { ok: false as const, errorCode: failure.errorCode, error: failure.errorCode,
+          ...(failure.failureCause ? { failureCause: failure.failureCause } : {}) } };
+      }
+    });
+    if (!read.ok) return refuse(read.executionFailure ?? projectUnexpectedActionFailureV1(false, binding.requestId));
+    if (read.value.failure) return refuse(read.value.failure);
+    if (!matchesExecutingWorkflowStepApproval({ receipt: read.value.receipt, binding, operand: decodedInput })) {
+      return refuse({ ok: false, errorCode: 'approval_stale', error: 'approval_stale' });
+    }
+    const current = await runExternalActionPhase('workflow_step_approval_currentness', input.currentMachineId,
+      originalRootCurrentness);
+    if (!current.ok) return refuse(current.executionFailure ?? { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+  }
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
@@ -1043,9 +1085,10 @@ async function executeExternalActionRequest(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
-    ...(admittedRequesterOperationCancellation ? { externalActionContinuation: true } : {}),
-    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery || approvedManagedPower || admittedRequesterOperationCancellation
-      ? { bypassApprovals: true } : {}),
+    // The verified Workflow receipt continues the coordinator's Automation admission.
+    ...(admittedRequesterOperationCancellation || workflowStepApprovalId ? { externalActionContinuation: true } : {}),
+    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery || approvedManagedPower
+      || admittedRequesterOperationCancellation || workflowStepApprovalId ? { bypassApprovals: true } : {}),
     // The exact compute effect is already admitted by Home; reading a source
     // Session profile here would borrow the controller's Account credential.
     ...(approvedDelegatedAcquire ? { approvalProfileId: null } : {}),
