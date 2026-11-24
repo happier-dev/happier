@@ -1166,7 +1166,7 @@ function DoActionRows(props: Readonly<{
         () => catalog.specs.filter((spec) => spec.id !== NOTIFY_ME_ACTION_ID),
         [catalog.specs],
     );
-    const spec = value.actionId === null ? null : findWorkflowActionSpec(value.actionId, specs);
+    const spec = value.actionId === null ? null : findWorkflowActionSpec(value.actionId, specs, { authored: true });
     const fields = React.useMemo(
         () => (spec === null ? [] : resolveEffectiveActionInputFields(spec, value.input).filter((field) => !field.path.includes('.'))),
         [spec, value.input],

@@ -10,6 +10,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
@@ -18,7 +19,8 @@ import { createDeferred, createMachineFixture, flushHookEffects, renderHook, ren
 import { Modal } from '@/modal';
 import type { ServiceCommandSheetProps } from './command/ServiceCommandSheet';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installHostResourceWatchSocket, type SelectResourceWatchFixture } from '@/components/projects/deployments/resourceWatchSocket.testFixture';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
@@ -57,6 +59,8 @@ const serverIdentityId = 'srv_services_rendered';
 let custodianAccountId = accountId;
 type Envelope = ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse>;
 type Request = Parameters<NonNullable<HomeDomainAnswer['select']>>[1];
+const resourceWatches = new Map<string, SelectResourceWatchFixture>();
+let resourceSocket: ReturnType<typeof installHostResourceWatchSocket>;
 
 function service(name: string, overrides: Partial<MachineServiceRowV1> = {}) {
     return MachineServiceRowV1Schema.parse({
@@ -95,7 +99,7 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
     select: (value: T, reference: PluginUiHostReadReferenceV1) => T = value => value) {
     let value = initial;
     let failureCode: string | null = null;
-    let deliver: (() => void) | undefined;
+    const deliver = new Set<() => void>();
     let reads = 0;
     const readValues: T[] = [];
     const content = (reference: PluginUiHostReadReferenceV1) => {
@@ -103,39 +107,32 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
         return { contentType: 'application/json', bytesBase64: bytes.toString('base64'),
             digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
     };
-    answerAction(actionId, (envelope, request) => {
+    answerAction(actionId, envelope => {
         const continuation = envelope.resourceContinuation;
         if (!continuation) return value;
         const reference = continuation.params.resource;
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
-            reads++;
-            readValues.push(select(value, reference));
-            return failureCode ? { ok: false, code: failureCode, reason: 'unavailable' }
-                : { ok: true, resource: reference, ...content(reference) };
-        }
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
-            return { ok: true, subscriptionId: continuation.params.subscriptionId, digest: content(reference).digest };
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)
-            return { ok: true, closed: true };
-        return new Promise(resolve => {
-            const finish = (result: unknown) => {
-                request.signal?.removeEventListener('abort', abort);
-                deliver = undefined;
-                resolve(result);
-            };
-            const abort = () => finish({ ok: true, status: 'idle' });
-            deliver = () => finish({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated',
-                subscriptionId: continuation.params.subscriptionId, digest: failureCode ? `sha256:${'0'.repeat(64)}` : content(reference).digest } });
-            request.signal?.addEventListener('abort', abort, { once: true });
-            if (request.signal?.aborted) abort();
-        });
+        if (continuation.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error('Expected finite Resource read');
+        reads++;
+        readValues.push(select(value, reference));
+        return failureCode ? { ok: false, code: failureCode, reason: 'unavailable' }
+            : { ok: true, resource: reference, ...content(reference) };
+    });
+    resourceWatches.set(actionId, reference => {
+        let invalidate: (() => void) | undefined;
+        return { actionId, digest: () => content(reference).digest,
+            onOpen(watch) {
+                invalidate = () => watch.invalidate(failureCode ? `sha256:${'0'.repeat(64)}` : content(reference).digest);
+                deliver.add(invalidate);
+            },
+            onDisconnect() { if (invalidate) deliver.delete(invalidate); },
+        };
     });
     return {
         fail(code = 'service_transport_unavailable') { failureCode = code; },
         async publish(next: typeof value) {
             value = next;
-            await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
-            await act(async () => { deliver?.(); });
+            await vi.waitFor(() => expect(deliver.size).toBeGreaterThan(0));
+            await act(async () => { for (const invalidate of deliver) invalidate(); });
         },
         get reads() { return reads; },
         readValues,
@@ -168,7 +165,7 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
     }, { initialProps: input });
     const shown = composeService ? 1 : 3;
     try {
-        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
         expect(resource.reads).toBe(1);
         expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown);
         expect(hook.getCurrent().rows).toHaveLength(shown);
@@ -267,6 +264,12 @@ beforeEach(async () => {
     custodianAccountId = accountId;
     await initializeRealAppRuntimeForTests();
     installHomeGovernanceBoundaries(homes);
+    resourceSocket = installHostResourceWatchSocket(reference => {
+        const actionId = resolvePluginUiHostReadActionIdV1(reference.hostRead);
+        const selectWatch = resourceWatches.get(actionId);
+        if (!selectWatch) throw new Error(`Unexpected Resource watch: ${actionId}`);
+        return selectWatch(reference);
+    });
     serverId = await homes.addHome({ name: 'Services rendered', serverUrl: 'https://services-rendered.test',
         serverIdentityId, accountId, currentAccount: true, active: true });
     const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), isShared: false });
@@ -284,7 +287,12 @@ beforeEach(async () => {
     await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, [machine]); });
     vi.mocked(router.push).mockClear();
 });
-afterEach(async () => { standardCleanup(); await homes.reset(); });
+afterEach(async () => {
+    standardCleanup();
+    resourceSocket?.mockRestore();
+    resourceWatches.clear();
+    await homes.reset();
+});
 
 it('offers only executable current services when setting up a scheduled Environment job', () => withPopoverWebGlobals(async () => {
     const environmentId = 'production';
@@ -315,9 +323,11 @@ it('offers only executable current services when setting up a scheduled Environm
 }));
 
 it('opens a scheduled Environment service job through the subject starter', () => withPopoverWebGlobals(async () => {
-    const { AutomationDefinitionListResponseSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
-    homes.answer(serverId, 'GET /v3/automations', { body: AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }) });
     const environmentId = 'production';
+    homes.answer(serverId, 'POST /v3/automations/query', { select: input => {
+        expect(input).toMatchObject({ subject: { kind: 'environment', serverId, environmentId } });
+        return { body: { automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 } };
+    } });
     const executable = service('Worker', { environmentId });
     answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [executable] }));
     const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');

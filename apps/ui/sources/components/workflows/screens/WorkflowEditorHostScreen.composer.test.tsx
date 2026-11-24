@@ -363,14 +363,12 @@ describe('editor workflow composer', () => {
         }
         if (admission === 'shell' || admission === 'route') {
             routeBoundary.platform = 'web';
-            const url = new URL(admission === 'route' ? '/new' : `/workflows/new?${param}=${first}`, 'https://happier.invalid');
-            const location = { pathname: url.pathname, search: url.search, hash: '' };
+            const location = new URL(admission === 'route' ? '/new' : `/workflows/new?${param}=${first}`, 'https://happier.invalid');
             const history = { state: null as unknown,
                 replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
                     history.state = state;
                     if (!href) return;
-                    const next = new URL(href, 'https://happier.invalid');
-                    location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+                    location.href = new URL(href, location.href).href;
                 },
                 pushState: (state: unknown, unused: string, href: string) => history.replaceState(state, unused, href), go: () => {},
             };

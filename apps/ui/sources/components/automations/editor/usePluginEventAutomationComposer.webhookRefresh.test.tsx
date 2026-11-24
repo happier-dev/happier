@@ -725,27 +725,46 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         await sync.refreshMachines({ serverId: scope.serverId });
         const materializations = machines.map((machineId, index) => ({ ...stableMaterialization, machineId,
             materializationId: `${MATERIALIZATION_ID}-${index}` }));
+        const baseEvent = eligibleEvent();
+        const materializationRef = { machineId: WATCHER_MACHINE_ID, pluginId: PLUGIN_ID, materializationId: materializations[0]!.materializationId };
+        const event = explicit === WATCHER_MACHINE_ID ? { ...baseEvent, observationBinding: {
+            executionOrigin: { serverIdentityId: SERVER_IDENTITY_ID, materializationRef }, materializationRef,
+        } } : baseEvent;
+        const { createPluginEventAutomationSetupResultV1JsonSchema } = await import('@happier-dev/protocol/automations/event-setup-result');
+        const release = availabilityResponse.release!;
+        const currentIntent = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            ...availabilityResponse, availabilityCursor: 2,
+            release: { ...release, normalizedManifest: { ...release.normalizedManifest, contributes: {
+                actions: [{ id: SETUP_ACTION_LOCAL_ID, title: event.setupAction.title, scopes: ['global'],
+                    surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
+                    inputSchema: event.setupAction.inputSchema,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(3, event.event.automation.source.sourceConfigSchema) }],
+                webhooks: [{ id: WEBHOOK_LOCAL_ID, title: 'Repository delivery',
+                    verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }, delivery: 'recordReceiptOnly' }],
+                events: [{ kind: 'event', id: EVENT_LOCAL_ID, title: event.event.title,
+                    payloadSchema: event.event.payloadSchema, automation: event.event.automation }],
+            } } },
+        });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response: { ...availabilityResponse, availabilityCursor: 2 } }], materializations,
+            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response: currentIntent }], materializations,
             snapshots: materializations.map(materialization => ({ serverIdentityId: SERVER_IDENTITY_ID,
                 machineId: materialization.machineId, materializations: [materialization] })),
         } });
         expect(readPluginAccountAvailability(scope).readMaterializations()).toMatchObject({ kind: 'available', materializations });
-        const event = eligibleEvent();
         const hook = await renderHook((inputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({ machineId: inputs ? WATCHER_MACHINE_ID : null, serverId,
             projectionPhase: inputs ? 'ready' : 'idle', projectionInputs: inputs, initialEventRef: event.event.identity,
             initialSetupSeed: { eventRef: event.event.identity, ...(explicit ? { monitoringMachineId: explicit } : {}),
                 setupInput: { subject: { kind: 'machineService', machineId: WATCHER_MACHINE_ID, serviceId: 'watched-service' } } },
         }), { initialProps: catalogPending ? null : projectionInputs(event) });
         await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().watcherCandidates).toHaveLength(machines.length);
+            expect(hook.getCurrent().watcherCandidates).toHaveLength(explicit ? Number(machines.includes(explicit)) : machines.length);
             expect(hook.getCurrent().watcherFailures).toEqual([]);
             if (!catalogPending) expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity);
         });
         await flushHookEffects();
         const origin = hook.getCurrent().selectedWatcherOrigin;
         expect(origin ? ('materializationRef' in origin ? origin.materializationRef.machineId : origin.sourceRef.machineId) : null).toBe(expected);
-        expect(hook.getCurrent().sourceStatus).toBe('idle');
+        expect(hook.getCurrent().sourceStatus).toBe(explicit && expected === null ? 'unavailable' : 'idle');
         expect(hook.getCurrent().createDraft).toBeNull();
         expect(endpointReads()).toHaveLength(0);
         expect(editorProjectionReads).toHaveLength(0);
@@ -844,22 +863,22 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             .toBe(t('errors.machineNotAnswering'));
     });
 
-    it('does not borrow the trigger Project Machine for repository-only Event intent', async () => {
+    it('reads repository Event intent on the selected controller without assigning its watcher', async () => {
         const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
         const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
         const event = eligibleEvent();
+        const controllerMachineId = 'project-controller';
         const hook = await renderHook(() => null, { wrapper: ({ children }) => <>{children}
             <TriggerPluginEventRows testID="event-row" editing when={{ kind: 'pluginEvent', value: null, eventRef: event.event.identity }}
                 initialEventSeed={{ eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' } }}
-                machineId="unrelated-project-machine" serverId={serverId} onChange={() => { throw new Error('must not enroll'); }} />
+                machineId={controllerMachineId} serverId={serverId} onChange={() => { throw new Error('must not enroll'); }} />
         </> });
         const model = () => hook.tree.root.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
-        expect(editorProjectionReads).toEqual([]);
-        expect(model().selectedEvent).toBeNull();
+        await waitForHomeGovernance(() => expect(editorProjectionReads).toEqual([controllerMachineId]));
         expect(model().selectedWatcherOrigin).toBeNull();
         await act(async () => model().selectWatcher(model().watcherCandidates[0]!));
         await flushHookEffects();
-        expect(editorProjectionReads).toEqual([WATCHER_MACHINE_ID]);
+        expect(editorProjectionReads).toEqual([controllerMachineId, WATCHER_MACHINE_ID]);
         await waitForHomeGovernance(() => expect(model().selectedEvent?.event.identity).toEqual(event.event.identity));
         expect(model().sourceStatus).toBe('idle');
         expect(model().createDraft).toBeNull();
