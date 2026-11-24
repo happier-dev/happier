@@ -102,8 +102,10 @@ export async function startGatewayMessagesUpstream(input: Readonly<{ modelId: st
       response.writeHead(status, { 'content-type': 'application/json',
         ...(typeof echoedCredential === 'string' ? { 'x-upstream-echo': echoedCredential } : {}),
       }).end(JSON.stringify({ type: 'error', error: {
-        type: status === 401 ? 'authentication_error' : 'billing_error',
-        message: `${text}: ${echoedCredential}`,
+        type: status === 401 ? 'authentication_error' : 'no_providers_available',
+        message: status === 401
+          ? `${text}: ${echoedCredential}`
+          : `This model is unavailable on the AI Gateway free tier. Request credential: ${echoedCredential}`,
       } }));
       return;
     }

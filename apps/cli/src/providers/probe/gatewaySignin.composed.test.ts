@@ -457,7 +457,15 @@ it.each(gatewaySigninScenarios)('admits the selected signed-in Gateway model thr
 
       const billingRefusal = await send('vendor billing refusal');
       expect(billingRefusal.status).toBe(403);
-      expect((await billingRefusal.text()).includes(vendorToken)).toBe(false);
+      const refusalBody = await billingRefusal.text();
+      expect(refusalBody.includes(vendorToken)).toBe(false);
+      expect(JSON.parse(refusalBody)).toMatchObject({
+        type: 'error',
+        error: {
+          type: 'no_providers_available',
+          message: expect.stringContaining('unavailable on the AI Gateway free tier'),
+        },
+      });
       expect(rotateAtVendorBoundary).not.toHaveBeenCalled();
       const invalidAuth = await send('vendor invalid auth');
       expect(invalidAuth.status).toBe(401);
@@ -468,6 +476,8 @@ it.each(gatewaySigninScenarios)('admits the selected signed-in Gateway model thr
       await turn('explicit turn after refresh');
       const rotatedRequest = upstream.requests.at(-1)!;
       expect(headerValues(rotatedRequest.rawHeaders, 'authorization').join() === `Bearer ${rotatedToken}`).toBe(true);
+      expect(headerValues(rotatedRequest.rawHeaders, 'x-vercel-ai-gateway-team')).toEqual([teamId]);
+      expect(new URL(rotatedRequest.pathAndQuery, upstream.origin).searchParams.getAll('teamId')).toEqual([teamId]);
       expect(materializeAccount).toHaveBeenCalledTimes(2);
 
       const cancel = new AbortController();
