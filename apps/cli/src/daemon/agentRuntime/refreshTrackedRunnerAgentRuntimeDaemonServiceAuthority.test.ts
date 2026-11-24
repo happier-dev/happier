@@ -1,11 +1,16 @@
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { loadBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { readRetainedBundledAgentFactory } from '@/plugins/runtime/retainedBundledAgentFactory';
+import { projectPath } from '@/projectPath';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import {
   loadRetainedAgentRuntimeLeaf,
@@ -39,7 +44,7 @@ const attachRunnerRetainedPluginGenerations = async (
 
 describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
   it('attests first-party development custody to its retained path runner across daemon replacement', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-path-runner-custody-'));
+    const happyHomeDir = await realpath(await mkdtemp(join(tmpdir(), 'happier-path-runner-custody-')));
     const publishSourceBundle = async (label: string) => {
       const runtimeRoot = join(happyHomeDir, 'source-bundles', label, 'apps', 'cli');
       const pluginRoot = join(happyHomeDir, 'source-bundles', label, 'packages', 'plugins', 'antigravity');
@@ -53,7 +58,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
       await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
       await writeFile(join(pluginRoot, `agent-${label}.mjs`), `export function ${factoryExport}() { return {}; }\n`);
       await writeFile(join(pluginRoot, 'src', 'index.ts'), `export { ${factoryExport} } from '../agent-${label}.mjs';\n`);
-      const declaration = JSON.stringify(
+      const declaration = normalizePluginManifestV2(
         createPluginManifestV2Fixture({
           id: 'happier.agent.antigravity',
           version: label === 'runner-a' ? '0.0.0' : '1.0.0',
@@ -69,19 +74,24 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
           }] },
         }),
       );
-      await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), declaration);
-      await writeFile(declarationPath, declaration);
-      return { runtimeRoot, pluginRoot };
+      await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(declaration));
+      await writeFile(declarationPath, JSON.stringify(declaration));
+      return { runtimeRoot, pluginRoot, locator, declarationPath, declaration };
     };
     try {
       const runner = await publishSourceBundle('runner-a');
       const successor = await publishSourceBundle('daemon-b');
+      const { admittedGraph } = loadBundledPluginLocatorResult([{
+        ...runner.locator, manifestRelativePath: relative(projectPath(), runner.declarationPath),
+      }]);
+      const admitted = admittedGraph.loadedPlugins[0]?.manifest;
+      if (!admitted) throw new Error('Daemon did not admit the bundled fixture');
+      const factory = readRetainedBundledAgentFactory(admitted, 'antigravity');
       const binding = createAgentSessionRunnerFactoryBinding({
-        v: 1, pluginId: 'happier.agent.antigravity', pluginVersion: '0.0.0',
+        v: 1, pluginId: admitted.id, pluginVersion: admitted.version,
         agentId: 'antigravity', localAgentId: 'antigravity',
         sourceCustody: { kind: 'development', registeredRootId: runner.pluginRoot },
-        locator: { module: './agent-runner-a.mjs', export: 'createRunnerA', runtimeApiVersion: 1 },
-        normalizedModulePath: 'agent-runner-a.mjs', loadMode: 'immutable-js',
+        locator: factory.locator, normalizedModulePath: factory.normalizedModulePath, loadMode: factory.loadMode,
       });
       const currentBinding = createAgentSessionRunnerFactoryBinding({
         v: 1, pluginId: 'happier.agent.antigravity', pluginVersion: '1.0.0',
@@ -94,6 +104,31 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
       await expect(attestFreshRunnerAgentBinding({
         binding, paths: resolvePluginStorePaths({ happyHomeDir }), runnerSnapshotIdentity: runnerIdentity,
       })).resolves.toEqual(binding);
+      await writeFile(runner.declarationPath, JSON.stringify({ ...runner.declaration, description: 'Regenerated presentation' }));
+      const command = `node "${join(runner.runtimeRoot, 'src', 'index.mjs')}" antigravity --existing-session session-a`;
+      const processCommandHash = createHash('sha256').update(command).digest('hex');
+      const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir, publicReleaseRing: 'stable' });
+      const reads = vi.spyOn(fs, 'readFileSync');
+      try {
+        const published = await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({
+          happyHomeDir, publicReleaseRing: 'stable', httpPort: 3210, sessionId: 'session-a',
+          tracked: {
+            trackingKey: legacyPidSessionTrackingKey(4201), startedBy: 'daemon', pid: 4201,
+            happySessionId: 'session-a', processCommandHash, processStartTimeMs: 12_346,
+            agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+            runnerAgentBootstrapIdentity: { agentId: binding.agentId, backendId: binding.agentId },
+          },
+          resolveCurrentRetainedAgent: () => binding,
+          readProcessIdentityByPidFn: async pid => ({ pid, command, processStartTimeMs: 12_346 }),
+          persistRunnerAgentSourceCustody: async () => true,
+          persistRunnerManagedDependencyRetention: async () => true,
+          attachRunnerRetainedPluginGenerations,
+        });
+        expect(published.document.retainedAgent).toEqual(binding);
+        expect(reads.mock.calls.filter(([path]) => path === runner.declarationPath)).toHaveLength(0);
+      } finally {
+        reads.mockRestore();
+      }
       expect(currentAgentBindingMatchesRetainedRunner({
         runnerSnapshotIdentity: runnerIdentity, currentBinding, retainedBinding: binding,
       })).toBe(true);
@@ -102,6 +137,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
         developmentRunnerSnapshotIdentity: runnerIdentity,
       });
       expect(leaf.factory.name).toBe('createRunnerA');
+      await leaf.dispose();
       await expect(attestFreshRunnerAgentBinding({
         binding: { ...binding, sourceCustody: { kind: 'development', registeredRootId: successor.pluginRoot } },
         paths: resolvePluginStorePaths({ happyHomeDir }), runnerSnapshotIdentity: runnerIdentity,

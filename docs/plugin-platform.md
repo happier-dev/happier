@@ -2199,6 +2199,13 @@ Managed-runtime publication may remove an unavailable provider facet from that
 admitted declaration; locator identity, entrypoint agreement and contribution-graph
 reference resolution remain enforced by their existing owners.
 
+In 0.3 development source, a fresh Session with a bundled Agent in a source
+checkout carries the Agent binding selected by the daemon's registry lease.
+The daemon attests the runner's checkout root and publishes that binding even
+if the bundled declaration was regenerated after admission. Runner-local reads
+of tracked bundled manifests use the bundled publisher's admission path. A
+packaged runner selects its own retained snapshot's declaration and factory.
+
 Every process admits all bundled file declarations as a summary. The bundled-plugin
 publisher derives three assets from each serialized manifest
 (`assets/bundled-plugin-manifests/declarations/<id>.summary.json`,
