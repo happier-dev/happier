@@ -552,10 +552,14 @@ export const DeploymentEnvironmentDetail = React.memo(
           serverIdentityId: detail.environment.serverId, serverApiUrl: ciHome.canonicalServerUrl ?? ciHome.serverUrl,
           scope: props.lifetime.scope, lifetime: props.lifetime } satisfies DeploymentCiInput : null;
     const platformName = platform?.title ?? null;
+    const platformResourceName = readPlatformResourceName(runtimeContent);
     // Where it runs, what defines it, then where people reach it (lab d1 header): vps-2 · Compose · compose.yaml · address.
     const composeHosted = runtime ? runtime.source.kind === 'host' : definition !== null;
     const meta: PageHeaderMetaFact[] = [
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
+      ...(platformResourceName && !isSameDeploymentName(platformResourceName, detail.content.name)
+        && (!props.project || !isSameDeploymentName(platformResourceName, props.project.name))
+        ? [{ key: 'platform-resource', text: platformResourceName }] : []),
       ...machineIds.flatMap((machineId) => {
         const name = knownMachine(machineId);
         return name ? [{ key: `machine:${machineId}`, text: name, icon: 'hard-drives' as const }] : [];

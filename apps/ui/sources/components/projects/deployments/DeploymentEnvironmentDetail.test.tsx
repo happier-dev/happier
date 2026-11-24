@@ -1590,6 +1590,10 @@ describe('Project deployments page', () => {
       detachReview={recovery ? { targetLinkId, onOpened } : undefined}
       disposition={{ ...actions, teardown, unlink } as never} /></ModalProvider>);
     try {
+      await vi.waitFor(() => {
+        const header = screen.findByTestId('project-deployments.environment.header');
+        expect(header?.findAll(node => node.props.children === 'acme-web').length ?? 0).toBeGreaterThan(0);
+      }, { timeout: 15_000 });
       if (recovery) {
         await waitForContent(screen, 'project-deployments.disposition.confirm');
         expect(onOpened).toHaveBeenCalledOnce();

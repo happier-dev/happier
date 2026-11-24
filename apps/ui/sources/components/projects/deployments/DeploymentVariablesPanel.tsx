@@ -356,6 +356,8 @@ export const DeploymentVariablesPanel = React.memo(
         accessibilityLabel: (row) =>
           `${row.name}, ${phaseLabel(row.phase)}, ${sourceTitle(row.binding, props.environmentName, secretName)}`,
         testID: (row) => `project-deployments.environment.variable.${row.name}`,
+        // Provider comparison needs both values even beside the Environment list.
+        ...(providerColumn ? { columnsOverflow: 'scroll' as const } : {}),
         columnTitles: { title: t('projects.deployments.columnName') },
         // Names are short identifiers: the title column keeps what a name needs, not a sentence's room.
         titleMinWidth: 160,

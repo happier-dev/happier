@@ -78,10 +78,11 @@ it.each([{ settlement: 'saved', choice: 'useOurs' }, { settlement: 'saved', choi
         : { ok: false, error: 'deployment_conflict', effectAttempted: true, details: { providerVariables } };
     } });
   const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+  const desktop = settlement === 'saved' && choice === 'useOurs';
   function Page({ visible }: Readonly<{ visible: boolean }>) {
     const draft = useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id, lifetime,
       snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
-    return <DeploymentVariablesPanel draft={draft} phone environmentName={() => null} sealedOn={null}
+    return <DeploymentVariablesPanel draft={draft} phone={!desktop} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id}
       projectSourceId={detail.environment.projectSourceId} providerTargetLinkId={targetLink.id} providerVariablesActive={visible}
       scope={lifetime.scope} lifetime={lifetime} />;
@@ -92,9 +93,15 @@ it.each([{ settlement: 'saved', choice: 'useOurs' }, { settlement: 'saved', choi
   });
   expect(reads).toHaveLength(0);
   await act(async () => { screen.update(render(true)); });
-  await measureMountedCollections(screen);
+  await measureMountedCollections(screen, { width: desktop ? 704 : 320 });
   const key = 'project-deployments.environment.variables.provider.MODE';
-  await vi.waitFor(() => expect(screen.findByTestId(key)).not.toBeNull());
+  await vi.waitFor(() => {
+    if (desktop) {
+      expect(screen.getTextContent()).toContain('Value from');
+      expect(screen.getTextContent()).toContain('At provider');
+    }
+    expect(screen.findByTestId(key)).not.toBeNull();
+  });
   expect(reads).toHaveLength(1);
   expect(screen.getTextContent()).not.toContain('provider-revision');
   await screen.pressByTestIdAsync(`${key}.${choice}`);
