@@ -13726,6 +13726,7 @@ const enLocalServices = {
     },
     unavailableReason: {
       launchUnavailable: "This service can't be started from here.",
+      declarationUnavailable: "This stopped service is no longer declared here. Restore its project definition to start it again.",
       bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Can't check services on ${machine}. Reconnect it and try again.`,
       previewRegistrationUnavailable: "This service can't register a preview.",
       nativeStateUnknown: "Happier can't tell whether this service is still running. Stop it to clean up.",

@@ -9752,6 +9752,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
               unavailableReason: {
                 launchUnavailable: '無法從這裡啟動此服務。',
+                declarationUnavailable: "此已停止的服務不再於此處宣告。請還原其專案定義以重新啟動。",
                 bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `無法檢查 ${machine} 上的服務。請重新連線該機器後再試。`,
                 previewRegistrationUnavailable: '此服務無法註冊預覽。',
                 nativeStateUnknown: "Happier 無法確定此服務是否仍在執行。請停止它以完成清理。",

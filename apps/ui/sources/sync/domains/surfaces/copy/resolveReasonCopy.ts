@@ -199,6 +199,7 @@ const BROWSER_SURFACE_KEYS = {
 
 const LOCAL_SERVICE_LAUNCHER_KEYS = {
     launch_unavailable: 'localServices.launcher.unavailableReason.launchUnavailable',
+    launcher_start_declaration_unavailable: 'localServices.launcher.unavailableReason.declarationUnavailable',
     preview_registration_unavailable: 'localServices.launcher.unavailableReason.previewRegistrationUnavailable',
     browser_target_unavailable: 'localServices.launcher.unavailableReason.browserTargetUnavailable',
     starting: 'localServices.launcher.unavailableReason.starting',
@@ -770,6 +771,7 @@ type LocalServiceLauncherMessageKey =
     | 'localServices.rowStatus.stopped'
     | 'localServices.rowStatus.failed'
     | 'localServices.launcher.unavailableReason.launchUnavailable'
+    | 'localServices.launcher.unavailableReason.declarationUnavailable'
     | 'localServices.launcher.unavailableReason.previewRegistrationUnavailable'
     | 'localServices.launcher.unavailableReason.browserTargetUnavailable'
     | 'localServices.launcher.unavailableReason.starting'

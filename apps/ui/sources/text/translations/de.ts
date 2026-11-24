@@ -11854,6 +11854,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             },
             unavailableReason: {
                 launchUnavailable: "Dieser Dienst lässt sich von hier aus nicht starten.",
+                declarationUnavailable: "Dieser gestoppte Dienst ist hier nicht mehr definiert. Stelle seine Projektdefinition wieder her, um ihn erneut zu starten.",
                 bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Die Dienste auf ${machine} können nicht geprüft werden. Verbinde den Rechner erneut und versuche es noch einmal.`,
                 previewRegistrationUnavailable: "Dieser Dienst kann keine Vorschau registrieren.",
                 nativeStateUnknown: "Happier kann nicht feststellen, ob dieser Dienst noch läuft. Stoppe ihn zum Aufräumen.",

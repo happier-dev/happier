@@ -116,19 +116,24 @@ describe('ServiceRowView', () => {
         expect(screen.findByTestId('row-dot-halo')).toBeNull();
     });
 
-    it('dispatches a qualified declaration Start from the actual row model without fabricating an executable feed action', async () => {
+    it('dispatches a qualified declaration Start only when the feed offers it', async () => {
         const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'project-service:selected' },
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'docs' } },
+            state: 'available', serviceState: 'stopped', unavailableReason: undefined,
             commandPreview: 'current declaration command' });
-        const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
-        // Start dispatch is the outer consumer port; the current row model and
-        // actual rendered control remain real.
+        const rowsFor = (published: LocalServiceLaunchTarget) => buildLocalServiceRows({
+            inventoryRows: [], launchTargets: [published], sessionId: null, scope: 'workspace',
+        });
+        // 079d1506819: declaration metadata never substitutes for the feed's Start decision.
         const start = vi.fn(async () => undefined);
-        const screen = await renderScreen(<ServiceRowView row={row!} onStartLauncherTarget={start} testID="row" />);
+        const screen = await renderScreen(<ServiceRowView row={rowsFor(target)[0]!} onStartLauncherTarget={start} testID="row" />);
+        expect(screen.findByTestId('row-start')).toBeNull();
+        expect(start).not.toHaveBeenCalled();
+        const admitted = { ...target, actions: ['start' as const] };
+        await screen.update(<ServiceRowView row={rowsFor(admitted)[0]!} onStartLauncherTarget={start} testID="row" />);
         await pressTestInstanceAsync(screen.findByTestId('row-start'), 'row-start');
-        expect(start).toHaveBeenCalledExactlyOnceWith(target);
-        expect(target.actions).toEqual([]);
+        expect(start).toHaveBeenCalledExactlyOnceWith(admitted);
     });
 
     function declaredStartRow(title = 'web') {

@@ -12204,6 +12204,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       },
       unavailableReason: {
         launchUnavailable: "Questo servizio non può essere avviato da qui.",
+        declarationUnavailable: "Questo servizio arrestato non è più dichiarato qui. Ripristina la sua definizione nel progetto per avviarlo di nuovo.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Impossibile verificare i servizi su ${machine}. Riconnetti la macchina e riprova.`,
         previewRegistrationUnavailable: "Questo servizio non può registrare unanteprima.",
         nativeStateUnknown: "Happier non può sapere se questo servizio è ancora in esecuzione. Arrestalo per ripulire.",

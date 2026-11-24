@@ -12280,6 +12280,7 @@ localTailscale: {
       },
       unavailableReason: {
         launchUnavailable: "このサービスはここから開始できません。",
+        declarationUnavailable: "この停止中のサービスは、ここでは定義されていません。再起動するには、プロジェクト内の定義を復元してください。",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `${machine} のサービスを確認できません。再接続して、もう一度お試しください。`,
         previewRegistrationUnavailable: "このサービスはプレビューを登録できません。",
         nativeStateUnknown: "このサービスがまだ実行中か Happier には判断できません。停止して後片付けしてください。",

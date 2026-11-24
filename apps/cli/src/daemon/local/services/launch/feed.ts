@@ -400,8 +400,10 @@ export function createLocalServiceLauncherFeed(
                     ...managed,
                 ].map(target => {
                     const declaration = declarations.get(target.id);
-                    if (!declaration || target.state !== 'available' || target.serviceState !== 'stopped'
+                    if (target.state !== 'available' || target.serviceState !== 'stopped'
                         || hasUncertainLocalServiceNativeCustodyV1(target)) return target;
+                    if (!declaration) return target.declaration
+                        ? { ...target, unavailableReason: 'launcher_start_declaration_unavailable' } : target;
                     // Start means review this declaration. The existing Start owner
                     // still admits its current files, placement and execution policy.
                     return { ...target, workspace: declaration.workspace, declaration: declaration.declaration,

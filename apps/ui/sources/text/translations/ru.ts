@@ -11835,6 +11835,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       },
       unavailableReason: {
         launchUnavailable: "Эту службу нельзя запустить отсюда.",
+        declarationUnavailable: "Эта остановленная служба больше не объявлена здесь. Восстановите её определение в проекте, чтобы запустить её снова.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Не удалось проверить службы на ${machine}. Подключите машину и повторите попытку.`,
         previewRegistrationUnavailable: "Эта служба не может зарегистрировать предпросмотр.",
         nativeStateUnknown: "Happier не может определить, работает ли ещё эта служба. Остановите её, чтобы всё убрать.",

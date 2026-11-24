@@ -11812,6 +11812,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       },
       unavailableReason: {
         launchUnavailable: "Tej usługi nie można uruchomić z tego miejsca.",
+        declarationUnavailable: "Ta zatrzymana usługa nie jest już tutaj zadeklarowana. Przywróć jej definicję w projekcie, aby uruchomić ją ponownie.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Nie można sprawdzić usług na ${machine}. Połącz maszynę ponownie i spróbuj jeszcze raz.`,
         previewRegistrationUnavailable: "Ta usługa nie może zarejestrować podglądu.",
         nativeStateUnknown: "Happier nie może ustalić, czy ta usługa nadal działa. Zatrzymaj ją, aby posprzątać.",

@@ -11,6 +11,12 @@ import {
   resolveReasonCopy,
 } from './resolveReasonCopy';
 
+it('explains stopped Service history whose current declaration is unavailable', () => {
+  const copy = resolveReasonCopy({ kind: 'localServiceLauncher', reasonCode: 'launcher_start_declaration_unavailable' });
+  expect(copy.diagnosticCode).toBe('launcher_start_declaration_unavailable');
+  expect(copy.body).toBe(t('localServices.launcher.unavailableReason.declarationUnavailable'));
+});
+
 it('explains a local native artifact failure through the runtime reason owner', () => {
   const copy = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: 'local_artifact_failure' });
   expect(copy.body).toBe(t('pluginRuntime.localArtifactFailure'));

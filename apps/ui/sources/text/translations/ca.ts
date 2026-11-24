@@ -11164,6 +11164,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             },
               unavailableReason: {
                 launchUnavailable: 'Aquest servei no es pot iniciar des d\'aquí.',
+                declarationUnavailable: "Aquest servei aturat ja no està declarat aquí. Restaura'n la definició del projecte per tornar-lo a iniciar.",
                 bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `No es poden comprovar els serveis de ${machine}. Torna a connectar-la i prova-ho de nou.`,
                 previewRegistrationUnavailable: 'Aquest servei no pot registrar cap previsualització.',
                 nativeStateUnknown: "Happier no pot saber si aquest servei encara s’executa. Atura’l per netejar-lo.",

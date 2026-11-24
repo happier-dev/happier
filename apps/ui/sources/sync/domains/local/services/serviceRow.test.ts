@@ -222,6 +222,7 @@ describe('buildLocalServiceRows', () => {
         // Captured from the ended-preview failure: launcher availability and a retained
         // Browser target survive the supervisor's stopped publication.
         const running = LocalServiceLaunchTargetV1Schema.parse(openableTarget({
+            id: 'project-service:copy-check-web', title: 'copy-check-web',
             source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'instance-a' },
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } },

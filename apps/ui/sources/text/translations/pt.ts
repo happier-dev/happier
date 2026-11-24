@@ -12100,6 +12100,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       },
       unavailableReason: {
         launchUnavailable: "Este serviço não pode ser iniciado aqui.",
+        declarationUnavailable: "Este serviço parado já não está declarado aqui. Restaure a sua definição no projeto para o iniciar novamente.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Não é possível verificar os serviços em ${machine}. Volte a conectar a máquina e tente novamente.`,
         previewRegistrationUnavailable: "Este serviço não pode registrar uma pré-visualização.",
         nativeStateUnknown: "O Happier não consegue saber se este serviço ainda está em execução. Pare-o para limpar.",

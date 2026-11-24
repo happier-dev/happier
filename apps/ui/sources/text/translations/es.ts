@@ -11983,6 +11983,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       },
       unavailableReason: {
         launchUnavailable: "Este servicio no se puede iniciar desde aquí.",
+        declarationUnavailable: "Este servicio detenido ya no está declarado aquí. Restaura su definición del proyecto para volver a iniciarlo.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `No se pueden comprobar los servicios en ${machine}. Vuelve a conectarlo e inténtalo de nuevo.`,
         previewRegistrationUnavailable: "Este servicio no puede registrar una vista previa.",
         nativeStateUnknown: "Happier no puede saber si este servicio sigue en ejecución. Detenlo para limpiarlo.",

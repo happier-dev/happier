@@ -11821,6 +11821,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       },
       unavailableReason: {
         launchUnavailable: "Ce service ne peut pas être démarré d’ici.",
+        declarationUnavailable: "Ce service arrêté n’est plus déclaré ici. Restaurez sa définition dans le projet pour le redémarrer.",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Impossible de vérifier les services sur ${machine}. Reconnecte cette machine et réessaie.`,
         previewRegistrationUnavailable: "Ce service ne peut pas enregistrer d’aperçu.",
         nativeStateUnknown: "Happier ne peut pas savoir si ce service tourne encore. Arrête-le pour nettoyer.",

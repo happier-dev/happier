@@ -11618,6 +11618,7 @@ export const zhHans: TranslationStructure = {
       },
       unavailableReason: {
         launchUnavailable: "无法从这里启动此服务。",
+        declarationUnavailable: "此已停止的服务不再在此处声明。请恢复其项目定义以重新启动。",
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `无法检查 ${machine} 上的服务。请重新连接该机器后重试。`,
         previewRegistrationUnavailable: "此服务无法注册预览。",
         nativeStateUnknown: "Happier 无法确定此服务是否仍在运行。请停止它以完成清理。",
