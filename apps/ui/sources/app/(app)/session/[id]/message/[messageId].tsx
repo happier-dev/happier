@@ -2,7 +2,6 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import { DetailsStartSheetHost } from '@/components/appShell/panes/panePresentation';
 import * as React from 'react';
 import { useIsFocused, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { View } from 'react-native';
 import type { ViewStyle } from 'react-native';
 import { storage, useMessage, useTranscriptApprovalArtifactsForSession, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptLoaded } from "@/sync/domains/state/storage";
@@ -26,6 +25,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { useSessionRouteLaunchCurtainHold } from '@/components/sessions/shell/useSessionRouteLaunchCurtainHold';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
@@ -44,8 +44,9 @@ const SessionDestinationBody = retryableLazy<NonNullable<React.ComponentProps<ty
     () => import('@/components/sessions/shell/SessionDestinationBody').then(module => ({ default: module.SessionDestinationBody })),
 );
 
-function LinkedSessionRouteLoading() {
-    useLaunchCurtainHold(useIsFocused());
+function LinkedSessionRouteLoading({ serverId }: Readonly<{ serverId: string | null }>) {
+    const focused = useIsFocused();
+    useSessionRouteLaunchCurtainHold(focused, serverId);
     return <PaneLoadingFallback />;
 }
 
@@ -249,7 +250,11 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     // An ordinary committed-message link is a location in its Session, not an
     // isolated text preview. Keep tool details on their existing detail surface.
     if (messageTarget) {
-        return <React.Suspense fallback={<LinkedSessionRouteLoading />}><SessionDestinationBody messageTarget={messageTarget} /></React.Suspense>;
+        return (
+            <React.Suspense fallback={<LinkedSessionRouteLoading serverId={routeHydrationState.serverId ?? routeScope.serverId ?? sessionServerId} />}>
+                <SessionDestinationBody messageTarget={messageTarget} />
+            </React.Suspense>
+        );
     }
     
     return (

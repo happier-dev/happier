@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Href } from 'expo-router';
-import { useLaunchCurtainHold } from '@/boot/launchCurtain';
+import { useSessionRouteLaunchCurtainHold } from './useSessionRouteLaunchCurtainHold';
 import { useDestinationParams, useDestinationRouter, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 
@@ -49,9 +49,9 @@ function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof Session
     </SessionBoardControllerProvider>;
 }
 
-function SessionDetailsRouteLoading({ initialLoading }: Readonly<{ initialLoading: boolean }>) {
+function SessionDetailsRouteLoading({ initialLoading, serverId }: Readonly<{ initialLoading: boolean; serverId: string | null }>) {
     const focused = useDestinationFocus();
-    useLaunchCurtainHold(initialLoading && focused);
+    useSessionRouteLaunchCurtainHold(initialLoading && focused, serverId);
     return <PaneLoadingFallback />;
 }
 
@@ -231,7 +231,10 @@ export function SessionDetailsDestinationBody() {
                         />
                 )
             ) : (
-                <SessionDetailsRouteLoading initialLoading={routeHydrationState.kind === 'loading'} />
+                <SessionDetailsRouteLoading
+                    initialLoading={routeHydrationState.kind === 'loading'}
+                    serverId={routeHydrationState.serverId ?? routeScope.serverId}
+                />
             )}
         </SessionFullscreenPaneSafeAreaView>
     );

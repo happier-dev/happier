@@ -12,7 +12,9 @@ const SessionViewContent = retryableLazy(async () => ({
 }));
 
 export const SessionView = React.memo((props: React.ComponentProps<typeof SessionViewContent>) => (
-    <React.Suspense fallback={props.presentation?.kind === 'embedded' ? <PaneLoadingFallback /> : <SessionViewRouteLoading />}>
+    <React.Suspense fallback={props.presentation?.kind === 'embedded' ? <PaneLoadingFallback /> : (
+        <SessionViewRouteLoading initialLoading serverId={props.routeHydrationState?.serverId ?? props.routeServerId ?? null} />
+    )}>
         <SessionViewContent {...props} />
     </React.Suspense>
 ));

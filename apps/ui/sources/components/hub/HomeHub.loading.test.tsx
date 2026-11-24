@@ -5,6 +5,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
+import { useLaunchCurtainState } from '@/boot/launchCurtain';
+import { startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -18,6 +20,7 @@ import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLay
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { isHomeArrivalMotionPending, isHomeArrivalSettled } from '@/components/hub/homeArrival';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
+import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -67,6 +70,10 @@ function BootReadiness() {
     return <div data-testid={readiness.active ? 'bootstrap-active' : 'bootstrap-bypassed'} />;
 }
 
+function LaunchCurtainObservation() {
+    return <div data-testid="curtain-state" data-state={useLaunchCurtainState()} />;
+}
+
 function GuidanceObservation(props: Readonly<{ observe: (kind: string) => void }>) {
     const { kind } = useSessionGettingStartedGuidanceBaseModel();
     React.useLayoutEffect(() => props.observe(kind), [kind, props.observe]);
@@ -82,6 +89,7 @@ async function frames(ms: number, observe: () => void) {
 
 describe('Home Loading at the RN-web layout boundary', () => {
     it.each([
+        { delay: 100, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false, reachability: true },
         { delay: 100, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false },
         { delay: 100, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false, arrival: true },
         { delay: 600, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false },
@@ -90,7 +98,7 @@ describe('Home Loading at the RN-web layout boundary', () => {
         { delay: 600, layoutAt: 400, placement: 'side' as const, coldProfile: true, emptySessions: false },
         { delay: 600, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: true },
     ])(
-        'waits $delay ms for the $placement Home layout, receiving positive pane geometry at $layoutAt ms (cold Profile $coldProfile, empty Sessions $emptySessions, first arrival $arrival)', async ({ delay, layoutAt, placement, coldProfile, emptySessions, arrival }) => {
+        'waits $delay ms for the $placement Home layout, receiving positive pane geometry at $layoutAt ms (cold Profile $coldProfile, empty Sessions $emptySessions, first arrival $arrival, curtain reachability $reachability)', async ({ delay, layoutAt, placement, coldProfile, emptySessions, arrival, reachability }) => {
         const machine = createPlainMachineRowFixture({ id: 'loading-dom-machine', accountId: 'loading-dom-account' });
         // This layout test seeds a current list display, not metadata/display backfill.
         const session = createPlainSessionWithDisplayRecordFixture({ id: 'loading-dom-session' });
@@ -198,6 +206,36 @@ describe('Home Loading at the RN-web layout boundary', () => {
                 </PersonalHomeBootstrapGate>
             </InjectedAuthProvider>
         );
+        if (reachability) {
+            const launch = startTestLaunchCurtain();
+            const curtain = () => find('curtain-state')?.getAttribute('data-state');
+            try {
+                await act(async () => {
+                    publishAppliedActiveServerRuntimeAvailability(true);
+                    storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
+                    root!.render(<>{home}<LaunchCurtainObservation /></>);
+                });
+                await vi.waitFor(() => expect(layoutReads).toBeGreaterThan(0));
+                expect(find('home-hub.loading')).not.toBeNull();
+                expect(find('home-unreachable')).toBeNull();
+                launch.releaseShell();
+                await frames(64, () => expect(curtain()).toBe('up'));
+
+                await act(async () => {
+                    storage.setState({ endpointStatus: 'offline', endpointReason: null, socketStatus: 'disconnected' });
+                });
+                await frames(32, () => {});
+                expect(curtain()).toBe('leaving');
+                await act(async () => { launch.finish(); });
+                expect(curtain()).toBe('gone');
+                expect(find('home-hub.loading')).toBeNull();
+                expect(find('home-unreachable')).not.toBeNull();
+                expect(find('home-unreachable-retry')).not.toBeNull();
+            } finally {
+                await act(async () => { root!.render(null); launch.dispose(); });
+            }
+            return;
+        }
         if (arrival) {
             function Journey() {
                 const [signedIn, setSignedIn] = React.useState(false);

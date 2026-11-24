@@ -10,11 +10,15 @@ import { DestinationInstanceHost } from '@/components/appShell/workspace/Destina
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
+import { readHomeShownUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { storage } from '@/sync/domains/state/storageStore';
+import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { resetSessionSurfaceVisibilityForTests, getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { SessionDestinationBody } from './SessionDestinationBody';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { SessionView } from './SessionView';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -137,6 +141,8 @@ describe('SessionDestinationBody workspace activation', () => {
         });
         await withSessionFixture(async serverId => {
             const launch = startTestLaunchCurtain();
+            publishAppliedActiveServerRuntimeAvailability(true);
+            storage.setState({ endpointStatus: 'online', endpointReason: null, socketStatus: 'connected', syncError: null });
             const tree = (id: string) => <InjectedAuthProvider credentials={credentials}><AppPaneProvider>
                 <DestinationInstanceHost key={id} tabId={id} ref={{ kind: 'session', params: { id, serverId } }}
                     pathname={`/session/${id}`} focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
@@ -148,6 +154,7 @@ describe('SessionDestinationBody workspace activation', () => {
             const curtain = () => screen.root.findByType('CurtainProbe').props.state;
             try {
                 await vi.waitFor(() => expect(coldReadStarted).toBe(true));
+                expect(readHomeShownUnavailable(serverId)).toBe(false);
                 expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
                 launch.releaseShell();
                 await launch.paint();
@@ -170,13 +177,15 @@ describe('SessionDestinationBody workspace activation', () => {
         }, async (input, init) => {
             const url = new URL(input instanceof Request ? input.url : String(input));
             if (url.pathname !== '/v2/sessions/read-batch' && !url.pathname.endsWith('-curtain-session')) {
-                return Response.json({ error: 'fixture_home_offline' }, { status: 503 });
+                if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                return createPlainAccountEncryptionCurrentnessHttpResponse(url.pathname)
+                    ?? createEmptyAccountBootstrapHttpResponse(url.pathname, init);
             }
             return await boundary.handle({
                 home: 'shell-test', accountId: 'account-shell', url, path: url.pathname,
                 method: init?.method ?? 'GET', headers: new Headers(init?.headers),
                 body: init?.body ? JSON.parse(String(init.body)) : undefined, signal: init?.signal,
-            }) ?? Response.json({ error: 'fixture_home_offline' }, { status: 503 });
+            }) ?? null;
         });
     });
 
