@@ -4869,6 +4869,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionList: listSessionsForVoiceTool,
     sessionRead: createUiSessionRead(accountContext),
     sessionStatusGet: readUiSessionStatus.bind(undefined, accountContext),
+    sessionWorkStateGet: ({ sessionId, serverId }) => actionSessionRpc({
+      sessionId, serverId, method: SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, payload: {},
+    }),
     readSessionManager: async ({ address, signal }) => {
       if (!accountContext || !areServerProfileIdentifiersEquivalent(address.serverId, accountContext.serverId)) return { kind: 'unavailable' };
       try {

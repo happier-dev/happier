@@ -5,7 +5,7 @@ import { fetchSessionMessagesPage, openSessionStoredContent, type SessionStoredC
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { readSessionMessageReply } from './sessionMessageReplyApi';
 
@@ -28,12 +28,18 @@ export async function readSessionInputResultForAction(input: Input, scope: Serve
             const result = await readSessionInputResult({ ...input, signal: guard.signal }, {
                 resolveSession: async needsTranscript => {
                     check();
-                    const { session } = await readSessionSnapshotForAuthority({
+                    const snapshot = await readSessionSnapshotForAuthority({
                         authority, sessionId: input.sessionId, isCurrent, signal: guard.signal,
                         includeTurns: false, includeMetadataTupleMutationSnapshot: false,
+                    }).catch((error: unknown) => {
+                        if (error instanceof SessionSnapshotReadError && error.httpStatus === 404) return null;
+                        throw error;
                     });
                     check();
-                    if (session.access?.capabilities.readTranscript !== true) return unavailable;
+                    if (snapshot?.session.access?.capabilities.readTranscript !== true) {
+                        return { ok: false, code: 'session_not_found' };
+                    }
+                    const { session } = snapshot;
                     const address = { serverId: scope.serverId, sessionId: session.id };
                     if (!needsTranscript) return { ok: true, address };
                     const encryption = authority.context.encryption?.getSessionEncryption(session.id) ?? null;

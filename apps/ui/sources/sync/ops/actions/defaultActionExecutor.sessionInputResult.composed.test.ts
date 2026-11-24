@@ -60,7 +60,7 @@ it('enumerates the UI catalog and probes the Session read guards with schema-val
     }
     // These are routed to their domain owners. Changes to the list surface as a contract diff.
     expect(unsupported.sort()).toEqual([
-        'session.skill_catalog.list', 'session.vendor_plugin_catalog.list', 'session.wait.idle', 'session.work_state.get',
+        'session.skill_catalog.list', 'session.vendor_plugin_catalog.list', 'session.wait.idle',
     ]);
 });
 
@@ -74,6 +74,6 @@ it('does not read a reply when Home conceals an unreadable Session', async () =>
     homes.answer(serverId, `GET /v2/sessions/${sessionId}`, { status: 404, body: { error: 'Session not found' } });
     const result = await createDefaultActionExecutor().execute('session.input.result.get', { sessionId, localId, projection: 'reply' },
         { surface: 'ui', serverId, expectedAccountId: 'owner' });
-    expect(result).toMatchObject({ ok: true, result: { ok: false, code: 'result_read_failed' } });
+    expect(result).toMatchObject({ ok: true, result: { ok: false, code: 'session_not_found' } });
     expect(homes.requestsFor(`/v2/sessions/${sessionId}/messages/by-local-id/${localId}/reply`)).toHaveLength(0);
 });
